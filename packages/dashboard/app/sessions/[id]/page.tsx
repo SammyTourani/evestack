@@ -84,6 +84,18 @@ function Metric({ label, children }: { label: string; children: React.ReactNode 
   );
 }
 
+/**
+ * eve names a subagent by its compiled graph node id, and the built-in `agent`
+ * tool — delegating to a copy of the current agent — is literally `__root__`.
+ * That is the most common subagent there is, so showing the raw id would put a
+ * meaningless token in front of most users. Named subagents keep their name.
+ */
+function kindLabel(run: TurnRow): string {
+  if (run.type !== "subagent") return run.type;
+  if (!run.subagent || run.subagent === "__root__") return "subagent";
+  return run.subagent;
+}
+
 function RunNode({ node, seq }: { node: TreeNode; seq?: number }) {
   const run = node.run;
   const failed = run.status === "failed" || run.status === "errored" || run.errorCode !== null;
@@ -94,7 +106,7 @@ function RunNode({ node, seq }: { node: TreeNode; seq?: number }) {
       <div className={failed ? `${styles.card} ${styles.cardFailed}` : styles.card}>
         <div className={styles.cardHead}>
           {seq !== undefined && <span className={styles.seq}>#{seq}</span>}
-          <span className={styles.kind}>{run.subagent ?? run.type}</span>
+          <span className={styles.kind}>{kindLabel(run)}</span>
           <span className={`status status-${run.status}`}>{run.status}</span>
           <span className={styles.model}>
             {run.model ?? <span className="faint">no model recorded</span>}
