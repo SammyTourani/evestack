@@ -34,3 +34,6 @@ Thumbs.db
 *.log
 npm-debug.log*
 pnpm-debug.log*
+
+# Scraped research scratch (third-party page content) — never commit.
+.firecrawl/
