@@ -36,6 +36,26 @@ ran the dashboard. On a non-UTC machine, every run rendered shifted by that offs
 `packages/dashboard/lib/db.ts` with a type parser scoped to that one column type — if you're
 seeing this, you're likely on an old build; update.
 
+## "The agent stopped answering and I get MODEL_CALL_FAILED"
+
+Read the provider's own message inside `details.message` — `eve` buries it as escaped JSON, and
+the dashboard's chat view digs it out for you. The most common cause on a new account is the
+daily request cap rather than anything in your setup: an OpenAI account with no payment method
+allows **50 requests per day**, and a day of building against it exhausts that faster than you
+would guess. The message names the limit and how long to wait.
+
+## "A turn shows as completed but the agent produced nothing"
+
+`eve`'s event stream and its workflow store disagree here, and the store is the misleading one.
+A turn killed mid-flight — a rate limit, a dropped connection — emits `turn.failed` on the
+stream, while the workflow row still reads `status = 'completed'`, because the workflow caught
+the error and finished cleanly. Nothing failed as far as it is concerned.
+
+Any dashboard trusting `status` alone therefore paints a healthy badge on a turn that did
+nothing. `$eve.model` is only written once a model call reports usage, so its absence on a
+finished turn is the surviving evidence. evestack uses exactly that signal and labels those
+turns **"no model call — turn produced nothing"**.
+
 ## "Composio tools aren't showing up"
 
 Check `COMPOSIO_API_KEY` is set in the **agent's** `.env.local` (not just the dashboard's —

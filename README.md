@@ -110,6 +110,14 @@ Things that cost real time, written down so they don't cost you any:
 - **Approvals have no dedicated endpoint.** They resolve through the ordinary follow-up route
   with `inputResponses: [{requestId, optionId}]`, the same protocol as `ask_question`.
 - **Next.js 16 needs TypeScript 6**; TS 7 doesn't expose the compiler API it wants.
+- **A failed turn still records `status = 'completed'`.** eve's event stream emits
+  `turn.failed`, but the workflow row disagrees — the workflow handled the error, so nothing
+  failed as far as it knows. Trusting `status` alone paints a green badge on a turn that
+  produced nothing. `$eve.model` is only written once a model call reports usage, so its
+  absence on a finished turn is the surviving evidence.
+- **Watch your provider's daily request cap.** An OpenAI account with no payment method
+  allows 50 requests per day; a day of building against it will exhaust that long before you
+  expect, and the failure arrives as an opaque `MODEL_CALL_FAILED`.
 
 ## License
 
