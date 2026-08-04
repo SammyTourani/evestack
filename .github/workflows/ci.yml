@@ -60,6 +60,20 @@ jobs:
           test -f ci-smoke-test/.env.local
           ! grep -q '^EVESTACK_AUTH_PASSWORD=$' ci-smoke-test/.env.local
 
+      - name: generated .env.local is actually ignored by git
+        # The file existing is not the point — git refusing to stage it is.
+        # In real use it holds a live API key, so a .gitignore that silently
+        # stops matching it is the one regression here that cannot be undone.
+        run: |
+          cd /tmp/ci-smoke-test
+          git init -q .
+          git add -A
+          if git status --short | grep -q '\.env\.local'; then
+            echo "FAIL: .env.local would be committed"
+            exit 1
+          fi
+          echo "secrets ignored"
+
   registry:
     runs-on: ubuntu-latest
     steps:
