@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- ▚ quadrant mark: UL + LR filled — works on light and dark tab bars -->
+  <rect x="2" y="2" width="13" height="13" rx="2.5" fill="#3b82f6"/>
+  <rect x="17" y="17" width="13" height="13" rx="2.5" fill="#3b82f6" fill-opacity="0.55"/>
+</svg>

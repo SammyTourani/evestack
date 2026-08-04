@@ -1,0 +1,291 @@
+@import "tailwindcss";
+
+/* evestack marketing site — Geist-family token system.
+   Dark is the primary theme; light is a first-class override.
+   Palette values derive from Vercel's public Geist token documentation
+   (verified 2026-08); names are our own. */
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ── 1. Raw palette — theme-dependent plain CSS vars ─────────────────── */
+
+:root {
+  color-scheme: light;
+  --ds-background-100: #ffffff;
+  --ds-background-200: #fafafa;
+  --ds-gray-100: #f2f2f2;
+  --ds-gray-200: #ebebeb;
+  --ds-gray-300: #e0e0e0;
+  --ds-gray-400: #d4d4d4;
+  --ds-gray-500: #b3b3b3;
+  /* 600/700 darkened from the Geist reference so small text passes WCAG AA
+     (4.5:1) on both #fff and the #fafafa raised surface. */
+  --ds-gray-600: #737373;
+  --ds-gray-700: #6b6b6b;
+  --ds-gray-800: #5d5d5d;
+  --ds-gray-900: #4d4d4d;
+  --ds-gray-1000: #171717;
+  --ds-border-subtle: rgb(0 0 0 / 0.08);
+  --ds-border-default: rgb(0 0 0 / 0.1);
+  --ds-border-strong: rgb(0 0 0 / 0.44);
+  --ds-blue-700: #006bff;
+  --ds-ok: #0f766e;
+  --ds-warn: #b45309;
+  --ds-err: #dc2626;
+}
+
+.dark {
+  color-scheme: dark;
+  --ds-background-100: #000000;
+  --ds-background-200: #0a0a0a;
+  --ds-gray-100: #1a1a1a;
+  --ds-gray-200: #1f1f1f;
+  --ds-gray-300: #292929;
+  --ds-gray-400: #2e2e2e;
+  --ds-gray-500: #454545;
+  --ds-gray-600: #878787;
+  --ds-gray-700: #8f8f8f;
+  --ds-gray-800: #7d7d7d;
+  --ds-gray-900: #a0a0a0;
+  --ds-gray-1000: #ededed;
+  --ds-border-subtle: rgb(255 255 255 / 0.13);
+  --ds-border-default: rgb(255 255 255 / 0.14);
+  --ds-border-strong: rgb(255 255 255 / 0.54);
+  --ds-blue-700: #006efe;
+  --ds-ok: #4ec9a5;
+  --ds-warn: #e5b567;
+  --ds-err: #f2777a;
+}
+
+/* ── 2. Map raw vars into Tailwind tokens (inline → .dark flips work) ── */
+
+@theme inline {
+  --color-background-100: var(--ds-background-100);
+  --color-background-200: var(--ds-background-200);
+  --color-gray-100: var(--ds-gray-100);
+  --color-gray-200: var(--ds-gray-200);
+  --color-gray-300: var(--ds-gray-300);
+  --color-gray-400: var(--ds-gray-400);
+  --color-gray-500: var(--ds-gray-500);
+  --color-gray-600: var(--ds-gray-600);
+  --color-gray-700: var(--ds-gray-700);
+  --color-gray-800: var(--ds-gray-800);
+  --color-gray-900: var(--ds-gray-900);
+  --color-gray-1000: var(--ds-gray-1000);
+  --color-border-subtle: var(--ds-border-subtle);
+  --color-border-default: var(--ds-border-default);
+  --color-border-strong: var(--ds-border-strong);
+  --color-blue-700: var(--ds-blue-700);
+  --color-ok: var(--ds-ok);
+  --color-warn: var(--ds-warn);
+  --color-err: var(--ds-err);
+}
+
+/* ── 3. Theme-independent tokens ─────────────────────────────────────── */
+
+@theme {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Geist text presets: size / line-height / letter-spacing / weight */
+  --text-heading-72: 4.5rem;
+  --text-heading-72--line-height: 4.5rem;
+  --text-heading-72--letter-spacing: -4.32px;
+  --text-heading-72--font-weight: 450;
+  --text-heading-56: 3.5rem;
+  --text-heading-56--line-height: 3.5rem;
+  --text-heading-56--letter-spacing: -3.36px;
+  --text-heading-56--font-weight: 450;
+  --text-heading-48: 3rem;
+  --text-heading-48--line-height: 3.5rem;
+  --text-heading-48--letter-spacing: -2.88px;
+  --text-heading-48--font-weight: 450;
+  --text-heading-40: 2.5rem;
+  --text-heading-40--line-height: 3rem;
+  --text-heading-40--letter-spacing: -2.4px;
+  --text-heading-40--font-weight: 450;
+  --text-heading-32: 2rem;
+  --text-heading-32--line-height: 2.5rem;
+  --text-heading-32--letter-spacing: -1.92px;
+  --text-heading-32--font-weight: 450;
+  --text-heading-24: 1.5rem;
+  --text-heading-24--line-height: 2rem;
+  --text-heading-24--letter-spacing: -0.96px;
+  --text-heading-24--font-weight: 450;
+  --text-heading-20: 1.25rem;
+  --text-heading-20--line-height: 1.625rem;
+  --text-heading-20--letter-spacing: -0.6px;
+  --text-heading-20--font-weight: 500;
+  --text-copy-18: 1.125rem;
+  --text-copy-18--line-height: 1.75rem;
+  --text-copy-18--font-weight: 400;
+  --text-copy-16: 1rem;
+  --text-copy-16--line-height: 1.5rem;
+  --text-copy-16--font-weight: 400;
+  --text-copy-14: 0.875rem;
+  --text-copy-14--line-height: 1.25rem;
+  --text-copy-14--font-weight: 400;
+  --text-mono-13: 0.8125rem;
+  --text-mono-13--line-height: 1.25rem;
+  --text-mono-13--font-weight: 400;
+  --text-label-12: 0.75rem;
+  --text-label-12--line-height: 1rem;
+  --text-label-12--letter-spacing: 0.04em;
+  --text-label-12--font-weight: 500;
+
+  --container-site: 1448px;
+
+  /* The sanctioned tri-gradient — hero glow ONLY */
+  --tri-blue: #007cf0;
+  --tri-cyan: #00dfd8;
+  --tri-purple: #7928ca;
+  --tri-pink: #ff0080;
+  --tri-red: #ff4d4d;
+  --tri-yellow: #f9cb28;
+
+  --animate-marquee: marquee 40s linear infinite;
+  @keyframes marquee {
+    from {
+      transform: translateX(0);
+    }
+    to {
+      transform: translateX(-50%);
+    }
+  }
+}
+
+/* ── 4. Base layer ───────────────────────────────────────────────────── */
+
+@layer base {
+  /* Smooth anchor jumps only for users who accept motion (Lenis takes over
+     wheel scrolling for them anyway); reduced-motion gets instant jumps. */
+  @media (prefers-reduced-motion: no-preference) {
+    html {
+      scroll-behavior: smooth;
+    }
+  }
+  body {
+    background: var(--ds-background-100);
+    color: var(--ds-gray-1000);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  ::selection {
+    background: var(--ds-gray-1000);
+    color: var(--ds-background-100);
+  }
+  :focus-visible {
+    outline: 2px solid var(--ds-blue-700);
+    outline-offset: 2px;
+  }
+  code,
+  pre,
+  kbd,
+  samp {
+    font-family: var(--font-mono);
+    font-variant-ligatures: none;
+  }
+}
+
+/* Shiki dual-theme output (defaultColor: false) — pick palette per theme */
+.shiki,
+.shiki span {
+  color: var(--shiki-light);
+  background-color: transparent !important;
+}
+.dark .shiki,
+.dark .shiki span {
+  color: var(--shiki-dark);
+}
+
+/* ── 5. Small shared utilities that need real CSS ────────────────────── */
+
+@utility site-container {
+  margin-inline: auto;
+  width: 100%;
+  max-width: var(--container-site);
+  padding-inline: 1.25rem;
+  @media (width >= 48rem) {
+    padding-inline: 2rem;
+  }
+}
+
+/* Hairline top border used between full-bleed sections */
+@utility section-rule {
+  border-top: 1px solid var(--ds-border-subtle);
+}
+
+/* Conic border sweep for the closing CTA pill — pure CSS, respects
+   reduced motion. */
+@property --beam-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@utility border-beam {
+  position: relative;
+  isolation: isolate;
+  &::before {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    z-index: -1;
+    border-radius: inherit;
+    background: conic-gradient(
+      from var(--beam-angle),
+      transparent 0deg,
+      transparent 300deg,
+      var(--tri-cyan) 330deg,
+      var(--tri-blue) 345deg,
+      transparent 360deg
+    );
+    animation: beam-spin 6s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    &::before {
+      animation: none;
+      opacity: 0.35;
+    }
+  }
+}
+
+@keyframes beam-spin {
+  to {
+    --beam-angle: 360deg;
+  }
+}
+
+/* Short viewports (laptop panes, small landscape screens): tighten the hero
+   so badge + headline + subhead + CTAs + toggle never clip against the
+   sticky viewport's overflow-hidden. */
+@media (max-height: 760px) {
+  #hero-heading {
+    font-size: 2.25rem;
+    line-height: 2.75rem;
+    letter-spacing: -2.16px;
+  }
+  [data-hero-copy] {
+    gap: 0.875rem;
+  }
+  [data-hero="sub"] {
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+  }
+}
+
+/* Terminal block cursor */
+.terminal-cursor {
+  animation: cursor-blink 1.1s steps(2, jump-none) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .terminal-cursor {
+    animation: none;
+  }
+}
+@keyframes cursor-blink {
+  50% {
+    opacity: 0;
+  }
+}
