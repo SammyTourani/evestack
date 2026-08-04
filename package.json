@@ -1,0 +1,17 @@
+{
+  "name": "evestack-monorepo",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A fully free, self-hosted distribution of the eve agent framework.",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@10.27.0",
+  "scripts": {
+    "typecheck": "pnpm -r --if-present typecheck",
+    "build": "pnpm -r --if-present build",
+    "test": "pnpm -r --if-present test"
+  }
+}

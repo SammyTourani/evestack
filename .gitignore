@@ -1,0 +1,32 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# secrets — never commit
+.env
+.env.*
+!.env.example
+
+# eve runtime artifacts
+.eve/
+.output/
+.nitro/
+
+# builds
+dist/
+.next/
+*.tsbuildinfo
+
+# test artifacts
+playwright-report/
+test-results/
+blob-report/
+
+# os
+.DS_Store
+Thumbs.db
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*

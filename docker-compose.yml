@@ -1,0 +1,31 @@
+# evestack — the whole stack, on your own machine, for $0.
+#
+#   docker compose up
+#
+# Nothing here phones home. No Vercel account, no metered compute, no gateway.
+name: evestack
+
+services:
+  # Durable session storage. pgvector image (not plain postgres) because the
+  # same database also backs agent memory — one container, two jobs.
+  postgres:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-evestack}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-evestack}
+      POSTGRES_DB: ${POSTGRES_DB:-evestack}
+    ports:
+      # 5433 on the host so we never collide with a local Postgres on 5432.
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - evestack-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-evestack} -d ${POSTGRES_DB:-evestack}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+volumes:
+  evestack-pgdata:
