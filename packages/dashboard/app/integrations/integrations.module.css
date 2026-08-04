@@ -1,0 +1,149 @@
+/* Scoped to this page so globals.css stays the shared vocabulary. Colors come
+   from the same CSS variables, and nothing here loads over the network — the
+   app "logos" are letters, not images from Composio's CDN. */
+
+/* The agent's Composio user id is the stat that matters operationally, but it is
+   a string — .stat-value's 22px is sized for numbers. */
+.statText {
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 600;
+  margin-top: 7px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 26px 0 12px;
+}
+
+.toolbarTitle {
+  font-size: 13px;
+  font-weight: 600;
+  margin-right: auto;
+}
+
+.search,
+.select {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 13px;
+  padding: 6px 10px;
+}
+
+.search { width: 220px; }
+.search::placeholder { color: var(--text-faint); }
+.search:focus,
+.select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.button {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  color: var(--bg);
+  cursor: pointer;
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  white-space: nowrap;
+}
+.button:hover { filter: brightness(1.1); }
+
+.buttonQuiet {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  cursor: pointer;
+  font-family: var(--sans);
+  font-size: 12px;
+  padding: 5px 12px;
+}
+.buttonQuiet:hover { border-color: var(--accent); color: var(--text); }
+
+.app {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 200px;
+}
+
+.mark {
+  align-items: center;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  display: flex;
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 12px;
+  height: 26px;
+  justify-content: center;
+  text-transform: uppercase;
+  width: 26px;
+}
+
+.appName { font-weight: 500; }
+
+.desc {
+  color: var(--text-faint);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  font-size: 12px;
+  max-width: 520px;
+  overflow: hidden;
+}
+
+.chip {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 1px 7px;
+  white-space: nowrap;
+}
+.chipManaged {
+  border-color: color-mix(in srgb, var(--ok) 40%, transparent);
+  color: var(--ok);
+}
+
+.notice {
+  align-items: baseline;
+  background: var(--bg-raised);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: var(--radius);
+  display: flex;
+  gap: 8px;
+  margin-bottom: 18px;
+  padding: 10px 14px;
+}
+
+.noticeFailed { border-color: color-mix(in srgb, var(--err) 45%, transparent); }
+
+.inlineEmpty {
+  color: var(--text-dim);
+  padding: 22px 14px;
+  text-align: center;
+}
+
+.footnote {
+  color: var(--text-faint);
+  font-size: 12px;
+  margin-top: 14px;
+}
