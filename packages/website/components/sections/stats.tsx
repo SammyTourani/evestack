@@ -9,7 +9,7 @@ export function Stats() {
         Verified numbers
       </h2>
       <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border-subtle bg-border-subtle lg:grid-cols-4">
-        {stats.map((stat) => (
+        {stats.map((stat, i) => (
           <div
             key={stat.label}
             className="flex flex-col gap-2 bg-background-100 p-8"
@@ -25,6 +25,7 @@ export function Stats() {
                 prefix={"prefix" in stat ? stat.prefix : ""}
                 suffix={"suffix" in stat ? stat.suffix : ""}
                 decimals={"decimals" in stat ? stat.decimals : 0}
+                delay={i * 0.08}
               />
             </dd>
             <dt className="text-copy-14 text-gray-900">{stat.label}</dt>

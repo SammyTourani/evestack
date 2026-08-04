@@ -10,7 +10,7 @@ export function ClosingCta() {
         <h2
           id="closing-heading"
           data-reveal="lines"
-          className="max-w-3xl text-balance text-heading-40 md:text-heading-48"
+          className="engraved-heading max-w-3xl text-balance text-heading-40 md:text-heading-48"
         >
           {closing.heading}
         </h2>

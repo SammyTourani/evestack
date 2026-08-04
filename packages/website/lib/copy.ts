@@ -161,24 +161,67 @@ export const control = {
 } as const;
 
 /* §11 integrations — brand marks are nominative use (services the agent
-   connects to); SVGs generated locally by scripts/gen-logos.mjs. Slack's
-   mark was removed from simple-icons at the brand's request → text only. */
+   connects to); colored SVGs generated locally by scripts/gen-logos.mjs.
+   Slack's mark was removed from simple-icons at the brand's request →
+   named in copy, no chip. "1,070 toolkits" is verified: the
+   evestack-composio README records it against GET /api/v3/toolkits.
+   hub.calls are action names taken verbatim from evestack-composio's
+   source — nothing invented. */
 export const integrations = {
   heading: "Your tools, one click",
-  sub: "Composio connects the agent to Gmail, GitHub, Slack, Notion, Linear, and hundreds more — sign in once from the dashboard.",
-  chips: [
-    { name: "Gmail", slug: "gmail" },
-    { name: "GitHub", slug: "github" },
-    { name: "Notion", slug: "notion" },
-    { name: "Linear", slug: "linear" },
-    { name: "Google Calendar", slug: "googlecalendar" },
-    { name: "Slack" },
-    { name: "Airtable", slug: "airtable" },
-    { name: "Discord", slug: "discord" },
-    { name: "Jira", slug: "jira" },
-    { name: "HubSpot", slug: "hubspot" },
-    { name: "Stripe", slug: "stripe" },
-    { name: "…and hundreds more" },
+  sub: "Composio wires the agent into 1,070 toolkits — Gmail, GitHub, Slack, Notion, Linear, and everything after. Sign in once from the dashboard.",
+  hub: {
+    /* left / right tile columns around the agent node */
+    left: [
+      { name: "Gmail", slug: "gmail" },
+      { name: "GitHub", slug: "github" },
+      { name: "Notion", slug: "notion" },
+      { name: "Linear", slug: "linear" },
+    ],
+    right: [
+      { name: "Google Calendar", slug: "googlecalendar" },
+      { name: "Stripe", slug: "stripe" },
+      { name: "Discord", slug: "discord" },
+      { name: "Jira", slug: "jira" },
+    ],
+    /* fired in order; slugs verbatim from evestack-composio source */
+    calls: [
+      { action: "GMAIL_SEND_EMAIL", app: "gmail", ms: 212 },
+      { action: "GITHUB_CREATE_AN_ISSUE", app: "github", ms: 415 },
+      { action: "GMAIL_FETCH_EMAILS", app: "gmail", ms: 189 },
+      { action: "GITHUB_SEARCH_REPOS", app: "github", ms: 342 },
+    ],
+  },
+  rows: [
+    [
+      { name: "Gmail", slug: "gmail" },
+      { name: "GitHub", slug: "github" },
+      { name: "Notion", slug: "notion" },
+      { name: "Linear", slug: "linear" },
+      { name: "Google Calendar", slug: "googlecalendar" },
+      { name: "Airtable", slug: "airtable" },
+      { name: "Discord", slug: "discord" },
+      { name: "Jira", slug: "jira" },
+      { name: "HubSpot", slug: "hubspot" },
+      { name: "Stripe", slug: "stripe" },
+      { name: "Figma", slug: "figma" },
+      { name: "Dropbox", slug: "dropbox" },
+    ],
+    [
+      { name: "Google Drive", slug: "googledrive" },
+      { name: "Google Sheets", slug: "googlesheets" },
+      { name: "Asana", slug: "asana" },
+      { name: "Trello", slug: "trello" },
+      { name: "ClickUp", slug: "clickup" },
+      { name: "Todoist", slug: "todoist" },
+      { name: "Zendesk", slug: "zendesk" },
+      { name: "Calendly", slug: "calendly" },
+      { name: "Shopify", slug: "shopify" },
+      { name: "Mailchimp", slug: "mailchimp" },
+      { name: "Zoom", slug: "zoom" },
+      { name: "Reddit", slug: "reddit" },
+      { name: "+1,046 more" },
+    ],
   ],
 } as const;
 

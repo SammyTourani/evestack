@@ -90,6 +90,7 @@ export function FeaturesBento() {
       <SectionHeading id="features-heading" eyebrow="04 · features" title={features.heading} sub={features.sub} />
       <ul
         data-reveal="stagger"
+        data-bento
         className="relative grid grid-cols-1 gap-px overflow-hidden rounded-xl border border-border-subtle bg-border-subtle md:grid-cols-2 lg:grid-cols-3"
       >
         {features.cells.map((cell, i) => (

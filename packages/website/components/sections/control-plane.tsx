@@ -26,6 +26,7 @@ export function ControlPlane() {
                 <p className="truncate text-gray-700">{control.demo.args}</p>
               </div>
               <span
+                data-approval-pill
                 className={
                   "shrink-0 rounded-full border px-3 py-1 font-mono text-label-12 uppercase " +
                   (state === "requested"
@@ -39,6 +40,29 @@ export function ControlPlane() {
               </span>
             </div>
           ))}
+          {/* Live decision point: the choreography parks the demo on
+             "requested" until one of these is pressed (or 4s passes).
+             Motion-only affordance — reduced-motion shows all states. */}
+          <div
+            data-approval-actions
+            className="hidden items-center gap-2 font-mono text-mono-13 motion-safe:flex"
+          >
+            <span className="text-gray-700">your call:</span>
+            <button
+              type="button"
+              data-approval-approve
+              className="rounded-full border border-ok/40 px-4 py-1.5 text-ok transition-colors hover:bg-ok/10"
+            >
+              approve
+            </button>
+            <button
+              type="button"
+              data-approval-deny
+              className="rounded-full border border-border-default px-4 py-1.5 text-gray-700 transition-colors hover:border-err/40 hover:text-err"
+            >
+              deny
+            </button>
+          </div>
         </div>
       </div>
     </Section>

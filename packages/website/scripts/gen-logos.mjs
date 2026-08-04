@@ -1,6 +1,9 @@
-/* Generates local monochrome brand SVGs (fill=currentColor) from
-   simple-icons into public/logos/. Nominative use: identifying the
-   third-party services the agent integrates with. */
+/* Generates local brand SVGs from simple-icons into public/logos/, each
+   filled with the brand's OFFICIAL hex color (si.hex). Rendered on white
+   tiles in the UI so dark marks (GitHub, Notion) work in both themes.
+   Nominative use: identifying the third-party services the agent
+   integrates with. Slack's mark was removed from simple-icons at the
+   brand's request — Slack stays text-only in copy. */
 import * as icons from "simple-icons";
 import { mkdir, writeFile } from "node:fs/promises";
 
@@ -10,7 +13,6 @@ await mkdir(outDir, { recursive: true });
 const wanted = [
   ["siGmail", "gmail"],
   ["siGithub", "github"],
-  ["siSlack", "slack"],
   ["siNotion", "notion"],
   ["siLinear", "linear"],
   ["siGooglecalendar", "googlecalendar"],
@@ -19,6 +21,20 @@ const wanted = [
   ["siJira", "jira"],
   ["siHubspot", "hubspot"],
   ["siStripe", "stripe"],
+  ["siFigma", "figma"],
+  ["siDropbox", "dropbox"],
+  ["siGoogledrive", "googledrive"],
+  ["siGooglesheets", "googlesheets"],
+  ["siAsana", "asana"],
+  ["siTrello", "trello"],
+  ["siClickup", "clickup"],
+  ["siTodoist", "todoist"],
+  ["siZendesk", "zendesk"],
+  ["siCalendly", "calendly"],
+  ["siShopify", "shopify"],
+  ["siMailchimp", "mailchimp"],
+  ["siZoom", "zoom"],
+  ["siReddit", "reddit"],
 ];
 
 for (const [key, slug] of wanted) {
@@ -27,7 +43,7 @@ for (const [key, slug] of wanted) {
     console.log("MISSING", key);
     continue;
   }
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="currentColor" d="${icon.path}"/></svg>\n`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#${icon.hex}" d="${icon.path}"/></svg>\n`;
   await writeFile(`${outDir}${slug}.svg`, svg);
-  console.log("wrote", slug);
+  console.log("wrote", slug, `#${icon.hex}`);
 }

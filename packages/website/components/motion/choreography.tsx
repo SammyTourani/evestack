@@ -53,6 +53,8 @@ function Choreography() {
 
       const mm = gsap.matchMedia();
       mm.add("(prefers-reduced-motion: no-preference)", () => {
+        /* one signal tears down every listener this callback attaches */
+        const uiAbort = new AbortController();
         /* ── Hero entrance (once, on load) ─────────────────────────────
            This chunk loads post-hydration; if it arrived late (slow
            network), the content has been visible for a while — skip the
@@ -103,8 +105,8 @@ function Choreography() {
           if (sub) {
             heroTl.fromTo(
               sub,
-              { autoAlpha: 0, y: 10 },
-              { autoAlpha: 1, y: 0, duration: 0.7 },
+              { autoAlpha: 0, y: 10, filter: "blur(6px)" },
+              { autoAlpha: 1, y: 0, filter: "blur(0px)", duration: 0.7 },
               0.35,
             );
           }
@@ -212,6 +214,25 @@ function Choreography() {
           );
         });
 
+        /* blur-decode reveal (Exa's grammar) — content de-focuses into
+           legibility; used where the payload is dense text (code cards) */
+        gsap.utils.toArray<HTMLElement>("[data-reveal='decode']").forEach((el) => {
+          gsap.fromTo(
+            el.children,
+            { autoAlpha: 0, y: 16, filter: "blur(8px)" },
+            {
+              autoAlpha: 1,
+              y: 0,
+              filter: "blur(0px)",
+              duration: 0.7,
+              ease: "power2.out",
+              stagger: 0.12,
+              scrollTrigger: { trigger: el, start: "top 80%", once: true },
+              onComplete: () => gsap.set(el.children, { clearProps: "all" }),
+            },
+          );
+        });
+
         /* evestack-column checks pop after the row cascade */
         const checks = gsap.utils.toArray<SVGElement>("[data-check]");
         if (checks.length) {
@@ -258,18 +279,30 @@ function Choreography() {
           if (prompt) {
             const chars = SplitText.create(prompt, { type: "chars", aria: "none" });
             termTl.set(chars.chars, { visibility: "hidden" });
+            /* human keystroke cadence: 30–65ms with jitter, never metronomic */
+            let typed = 0;
+            const keystrokes = chars.chars.map(() => (typed += 0.03 + Math.random() * 0.035));
             termTl.to(chars.chars, {
               visibility: "visible",
               duration: 0.001,
-              stagger: { each: 0.045, from: "start" },
+              stagger: (i: number) => keystrokes[i],
             });
           }
           termTl.set(lines, { autoAlpha: 0 }, 0);
           if (result) termTl.set(result, { autoAlpha: 0, y: 24, scale: 0.985 }, 0);
+          /* the machine thinks before it speaks — a hard 450ms beat, then
+             output cascades at widening, non-uniform intervals */
+          const cascade = [0, 0.18, 0.38, 0.6, 0.86, 1.16, 1.48, 1.82, 2.18];
           termTl.to(
             lines,
-            { autoAlpha: 1, y: 0, duration: 0.3, stagger: 0.18, ease: "power1.out" },
-            ">+0.3",
+            {
+              autoAlpha: 1,
+              y: 0,
+              duration: 0.3,
+              ease: "power1.out",
+              stagger: (i: number) => cascade[Math.min(i, cascade.length - 1)],
+            },
+            ">+0.45",
           );
           if (result) {
             // the payoff: the compose output resolves into the live dashboard
@@ -281,31 +314,73 @@ function Choreography() {
           }
         }
 
-        /* ── Approval demo (§10): spotlight one state at a time.
-           Finite (WCAG 2.2.2 — no >5s auto-motion without a pause control):
-           one pass through the state machine, settling on "executed". */
+        /* ── Approval demo (§10): the demo PARKS at the decision.
+           Warp's approvalGate pattern — the timeline genuinely waits for a
+           human (approve/deny buttons), with a 4s grace resume so passive
+           viewers still get the story. Finite either way (WCAG 2.2.2);
+           the parked "thinking" shimmer is bounded by the grace window. */
+        const approvalDemo = document.querySelector<HTMLElement>("[data-approval-demo]");
         const approvalStates = gsap.utils.toArray<HTMLElement>("[data-approval-state]");
-        if (approvalStates.length === 3) {
-          const pass = gsap.timeline({
-            scrollTrigger: { trigger: "[data-approval-demo]", start: "top 75%", once: true },
-          });
-          const durations = [1.4, 1.2, 1.8];
-          approvalStates.forEach((state, i) => {
-            pass.to(approvalStates, {
+        if (approvalDemo && approvalStates.length === 3) {
+          const actions = approvalDemo.querySelector<HTMLElement>("[data-approval-actions]");
+          const approveBtn = approvalDemo.querySelector<HTMLElement>("[data-approval-approve]");
+          const denyBtn = approvalDemo.querySelector<HTMLElement>("[data-approval-deny]");
+          const requestedPill = approvalStates[0].querySelector<HTMLElement>("[data-approval-pill]");
+          let decided = false;
+          let graceTimer = 0;
+
+          const spotlight = (i: number) =>
+            gsap.to(approvalStates, {
               autoAlpha: (j: number) => (j === i ? 1 : 0.35),
               scale: (j: number) => (j === i ? 1 : 0.985),
               duration: 0.35,
               ease: "power2.inOut",
             });
-            pass.to({}, { duration: durations[i] });
+
+          const pass = gsap.timeline({
+            scrollTrigger: { trigger: approvalDemo, start: "top 75%", once: true },
           });
-          // settle: all states readable again
-          pass.to(approvalStates, {
-            autoAlpha: 1,
-            scale: 1,
-            duration: 0.4,
-            ease: "power2.inOut",
+          if (actions) pass.set(actions, { autoAlpha: 0 }, 0);
+          pass.add(spotlight(0));
+          pass.to({}, { duration: 0.6 });
+          pass.call(() => {
+            // PARK — the runtime is waiting on a human, so is the page
+            approvalDemo.setAttribute("data-parked", "");
+            if (actions) gsap.to(actions, { autoAlpha: 1, duration: 0.35 });
+            pass.pause();
+            graceTimer = window.setTimeout(() => resolveGate(true), 4000);
           });
+          // approved path (played on resume)
+          pass.add(spotlight(1));
+          pass.to({}, { duration: 1.1 });
+          pass.add(spotlight(2));
+          pass.to({}, { duration: 1.6 });
+          pass.to(approvalStates, { autoAlpha: 1, scale: 1, duration: 0.4, ease: "power2.inOut" });
+          if (actions) pass.to(actions, { autoAlpha: 0, duration: 0.3 }, "<");
+
+          const resolveGate = (approved: boolean) => {
+            if (decided) return;
+            decided = true;
+            window.clearTimeout(graceTimer);
+            approvalDemo.removeAttribute("data-parked");
+            if (approved) {
+              pass.play();
+              return;
+            }
+            // denied: nothing runs — the pill says so, the outcomes stay dim
+            if (requestedPill) {
+              requestedPill.textContent = "denied";
+              requestedPill.classList.remove("border-warn/40", "text-warn");
+              requestedPill.classList.add("border-err/40", "text-err");
+            }
+            pass.kill();
+            gsap.to(approvalStates[0], { autoAlpha: 1, scale: 1, duration: 0.3 });
+            gsap.to(approvalStates.slice(1), { autoAlpha: 0.35, scale: 0.985, duration: 0.3 });
+            if (actions) gsap.to(actions, { autoAlpha: 0, duration: 0.3, delay: 0.6 });
+          };
+          approveBtn?.addEventListener("click", () => resolveGate(true), { signal: uiAbort.signal });
+          denyBtn?.addEventListener("click", () => resolveGate(false), { signal: uiAbort.signal });
+          uiAbort.signal.addEventListener("abort", () => window.clearTimeout(graceTimer));
         }
 
         /* ── Screenshot perspective tilt (§8) ──────────────────────── */
@@ -336,7 +411,6 @@ function Choreography() {
         }
 
         /* ── Magnetic buttons ──────────────────────────────────────── */
-        const magneticAbort = new AbortController();
         gsap.utils.toArray<HTMLElement>("[data-magnetic]").forEach((el) => {
           const xTo = gsap.quickTo(el, "x", { duration: 0.4, ease: "power3.out" });
           const yTo = gsap.quickTo(el, "y", { duration: 0.4, ease: "power3.out" });
@@ -351,8 +425,8 @@ function Choreography() {
             xTo(0);
             yTo(0);
           };
-          el.addEventListener("pointermove", onMove, { signal: magneticAbort.signal });
-          el.addEventListener("pointerleave", onLeave, { signal: magneticAbort.signal });
+          el.addEventListener("pointermove", onMove, { signal: uiAbort.signal });
+          el.addEventListener("pointerleave", onLeave, { signal: uiAbort.signal });
         });
 
         /* ── Bento event-ticker mini (finite — WCAG 2.2.2) ─────────── */
@@ -387,7 +461,7 @@ function Choreography() {
         const refresh = () => ScrollTrigger.refresh();
         window.addEventListener("load", refresh);
         return () => {
-          magneticAbort.abort();
+          uiAbort.abort();
           window.removeEventListener("load", refresh);
         };
       });

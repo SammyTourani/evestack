@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { architecture } from "@/lib/copy";
 
 /* Measures the server-rendered node cards and overlays SVG beams that
@@ -43,11 +43,24 @@ export function ArchitectureBeams() {
   const [beams, setBeams] = useState<Beam[]>([]);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [reduced, setReduced] = useState(false);
+  const [drawn, setDrawn] = useState(false);
 
   useEffect(() => {
     setReduced(window.matchMedia("(prefers-reduced-motion: reduce)").matches);
     const container = document.querySelector<HTMLElement>("[data-arch-container]");
     if (!container) return;
+
+    /* Beams draw in when the diagram scrolls into view (CSS transition on
+       the normalized dashoffset — see .beam-draw). */
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry.isIntersecting) return;
+        io.disconnect();
+        setDrawn(true);
+      },
+      { rootMargin: "0px 0px -30% 0px" },
+    );
+    io.observe(container);
 
     const measure = () => {
       const crect = container.getBoundingClientRect();
@@ -110,7 +123,10 @@ export function ArchitectureBeams() {
     ro.observe(container);
     // re-measure once fonts settle (border positions shift subpixel)
     document.fonts?.ready.then(measure).catch(() => {});
-    return () => ro.disconnect();
+    return () => {
+      ro.disconnect();
+      io.disconnect();
+    };
   }, []);
 
   if (!beams.length) return null;
@@ -121,13 +137,40 @@ export function ArchitectureBeams() {
       viewBox={`0 0 ${size.w} ${size.h}`}
       fill="none"
       aria-hidden
+      data-drawn={drawn || undefined}
     >
       {beams.map((beam, i) => (
-        <g key={i}>
-          <path d={beam.d} stroke="var(--ds-border-default)" strokeWidth="1" />
-          {/* endpoint plugs — flush on the box borders */}
+        <g key={i} style={{ "--beam-delay": `${i * 0.15}s` } as CSSProperties}>
+          {/* always-visible dashed track (the route exists) … */}
+          <path
+            d={beam.d}
+            stroke="var(--ds-border-subtle)"
+            strokeWidth="1"
+            strokeDasharray="4 4"
+          />
+          {/* … the solid line materializes over it on scroll entry */}
+          <path
+            className="beam-draw"
+            d={beam.d}
+            pathLength={1}
+            stroke="var(--ds-border-default)"
+            strokeWidth="1"
+          />
+          {/* endpoint plugs — flush on the box borders, with arrival pings */}
           {beam.ends.map((end, j) => (
-            <circle key={j} cx={end.x} cy={end.y} r="2.5" fill="var(--ds-gray-500)" />
+            <g key={j}>
+              <circle cx={end.x} cy={end.y} r="2.5" fill="var(--ds-gray-500)" />
+              {drawn && !reduced ? (
+                <circle
+                  className="beam-ping"
+                  cx={end.x}
+                  cy={end.y}
+                  r="8"
+                  stroke="var(--ds-gray-600)"
+                  strokeWidth="1"
+                />
+              ) : null}
+            </g>
           ))}
           {!reduced ? (
             <circle r="2.5" fill="var(--ds-blue-700)" opacity="0.9">

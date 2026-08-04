@@ -17,7 +17,7 @@ export async function CodeWalkthrough() {
         title="The code is the pitch"
         sub="Real files, read from the repository at build time — the page can never drift from the code."
       />
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3" data-reveal="stagger">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3" data-reveal="decode">
         {highlighted.map((s) => (
           <div key={s.filename} className="flex min-w-0 flex-col gap-3">
             <CodeCard

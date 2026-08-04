@@ -151,6 +151,7 @@ function SessionRow({
 export function DashboardDemo() {
   const uid = useId();
   const rootRef = useRef<HTMLDivElement>(null);
+  const barRef = useRef<HTMLDivElement>(null);
   const pausedRef = useRef(false);
   const stopRef = useRef(false);
   const rafRef = useRef(0);
@@ -165,13 +166,29 @@ export function DashboardDemo() {
     if (!root || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     stopRef.current = false;
 
+    /* Loop-progress hairline: total scripted runtime is deterministic —
+       the sum of every timer below. Keep in sync with play()/cycle(). */
+    const TOTAL_MS =
+      150 +
+      (baseSessions.length - 1) * 90 +
+      700 +
+      (liveSessions.length - 1) * 5940 +
+      3200;
+    const prog = { elapsed: 0 };
+
     /* Pause-aware timer: `ms` only elapses while the demo is not hovered. */
     const timer = (ms: number, onFrame: ((t: number) => void) | null, onDone: () => void) => {
       let last = performance.now();
       let elapsed = 0;
       const step = (now: number) => {
         if (stopRef.current) return;
-        if (!pausedRef.current) elapsed += now - last;
+        if (!pausedRef.current) {
+          const d = now - last;
+          elapsed += d;
+          prog.elapsed += d;
+          const bar = barRef.current;
+          if (bar) bar.style.transform = `scaleX(${Math.min(prog.elapsed / TOTAL_MS, 1)})`;
+        }
         last = now;
         const t = Math.min(elapsed / ms, 1);
         onFrame?.(t);
@@ -199,7 +216,15 @@ export function DashboardDemo() {
             setLive((l) => l && { ...l, status: "completed", flash: true });
             timer(300, null, () => {
               setLive((l) => l && { ...l, flash: false });
-              if (k + 1 >= liveSessions.length) return; // hard cap: settle forever
+              if (k + 1 >= liveSessions.length) {
+                // hard cap: settle forever — retire the progress hairline
+                const bar = barRef.current;
+                if (bar) {
+                  bar.style.transform = "scaleX(1)";
+                  bar.style.opacity = "0";
+                }
+                return;
+              }
               timer(2500, null, () => {
                 setLive((l) => l && { ...l, shown: false });
                 timer(240, null, () => cycle(k + 1));
@@ -230,6 +255,7 @@ export function DashboardDemo() {
       ([entry]) => {
         if (!entry.isIntersecting) return;
         io.disconnect();
+        if (barRef.current) barRef.current.style.opacity = "1";
         timer(150, null, play);
       },
       { threshold: 0.35 },
@@ -278,8 +304,14 @@ export function DashboardDemo() {
       ref={rootRef}
       onMouseEnter={() => (pausedRef.current = true)}
       onMouseLeave={() => (pausedRef.current = false)}
-      className="overflow-hidden rounded-xl border border-border-default bg-background-200"
+      className="relative overflow-hidden rounded-xl border border-border-default bg-background-200"
     >
+      <div
+        ref={barRef}
+        aria-hidden
+        className="demo-progress pointer-events-none absolute inset-x-0 top-0 z-10 h-px origin-left opacity-0"
+        style={{ transform: "scaleX(0)" }}
+      />
       <div className="flex h-11 items-center gap-4 border-b border-border-subtle px-4">
         <p className="flex shrink-0 items-center gap-2 font-mono text-mono-13 text-gray-1000">
           <span aria-hidden className="text-blue-700">▚</span>
