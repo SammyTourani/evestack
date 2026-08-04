@@ -189,13 +189,37 @@ export function ChatClient({ initialSessionId }: { initialSessionId?: string }) 
           );
           break;
         }
+        case "input.requested": {
+          // The event that actually carries an approval. It arrives with the
+          // full request — tool name, arguments, and the option ids to answer
+          // with — so there is nothing to go back and fetch.
+          const requests = (data.requests ?? []) as PendingRequest[];
+          if (requests.length > 0) {
+            setPending((prev) => {
+              // Keyed by requestId: eve re-emits a request on stream replay, and
+              // rejoining a parked session must not stack duplicate cards.
+              const merged = new Map(prev.map((p) => [p.requestId, p]));
+              for (const request of requests) merged.set(request.requestId, request);
+              return [...merged.values()];
+            });
+            setStatus("waiting");
+          }
+          break;
+        }
+        case "input.resolved":
+        case "input.completed":
+          setPending([]);
+          break;
         case "session.waiting":
           setStatus("waiting");
-          // "next-user-message" is the ordinary end of a turn. Anything else
-          // means the agent parked on something it needs from us, so go ask
-          // what the request actually is.
-          if (data.wait !== "next-user-message") void refreshPending(id);
-          else setPending([]);
+          // Deliberately does NOT touch `pending`.
+          //
+          // An earlier version cleared it whenever `wait` was
+          // "next-user-message", on the assumption that anything else meant a
+          // park. eve reports "next-user-message" for an approval park too, so
+          // that heuristic wiped the approval card the instant it appeared —
+          // the turn sat visibly stuck with no way to answer it. `input.*` is
+          // the only honest signal for this; `wait` cannot distinguish them.
           break;
         case "turn.completed":
           setStatus((s) => (s === "cancelling" ? "cancelling" : "waiting"));
@@ -225,17 +249,6 @@ export function ChatClient({ initialSessionId }: { initialSessionId?: string }) 
     [upsertAssistant],
   );
 
-  const refreshPending = useCallback(async (id: string) => {
-    try {
-      const response = await fetch(`/api/control/sessions/${id}/approve`);
-      if (!response.ok) return;
-      const body = (await response.json()) as { pendingRequests?: PendingRequest[] };
-      setPending(body.pendingRequests ?? []);
-    } catch {
-      // A failed poll just means no approval UI this tick; the stream is the
-      // source of truth and will say `session.waiting` again.
-    }
-  }, []);
 
   const start = useCallback(
     async (message: string) => {
