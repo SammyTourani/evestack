@@ -51,6 +51,22 @@ export async function GET(
     }
 
     const tailIndex = parseTailIndex(upstream);
+
+    // eve serves 200 with an empty body for a session it has never seen, so a
+    // typo'd id would otherwise hand the operator a stream that connects and
+    // then stays silent forever. A tail index of -1 means "no events at all",
+    // which is the same signal the message route treats as unknown — so treat
+    // it the same way here instead of hanging.
+    if (tailIndex < 0) {
+      await upstream.body?.cancel();
+      return jsonError(
+        `No session '${id}' has emitted any events. Check the id, or wait a moment if you ` +
+          `just created it.`,
+        404,
+        "session_not_found",
+      );
+    }
+
     // A negative startIndex is relative to the tail; SSE ids must be absolute.
     const firstIndex = startIndex < 0 ? Math.max(0, tailIndex + 1 + startIndex) : startIndex;
 

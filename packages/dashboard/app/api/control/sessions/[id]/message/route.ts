@@ -74,6 +74,22 @@ export async function POST(
       signal: request.signal,
     });
 
+    // eve answers an unknown session id by *starting a new one* and returning
+    // its id, rather than failing. Without this check a UI sending to a stale id
+    // gets `{ok:true}` back while a second agent run spins up and bills against
+    // a session nobody is watching. The mismatch is the only evidence, since the
+    // caller-supplied-token path skips the tailIndex guard above.
+    if (result.sessionId && result.sessionId !== id) {
+      return jsonError(
+        `The agent did not continue session '${id}' — it started '${result.sessionId}' instead, ` +
+          `which means '${id}' is not a session it knows. That run is now live; cancel it if it ` +
+          `was unintended.`,
+        409,
+        "session_mismatch",
+        { startedSessionId: result.sessionId },
+      );
+    }
+
     return jsonOk({ sessionId: result.sessionId, resolvedContinuationToken: provided === undefined });
   } catch (error) {
     // A stale token is the one failure a caller can actually act on, so say so.

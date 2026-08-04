@@ -6,8 +6,16 @@ import { AgentError, type UserMessage } from "@/lib/agent-client";
  * reachable over HTTP.
  */
 
-export function jsonError(message: string, status: number, code: string): Response {
-  return Response.json({ ok: false, error: message, code }, { status, headers: { "cache-control": "no-store" } });
+export function jsonError(
+  message: string,
+  status: number,
+  code: string,
+  detail?: Record<string, unknown>,
+): Response {
+  return Response.json(
+    { ok: false, error: message, code, ...detail },
+    { status, headers: { "cache-control": "no-store" } },
+  );
 }
 
 export function jsonOk(body: Record<string, unknown>, status = 200): Response {

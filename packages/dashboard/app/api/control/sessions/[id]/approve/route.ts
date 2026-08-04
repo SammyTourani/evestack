@@ -43,6 +43,19 @@ export async function GET(
   try {
     const { id } = await context.params;
     const snapshot = await getSessionSnapshot(id, { signal: request.signal });
+
+    // Match the message route: a tail index of -1 is eve's only signal for an id
+    // it has never seen. Reporting ok:true here while `message` returns 404 for
+    // the same id would leave a UI unable to decide whether a session exists.
+    if (snapshot.tailIndex < 0) {
+      return jsonError(
+        `No session '${id}' has emitted any events. Check the id, or wait a moment if you ` +
+          `just created it.`,
+        404,
+        "session_not_found",
+      );
+    }
+
     return jsonOk({
       sessionId: id,
       waiting: snapshot.waiting,

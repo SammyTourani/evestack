@@ -136,7 +136,15 @@ export async function POST(request: Request): Promise<Response> {
   return Response.json({});
 }
 
-/** What has landed so far — the quickest way to tell a wired-up exporter from a silent one. */
+/**
+ * What has landed so far — the quickest way to tell a wired-up exporter from a
+ * silent one.
+ *
+ * Counts only, never span contents, because spans carry prompt bodies and tool
+ * arguments. Both this and POST are unauthenticated by design: an OTLP exporter
+ * has nowhere to put a credential, which is exactly why the dashboard binds to
+ * 127.0.0.1 and must not be exposed without auth in front of it.
+ */
 export async function GET(): Promise<Response> {
   try {
     return Response.json({ ok: true, endpoint: "/api/ingest/v1/traces", ...(await getTraceStats()) });
