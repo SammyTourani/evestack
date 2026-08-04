@@ -109,7 +109,11 @@ function RunNode({ node, seq }: { node: TreeNode; seq?: number }) {
           <span className={styles.kind}>{kindLabel(run)}</span>
           <span className={`status status-${run.status}`}>{run.status}</span>
           <span className={styles.model}>
-            {run.model ?? <span className="faint">no model recorded</span>}
+            {run.model ?? (
+              <span className={run.noModelCall ? "unpriced" : "faint"}>
+                {run.noModelCall ? "no model call — turn produced nothing" : "no model recorded"}
+              </span>
+            )}
           </span>
           {run.model && !priced && (
             <span className="unpriced" title="No price configured for this model">

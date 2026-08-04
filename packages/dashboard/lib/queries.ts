@@ -53,6 +53,22 @@ export interface TurnRow {
   toolCount: number;
   errorCode: string | null;
   costUsd: number;
+  /**
+   * True when a turn reached a terminal state without ever recording a model
+   * call.
+   *
+   * This exists because eve's stream and its workflow store disagree. A turn
+   * killed by a provider rate limit emits `turn.failed` on the stream, but the
+   * workflow row still reads `status = 'completed'` — the workflow handled the
+   * error, so as far as it is concerned nothing failed. Trusting `status` alone
+   * would paint a green "completed" badge on a turn that produced nothing,
+   * which is worse than showing no badge at all.
+   *
+   * eve writes `$eve.model` and the token tags only once a model call reports
+   * usage, so their absence on a finished turn is the surviving evidence that
+   * the call never landed.
+   */
+  noModelCall: boolean;
 }
 
 const NUM = (v: unknown): number => {
@@ -168,6 +184,10 @@ export async function getSessionTree(sessionId: string): Promise<TurnRow[]> {
       toolCount: NUM(a["$eve.tool_count"]),
       errorCode: (r.error_code as string) ?? null,
       costUsd: costUsd(a["$eve.model"] ?? null, input, output, cacheRead),
+      noModelCall:
+        (a["$eve.type"] === "turn") &&
+        !a["$eve.model"] &&
+        r.completed_at !== null,
     };
   });
 }
