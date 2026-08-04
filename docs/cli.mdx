@@ -1,0 +1,35 @@
+---
+title: create-evestack CLI
+description: The one-command scaffolder — dependency-free on purpose.
+---
+
+```bash
+npx create-evestack [name] [--yes]
+```
+
+| Flag | Effect |
+| --- | --- |
+| `[name]` | Project directory. Prompted for if omitted (interactively). |
+| `--yes` / `-y` | Skip prompts, use defaults. Also triggered automatically when stdin isn't a TTY (CI, a piped script). |
+
+## What it generates
+
+- The agent project, from `templates/default`
+- `.env.local` with a **uniquely generated** `EVESTACK_AUTH_PASSWORD` — never a shipped default
+- `.gitignore` covering `.env*`, so a generated key can't be accidentally committed
+- `docker-compose.yml` for Postgres
+
+## Why it has zero dependencies
+
+A scaffolder that installs a prompt library before asking its first question is slower than
+the thing it scaffolds — and every dependency is another supply-chain surface for a tool that
+writes files and credentials to your disk. It's built on Node's built-in `readline`, `crypto`,
+and `fs` only.
+
+## A real bug this caught
+
+An early version exited `0` — success — having created nothing, whenever stdin wasn't an
+interactive terminal (a CI run, a piped heredoc). `readline`'s `question()` never resolves
+after stdin hits EOF, and Node exits cleanly once the event loop empties. Silent success is the
+worst failure mode for a scaffolder, so `--yes` and non-TTY detection now race every prompt
+against stdin closing, and fall back to a sane default instead of hanging or vanishing.

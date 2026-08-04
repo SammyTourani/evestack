@@ -1,0 +1,68 @@
+---
+title: Architecture
+description: Why the dashboard is a SQL query, not an ingest pipeline — and where OpenTelemetry actually earns its keep.
+---
+
+## The discovery that shaped the dashboard
+
+`eve` tags every workflow run with framework-owned `$eve.*` attributes —
+`$eve.type` (`session` | `turn` | `subagent`), `$eve.parent`, `$eve.root`, `$eve.model`,
+`$eve.input_tokens`, `$eve.output_tokens`, `$eve.cache_read_tokens`, `$eve.tool_count`. eve's
+own docs say plainly: *these tags power the Agent Runs tab.*
+
+`@workflow/world-postgres` persists them to `workflow.workflow_runs.attributes` as JSONB — in
+**your own database**, the same one storing durable sessions. We verified this by hand:
+
+```sql
+SELECT attributes FROM workflow.workflow_runs WHERE id = 'wrun_...';
+-- {"$eve.type": "turn", "$eve.model": "openai/gpt-5-mini",
+--  "$eve.input_tokens": "4550", "$eve.output_tokens": "101", ...}
+```
+
+That means the dashboard's core view — session list, run tree, model, token totals — is a
+**plain SQL query against `packages/dashboard/lib/queries.ts`**, not an ingest pipeline with a
+second source of truth to keep in sync.
+
+## Where OpenTelemetry still matters
+
+SQL gives you *that* a turn happened and its numbers. It doesn't give you prompt bodies or
+tool-call arguments — those exist only on OpenTelemetry spans. `agent/instrumentation.ts`
+exports them to the dashboard's `/api/ingest/v1/traces` endpoint as OTLP/HTTP JSON (not
+protobuf — the ingest route only parses JSON).
+
+<Note>
+  The mere presence of `agent/instrumentation.ts` disables `eve`'s zero-config local trace spool
+  (`.eve/traces/v1`), so `eve traces` stops working once you wire up the dashboard. Delete the
+  file to get it back.
+</Note>
+
+## Computed cost, not reported cost
+
+`eve` only attaches `gen_ai.usage.cost` to a span when the call went through Vercel's AI
+Gateway. A self-hosted agent calls its provider directly, so that attribute is simply absent —
+nothing upstream can tell you what a turn cost. `packages/dashboard/lib/pricing.ts` computes it
+from token counts against a table you can override with `EVESTACK_PRICING`. A model with no
+configured price is labeled `unpriced`, never silently rendered as free.
+
+## Cooperative cancellation
+
+`POST /eve/v1/session/:id/cancel` returns `202` immediately, but the in-flight model call keeps
+running. We measured a cancelled turn continuing to stream for roughly 90 seconds, with the
+event order:
+
+```
+message.completed → step.completed → turn.completed → session.waiting → turn.cancelled → session.waiting
+```
+
+`turn.cancelled` arrives *after* a `session.waiting`, not before. Don't build a stop button
+that assumes silence follows a 202.
+
+## Approvals ride the ordinary follow-up route
+
+There's no dedicated approve/deny endpoint. A pending tool approval resolves the same way an
+`ask_question` does — through the normal continuation route:
+
+```
+POST /eve/v1/session/:sessionId
+{ "continuationToken": "...", "inputResponses": [{ "requestId": "...", "optionId": "approve" }] }
+```

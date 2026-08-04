@@ -1,0 +1,47 @@
+---
+title: Composio auth
+description: One browser flow, ~1,070 apps — versus Vercel Connect's four managed connectors.
+---
+
+## What you get
+
+Vercel Connect ships four Vercel-managed connectors: Slack, GitHub, Snowflake, Salesforce.
+Everything else needs you to register your own OAuth client by hand.
+
+evestack wires in [Composio](https://composio.dev) instead. We verified the live catalog
+against `GET /api/v3/toolkits`: **1,070 toolkits**, including Gmail (61 tools) and GitHub
+(871 tools), each one click to connect.
+
+## How it reaches the model
+
+The agent doesn't get ten thousand individual tools. It gets a handful of meta-tools —
+`COMPOSIO_SEARCH_TOOLS`, `COMPOSIO_MANAGE_CONNECTIONS`, `COMPOSIO_EXECUTE_TOOL`,
+`COMPOSIO_MULTI_EXECUTE_TOOL` — and Composio's Tool Router resolves the real set per session.
+`agent/tools/composio.ts` in the template is three lines:
+
+```ts
+import { composioTools } from "@evestack/composio";
+export default composioTools();
+```
+
+With `COMPOSIO_API_KEY` unset, this resolves to no tools and logs one line. The agent still
+boots, still has its sandbox and memory — you just don't get the connectors. Nothing about
+Composio being unreachable holds up the rest of the stack.
+
+## The tradeoff, stated plainly
+
+Composio's managed OAuth is genuinely one-click, and that convenience has a real cost:
+
+- The consent screen reads **"Composio wants to access your account,"** not your app's name
+- Rate limits are **shared across every Composio customer** on the managed app
+- A **15-minute minimum polling interval** applies to managed auth
+
+That's the right tradeoff for personal use, prototypes, and internal tools. Before you onboard
+other people's accounts in production, read Composio's docs on registering your own OAuth app
+— it removes all three limits at the cost of the one-click setup.
+
+## The dashboard's integrations page
+
+`http://localhost:4000/integrations` lists the live catalog, what's already connected, and a
+one-click **Connect** button per app — built directly against the Composio API, not a static
+list.

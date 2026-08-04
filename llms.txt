@@ -1,0 +1,51 @@
+# evestack
+
+> A fully free, self-hosted distribution of Vercel's `eve` agent framework. `eve` on your own
+> machine — durable Postgres sessions, a Docker sandbox, a dashboard that observes AND drives
+> the agent, and one-click sign-in to ~1,070 tools via Composio. $0 infrastructure; the only
+> real cost is model tokens, and Ollama removes that too.
+
+evestack is not a fork of `eve`. It ships primarily as an `eve` registry
+(`eve registry add @evestack=...`), so an existing `eve` project can adopt one piece without
+migrating. `templates/default` and `packages/create-evestack` exist for the zero-to-running
+path (`npx create-evestack my-agent`).
+
+## Core facts an agent should know before answering questions about this repo
+
+- `@workflow/world-postgres` MUST be pinned to the `beta` npm tag, not `latest`. `latest` is
+  `4.3.3`; `eve` 0.29.x requires the `5.0.0-beta` protocol line and rejects mismatches.
+- The dashboard (`packages/dashboard`) reads `workflow.workflow_runs.attributes` (JSONB)
+  directly via SQL — that column holds `eve`'s own `$eve.*` run tags, the same data behind
+  Vercel's Agent Runs. It is NOT an OpenTelemetry ingest pipeline for its core view; OTLP
+  ingest (`/api/ingest/v1/traces`) is a second tier used only for prompt bodies and tool
+  arguments, which don't exist in the SQL tags.
+- Cost is computed client-side from token counts (`packages/dashboard/lib/pricing.ts`), because
+  `eve` only reports `gen_ai.usage.cost` for AI-Gateway-routed calls, which a self-hosted agent
+  never makes.
+- Memory (`templates/default/lib/memory.ts`) uses an HNSW pgvector index, not IVFFlat — IVFFlat
+  built on an empty table returns zero rows for queries that should match, because it probes a
+  meaningless centroid. This was measured, not theorized: the same query returned 2 results at
+  `LIMIT 3` and 0 at `LIMIT 20`.
+- Cancellation (`POST /eve/v1/session/:id/cancel`) is cooperative: it returns 202 immediately,
+  but the in-flight model call keeps running — measured ~90 seconds on a long turn — and
+  `turn.cancelled` arrives after a `session.waiting` event, not before.
+- Tool approvals have no dedicated HTTP endpoint. They resolve through the normal continuation
+  route with `inputResponses: [{requestId, optionId}]`.
+
+## Docs
+
+- [Introduction](https://evestack.dev/introduction.mdx)
+- [Quickstart](https://evestack.dev/quickstart.mdx)
+- [Architecture](https://evestack.dev/architecture.mdx)
+- [Dashboard](https://evestack.dev/dashboard.mdx)
+- [Composio auth](https://evestack.dev/composio-auth.mdx)
+- [Memory](https://evestack.dev/memory.mdx)
+- [Registry](https://evestack.dev/registry.mdx)
+- [CLI](https://evestack.dev/cli.mdx)
+- [Troubleshooting](https://evestack.dev/troubleshooting.mdx)
+
+## Repository
+
+- [README](https://github.com/SammyTourani/evestack/blob/main/README.md)
+- [CONTRIBUTING](https://github.com/SammyTourani/evestack/blob/main/CONTRIBUTING.md)
+- [SECURITY](https://github.com/SammyTourani/evestack/blob/main/SECURITY.md)

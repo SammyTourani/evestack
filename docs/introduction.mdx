@@ -1,0 +1,46 @@
+---
+title: Introduction
+description: eve on your own machine, with a dashboard you can drive. $0 infrastructure.
+---
+
+[Vercel's `eve`](https://github.com/vercel/eve) is a genuinely good, Apache-2.0 agent
+framework. Run it off Vercel, though, and you lose one thing with no open replacement: the
+**Agent Runs dashboard**. Self-hosting means flying blind on terminal logs.
+
+evestack is to `eve` what Ubuntu is to the Linux kernel — not a fork, a distribution. It
+packages `eve` to run on your own hardware with one command, and builds the dashboard Vercel
+kept for itself.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    `npx create-evestack my-agent` to a running agent in one command.
+  </Card>
+  <Card title="Architecture" icon="diagram-project" href="/architecture">
+    How the dashboard reads eve's own Postgres tables directly — no ingest pipeline.
+  </Card>
+</CardGroup>
+
+## What you get
+
+| | evestack | eve on Vercel |
+| --- | --- | --- |
+| Compute, workflows, sandbox | your machine — **$0** | metered |
+| Durable sessions | your Postgres | Vercel Workflows |
+| Dashboard | yes, anywhere | Vercel only |
+| Dashboard can *drive* the agent | yes | read-only |
+| One-click tool sign-in | 1,070 apps (Composio) | 4 managed connectors |
+| Long-term memory | included (pgvector) | not included |
+
+The only real cost is model tokens — and [Ollama](/local-setup#ollama) takes that to zero too.
+
+## The honest tradeoffs
+
+evestack doesn't hide the parts of self-hosting that are genuinely harder than paying Vercel:
+
+- **Frictionless auth needs someone else's OAuth app.** Composio's managed auth is one click,
+  but shows a Composio-branded consent screen and shares rate limits across every Composio
+  customer. Read [Composio auth](/composio-auth) before onboarding real users.
+- **Cancellation is cooperative, not immediate.** We measured a cancelled turn continuing to
+  stream for roughly 90 seconds. See [Architecture](/architecture#cooperative-cancellation).
+- **You own operations.** Backups, uptime, and scaling are yours — that's the actual trade for
+  $0 infrastructure and full data ownership.

@@ -1,0 +1,49 @@
+---
+title: Troubleshooting
+description: Grouped by symptom — see local-setup for the setup-time issues.
+---
+
+## "eve rejects my workflow world at boot"
+
+`@workflow/world-postgres` is on `latest` (`4.3.3`) instead of `beta` (`5.0.0-beta.x`).
+`eve` 0.29.x requires the `5.0.0-beta` protocol line and rejects anything else outright. Pin
+the dependency to the `beta` tag.
+
+## "The agent forgets everything between restarts"
+
+`WORKFLOW_POSTGRES_URL` isn't set, or Postgres isn't reachable at that URL. `eve` falls back
+silently to an on-disk world (`.eve/.workflow-data`) rather than failing loudly — silent in the
+sense that the agent keeps working, just without the durability you expected from Postgres.
+
+## "Recall returns nothing even though I definitely saved that fact"
+
+If you're running a customized memory setup rather than the shipped
+`@evestack/memory` registry item, check the vector index type. IVFFlat built on a table that
+started empty can return zero rows for a query that should obviously match — see
+[Memory](/memory) for the full explanation and the fix (HNSW).
+
+## "A stop/cancel button in my own UI doesn't seem to work"
+
+It almost certainly did — cancellation is cooperative, not immediate. Read
+[Architecture § cooperative cancellation](/architecture#cooperative-cancellation) for the
+measured ~90-second tail and the actual event ordering.
+
+## "The dashboard shows sessions starting in the future"
+
+This was a real bug we found and fixed: `eve`'s `workflow` tables store UTC timestamps in
+columns with no timezone offset, so `pg` parsed them in the local timezone of whatever machine
+ran the dashboard. On a non-UTC machine, every run rendered shifted by that offset. Fixed in
+`packages/dashboard/lib/db.ts` with a type parser scoped to that one column type — if you're
+seeing this, you're likely on an old build; update.
+
+## "Composio tools aren't showing up"
+
+Check `COMPOSIO_API_KEY` is set in the **agent's** `.env.local` (not just the dashboard's —
+they're separate processes with separate environment files). With no key, `composioTools()`
+resolves to zero tools and logs one line; the agent still runs normally.
+
+## Still stuck
+
+Open an issue with the checklist in the bug report template — a repro against a fresh
+`npx create-evestack test` is worth far more than a description of what you were doing in a
+much larger project.

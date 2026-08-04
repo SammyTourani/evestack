@@ -1,0 +1,42 @@
+---
+title: The dashboard
+description: The open replacement for Agent Runs — and it drives the agent, not just watches it.
+---
+
+## Observe
+
+- **Sessions** — every run on your machine, with title, status, and trigger
+- **Run tree** — turns and subagents nested by `$eve.parent`/`$eve.root`, with duration, input
+  and output tokens, cached-read tokens, and tool count per turn
+- **Computed cost** — see [Architecture](/architecture#computed-cost-not-reported-cost) for why
+  it's computed rather than read from a span
+- **Integrations** — the live Composio catalog, connected accounts, one-click connect
+
+## Control
+
+This is where evestack diverges from Agent Runs, which is read-only:
+
+- **Start a session** and stream the reply straight from the dashboard
+- **Send a follow-up** to an existing session
+- **Resolve a pending approval** — see [Architecture](/architecture#approvals-ride-the-ordinary-follow-up-route)
+  for the actual protocol underneath
+- **Cancel a run** — read [the cooperative-cancellation note](/architecture#cooperative-cancellation)
+  before building anything that assumes a cancel is instant
+
+## Running it
+
+```bash
+cd packages/dashboard
+cp .env.example .env.local   # WORKFLOW_POSTGRES_URL, optionally COMPOSIO_API_KEY
+npm run dev
+```
+
+Or as part of the full stack: `docker compose --profile full up -d` brings up Postgres and the
+dashboard together. The dashboard container runs as a non-root user and binds to `127.0.0.1`
+by default — see [Security](/../SECURITY.md) before exposing it beyond your own machine.
+
+## It reads your database, nothing else
+
+No API calls to evestack, no telemetry, no external service in the loop. The dashboard's only
+required environment variable is `WORKFLOW_POSTGRES_URL` — point it at your Postgres and it
+works.

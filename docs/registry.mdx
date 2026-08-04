@@ -1,0 +1,27 @@
+---
+title: The @evestack registry
+description: Take one piece of evestack without migrating a project or forking eve.
+---
+
+evestack ships as an [`eve` registry](https://eve.dev/docs) in the shadcn registry-item format
+— the same mechanism `eve add channel/slack` uses for the official catalog.
+
+```bash
+eve registry add @evestack=https://registry.evestack.dev/r/{name}.json
+eve add @evestack/memory
+```
+
+This is the reason evestack doesn't fork `eve`: anyone already running a vanilla `eve init`
+project can take exactly the piece they want.
+
+| Item | Adds |
+| --- | --- |
+| `@evestack/memory` | Semantic long-term memory via pgvector — `remember`/`recall` tools |
+| `@evestack/instrumentation` | OTLP trace export to an evestack dashboard |
+| `@evestack/docker-sandbox` | Local Docker sandbox instead of hosted Vercel Sandbox |
+| `@evestack/basic-auth` | HTTP Basic route auth, for agents running off Vercel |
+
+Verified end to end against a fresh `eve init` project: `eve add @evestack/memory` installs all
+three files at their correct targets, adds the right dependencies, and the installed content is
+byte-identical to what ships in `templates/default` — the registry build script inlines from
+the real, tested source rather than a maintained copy.

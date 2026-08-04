@@ -1,0 +1,51 @@
+---
+title: Long-term memory
+description: Free semantic recall on the Postgres you're already running — and the indexing bug we hit building it.
+---
+
+## Why this is free
+
+The Postgres storing your durable sessions is already running, and `docker-compose.yml` uses
+the `pgvector/pgvector` image — so long-term memory costs one `CREATE EXTENSION` and zero new
+containers. The agent gets `remember` and `recall` tools out of the box
+(`agent/tools/remember.ts`, `agent/tools/recall.ts`).
+
+```
+"Remember this for the future: my production database runs on port 5433
+ and I always deploy on Fridays."
+```
+
+...saved in one session, comes back correctly in a completely fresh one:
+
+```
+"Your production database runs on port 5433, and you deploy on Fridays."
+```
+
+## HNSW, not IVFFlat — a correctness fix, not a preference
+
+We built this with an IVFFlat index first, because it's the more commonly recommended default.
+It silently broke memory.
+
+IVFFlat assigns vectors to `lists` centroids **at index-build time**. Build it on an empty
+table — which any bootstrap migration must, since memory starts with nothing in it — and the
+centroids are meaningless. The planner switches to the index once a query looks selective
+enough, probes a near-empty list, and returns **zero rows** for a query that plainly should
+match.
+
+We reproduced this exactly: the same `recall()` call returned **2 results at `LIMIT 3`** and
+**0 results at `LIMIT 20`**, purely because the query plan flipped between them.
+
+```sql
+-- lib/memory.ts uses this, not ivfflat:
+CREATE INDEX memories_embedding_idx
+ON evestack.memories USING hnsw (embedding vector_cosine_ops)
+```
+
+HNSW builds a navigable graph incrementally and needs no training data — it's correct from the
+first row, which is what an empty-by-definition memory table needs.
+
+## Tags and filtering
+
+`remember` accepts optional tags; `recall` can filter by them. The agent chooses its own tags —
+in testing, saving a deployment preference produced `["preference", "devops", "deployment"]`
+without being told to.

@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Deliberately does NOT run `eve eval`: it drives a real model through a real
+# Docker sandbox, which means a model API key as a repo secret and Docker
+# available in the runner. That's real money spent on every PR from a fork,
+# including malicious ones probing for spend. Typecheck and build catch the
+# large majority of regressions for free; eval stays a local/maintainer gate
+# documented in CONTRIBUTING.md.
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r typecheck
+
+  dashboard-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # No real Postgres in this job — next build only needs the schema to
+      # typecheck, not a live connection, since all queries are server-only
+      # code that Next traces but does not execute at build time.
+      - run: pnpm --filter @evestack/dashboard build
+
+  scaffolder:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node --check packages/create-evestack/index.mjs
+      - run: node packages/create-evestack/scripts/sync-template.mjs
+      - name: non-interactive scaffold smoke test
+        run: |
+          cd /tmp
+          node ${{ github.workspace }}/packages/create-evestack/index.mjs ci-smoke-test --yes
+          test -f ci-smoke-test/.gitignore
+          test -f ci-smoke-test/.env.local
+          ! grep -q '^EVESTACK_AUTH_PASSWORD=$' ci-smoke-test/.env.local
+
+  registry:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node registry/build.mjs
+      - name: every registry item has non-empty inlined content
+        run: |
+          node -e '
+            const fs = require("fs");
+            for (const f of fs.readdirSync("registry/r")) {
+              if (f === "index.json") continue;
+              const item = JSON.parse(fs.readFileSync(`registry/r/${f}`, "utf8"));
+              for (const file of item.files ?? []) {
+                if (!file.content || file.content.length < 20) {
+                  console.error(`${f}: empty or near-empty content for ${file.target}`);
+                  process.exit(1);
+                }
+              }
+            }
+          '

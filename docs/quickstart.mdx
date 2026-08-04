@@ -1,0 +1,72 @@
+---
+title: Quickstart
+description: One command to a running, durable, dashboard-observed agent.
+---
+
+## Requirements
+
+- Node 24+
+- Docker, running (for Postgres and the agent sandbox)
+- A model API key — or skip straight to [Ollama](/local-setup#ollama) for $0 total
+
+## Create the project
+
+```bash
+npx create-evestack my-agent
+```
+
+You'll be asked for a model provider (OpenAI/Anthropic key, or Ollama) and whether to enable
+Composio's one-click tool sign-in. Answer both, or pass `--yes` to skip prompts and fill in
+`.env.local` yourself afterward — the scaffolder never hangs waiting on input it isn't going
+to get.
+
+This generates a unique `EVESTACK_AUTH_PASSWORD` per project. `eve` fails closed by default, so
+there's no shipped default password sitting between a stranger and your agent.
+
+## Bring up the database
+
+```bash
+cd my-agent
+docker compose up -d postgres
+npx --package=@workflow/world-postgres bootstrap
+```
+
+<Warning>
+  Pin `@workflow/world-postgres` to the `beta` tag, not `latest`. npm's `latest` is `4.3.3`;
+  `eve` 0.29.x needs the `5.0.0-beta` line, and the runtime rejects a mismatched protocol
+  version outright. The scaffolded `package.json` already does this — worth knowing if you ever
+  touch that dependency by hand.
+</Warning>
+
+## Run it
+
+```bash
+npm run dev
+```
+
+`eve dev` boots on port 2000 by default — but **auto-increments if that port is taken**, so
+read the actual port from its startup log rather than assuming.
+
+## Verify it's durable
+
+The whole point is that restarting doesn't lose anything. Prove it to yourself:
+
+```bash
+curl -X POST http://127.0.0.1:2000/eve/v1/session \
+  -H 'content-type: application/json' \
+  -d '{"message":"Remember this exact phrase: quokka-orbit-9."}'
+```
+
+Kill the dev server (`Ctrl-C`), restart it (`npm run dev`), then send a follow-up using the
+`continuationToken` from the first response. The agent recalls it — durable state survives the
+process, because it never lived in the process to begin with.
+
+## See it in the dashboard
+
+```bash
+cd ../packages/dashboard  # or: docker compose --profile full up -d
+npm run dev
+```
+
+Open `http://localhost:4000`. Every session you just created is already there, read straight
+out of the same Postgres — no ingest step required for the session list itself.

@@ -1,0 +1,50 @@
+# Apply once the repo exists, with a label-sync action (e.g.
+# EndBug/label-sync) or manually:
+#   gh label create "<name>" --color "<hex>" --description "<desc>" --force
+#
+# Colors follow GitHub's own defaults where one exists, so labels look native
+# rather than like a bespoke color system nobody remembers the meaning of.
+
+- name: bug
+  color: "d73a4a"
+  description: Something doesn't work the way it should
+
+- name: enhancement
+  color: "a2eeef"
+  description: New capability or improvement
+
+- name: good first issue
+  color: "7057ff"
+  description: Small, scoped, and doesn't require deep context to start
+
+- name: help wanted
+  color: "008672"
+  description: Maintainers want outside help on this one
+
+- name: documentation
+  color: "0075ca"
+  description: README, CONTRIBUTING, SECURITY, or docs/ site
+
+- name: dashboard
+  color: "1d76db"
+  description: packages/dashboard
+
+- name: composio
+  color: "5319e7"
+  description: One-click auth, packages/evestack-composio
+
+- name: registry
+  color: "fbca04"
+  description: The @evestack eve registry, registry/
+
+- name: scaffolder
+  color: "c5def5"
+  description: create-evestack
+
+- name: needs-repro
+  color: "e4e669"
+  description: Waiting on a minimal reproduction before it's actionable
+
+- name: wontfix
+  color: "ffffff"
+  description: Not something evestack will address, with a reason in the thread

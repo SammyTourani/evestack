@@ -1,0 +1,54 @@
+---
+title: Local setup & troubleshooting
+description: Docker, Postgres, and the Ollama path to a genuinely $0 stack.
+---
+
+## Ollama
+
+For zero cost, total:
+
+```bash
+ollama pull qwen3
+```
+
+Then set `EVESTACK_MODEL=qwen3` in `.env.local`. `create-evestack` offers this as an option at
+scaffold time — you don't have to configure it by hand.
+
+<Note>
+  Local models generally have weaker tool-calling than gpt-5-mini or Claude. That's the honest
+  tradeoff for $0 total cost — try it, and switch to a cloud key if tool use feels unreliable.
+</Note>
+
+## Docker sandbox
+
+The default backend, `docker()`, keeps one long-lived container per durable session and
+persists `/workspace` across turns with **no idle timeout** — genuinely free to run 24/7 on
+your own machine, since it's just a container.
+
+Swaps, one line in `agent/sandbox/sandbox.ts`:
+- `microsandbox()` — real VM isolation, domain-level network policies, credential brokering.
+  macOS on Apple Silicon or Linux with KVM only.
+- `justbash()` — no daemon at all, but no real binaries either.
+
+## Common issues
+
+**`eve dev` seems to not be listening on port 2000.**
+It auto-increments when the port is taken. Read the actual port from the startup log.
+
+**A follow-up request 404s or the agent seems to have forgotten everything.**
+Check that `WORKFLOW_POSTGRES_URL` is actually set and Postgres is reachable — without it,
+`eve` silently falls back to its local on-disk world under `.eve/.workflow-data`, which does
+not survive a container rebuild the way Postgres does.
+
+**`@workflow/world-postgres` fails at boot with a protocol version error.**
+It's pinned to `latest` instead of `beta` somewhere. `eve` 0.29.x needs the `5.0.0-beta` line;
+npm's `latest` tag for that package is `4.3.3`.
+
+**The dashboard can't reach the database.**
+It reads `WORKFLOW_POSTGRES_URL` directly — same variable, same database, as the agent. If the
+agent works but the dashboard doesn't, the two processes likely have different `.env.local`
+files with different values.
+
+**Reverse-proxying either the agent or the dashboard.**
+Forward `/eve/` **and** `/.well-known/workflow/`, unrewritten. Forwarding only `/eve/` lets a
+session start, then stalls it forever — the workflow callback can't get back in.
