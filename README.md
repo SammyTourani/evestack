@@ -28,7 +28,8 @@ npm run dev
 | Long-term memory | **included** (pgvector) | not included |
 | Your data leaves the machine | **never** | — |
 
-The only thing that costs money is model tokens, and Ollama takes that to zero too.
+The only thing that costs money is model tokens. Ollama takes even that to zero, with a real
+caveat — see [Local models](#local-models).
 
 ## The dashboard
 
@@ -75,6 +76,29 @@ IVFFlat built on an empty table (as any bootstrap migration must be) probes one 
 centroid and returns nothing. We measured the same query returning 2 results at `LIMIT 3` and
 **0** at `LIMIT 20`, purely because the query plan flipped. HNSW needs no training data and is
 correct from the first row.
+
+## Local models
+
+`EVESTACK_PROVIDER=ollama` runs the whole stack on your own machine for literally nothing. Two
+things are required to make it work at all, and both are set for you:
+
+- **`modelContextWindowTokens` must be declared.** eve sizes compaction from the AI Gateway's
+  model catalog, and a local model is not in it. Without an explicit value the agent refuses to
+  compile: *"Cannot compile agent compaction because the primary compaction trigger model
+  `ollama/qwen3` does not have known AI Gateway context window metadata."*
+- **`OLLAMA_BASE_URL` takes the bare host, no `/api`.** `ai-sdk-ollama` appends the path itself;
+  include it and every call returns `OllamaError: 404 page not found`.
+
+**Check your RAM before you turn this on.** On an 8 GB Apple Silicon laptop already running
+Docker, Postgres, the dashboard and the agent, loading qwen3 (5.2 GB) took **over three minutes
+to answer "say ok"**, a 1.3 GB model timed out on the same prompt, and the machine eventually
+became unusable and shut down. eve hands the model a large harness prompt and a dozen-plus
+tools, so local inference here is not a light request.
+
+Budget roughly **model size + 4 GB** free before starting, and prefer a machine with a
+dedicated GPU. evestack never selects a local model on its own for this reason — you have to
+set `EVESTACK_PROVIDER=ollama` explicitly. On a laptop already running the rest of this stack,
+a hosted provider is the practical choice.
 
 ## Requirements
 
