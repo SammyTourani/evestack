@@ -305,11 +305,13 @@ function Choreography() {
             ">+0.45",
           );
           if (result) {
-            // the payoff: the compose output resolves into the live dashboard
+            // the payoff: the dashboard surfaces as the FIRST ✓ lands — it
+            // overlaps the cascade tail instead of waiting out the whole
+            // typing rhythm (which would leave ~5s of dead space below).
             termTl.to(
               result,
               { autoAlpha: 1, y: 0, scale: 1, duration: 0.6, ease: "power2.inOut" },
-              ">+0.4",
+              "<+1.0",
             );
           }
         }

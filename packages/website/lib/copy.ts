@@ -171,7 +171,8 @@ export const integrations = {
   heading: "Your tools, one click",
   sub: "Composio wires the agent into 1,070 toolkits — Gmail, GitHub, Slack, Notion, Linear, and everything after. Sign in once from the dashboard.",
   hub: {
-    /* left / right tile columns around the agent node */
+    /* left / right tile columns around the agent node — icon-only,
+       equal-size tiles keep the composition perfectly symmetric */
     left: [
       { name: "Gmail", slug: "gmail" },
       { name: "GitHub", slug: "github" },
@@ -181,10 +182,10 @@ export const integrations = {
     right: [
       { name: "Google Calendar", slug: "googlecalendar" },
       { name: "Stripe", slug: "stripe" },
-      { name: "Discord", slug: "discord" },
+      { name: "HubSpot", slug: "hubspot" },
       { name: "Jira", slug: "jira" },
     ],
-    /* fired in order; slugs verbatim from evestack-composio source */
+    /* fired in an endless loop; slugs verbatim from evestack-composio source */
     calls: [
       { action: "GMAIL_SEND_EMAIL", app: "gmail", ms: 212 },
       { action: "GITHUB_CREATE_AN_ISSUE", app: "github", ms: 415 },
@@ -192,36 +193,33 @@ export const integrations = {
       { action: "GITHUB_SEARCH_REPOS", app: "github", ms: 342 },
     ],
   },
-  rows: [
-    [
-      { name: "Gmail", slug: "gmail" },
-      { name: "GitHub", slug: "github" },
-      { name: "Notion", slug: "notion" },
-      { name: "Linear", slug: "linear" },
-      { name: "Google Calendar", slug: "googlecalendar" },
-      { name: "Airtable", slug: "airtable" },
-      { name: "Discord", slug: "discord" },
-      { name: "Jira", slug: "jira" },
-      { name: "HubSpot", slug: "hubspot" },
-      { name: "Stripe", slug: "stripe" },
-      { name: "Figma", slug: "figma" },
-      { name: "Dropbox", slug: "dropbox" },
-    ],
-    [
-      { name: "Google Drive", slug: "googledrive" },
-      { name: "Google Sheets", slug: "googlesheets" },
-      { name: "Asana", slug: "asana" },
-      { name: "Trello", slug: "trello" },
-      { name: "ClickUp", slug: "clickup" },
-      { name: "Todoist", slug: "todoist" },
-      { name: "Zendesk", slug: "zendesk" },
-      { name: "Calendly", slug: "calendly" },
-      { name: "Shopify", slug: "shopify" },
-      { name: "Mailchimp", slug: "mailchimp" },
-      { name: "Zoom", slug: "zoom" },
-      { name: "Reddit", slug: "reddit" },
-      { name: "+1,046 more" },
-    ],
+  /* Stripe-style single-row marquee of REAL brand wordmarks (each in the
+     brand's own typeface) — SVGs in public/logos/wordmarks/ from
+     gilbarbara/logos + vectorlogo.zone (nominative use). `pad: true` marks
+     vectorlogo.zone files, which carry internal padding and render taller
+     to visually match. Light theme: full color (Stripe treatment). Dark:
+     grayscale+invert silver (Vercel treatment — preserves knockouts). */
+  marquee: [
+    { name: "Gmail", slug: "gmail", pad: true },
+    { name: "GitHub", slug: "github" },
+    { name: "Notion", slug: "notion" },
+    { name: "Stripe", slug: "stripe" },
+    { name: "Figma", slug: "figma", pad: true },
+    { name: "Asana", slug: "asana" },
+    { name: "Jira", slug: "jira", pad: true },
+    { name: "Linear", slug: "linear" },
+    { name: "Dropbox", slug: "dropbox", pad: true },
+    { name: "Zendesk", slug: "zendesk" },
+    { name: "Trello", slug: "trello", pad: true },
+    { name: "HubSpot", slug: "hubspot" },
+    { name: "Google Drive", slug: "googledrive", pad: true },
+    { name: "Todoist", slug: "todoist" },
+    { name: "Airtable", slug: "airtable", pad: true },
+    { name: "Mailchimp", slug: "mailchimp" },
+    { name: "Shopify", slug: "shopify", pad: true },
+    { name: "Zoom", slug: "zoom" },
+    { name: "Reddit", slug: "reddit" },
+    { name: "Discord", slug: "discord" },
   ],
 } as const;
 

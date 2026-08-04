@@ -1,14 +1,20 @@
 import { Section, SectionHeading } from "@/components/ui/section";
-import { TraceStage } from "@/components/three/trace/trace-stage";
-import { DashboardShot } from "@/components/ui/dashboard-shot";
+import { MonitorsPanel } from "@/components/sections/monitors-panel";
 import { observability } from "@/lib/copy";
 
-/* Screenshot slot renders the styled span tree until Phase 6 swaps in real
-   dashboard captures (hidden dark:block picture pairs). */
+/* §06: the live monitors panel IS the artwork — percentiles, the real 41.0s
+   spike, span waterfall, token bars, log tail, all computed from the same
+   demo dataset as the dashboard demo. Backdrop is the site's quiet
+   graph-paper motif (established in the integrations hub) — the WebGL
+   trace constellation is gone. */
 export function Observability() {
   return (
     <Section id="observability" className="relative overflow-hidden">
-      <TraceStage />
+      {/* graph-paper backdrop, faded toward the edges — both themes */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 [background-image:radial-gradient(var(--ds-border-subtle)_1px,transparent_1px)] [background-size:24px_24px] [mask-image:radial-gradient(ellipse_65%_60%_at_50%_42%,black_30%,transparent_78%)]"
+      />
       <div className="relative">
         <SectionHeading
           id="observability-heading"
@@ -16,44 +22,12 @@ export function Observability() {
           title={observability.heading}
           sub={observability.sub}
         />
-        <div className="grid items-center gap-12 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
-          <div className="flex flex-col gap-6">
-            <p className="text-copy-16 text-gray-900">
-              Every span the framework emits, in your own database. The tree below is a real
-              session, captured from a live run.
-            </p>
-            <div className="flex flex-col gap-1.5 rounded-xl border border-border-subtle bg-background-200 p-5 font-mono text-mono-13">
-              {observability.spanTree.map((span, i) => (
-                <p key={i} style={{ paddingLeft: span.depth * 16 }} className="whitespace-nowrap">
-                  <span className="text-gray-600">{span.depth > 0 ? "└─ " : ""}</span>
-                  <span className={span.depth === 0 ? "text-gray-1000" : "text-gray-900"}>
-                    {span.name}
-                  </span>
-                  {span.note ? (
-                    <span className="ml-2 rounded-full border border-border-subtle px-1.5 py-0.5 text-label-12 text-gray-700">
-                      {span.note}
-                    </span>
-                  ) : null}
-                </p>
-              ))}
-            </div>
-          </div>
-
-          <figure data-screenshot-tilt className="min-w-0">
-            <div className="overflow-hidden rounded-xl border border-border-default bg-background-200 shadow-2xl">
-              <DashboardShot
-                name="session-detail"
-                width={1440}
-                height={680}
-                alt="evestack dashboard session view: a real run with 5,123 input and 3,704 output tokens, 4,608 cached reads, and $0.0077 computed model spend"
-                className="w-full"
-              />
-            </div>
-            <figcaption className="mt-3 text-center font-mono text-label-12 uppercase text-gray-700">
-              read straight from your own postgres — <span data-scramble>100% yours</span>
-            </figcaption>
-          </figure>
-        </div>
+        <figure data-screenshot-tilt className="mx-auto max-w-5xl min-w-0">
+          <MonitorsPanel />
+          <figcaption className="mt-4 text-center font-mono text-label-12 uppercase text-gray-700">
+            read straight from your own postgres — <span data-scramble>100% yours</span>
+          </figcaption>
+        </figure>
       </div>
     </Section>
   );

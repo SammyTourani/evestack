@@ -396,6 +396,42 @@
   }
 }
 
+/* ── Monitors panel staged reveal ────────────────────────────────────────
+   Default (no attributes) = settled, fully visible — the SSR / no-JS /
+   reduced-motion truth. The component ARMS itself only client-side with
+   motion allowed (hiding the animated pieces), then LIVE plays everything
+   to the settled state with per-element --d delays. */
+.mon [data-anim] {
+  transition:
+    opacity 0.5s ease,
+    transform 0.55s cubic-bezier(0.16, 1, 0.3, 1);
+  transition-delay: var(--d, 0s);
+}
+.mon[data-armed]:not([data-live]) [data-anim="fade"] {
+  opacity: 0;
+  transform: translateY(10px);
+}
+.mon[data-armed]:not([data-live]) [data-anim="bar-x"] {
+  transform: scaleX(0);
+}
+.mon[data-armed]:not([data-live]) [data-anim="bar-y"] {
+  transform: scaleY(0);
+}
+.mon[data-armed]:not([data-live]) [data-anim="pop"] {
+  opacity: 0;
+  transform: scale(0.5);
+}
+/* SVG children animate around their own box, not the viewport origin */
+.mon svg [data-anim] {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mon [data-anim] {
+    transition: none;
+  }
+}
+
 /* Dashboard demo loop-progress hairline: brighter leading edge = honest
    "this is a scripted loop" signal. */
 .demo-progress {
@@ -406,6 +442,64 @@
     var(--ds-gray-800)
   );
   transition: opacity 0.5s ease;
+}
+
+/* ── Dashboard demo tabs ─────────────────────────────────────────────── */
+
+/* panel content eases in each time its tab becomes visible (display:none
+   toggling restarts the animation — no JS involved) */
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+[role="tabpanel"]:not([hidden]) > [data-panel-anim] {
+  animation: panel-in 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* the agent "thinking" — blue pulse, staggered per dot */
+@keyframes chat-dot {
+  0%,
+  60%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+.chat-dot {
+  animation: chat-dot 1.2s ease-in-out infinite;
+}
+
+/* integration flips to connected with a small overshoot */
+@keyframes connect-pop {
+  from {
+    transform: scale(0.55);
+  }
+  60% {
+    transform: scale(1.12);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [role="tabpanel"]:not([hidden]) > [data-panel-anim] {
+    animation: none;
+  }
+  .chat-dot {
+    animation: none;
+    opacity: 0.6;
+  }
 }
 
 /* ── Integration hub ─────────────────────────────────────────────────── */
@@ -430,15 +524,17 @@
   }
 }
 
-/* landed-call label pops in with the ping */
+/* landed-call label pops in with the ping. Y-motion only — horizontal
+   centering lives on the element's `translate` property (Tailwind v4),
+   which composes with (never fights) this transform. */
 @keyframes hub-label-in {
   from {
     opacity: 0;
-    transform: translate(-50%, 5px);
+    transform: translateY(5px);
   }
   to {
     opacity: 1;
-    transform: translate(-50%, 0);
+    transform: translateY(0);
   }
 }
 

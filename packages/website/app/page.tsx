@@ -17,13 +17,13 @@ export default function Page() {
       <Hero />
       <OneCommand />
       <Comparison />
-      <CodeWalkthrough />
+      <Integrations />
       <FeaturesBento />
       <Architecture />
       <Observability />
       <Stats />
       <ControlPlane />
-      <Integrations />
+      <CodeWalkthrough />
       <Quickstart />
       <ClosingCta />
     </>

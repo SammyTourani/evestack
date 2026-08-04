@@ -13,7 +13,7 @@ export async function CodeWalkthrough() {
     <Section id="code">
       <SectionHeading
         id="code-heading"
-        eyebrow="03 · the code"
+        eyebrow="08 · the code"
         title="The code is the pitch"
         sub="Real files, read from the repository at build time — the page can never drift from the code."
       />

@@ -57,19 +57,26 @@ const ITEMS = [
     description:
       "Semantic long-term memory for an eve agent, stored in your own Postgres with pgvector. " +
       "No vector service, no extra container, no bill.",
-    dependencies: pin(["pg", "ai", "@ai-sdk/openai"]),
+    // `ai` is deliberately NOT listed. Every eve project already depends on it
+    // AND carries an `overrides` entry for it, so declaring it here as a direct
+    // dependency makes npm fail the whole install with
+    // `EOVERRIDE: Override for ai@^7.0.51 conflicts with direct dependency`.
+    // Pinning it was meant to prevent a version mismatch and instead made
+    // `eve add @evestack/memory` impossible on a stock project.
+    dependencies: pin(["pg", "@ai-sdk/openai"]),
     devDependencies: pin(["@types/pg"], "devDependencies"),
     files: [
       { source: "lib/memory.ts", target: "lib/memory.ts" },
       { source: "agent/tools/remember.ts", target: "agent/tools/remember.ts" },
       { source: "agent/tools/recall.ts", target: "agent/tools/recall.ts" },
+      { source: "agent/tools/forget.ts", target: "agent/tools/forget.ts" },
     ],
     docs:
       "Requires a Postgres with the pgvector extension available (the pgvector/pgvector image " +
       "has it) and WORKFLOW_POSTGRES_URL set. The tools import lib/memory.ts by relative path, " +
       "so no `imports` or tsconfig `paths` entry is needed — but if your tsconfig `include` " +
       "lists only agent/, add \"lib/**/*.ts\" so the file is typechecked. Uses HNSW indexing, " +
-      "which is correct on an empty table — IVFFlat is not.",
+      "which is correct on an empty table — IVFFlat is not. `forget` is gated with approval: always(), so deleting a memory always parks the turn for a human decision — it is also the worked example of human-in-the-loop.",
   },
   {
     name: "instrumentation",
