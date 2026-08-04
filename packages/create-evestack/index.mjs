@@ -249,6 +249,14 @@ async function main() {
   say(`    ${pm} run db:bootstrap                 ${C.dim}# create the workflow schema${C.reset}`);
   say(`    ${pm} run dev                          ${C.dim}# chat with your agent${C.reset}`);
   say();
+  // The dashboard is the reason to pick evestack over plain eve, and it lives
+  // in the repo rather than this package — so a user who never opens the README
+  // would finish this command without learning it exists.
+  say(`  ${C.bold}Then add the dashboard${C.reset} ${C.dim}— sessions, cost, approvals, chat:${C.reset}`);
+  say(`    git clone https://github.com/SammyTourani/evestack`);
+  say(`    cd evestack/packages/dashboard && pnpm install && pnpm dev`);
+  say(`    ${C.dim}point WORKFLOW_POSTGRES_URL at the same database${C.reset}`);
+  say();
   say(`  ${C.dim}Nothing here bills you. No Vercel account, no metered compute.${C.reset}`);
   if (!useOllama && !apiKeyLine.includes("=sk-")) {
     say(`  ${C.yellow}Add your API key to .env.local before starting.${C.reset}`);
