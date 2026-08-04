@@ -24,6 +24,12 @@ const HEARTBEAT_MS = 15_000;
  * `EventSource` sends it back as `Last-Event-ID` — which becomes the next
  * `startIndex`. No replayed events, no dropped ones.
  */
+// A freshly created session emits its first event within a few hundred
+// milliseconds. Six tries at 250ms gives that ~1.5s of grace while keeping a
+// genuinely bad id fast to diagnose.
+const FIRST_EVENT_ATTEMPTS = 6;
+const FIRST_EVENT_DELAY_MS = 250;
+
 export async function GET(
   request: Request,
   context: { params: Promise<{ id: string }> },
@@ -40,28 +46,46 @@ export async function GET(
     const startIndex = resolveStartIndex(url.searchParams.get("startIndex"), request.headers.get("last-event-id"));
     if (startIndex instanceof Response) return startIndex;
 
-    const upstream = await openEventStream(id, {
+    // eve serves 200 with an empty body for a session it has never seen, so a
+    // typo'd id would otherwise hand the operator a stream that connects and
+    // then stays silent forever. A tail index of -1 means "no events at all".
+    //
+    // But -1 is ambiguous: it is also what a session that was created
+    // milliseconds ago looks like, before its first event lands. A browser that
+    // starts a session and immediately opens the stream hits that window every
+    // time. So poll briefly before deciding — a real session announces itself
+    // almost at once, while a typo'd id stays empty and still fails fast.
+    let upstream = await openEventStream(id, {
       startIndex,
       includeTailIndex: true,
       signal: request.signal,
     });
-
     if (!upstream.body) {
       return jsonError("The agent returned an empty event stream.", 502, "invalid_response");
     }
 
-    const tailIndex = parseTailIndex(upstream);
+    let tailIndex = parseTailIndex(upstream);
+    for (let attempt = 0; tailIndex < 0 && attempt < FIRST_EVENT_ATTEMPTS; attempt += 1) {
+      await upstream.body?.cancel();
+      await new Promise((resolve) => setTimeout(resolve, FIRST_EVENT_DELAY_MS));
+      if (request.signal.aborted) return new Response(null, { status: 499 });
 
-    // eve serves 200 with an empty body for a session it has never seen, so a
-    // typo'd id would otherwise hand the operator a stream that connects and
-    // then stays silent forever. A tail index of -1 means "no events at all",
-    // which is the same signal the message route treats as unknown — so treat
-    // it the same way here instead of hanging.
+      upstream = await openEventStream(id, {
+        startIndex,
+        includeTailIndex: true,
+        signal: request.signal,
+      });
+      if (!upstream.body) {
+        return jsonError("The agent returned an empty event stream.", 502, "invalid_response");
+      }
+      tailIndex = parseTailIndex(upstream);
+    }
+
     if (tailIndex < 0) {
       await upstream.body?.cancel();
       return jsonError(
-        `No session '${id}' has emitted any events. Check the id, or wait a moment if you ` +
-          `just created it.`,
+        `No session '${id}' has emitted any events after ` +
+          `${(FIRST_EVENT_ATTEMPTS * FIRST_EVENT_DELAY_MS) / 1000}s. Check the id.`,
         404,
         "session_not_found",
       );
