@@ -1,6 +1,8 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
-import { recall } from "#lib/memory";
+// Relative for the same reason as remember.ts: this file ships as part of the
+// `@evestack/memory` registry item and must resolve in a stock eve project.
+import { recall } from "../../lib/memory";
 
 export default defineTool({
   description:

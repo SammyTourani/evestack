@@ -1,5 +1,5 @@
 import { Section, SectionHeading } from "@/components/ui/section";
-import { DashboardShot } from "@/components/ui/dashboard-shot";
+import { DashboardDemo } from "@/components/sections/dashboard-demo";
 import { terminal } from "@/lib/copy";
 
 /* Server-renders the FINAL terminal state (a11y + no-JS truth).
@@ -87,16 +87,10 @@ export function OneCommand() {
             </div>
           </figure>
 
-          {/* what the command buys you: the live session list */}
-          <figure data-terminal-result className="overflow-hidden rounded-xl border border-border-default">
-            <DashboardShot
-              name="sessions"
-              width={1440}
-              height={780}
-              alt="evestack dashboard session list backed by the local Postgres — 30 real sessions with token and cost rollups"
-              className="w-full"
-            />
-          </figure>
+          {/* what the command buys you: a live, interactive dashboard */}
+          <div data-terminal-result>
+            <DashboardDemo />
+          </div>
         </div>
       </div>
     </Section>

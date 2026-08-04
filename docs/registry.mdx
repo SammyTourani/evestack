@@ -21,7 +21,20 @@ project can take exactly the piece they want.
 | `@evestack/docker-sandbox` | Local Docker sandbox instead of hosted Vercel Sandbox |
 | `@evestack/basic-auth` | HTTP Basic route auth, for agents running off Vercel |
 
-Verified end to end against a fresh `eve init` project: `eve add @evestack/memory` installs all
-three files at their correct targets, adds the right dependencies, and the installed content is
-byte-identical to what ships in `templates/default` — the registry build script inlines from
-the real, tested source rather than a maintained copy.
+Verified end to end against a stock `eve init` project (eve 0.29.5): `eve add @evestack/memory`
+installs all three files at their correct targets, the installed content is byte-identical to
+what ships in `templates/default` — the build script inlines from the real, tested source rather
+than a maintained copy — and `tsc --noEmit` passes with **no edits to `package.json` or
+`tsconfig.json`**.
+
+That last part is the part that is easy to get wrong. A stock eve project maps only
+`"#*": "./agent/*"` and carries no tsconfig `paths`, and TypeScript's `bundler` module
+resolution ignores package.json `imports` outright — so an item whose files import each other
+through a `#`-subpath cannot be made to typecheck there without the user editing two files.
+The memory tools therefore import `lib/memory.ts` by relative path, in `templates/default` too,
+so the tested code and the shipped item are the same code.
+
+Dependencies are pinned to the ranges `templates/default` is tested against, generated from
+that manifest at build time — `pg@^8.20.3`, `ai@^7.0.38`, `@ai-sdk/openai@^2.0.0`. A bare,
+unversioned name would resolve to whatever npm calls latest on the day you run it, which is
+how you end up with `@ai-sdk/openai@4` next to code only ever exercised against v2.

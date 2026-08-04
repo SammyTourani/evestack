@@ -86,7 +86,7 @@ OTEL_EXPORTER_OTLP_PROTOCOL=http/json   # the default is http/protobuf — this 
 | --- | --- |
 | Encoding | OTLP/HTTP, JSON only (`application/json`) |
 | Compression | none, `gzip`, or `deflate` via `content-encoding` |
-| Max body | 32 MB |
+| Max body | 32 MB compressed **and** 32 MB decompressed — zlib enforces the second while inflating, so a gzip bomb is refused rather than buffered |
 | gRPC (`:4317`) | not served |
 
 OTLP attribute values arrive type-tagged — `{"intValue": 1}` rather than `1`.
@@ -107,7 +107,7 @@ rather than being silently rounded.
 | `200` | `{}` | every span stored |
 | `200` | `{"partialSuccess":{"rejectedSpans":"2","errorMessage":"…"}}` | some spans were unreadable; the rest are stored, and the exporter should not retry |
 | `400` | `{"code":3,"message":"…"}` | not JSON, or not an `ExportTraceServiceRequest` |
-| `413` | `{"code":3,"message":"…"}` | body over the size limit |
+| `413` | `{"code":3,"message":"…"}` | body over the size limit, before or after decompression |
 | `415` | `{"code":12,"message":"…"}` | protobuf encoding |
 | `503` | `{"code":14,"message":"…"}` + `Retry-After: 5` | Postgres unreachable — retryable, so the exporter holds the batch |
 

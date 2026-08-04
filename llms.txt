@@ -31,6 +31,17 @@ path (`npx create-evestack my-agent`).
   `turn.cancelled` arrives after a `session.waiting` event, not before.
 - Tool approvals have no dedicated HTTP endpoint. They resolve through the normal continuation
   route with `inputResponses: [{requestId, optionId}]`.
+- Nothing creates the Postgres schema implicitly. `@workflow/world-postgres` runs its migrations
+  only from its own CLI and `eve` never invokes it, so a new project needs
+  `npm run db:bootstrap` between `docker compose up -d postgres` and `npm run dev`. Do NOT
+  suggest `npx --package=@workflow/world-postgres bootstrap` — that CLI reads `.env` via dotenv
+  and never `.env.local`, which is the only env file `create-evestack` writes, so it falls back
+  to `postgres://world:world@localhost:5432/world` and fails with `ECONNREFUSED`.
+- `agent/channels/eve.ts` deliberately does not call `eve`'s `localDev()` directly. Its loopback
+  test (`/^127\./`, `*.localhost`) accepts hostile hostnames such as `127.evil.com`, so the
+  template wraps it in an exact-match loopback check. Do not "simplify" that back.
+- Registry items pin dependency versions from `templates/default/package.json`, and CI enforces
+  the match. Bare, unversioned names are a bug, not a style choice.
 
 ## Docs
 

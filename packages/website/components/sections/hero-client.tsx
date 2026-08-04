@@ -1,10 +1,7 @@
 "use client";
 
-import { useState } from "react";
 import { HeroStage } from "@/components/three/hero/hero-stage";
-import type { HeroMode } from "@/components/three/contracts";
 import { SLABS } from "@/components/three/hero/slab-data";
-import { cn } from "@/lib/utils";
 
 /* Row screen positions for the disassembled stack — derived from the scene
    constants (camera z 9.6, fov 30 → half-height 2.57u; rows at ±1.95/±0.65).
@@ -13,11 +10,7 @@ const ROW_TOP = [12.1, 37.35, 62.65, 87.9];
 const LABEL_LEFT = 67;
 const SPINE_X = 64;
 
-/* Client island: shares the mode state between the toggle and the 3D stage.
-   The copy block stays a Server Component and is passed through children. */
 export function HeroClient({ children }: { children: React.ReactNode }) {
-  const [mode, setMode] = useState<HeroMode>("dashboard");
-
   return (
     <>
       {/* 3D stage behind the copy, eve.dev geometry: centered, no pointer events */}
@@ -26,13 +19,11 @@ export function HeroClient({ children }: { children: React.ReactNode }) {
         aria-hidden
         className="pointer-events-none absolute left-1/2 top-1/2 z-0 aspect-[1112/460] w-[min(1112px,96vw)] -translate-x-1/2 -translate-y-[calc(50%+2.5rem)]"
       >
-        <HeroStage mode={mode} />
+        <HeroStage />
 
         {/* Disassembly annotations: connector spine + layer labels.
-            Pure decoration for the animated path (aria-hidden ancestor,
-            sr-summary covers content) — starts opacity-0 and only the
-            scrub timeline ever reveals it, so the static/no-JS/reduced
-            hero never shows labels over the assembled mark. */}
+            Pure decoration for the animated path — starts opacity-0 and only
+            the scrub timeline ever reveals it. */}
         <div data-hero-annotations className="absolute inset-0 opacity-0">
           <svg
             className="absolute inset-0 h-full w-full"
@@ -70,32 +61,6 @@ export function HeroClient({ children }: { children: React.ReactNode }) {
         className="site-container relative z-10 flex flex-col items-center gap-6 text-center"
       >
         {children}
-
-        {/* Dashboard / Terminal render-mode toggle — plain toggle buttons
-            (aria-pressed) so semantics match the actual keyboard behavior */}
-        <div
-          data-hero="toggle"
-          role="group"
-          aria-label="Hero render mode"
-          className="mt-2 inline-flex items-center rounded-full border border-border-default p-0.5"
-        >
-          {(["dashboard", "terminal"] as const).map((m) => (
-            <button
-              key={m}
-              type="button"
-              aria-pressed={mode === m}
-              onClick={() => setMode(m)}
-              className={cn(
-                "rounded-full px-4 py-1.5 font-mono text-label-12 uppercase transition-colors",
-                mode === m
-                  ? "bg-gray-200 text-gray-1000"
-                  : "text-gray-700 hover:text-gray-1000",
-              )}
-            >
-              {m}
-            </button>
-          ))}
-        </div>
       </div>
     </>
   );

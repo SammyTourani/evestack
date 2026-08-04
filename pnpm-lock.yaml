@@ -154,6 +154,9 @@ importers:
       sharp:
         specifier: ^0.34.0
         version: 0.34.5
+      simple-icons:
+        specifier: ^16.28.0
+        version: 16.28.0
       tailwindcss:
         specifier: ^4.1.0
         version: 4.3.3
@@ -2179,6 +2182,10 @@ packages:
 
   signal-exit@3.0.7:
     resolution: {integrity: sha512-wnD2ZE+l+SPC/uoS0vXeE9L1+0wuaMqKlfz9AMUo38JsyLSBWSFcHR1Rri62LZc12vLr1gb3jl7iwQhgwpAbGQ==}
+
+  simple-icons@16.28.0:
+    resolution: {integrity: sha512-sQPR5AtK/ijRjou7zw7mlLp08oB6FH7i0lOy5XJ2zp9mJs/yejgiOn7KvQoe2q4YJIx6VmgUSW5AOefebPt5kg==}
+    engines: {node: '>=0.12.18'}
 
   source-map-js@1.2.1:
     resolution: {integrity: sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==}
@@ -4331,6 +4338,8 @@ snapshots:
       '@types/hast': 3.0.5
 
   signal-exit@3.0.7: {}
+
+  simple-icons@16.28.0: {}
 
   source-map-js@1.2.1: {}
 

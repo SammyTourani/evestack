@@ -160,23 +160,25 @@ export const control = {
   },
 } as const;
 
-/* §11 integrations — text chips only (no third-party logos). */
+/* §11 integrations — brand marks are nominative use (services the agent
+   connects to); SVGs generated locally by scripts/gen-logos.mjs. Slack's
+   mark was removed from simple-icons at the brand's request → text only. */
 export const integrations = {
   heading: "Your tools, one click",
   sub: "Composio connects the agent to Gmail, GitHub, Slack, Notion, Linear, and hundreds more — sign in once from the dashboard.",
   chips: [
-    "Gmail",
-    "GitHub",
-    "Slack",
-    "Notion",
-    "Linear",
-    "Google Calendar",
-    "Airtable",
-    "Discord",
-    "Jira",
-    "HubSpot",
-    "Stripe",
-    "…and hundreds more",
+    { name: "Gmail", slug: "gmail" },
+    { name: "GitHub", slug: "github" },
+    { name: "Notion", slug: "notion" },
+    { name: "Linear", slug: "linear" },
+    { name: "Google Calendar", slug: "googlecalendar" },
+    { name: "Slack" },
+    { name: "Airtable", slug: "airtable" },
+    { name: "Discord", slug: "discord" },
+    { name: "Jira", slug: "jira" },
+    { name: "HubSpot", slug: "hubspot" },
+    { name: "Stripe", slug: "stripe" },
+    { name: "…and hundreds more" },
   ],
 } as const;
 

@@ -32,6 +32,12 @@ const UNAVAILABLE = 14;
 // dashboard's problem rather than the sender's.
 const MAX_BODY_BYTES = 32 * 1024 * 1024;
 
+// The same ceiling, applied to what comes *out* of the decompressor. Checking
+// only the compressed size is not a limit at all: a 299 KB gzip body that
+// inflates 1000x took this process from 16 MB to 892 MB of RSS in a single
+// request. zlib enforces this while inflating, so the memory is never allocated.
+const MAX_DECOMPRESSED_BYTES = MAX_BODY_BYTES;
+
 const PROTOBUF_TYPES = [
   "application/x-protobuf",
   "application/protobuf",
@@ -62,12 +68,25 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
+  // Declared size first: `arrayBuffer()` buffers the whole body before anything
+  // can look at its length, so a limit checked only afterwards has already cost
+  // the memory it was meant to protect.
+  const declaredLength = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_BYTES) {
+    return status(
+      INVALID_ARGUMENT,
+      `payload of ${declaredLength} bytes exceeds the ${MAX_BODY_BYTES} byte limit`,
+      413,
+    );
+  }
+
   let raw: Buffer;
   try {
     raw = Buffer.from(await request.arrayBuffer());
   } catch (error) {
     return status(INVALID_ARGUMENT, `could not read request body: ${describe(error)}`, 400);
   }
+  // A chunked request declares no length, so the check still has to run here.
   if (raw.byteLength > MAX_BODY_BYTES) {
     return status(
       INVALID_ARGUMENT,
@@ -80,6 +99,13 @@ export async function POST(request: Request): Promise<Response> {
   try {
     text = decode(raw, (request.headers.get("content-encoding") ?? "").toLowerCase());
   } catch (error) {
+    if (isOutputTooLarge(error)) {
+      return status(
+        INVALID_ARGUMENT,
+        `compressed body inflates past the ${MAX_DECOMPRESSED_BYTES} byte limit`,
+        413,
+      );
+    }
     return status(INVALID_ARGUMENT, `could not decompress request body: ${describe(error)}`, 400);
   }
 
@@ -154,11 +180,18 @@ export async function GET(): Promise<Response> {
 }
 
 function decode(body: Buffer, encoding: string): string {
-  if (encoding.includes("gzip")) return gunzipSync(body).toString("utf8");
-  if (encoding.includes("deflate")) return inflateSync(body).toString("utf8");
+  const limit = { maxOutputLength: MAX_DECOMPRESSED_BYTES };
+  if (encoding.includes("gzip")) return gunzipSync(body, limit).toString("utf8");
+  if (encoding.includes("deflate")) return inflateSync(body, limit).toString("utf8");
   return body.toString("utf8");
 }
 
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** zlib's signal that `maxOutputLength` stopped it, rather than a corrupt stream. */
+function isOutputTooLarge(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  return code === "ERR_BUFFER_TOO_LARGE" || code === "ERR_ZLIB_MAX_OUTPUT_LENGTH_EXCEEDED";
 }

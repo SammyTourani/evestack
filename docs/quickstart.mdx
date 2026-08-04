@@ -28,8 +28,20 @@ there's no shipped default password sitting between a stranger and your agent.
 ```bash
 cd my-agent
 docker compose up -d postgres
-npx --package=@workflow/world-postgres bootstrap
+npm run db:bootstrap
 ```
+
+Nothing creates the `workflow` schema for you: `@workflow/world-postgres` runs its migrations
+only from its own CLI, and `eve` never invokes it. Skip this and `npm run dev` starts against
+a database with no tables.
+
+<Warning>
+  Run it through the script, not as `npx --package=@workflow/world-postgres bootstrap`. That
+  CLI loads `.env` through dotenv and never looks at `.env.local` — which is the only env file
+  `create-evestack` writes — so it silently falls back to
+  `postgres://world:world@localhost:5432/world` and dies on `ECONNREFUSED`. The `db:bootstrap`
+  script passes `--env-file-if-exists=.env.local` explicitly.
+</Warning>
 
 <Warning>
   Pin `@workflow/world-postgres` to the `beta` tag, not `latest`. npm's `latest` is `4.3.3`;
@@ -63,9 +75,15 @@ process, because it never lived in the process to begin with.
 
 ## See it in the dashboard
 
+The dashboard is not part of the scaffolded project — `create-evestack` gives you the agent.
+Clone the repository once, anywhere, and point it at the same database:
+
 ```bash
-cd ../packages/dashboard  # or: docker compose --profile full up -d
-npm run dev
+git clone https://github.com/SammyTourani/evestack
+cd evestack/packages/dashboard
+echo 'WORKFLOW_POSTGRES_URL=postgres://evestack:evestack@localhost:5433/evestack' > .env.local
+pnpm install
+pnpm run dev
 ```
 
 Open `http://localhost:4000`. Every session you just created is already there, read straight

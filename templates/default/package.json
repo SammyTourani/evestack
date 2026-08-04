@@ -7,7 +7,6 @@
   "license": "Apache-2.0",
   "imports": {
     "#*": "./agent/*",
-    "#lib/*": "./lib/*",
     "#evals/*": "./evals/*"
   },
   "scripts": {
@@ -15,7 +14,7 @@
     "build": "eve build",
     "start": "eve start",
     "typecheck": "tsc",
-    "db:bootstrap": "node --experimental-strip-types scripts/bootstrap-db.ts"
+    "db:bootstrap": "node --env-file-if-exists=.env.local node_modules/@workflow/world-postgres/bin/setup.js"
   },
   "dependencies": {
     "@ai-sdk/openai": "^2.0.0",

@@ -18,14 +18,14 @@ cd evestack
 pnpm install
 docker compose up -d postgres
 cd templates/default && cp .env.example .env.local   # add a model API key
-npx --package=@workflow/world-postgres bootstrap
+pnpm run db:bootstrap                                # creates the workflow schema
 ```
 
 Then, in separate terminals:
 
 ```bash
 cd templates/default && pnpm run dev      # the agent, on :2000 (auto-increments if taken)
-cd packages/dashboard && pnpm run dev     # the dashboard, on :4000
+cd packages/dashboard && cp .env.example .env.local && pnpm run dev   # the dashboard, on :4000
 ```
 
 ## Before opening a PR

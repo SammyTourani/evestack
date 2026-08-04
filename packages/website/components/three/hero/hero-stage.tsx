@@ -2,9 +2,9 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
+import { useTheme } from "next-themes";
 import { HeroPoster } from "./hero-poster";
 import { canRunHeroScene } from "../shared/fallback-gate";
-import type { HeroMode } from "../contracts";
 
 /* Owns the fallback ladder, mount gating, and poster crossfade.
    The dynamic() call MUST live in a Client Component (Next 16 hard-errors
@@ -16,23 +16,23 @@ const HeroCanvas = dynamic(() => import("./hero-canvas"), {
   loading: () => null,
 });
 
-export function HeroStage({ mode }: { mode: HeroMode }) {
+export function HeroStage() {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [eligible, setEligible] = useState(false);
   const [mount, setMount] = useState(false);
   const [inView, setInView] = useState(true);
   const [ready, setReady] = useState(false);
+  const { resolvedTheme } = useTheme();
+  const theme: "dark" | "light" = resolvedTheme === "light" ? "light" : "dark";
 
   /* Rungs 1-3 of the ladder — before the chunk is even requested. */
   useEffect(() => {
     if (canRunHeroScene()) setEligible(true);
   }, []);
 
-  /* Mount gating: post-hydration idle + hero visible → request the chunk.
-     The 3D bundle never competes with first paint. */
+  /* Mount gating: post-hydration idle + hero visible → request the chunk. */
   useEffect(() => {
     if (!eligible) return;
-    // requestIdleCallback is missing on older Safari
     const ric = window.requestIdleCallback as typeof window.requestIdleCallback | undefined;
     if (ric) {
       const handle = ric(() => setMount(true));
@@ -69,12 +69,10 @@ export function HeroStage({ mode }: { mode: HeroMode }) {
           style={{ opacity: ready ? 1 : 0 }}
         >
           <HeroCanvas
-            mode={mode}
+            theme={theme}
             inView={inView}
             onReady={() => setReady(true)}
             onFailed={() => {
-              /* context lost: crossfade the poster back and tear the
-                 canvas down for good (no remount attempts) */
               setReady(false);
               setMount(false);
               setEligible(false);

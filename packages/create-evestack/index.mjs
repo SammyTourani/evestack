@@ -11,7 +11,7 @@ import { execSync, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -135,9 +135,10 @@ async function main() {
   say();
   step("Creating project");
   mkdirSync(target, { recursive: true });
-  cpSync(templateDir(), target, {
+  const source = templateDir();
+  cpSync(source, target, {
     recursive: true,
-    filter: (src) => !/(node_modules|\.eve|\.output|\.env\.local|dist)/.test(src),
+    filter: (src) => isTemplateFile(source, src),
   });
 
   // Shipped as `gitignore` because npm silently renames a packaged `.gitignore`
@@ -149,6 +150,16 @@ async function main() {
   }
 
   const pkgPath = join(target, "package.json");
+  if (!existsSync(pkgPath)) {
+    // Reached only if the copy silently produced nothing. Say so here rather
+    // than letting the next line die on an ENOENT that names the wrong file.
+    console.error(
+      `\n${C.red}The agent template did not copy — ${pkgPath} is missing.${C.reset}\n` +
+        `  Template source: ${source}\n` +
+        "  Please report this at https://github.com/SammyTourani/evestack/issues",
+    );
+    process.exit(1);
+  }
   const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
   pkg.name = basename(target);
   pkg.private = true;
@@ -195,15 +206,33 @@ async function main() {
   step("Installing dependencies");
   const pm = detectPm();
   const install = spawnSync(pm, ["install"], { cwd: target, stdio: "inherit" });
-  if (install.status !== 0) {
-    warn(`${pm} install failed — run it yourself in ${target}`);
-  } else {
+  // A failed install leaves an empty node_modules, and the "Next:" steps below
+  // would then fail one after another with unrelated-looking errors. Report it
+  // as the failure it is — including the exit code, so CI and shell `&&` chains
+  // stop here instead of proceeding on a project that cannot run.
+  const installed = install.status === 0 && existsSync(join(target, "node_modules", "eve"));
+  if (installed) {
     ok("Dependencies installed");
+  } else {
+    process.exitCode = 1;
   }
 
   // ---- next steps -----------------------------------------------------------
   const dockerUp = hasDocker();
   say();
+  if (!installed) {
+    say(`${C.yellow}${C.bold}  Created, but dependencies are not installed.${C.reset}`);
+    say();
+    say(`  ${C.bold}Finish it:${C.reset}`);
+    say(`    cd ${basename(target)}`);
+    say(`    ${pm} install`);
+    say();
+    dim("If the install failed on a 404 for @evestack/composio, that package is not");
+    dim("published yet. Drop it from package.json and delete agent/tools/composio.ts —");
+    dim("everything else in the template works without it.");
+    say();
+    return;
+  }
   say(`${C.green}${C.bold}  Done.${C.reset}`);
   say();
   if (!dockerUp) {
@@ -213,7 +242,11 @@ async function main() {
   say(`  ${C.bold}Next:${C.reset}`);
   say(`    cd ${basename(target)}`);
   say(`    docker compose up -d postgres        ${C.dim}# durable sessions${C.reset}`);
-  say(`    npx --package=@workflow/world-postgres bootstrap`);
+  // `npx --package=@workflow/world-postgres bootstrap` looks equivalent and is
+  // not: its CLI loads `.env` via dotenv and never reads `.env.local`, so it
+  // silently falls back to postgres://world:world@localhost:5432/world and dies
+  // on ECONNREFUSED. The script wires the generated .env.local in explicitly.
+  say(`    ${pm} run db:bootstrap                 ${C.dim}# create the workflow schema${C.reset}`);
   say(`    ${pm} run dev                          ${C.dim}# chat with your agent${C.reset}`);
   say();
   say(`  ${C.dim}Nothing here bills you. No Vercel account, no metered compute.${C.reset}`);
@@ -221,6 +254,33 @@ async function main() {
     say(`  ${C.yellow}Add your API key to .env.local before starting.${C.reset}`);
   }
   say();
+}
+
+// Build leftovers and secrets that must never reach a generated project.
+const EXCLUDED_SEGMENTS = new Set([
+  "node_modules",
+  ".eve",
+  ".output",
+  ".next",
+  "dist",
+  ".env.local",
+  "tsconfig.tsbuildinfo",
+]);
+
+/**
+ * Decide whether a template path is copied.
+ *
+ * Matched against the path *relative to the template root*, one segment at a
+ * time. Testing the absolute path instead — which this did — silently copies
+ * nothing under `npx`, because npm stages the package at
+ * `~/.npm/_npx/<hash>/node_modules/create-evestack/template/…` and every source
+ * path therefore contains `node_modules`. Substring matching had the same class
+ * of bug for anyone whose project lived under a directory named `dist`.
+ */
+function isTemplateFile(templateRoot, src) {
+  const rel = relative(templateRoot, src);
+  if (rel === "") return true; // the template root itself
+  return !rel.split(sep).some((segment) => EXCLUDED_SEGMENTS.has(segment));
 }
 
 function basename(p) {

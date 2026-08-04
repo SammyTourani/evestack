@@ -13,7 +13,7 @@ gsap.registerPlugin(ScrollTrigger);
    scrubbed by ScrollTrigger (the tree grows root-first); uTime runs free
    (scrub the REVEAL, never the LIFE). */
 
-const PULSES_PER_EDGE = 3;
+const PULSES_PER_EDGE = 2;
 
 const nodeVert = /* glsl */ `
 attribute float aDepth;
@@ -32,6 +32,7 @@ void main() {
 const nodeFrag = /* glsl */ `
 uniform float uTime;
 uniform float uReveal;
+uniform float uLight;
 varying vec2 vUv;
 varying float vDepth;
 varying float vSeed;
@@ -40,8 +41,10 @@ void main() {
   float glow = pow(smoothstep(1.0, 0.0, d), 2.4);
   float reveal = smoothstep(vDepth - 0.4, vDepth + 0.4, uReveal * 5.0);
   float flicker = vDepth > 3.5 ? (0.82 + 0.18 * sin(uTime * 3.0 + vSeed * 40.0)) : 1.0;
-  vec3 tint = mix(vec3(0.0, 0.875, 0.847), vec3(0.42, 0.47, 0.52), vDepth / 4.0);
-  float a = glow * reveal * flicker;
+  vec3 dark = mix(vec3(0.0, 0.875, 0.847), vec3(0.42, 0.47, 0.52), vDepth / 4.0);
+  vec3 light = mix(vec3(0.05, 0.46, 0.43), vec3(0.35, 0.4, 0.46), vDepth / 4.0);
+  vec3 tint = mix(dark, light, uLight);
+  float a = glow * reveal * flicker * mix(1.0, 0.55, uLight);
   gl_FragColor = vec4(tint * a, a);
 }
 `;
@@ -57,10 +60,12 @@ void main() {
 
 const edgeFrag = /* glsl */ `
 uniform float uReveal;
+uniform float uLight;
 varying float vDepth;
 void main() {
   float reveal = smoothstep(vDepth - 0.4, vDepth + 0.4, uReveal * 5.0);
-  gl_FragColor = vec4(vec3(0.30, 0.42, 0.45) * 0.5, 0.35 * reveal);
+  vec3 ink = mix(vec3(0.30, 0.42, 0.45) * 0.5, vec3(0.55, 0.6, 0.65), uLight);
+  gl_FragColor = vec4(ink, 0.35 * reveal);
 }
 `;
 
@@ -88,6 +93,7 @@ void main() {
 
 const pulseFrag = /* glsl */ `
 uniform float uReveal;
+uniform float uLight;
 varying vec2 vUv;
 varying float vBright;
 varying float vDepth;
@@ -95,12 +101,13 @@ void main() {
   float d = length(vUv - 0.5) * 2.0;
   float glow = pow(smoothstep(1.0, 0.0, d), 3.0);
   float reveal = smoothstep(vDepth - 0.4, vDepth + 0.4, uReveal * 5.0);
-  float a = glow * vBright * reveal * 0.9;
-  gl_FragColor = vec4(vec3(0.0, 0.875, 0.847) * a, a);
+  float a = glow * vBright * reveal * mix(0.9, 0.6, uLight);
+  vec3 ink = mix(vec3(0.0, 0.875, 0.847), vec3(0.05, 0.46, 0.43), uLight);
+  gl_FragColor = vec4(ink * a, a);
 }
 `;
 
-function TraceScene({ uniforms }: { uniforms: { uTime: THREE.Uniform<number>; uReveal: THREE.Uniform<number> } }) {
+function TraceScene({ uniforms, light }: { uniforms: { uTime: THREE.Uniform<number>; uReveal: THREE.Uniform<number>; uLight: THREE.Uniform<number> }; light: boolean }) {
   const { nodes, edges } = useMemo(() => buildSpanTree(), []);
 
   const nodeMesh = useMemo(() => {
@@ -112,7 +119,7 @@ function TraceScene({ uniforms }: { uniforms: { uTime: THREE.Uniform<number>; uR
       transparent: true,
       depthWrite: false,
       depthTest: false,
-      blending: THREE.AdditiveBlending,
+      blending: light ? THREE.NormalBlending : THREE.AdditiveBlending,
     });
     const mesh = new THREE.InstancedMesh(geo, mat, nodes.length);
     const m = new THREE.Matrix4();
@@ -128,7 +135,7 @@ function TraceScene({ uniforms }: { uniforms: { uTime: THREE.Uniform<number>; uR
     geo.setAttribute("aSeed", new THREE.InstancedBufferAttribute(seeds, 1));
     mesh.instanceMatrix.needsUpdate = true;
     return mesh;
-  }, [nodes, uniforms]);
+  }, [nodes, uniforms, light]);
 
   const edgeLines = useMemo(() => {
     const positions = new Float32Array(edges.length * 6);
@@ -150,10 +157,10 @@ function TraceScene({ uniforms }: { uniforms: { uTime: THREE.Uniform<number>; uR
       transparent: true,
       depthWrite: false,
       depthTest: false,
-      blending: THREE.AdditiveBlending,
+      blending: light ? THREE.NormalBlending : THREE.AdditiveBlending,
     });
     return new THREE.LineSegments(geo, mat);
-  }, [nodes, edges, uniforms]);
+  }, [nodes, edges, uniforms, light]);
 
   const pulseMesh = useMemo(() => {
     const count = edges.length * PULSES_PER_EDGE;
@@ -192,12 +199,12 @@ function TraceScene({ uniforms }: { uniforms: { uTime: THREE.Uniform<number>; uR
       transparent: true,
       depthWrite: false,
       depthTest: false,
-      blending: THREE.AdditiveBlending,
+      blending: light ? THREE.NormalBlending : THREE.AdditiveBlending,
     });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.frustumCulled = false;
     return mesh;
-  }, [nodes, edges, uniforms]);
+  }, [nodes, edges, uniforms, light]);
 
   useEffect(() => {
     return () => {
@@ -223,11 +230,19 @@ function TraceScene({ uniforms }: { uniforms: { uTime: THREE.Uniform<number>; uR
   );
 }
 
-export default function TraceCanvas({ inView }: { inView: boolean }) {
+export default function TraceCanvas({
+  inView,
+  theme,
+}: {
+  inView: boolean;
+  theme: "dark" | "light";
+}) {
   const uniforms = useRef({
     uTime: new THREE.Uniform(0),
     uReveal: new THREE.Uniform(0),
+    uLight: new THREE.Uniform(0),
   }).current;
+  uniforms.uLight.value = theme === "light" ? 1 : 0;
 
   /* Scrub the REVEAL against the observability section. */
   useEffect(() => {
@@ -246,13 +261,13 @@ export default function TraceCanvas({ inView }: { inView: boolean }) {
   return (
     <Canvas
       gl={{ antialias: false, stencil: false, depth: false, powerPreference: "high-performance" }}
-      dpr={[1, 1.5]}
+      dpr={[1, 1]}
       frameloop={inView ? "always" : "never"}
       camera={{ fov: 40, position: [0, 0, 7.5] }}
       className="pointer-events-none"
       aria-hidden
     >
-      <TraceScene uniforms={uniforms} />
+      <TraceScene uniforms={uniforms} light={theme === "light"} />
     </Canvas>
   );
 }

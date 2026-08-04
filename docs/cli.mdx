@@ -26,10 +26,24 @@ the thing it scaffolds — and every dependency is another supply-chain surface 
 writes files and credentials to your disk. It's built on Node's built-in `readline`, `crypto`,
 and `fs` only.
 
-## A real bug this caught
+## Exit codes
+
+`0` only when the project was created **and** its dependencies installed. If `npm install`
+fails, or `node_modules/eve` is missing afterwards, it exits `1` and prints what to run — so a
+`&&` chain or a CI step stops there rather than walking into an empty `node_modules`.
+
+## Two real bugs this caught
 
 An early version exited `0` — success — having created nothing, whenever stdin wasn't an
 interactive terminal (a CI run, a piped heredoc). `readline`'s `question()` never resolves
 after stdin hits EOF, and Node exits cleanly once the event loop empties. Silent success is the
 worst failure mode for a scaffolder, so `--yes` and non-TTY detection now race every prompt
 against stdin closing, and fall back to a sane default instead of hanging or vanishing.
+
+The second was the same failure mode wearing a different hat. The template copy skipped any
+source path matching `node_modules`, tested against the **absolute** path — and `npx` stages a
+package at `~/.npm/_npx/<hash>/node_modules/create-evestack/template/…`, so every file was
+skipped and `npx create-evestack` produced an empty directory. It worked perfectly from a
+monorepo checkout, where no `node_modules` appears in the path, which is exactly why nothing
+caught it. The filter now matches path *segments* of the path *relative to the template root*,
+and CI scaffolds from an `npx`-shaped directory on every PR.

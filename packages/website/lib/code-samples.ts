@@ -42,7 +42,19 @@ export async function getCodeSamples(): Promise<CodeSample[]> {
     {
       filename: "agent/agent.ts",
       lang: "typescript",
-      code: agent,
+      // The full file is comment-heavy; show the three working parts at a
+      // length that matches the sibling cards.
+      code: [
+        slice(agent, 0, 2),
+        "",
+        "// Durable sessions: your Postgres, pinned to eve's protocol",
+        slice(agent, 17, 20),
+        "",
+        "// Direct provider calls — no AI Gateway, no markup",
+        slice(agent, 32, 42),
+        "",
+        slice(agent, 62),
+      ].join("\n"),
       note: "Durable Postgres sessions, direct provider — no gateway",
     },
     {

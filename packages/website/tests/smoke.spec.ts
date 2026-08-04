@@ -42,13 +42,6 @@ test.describe("evestack landing page", () => {
     expect(clip).toBe("npx create-evestack");
   });
 
-  test("hero toggle switches render mode", async ({ page }) => {
-    await page.goto("/");
-    const terminal = page.getByRole("button", { name: "terminal", exact: true });
-    await terminal.click();
-    await expect(terminal).toHaveAttribute("aria-pressed", "true");
-  });
-
   test("reduced motion renders full content, no canvas", async ({ browser }) => {
     const ctx = await browser.newContext({
       reducedMotion: "reduce",
@@ -68,6 +61,43 @@ test.describe("evestack landing page", () => {
     await page.goto("/");
     await page.getByRole("button", { name: "light", exact: true }).click();
     await expect(page.locator("html")).toHaveClass(/light/);
+  });
+
+  test("wheel scrolling works immediately after load", async ({ page }) => {
+    // Regression: Lenis must never arm smoothWheel (which preventDefaults
+    // wheel events) before its raf driver exists — the page would freeze.
+    await page.goto("/");
+    await page.mouse.move(700, 450);
+    await page.mouse.wheel(0, 600);
+    await page.waitForTimeout(400);
+    const early = await page.evaluate(() => window.scrollY);
+    expect(early).toBeGreaterThan(0);
+    // and again after the choreography chunk has settled (smoothed path)
+    await page.waitForTimeout(1500);
+    await page.mouse.wheel(0, 800);
+    await page.waitForTimeout(700);
+    const later = await page.evaluate(() => window.scrollY);
+    expect(later).toBeGreaterThan(early);
+  });
+
+  test("hero entrance settles with all CTAs visible", async ({ page }) => {
+    await page.goto("/");
+    await page.waitForTimeout(2600); // entrance (~1.6s) + margin
+    const opacities = await page.evaluate(() =>
+      [...document.querySelector("[data-hero='ctas']")!.children].map(
+        (c) => getComputedStyle(c).opacity,
+      ),
+    );
+    expect(opacities).toEqual(["1", "1", "1"]);
+    // clearProps ran — no leftover inline tween styles
+    const inline = await page.evaluate(() =>
+      [...document.querySelector("[data-hero='ctas']")!.children].map((c) =>
+        c.getAttribute("style"),
+      ),
+    );
+    for (const style of inline) {
+      expect(style ?? "").not.toContain("visibility");
+    }
   });
 
   test("no-JS page is fully readable", async ({ browser }) => {

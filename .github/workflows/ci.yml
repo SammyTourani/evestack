@@ -47,11 +47,35 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+          cache: pnpm
       - run: node --check packages/create-evestack/index.mjs
+      - run: pnpm install --frozen-lockfile
       - run: node packages/create-evestack/scripts/sync-template.mjs
+
+      - name: substitute the workspace build of @evestack/composio
+        # The template depends on @evestack/composio, which only exists on the
+        # public registry after a release — so on every other day this job would
+        # stop at a 404 instead of testing the template. Packing the workspace
+        # build and pointing the dependency at it tests the dependency set we
+        # actually ship, independent of publish order.
+        run: |
+          pnpm --filter @evestack/composio run build
+          npm pack --pack-destination /tmp ./packages/evestack-composio
+          node -e '
+            const fs = require("fs");
+            const p = "packages/create-evestack/template/package.json";
+            const manifest = JSON.parse(fs.readFileSync(p, "utf8"));
+            manifest.dependencies["@evestack/composio"] =
+              "file:/tmp/evestack-composio-" + manifest.dependencies["@evestack/composio"].replace(/^\^/, "") + ".tgz";
+            fs.writeFileSync(p, JSON.stringify(manifest, null, 2) + "\n");
+          '
+
       - name: non-interactive scaffold smoke test
         run: |
           cd /tmp
@@ -59,6 +83,39 @@ jobs:
           test -f ci-smoke-test/.gitignore
           test -f ci-smoke-test/.env.local
           ! grep -q '^EVESTACK_AUTH_PASSWORD=$' ci-smoke-test/.env.local
+          # The install is the whole point. Asserting only that files exist is
+          # what let a scaffolder that 404s on install, prints a green "Done."
+          # and exits 0 pass this job.
+          test -d ci-smoke-test/node_modules/eve
+          test -d ci-smoke-test/node_modules/@evestack/composio
+
+      - name: scaffolds from an npx-shaped install path
+        # `npx` stages the package under
+        # ~/.npm/_npx/<hash>/node_modules/create-evestack/template, so every
+        # source path contains "node_modules". A template filter tested against
+        # the absolute path therefore copied nothing and `npx create-evestack`
+        # produced an empty directory — while passing from a monorepo checkout,
+        # which is why it was never caught here.
+        run: |
+          npm pack --ignore-scripts --pack-destination /tmp ./packages/create-evestack
+          mkdir -p /tmp/npx-sim/node_modules
+          tar xzf /tmp/create-evestack-*.tgz -C /tmp/npx-sim
+          mv /tmp/npx-sim/package /tmp/npx-sim/node_modules/create-evestack
+          cd /tmp/npx-sim
+          node node_modules/create-evestack/index.mjs npx-agent --yes
+          test -f npx-agent/package.json
+          test -f npx-agent/agent/agent.ts
+          test -f npx-agent/lib/memory.ts
+          test -d npx-agent/node_modules/eve
+
+      - name: every publishable package carries a README and a LICENSE
+        # A package published without a README renders "This package does not
+        # have a README" on the one page the whole launch funnels through.
+        run: |
+          for pkg in create-evestack evestack-composio sandbox-opensandbox; do
+            test -f "packages/$pkg/README.md" || { echo "packages/$pkg/README.md missing"; exit 1; }
+            test -f "packages/$pkg/LICENSE"   || { echo "packages/$pkg/LICENSE missing"; exit 1; }
+          done
 
       - name: generated .env.local is actually ignored by git
         # The file existing is not the point — git refusing to stage it is.
@@ -96,4 +153,35 @@ jobs:
                 }
               }
             }
+          '
+
+      - name: registry items pin versions, and pin the tested ones
+        # A bare name means "whatever npm calls latest today", which is how
+        # `eve add @evestack/memory` installed @ai-sdk/openai@4 beside code only
+        # ever exercised against v2.
+        run: |
+          node -e '
+            const fs = require("fs");
+            const template = JSON.parse(fs.readFileSync("templates/default/package.json", "utf8"));
+            let failed = false;
+            for (const f of fs.readdirSync("registry/r")) {
+              if (f === "index.json") continue;
+              const item = JSON.parse(fs.readFileSync(`registry/r/${f}`, "utf8"));
+              for (const [field, source] of [["dependencies", "dependencies"], ["devDependencies", "devDependencies"]]) {
+                for (const entry of item[field] ?? []) {
+                  const at = entry.lastIndexOf("@");
+                  const name = at > 0 ? entry.slice(0, at) : entry;
+                  const range = at > 0 ? entry.slice(at + 1) : "";
+                  const expected = template[source]?.[name];
+                  if (!range) {
+                    console.error(`${f}: ${entry} is unversioned`);
+                    failed = true;
+                  } else if (range !== expected) {
+                    console.error(`${f}: ${entry} does not match templates/default (${expected ?? "absent"})`);
+                    failed = true;
+                  }
+                }
+              }
+            }
+            process.exit(failed ? 1 : 0);
           '

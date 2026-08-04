@@ -1,6 +1,11 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
-import { remember } from "#lib/memory";
+// Relative, not `#lib/memory`. This file also ships as the `@evestack/memory`
+// registry item, and a stock `eve init` project maps only `#*` -> ./agent/*
+// with no tsconfig `paths` at all — TypeScript's `bundler` resolution ignores
+// package.json `imports` entirely, so a subpath import cannot be made to
+// typecheck there without editing two files. A relative path just works.
+import { remember } from "../../lib/memory";
 
 export default defineTool({
   description:

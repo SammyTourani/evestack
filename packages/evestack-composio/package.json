@@ -15,7 +15,9 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "src",
+    "README.md",
+    "LICENSE"
   ],
   "keywords": [
     "eve",
@@ -26,7 +28,8 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepack": "npm run build"
   },
   "dependencies": {
     "@composio/core": "^0.14.1",
@@ -42,5 +45,17 @@
   },
   "engines": {
     "node": ">=24"
+  },
+  "homepage": "https://github.com/SammyTourani/evestack#readme",
+  "bugs": {
+    "url": "https://github.com/SammyTourani/evestack/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SammyTourani/evestack.git",
+    "directory": "packages/evestack-composio"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

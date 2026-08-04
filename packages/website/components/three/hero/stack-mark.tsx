@@ -10,19 +10,63 @@ import { scrollState } from "../shared/scroll-state";
 
 /* Scene-graph contract (load-bearing — the animation systems never fight):
      sceneGroup   ← disassembly pure-function ONLY (offset/scale recenter)
-      mouseGroup  ← mouse yaw/pitch damping ONLY
-       slabGroup  ← GSAP assemble (progress≈0) + disassembly pure-function
+      mouseGroup  ← mouse yaw/pitch damping ONLY (held while assemble owns it)
+      slabGroup   ← GSAP assemble (progress≈0) + disassembly pure-function
          mesh     ← idle breathing sine ONLY
 
    The scroll disassembly is a PURE FUNCTION of scrollState.heroProgress,
    evaluated per frame — scrub-reversible by construction, no tween state. */
 
 const REST_ROTATION = { x: -0.14, y: 0.3 };
-/* Assembled composition: raised + slightly reduced so the mark's crown
-   reads above the h1. Disassembly recenters to fill the canvas. */
-const REST_OFFSET_Y = 0.5;
-const REST_SCALE = 0.94;
-const CAMERA_Z = { rest: 7, exploded: 9.6 };
+/* Assembled composition: raised so the mark's crown reads above the h1 —
+   but small enough that no rotated corner ever crosses the canvas edge
+   (camera z 7.5 → half-view 2.01u; extent ≈ 1.9·scale + offset). */
+const REST_OFFSET_Y = 0.25;
+const REST_SCALE = 0.88;
+const CAMERA_Z = { rest: 7.5, exploded: 9.6 };
+
+const MATERIALS = {
+  dark: {
+    proud: {
+      color: "#0b0b0c",
+      metalness: 0.75,
+      roughness: 0.14,
+      clearcoat: 1.0,
+      clearcoatRoughness: 0.1,
+      envMapIntensity: 2.4,
+    },
+    recessed: {
+      color: "#060607",
+      metalness: 0.75,
+      roughness: 0.28,
+      clearcoat: 0.6,
+      clearcoatRoughness: 0.22,
+      envMapIntensity: 1.1,
+    },
+    parityEnv: 2.4,
+  },
+  light: {
+    /* porcelain: bright dielectric slabs lit by ambient fill; env only
+       contributes the chamfer speculars, so keep its weight low */
+    proud: {
+      color: "#eceef1",
+      metalness: 0.05,
+      roughness: 0.34,
+      clearcoat: 1.0,
+      clearcoatRoughness: 0.16,
+      envMapIntensity: 0.55,
+    },
+    recessed: {
+      color: "#d6d9df",
+      metalness: 0.05,
+      roughness: 0.48,
+      clearcoat: 0.5,
+      clearcoatRoughness: 0.3,
+      envMapIntensity: 0.35,
+    },
+    parityEnv: 0.55,
+  },
+} as const;
 
 /** 0→1 progress within [a, b], clamped. */
 function seg(p: number, a: number, b: number): number {
@@ -36,7 +80,7 @@ function easeInOut3(t: number): number {
 }
 const lerp = THREE.MathUtils.lerp;
 
-export function StackMark() {
+export function StackMark({ theme }: { theme: "dark" | "light" }) {
   const sceneGroup = useRef<THREE.Group>(null!);
   const mouseGroup = useRef<THREE.Group>(null!);
   const slabRefs = useRef<(THREE.Group | null)[]>([]);
@@ -45,33 +89,22 @@ export function StackMark() {
   const assembleTl = useRef<gsap.core.Timeline | null>(null);
 
   const geometry = useMemo(() => createSlabGeometry(), []);
+  const spec = MATERIALS[theme];
   const materials = useMemo(() => {
-    const proud = new THREE.MeshPhysicalMaterial({
-      color: "#0b0b0c",
-      metalness: 0.75,
-      roughness: 0.14,
-      clearcoat: 1.0,
-      clearcoatRoughness: 0.1,
-      envMapIntensity: 2.4,
-    });
-    const recessed = new THREE.MeshPhysicalMaterial({
-      color: "#060607",
-      metalness: 0.75,
-      roughness: 0.28,
-      clearcoat: 0.6,
-      clearcoatRoughness: 0.22,
-      envMapIntensity: 1.1,
-    });
-    return { proud, recessed };
-  }, []);
+    return {
+      proud: new THREE.MeshPhysicalMaterial(spec.proud),
+      recessed: new THREE.MeshPhysicalMaterial(spec.recessed),
+    };
+  }, [spec]);
 
   useEffect(() => {
     return () => {
-      geometry.dispose();
       materials.proud.dispose();
       materials.recessed.dispose();
     };
-  }, [geometry, materials]);
+  }, [materials]);
+
+  useEffect(() => () => geometry.dispose(), [geometry]);
 
   /* Mouse parallax source — window-level because the canvas is
      pointer-events-none. Skipped entirely on coarse pointers. */
@@ -135,9 +168,7 @@ export function StackMark() {
       mesh.position.y = Math.sign(SLABS[i].y) * drift;
     });
 
-    // Damped mouse yaw/pitch, influence and rest pose both fade during
-    // the un-glyph (the mark turns face-on). Held off while the assemble
-    // timeline owns mouseGroup.rotation — one writer at a time.
+    // Damped mouse yaw/pitch — held while the assemble timeline owns it
     const unglyph = easeInOut2(seg(p, 0.12, 0.45));
     if (!assembleTl.current?.isActive()) {
       const targetY = REST_ROTATION.y * (1 - unglyph) + pointer.current.x * 0.3 * calm;
@@ -148,15 +179,12 @@ export function StackMark() {
 
     /* ── Scroll disassembly: pure function of progress ── */
     if (p > 0.001) {
-      // interrupt the assemble timeline if the user scrolls early
       if (assembleTl.current?.isActive()) assembleTl.current.progress(1);
 
-      // recenter + refill the frame
       sceneGroup.current.position.y = lerp(REST_OFFSET_Y, 0, unglyph);
       const s = lerp(REST_SCALE, 1, unglyph);
       sceneGroup.current.scale.setScalar(s);
 
-      // camera dolly out so the four-row stack fits
       state.camera.position.z = lerp(
         CAMERA_Z.rest,
         CAMERA_Z.exploded,
@@ -175,19 +203,22 @@ export function StackMark() {
       });
 
       // recessed quadrants tween to glossy parity — "the quadrants are peers"
-      materials.recessed.envMapIntensity = lerp(1.1, 2.4, unglyph);
-      materials.recessed.roughness = lerp(0.28, 0.14, unglyph);
-      materials.recessed.clearcoat = lerp(0.6, 1.0, unglyph);
+      materials.recessed.envMapIntensity = lerp(
+        spec.recessed.envMapIntensity,
+        spec.parityEnv,
+        unglyph,
+      );
+      materials.recessed.roughness = lerp(spec.recessed.roughness, spec.proud.roughness, unglyph);
+      materials.recessed.clearcoat = lerp(spec.recessed.clearcoat, spec.proud.clearcoat, unglyph);
     } else {
       sceneGroup.current.position.y = REST_OFFSET_Y;
       sceneGroup.current.scale.setScalar(REST_SCALE);
       state.camera.position.z = CAMERA_Z.rest;
-      materials.recessed.envMapIntensity = 1.1;
-      materials.recessed.roughness = 0.28;
-      materials.recessed.clearcoat = 0.6;
+      materials.recessed.envMapIntensity = spec.recessed.envMapIntensity;
+      materials.recessed.roughness = spec.recessed.roughness;
+      materials.recessed.clearcoat = spec.recessed.clearcoat;
       // Instant jumps to the top (Home key, scroll restoration) skip the
-      // scrub — restore the slab grid pose too, unless the assemble
-      // timeline still owns these transforms.
+      // scrub — restore the slab grid pose too.
       if (!assembleTl.current?.isActive()) {
         SLABS.forEach((slab, i) => {
           const group = slabRefs.current[i];

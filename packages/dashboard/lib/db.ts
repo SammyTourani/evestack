@@ -1,3 +1,4 @@
+import { setDefaultAutoSelectFamily } from "node:net";
 import { Pool, types as pgTypes, type CustomTypesConfig } from "pg";
 
 /**
@@ -14,6 +15,27 @@ declare global {
   // eslint-disable-next-line no-var
   var __evestackPool: Pool | undefined;
 }
+
+/**
+ * Connect to one address at a time instead of racing every address a hostname
+ * resolves to.
+ *
+ * `localhost` resolves to both ::1 and 127.0.0.1, which sends Node down its
+ * happy-eyeballs path — and when every attempt is refused, that path can build
+ * its summary `AggregateError` from a list it has already cleared. The
+ * constructor then throws `TypeError: object null is not iterable` from inside
+ * node:net, on a socket callback, where no `await` and no page `try/catch` can
+ * see it. The result was `⨯ uncaughtException` and `GET / 500 in 100s` for the
+ * single most likely misconfiguration there is: Postgres not started.
+ *
+ * Measured on this exact code: `…@localhost:5999` → 500 after 100s plus four
+ * uncaught exceptions; `…@127.0.0.1:5999`, which resolves to one address and so
+ * never enters that path → 200 in 0.3s with the intended "Can't reach the
+ * database" page. Disabling the race gets the second behaviour for hostnames
+ * too. The cost is the pre-Node-20 fallback speed on a broken-IPv6 network,
+ * which is a fair trade against taking the process down.
+ */
+setDefaultAutoSelectFamily(false);
 
 const NAIVE_TIMESTAMP = pgTypes.builtins.TIMESTAMP;
 
@@ -68,21 +90,98 @@ function connectionString(): string {
   return url;
 }
 
-// Next dev reloads modules on every edit; without the global we would leak a
-// pool per reload until Postgres refuses new connections.
-export const pool: Pool =
-  globalThis.__evestackPool ??
-  (globalThis.__evestackPool = new Pool({
+/**
+ * Built on first query, not at module load.
+ *
+ * At module scope, a missing WORKFLOW_POSTGRES_URL threw during module
+ * evaluation — before any route or page `try/catch` existed to catch it — so
+ * the carefully worded error above never reached anyone and every route
+ * answered a bare 500 instead. Deferring construction is what lets the
+ * "Can't reach the database" page and `/api/health`'s 503 do their jobs.
+ *
+ * Next dev reloads modules on every edit; without the global we would leak a
+ * pool per reload until Postgres refuses new connections.
+ */
+export function getPool(): Pool {
+  const existing = globalThis.__evestackPool;
+  if (existing) return existing;
+  const created = new Pool({
     connectionString: connectionString(),
     types: utcTimestamps,
     max: Number(process.env.EVESTACK_DB_POOL_MAX ?? 8),
     idleTimeoutMillis: 30_000,
-  }));
+    // Postgres being down is the common case, not the exotic one. Without a
+    // bound, pg keeps retrying every address the hostname resolves to and a
+    // page render hangs for minutes before anything is rendered at all.
+    connectionTimeoutMillis: Number(process.env.EVESTACK_DB_CONNECT_TIMEOUT_MS ?? 5_000),
+  });
+  // A pool with no listener turns an idle client's socket error into an
+  // unhandled 'error' event, which takes the whole server process down.
+  created.on("error", (error) => {
+    console.warn(`[evestack] idle Postgres client error: ${describeDbError(error)}`);
+  });
+  globalThis.__evestackPool = created;
+  return created;
+}
+
+/**
+ * Flattens whatever pg threw into a single readable sentence.
+ *
+ * A refused connection surfaces as an `AggregateError` whose `errors` property
+ * is null rather than an array — one per resolved address. Rendering that
+ * through Next's error path threw `TypeError: object null is not iterable`
+ * from inside the framework, which escaped the page's own catch entirely and
+ * came out as `uncaughtException` plus a 100-second hang. Normalizing here
+ * keeps every caller dealing with an ordinary Error.
+ */
+export function describeDbError(error: unknown): string {
+  if (error instanceof AggregateError) {
+    const parts: unknown[] = Array.isArray(error.errors) ? error.errors : [];
+    const detail = parts.map(describeDbError).filter(Boolean).join("; ");
+    return detail || error.message || "connection failed";
+  }
+  if (error instanceof Error) {
+    // Node attaches these to socket errors but does not declare them on Error;
+    // pg re-throws the raw system error, so this is where the useful detail is.
+    const { code, address, port } = error as Error & {
+      code?: string;
+      address?: string;
+      port?: number;
+    };
+    const where = address ? ` (${address}${port ? `:${port}` : ""})` : "";
+    return code && !error.message.includes(code)
+      ? `${code}: ${error.message}${where}`
+      : `${error.message}${where}`;
+  }
+  return String(error);
+}
+
+/**
+ * Deliberately carries no `cause`.
+ *
+ * pg reports a refused connection as an `AggregateError`, and Next serializes
+ * an error's `cause` chain across the server/client boundary in dev. Rebuilding
+ * an AggregateError on the other side throws `TypeError: object null is not
+ * iterable` from inside the framework — outside any page's try/catch — which
+ * surfaced as `⨯ uncaughtException` and a 93-second `GET /`. The original
+ * message is already flattened into `message`; the object itself must not
+ * travel. `describeDbError` keeps the detail without keeping the shape.
+ */
+export class DatabaseUnavailableError extends Error {
+  constructor(detail: string) {
+    super(detail);
+    this.name = "DatabaseUnavailableError";
+  }
+}
 
 export async function query<T = Record<string, unknown>>(
   text: string,
   params: readonly unknown[] = [],
 ): Promise<T[]> {
-  const result = await pool.query(text, params as unknown[]);
-  return result.rows as T[];
+  try {
+    const result = await getPool().query(text, params as unknown[]);
+    return result.rows as T[];
+  } catch (error) {
+    throw new DatabaseUnavailableError(describeDbError(error));
+  }
 }

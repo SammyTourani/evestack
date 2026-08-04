@@ -25,6 +25,30 @@ const outDir = join(root, "registry", "r");
 
 const read = (rel) => readFileSync(join(template, rel), "utf8");
 
+const templateManifest = JSON.parse(read("package.json"));
+
+/**
+ * Pin every declared dependency to the range templates/default is tested with.
+ *
+ * A bare name in a registry item means "whatever npm calls latest today". That
+ * is how `eve add @evestack/memory` ended up installing @ai-sdk/openai@4 next to
+ * ai@7 in a project whose code has only ever been run against @ai-sdk/openai@2.
+ * eve's own items pin (`@vercel/connect@0.4.2`); so do ours, from the one
+ * manifest that is actually exercised.
+ */
+function pin(names, field = "dependencies") {
+  return names.map((name) => {
+    const range = templateManifest[field]?.[name];
+    if (!range) {
+      throw new Error(
+        `registry: ${name} is listed as a ${field} of a registry item but is not in ` +
+          "templates/default/package.json, so there is no tested version to pin to.",
+      );
+    }
+    return `${name}@${range}`;
+  });
+}
+
 /** @type {Array<{name:string,title:string,description:string,dependencies?:string[],devDependencies?:string[],files:Array<{source:string,target:string}>,docs?:string}>} */
 const ITEMS = [
   {
@@ -33,8 +57,8 @@ const ITEMS = [
     description:
       "Semantic long-term memory for an eve agent, stored in your own Postgres with pgvector. " +
       "No vector service, no extra container, no bill.",
-    dependencies: ["pg", "ai", "@ai-sdk/openai"],
-    devDependencies: ["@types/pg"],
+    dependencies: pin(["pg", "ai", "@ai-sdk/openai"]),
+    devDependencies: pin(["@types/pg"], "devDependencies"),
     files: [
       { source: "lib/memory.ts", target: "lib/memory.ts" },
       { source: "agent/tools/remember.ts", target: "agent/tools/remember.ts" },
@@ -42,16 +66,17 @@ const ITEMS = [
     ],
     docs:
       "Requires a Postgres with the pgvector extension available (the pgvector/pgvector image " +
-      "has it) and WORKFLOW_POSTGRES_URL set. Add `\"#lib/*\": \"./lib/*\"` to the `imports` map " +
-      "in package.json so the tools can resolve #lib/memory. Uses HNSW indexing, which is " +
-      "correct on an empty table — IVFFlat is not.",
+      "has it) and WORKFLOW_POSTGRES_URL set. The tools import lib/memory.ts by relative path, " +
+      "so no `imports` or tsconfig `paths` entry is needed — but if your tsconfig `include` " +
+      "lists only agent/, add \"lib/**/*.ts\" so the file is typechecked. Uses HNSW indexing, " +
+      "which is correct on an empty table — IVFFlat is not.",
   },
   {
     name: "instrumentation",
     title: "evestack dashboard traces",
     description:
       "Export OpenTelemetry traces from an eve agent to a self-hosted evestack dashboard.",
-    dependencies: ["@vercel/otel"],
+    dependencies: pin(["@vercel/otel"]),
     files: [{ source: "agent/instrumentation.ts", target: "agent/instrumentation.ts" }],
     docs:
       "Set EVESTACK_DASHBOARD_URL to your dashboard's ingest endpoint " +
@@ -77,9 +102,12 @@ const ITEMS = [
       "Replace vercelOidc()/placeholderAuth() with HTTP Basic, for agents that run off Vercel.",
     files: [{ source: "agent/channels/eve.ts", target: "agent/channels/eve.ts" }],
     docs:
-      "Set EVESTACK_AUTH_USER and EVESTACK_AUTH_PASSWORD. localDev() still accepts loopback " +
-      "with no credentials. eve fails closed, so without these set, non-loopback traffic gets " +
-      "a 401 — which is the intended behavior, not a bug.",
+      "Set EVESTACK_AUTH_USER and EVESTACK_AUTH_PASSWORD. Requests whose Host is a literal " +
+      "loopback name still need no credentials, so `eve dev` keeps working; the file wraps " +
+      "eve's localDev() in a stricter host check because eve 0.29.5 matches `/^127./` " +
+      "unanchored and any `*.localhost`, which lets a hostile DNS name skip auth entirely. " +
+      "eve fails closed, so without these set, non-loopback traffic gets a 401 — which is " +
+      "the intended behavior, not a bug.",
   },
 ];
 

@@ -37,12 +37,6 @@ if (hasCanvas) {
 
 await page.locator("#hero .sticky").screenshot({ path: `${outDir}/hero-dashboard.png` });
 
-if (hasCanvas) {
-  await page.getByRole("radio", { name: "terminal" }).click();
-  await page.waitForTimeout(900);
-  await page.locator("#hero .sticky").screenshot({ path: `${outDir}/hero-terminal.png` });
-}
-
 const gl = await page.evaluate(() => {
   const c = document.createElement("canvas");
   const g = c.getContext("webgl2");

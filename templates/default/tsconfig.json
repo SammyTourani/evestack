@@ -8,8 +8,12 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "noEmit": true,
+    // `moduleResolution: "bundler"` ignores package.json `imports`, so the `#*`
+    // subpath has to be restated here or nothing under agent/ can use it.
+    // Deliberately no `#lib/*`: lib/ is imported relatively, because those files
+    // also ship as the @evestack/memory registry item and land in projects that
+    // have no such mapping.
     "paths": {
-      "#lib/*": ["./lib/*"],
       "#*": ["./agent/*"]
     }
   },

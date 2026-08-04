@@ -181,37 +181,69 @@ function Choreography() {
         gsap.utils.toArray<HTMLElement>("[data-reveal='lines']").forEach((el) => {
           // skip elements inside the hero (choreographed above)
           if (el.closest("#hero")) return;
-          const split = SplitText.create(el, { type: "lines", mask: "lines", autoSplit: true });
-          gsap.from(split.lines, {
-            yPercent: 100,
-            duration: 0.8,
-            ease: "expo.out",
-            stagger: 0.08,
-            scrollTrigger: { trigger: el, start: "top 80%", once: true },
-            onComplete: () => split.revert(),
-          });
+          const split = SplitText.create(el, { type: "lines", mask: "lines" });
+          gsap.fromTo(
+            split.lines,
+            { yPercent: 100 },
+            {
+              yPercent: 0,
+              duration: 0.8,
+              ease: "expo.out",
+              stagger: 0.08,
+              scrollTrigger: { trigger: el, start: "top 80%", once: true },
+              onComplete: () => split.revert(),
+            },
+          );
         });
 
         gsap.utils.toArray<HTMLElement>("[data-reveal='stagger']").forEach((el) => {
-          gsap.from(el.children, {
-            autoAlpha: 0,
-            y: 24,
-            duration: 0.7,
-            ease: "power2.out",
-            stagger: 0.07,
-            scrollTrigger: { trigger: el, start: "top 80%", once: true },
-          });
+          gsap.fromTo(
+            el.children,
+            { autoAlpha: 0, y: 24 },
+            {
+              autoAlpha: 1,
+              y: 0,
+              duration: 0.7,
+              ease: "power2.out",
+              stagger: 0.07,
+              scrollTrigger: { trigger: el, start: "top 80%", once: true },
+              onComplete: () => gsap.set(el.children, { clearProps: "all" }),
+            },
+          );
         });
 
+        /* evestack-column checks pop after the row cascade */
+        const checks = gsap.utils.toArray<SVGElement>("[data-check]");
+        if (checks.length) {
+          gsap.fromTo(
+            checks,
+            { scale: 0, transformOrigin: "center" },
+            {
+              scale: 1,
+              duration: 0.45,
+              ease: "back.out(2.2)",
+              stagger: 0.05,
+              delay: 0.7,
+              scrollTrigger: { trigger: "[data-reveal='rows']", start: "top 75%", once: true },
+              onComplete: () => gsap.set(checks, { clearProps: "all" }),
+            },
+          );
+        }
+
         gsap.utils.toArray<HTMLElement>("[data-reveal='rows'] tbody tr").forEach((row, i) => {
-          gsap.from(row, {
-            autoAlpha: 0,
-            y: 12,
-            duration: 0.5,
-            ease: "power2.out",
-            delay: (i % 8) * 0.06,
-            scrollTrigger: { trigger: row.closest("[data-reveal='rows']"), start: "top 75%", once: true },
-          });
+          gsap.fromTo(
+            row,
+            { autoAlpha: 0, y: 12 },
+            {
+              autoAlpha: 1,
+              y: 0,
+              duration: 0.5,
+              ease: "power2.out",
+              delay: (i % 8) * 0.06,
+              scrollTrigger: { trigger: row.closest("[data-reveal='rows']"), start: "top 75%", once: true },
+              onComplete: () => gsap.set(row, { clearProps: "all" }),
+            },
+          );
         });
 
         /* ── Terminal typing (§3) ──────────────────────────────────── */

@@ -231,11 +231,29 @@ export async function listCategories(apiKey: string): Promise<Category[]> {
  * COMPOSIO_MANAGE_CONNECTIONS, not the dashboard's.
  */
 export async function resolveAuthConfigId(apiKey: string, toolkitSlug: string): Promise<string> {
-  const existing = await request<{ items?: { id?: string; is_disabled?: boolean }[] }>(
-    `/api/v3/auth_configs?toolkit_slug=${encodeURIComponent(toolkitSlug)}&limit=10`,
-    apiKey,
+  // `?toolkit_slug=` is sent, but Composio ignores it: `bananaslug`,
+  // `nonexistenttoolkit123` and 50 random characters all came back 200 with the
+  // account's single github config. Taking the first enabled item on trust is
+  // therefore how "Connect Notion" sends someone to a GitHub authorization
+  // page — and creates a real INITIATED connected_account for the wrong app.
+  // The server filter stays as a hint; the match is decided here.
+  const existing = await request<{
+    items?: {
+      id?: string;
+      is_disabled?: boolean;
+      status?: string;
+      toolkit?: { slug?: string };
+    }[];
+  }>(`/api/v3/auth_configs?toolkit_slug=${encodeURIComponent(toolkitSlug)}&limit=100`, apiKey);
+  // `status` is what the live API returns ("ENABLED"); `is_disabled` is not a
+  // field on this resource, so testing it alone accepts a disabled config.
+  const usable = (existing.items ?? []).find(
+    (item) =>
+      item.id &&
+      !item.is_disabled &&
+      (item.status === undefined || item.status.toUpperCase() === "ENABLED") &&
+      item.toolkit?.slug?.toLowerCase() === toolkitSlug,
   );
-  const usable = (existing.items ?? []).find((item) => item.id && !item.is_disabled);
   if (usable?.id) return usable.id;
 
   const created = await request<{ auth_config?: { id?: string }; id?: string }>(

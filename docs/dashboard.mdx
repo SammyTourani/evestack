@@ -25,10 +25,15 @@ This is where evestack diverges from Agent Runs, which is read-only:
 
 ## Running it
 
+The dashboard is not part of a `create-evestack` project — clone the repository for it. It only
+needs to reach the same Postgres your agent uses, so it can live anywhere:
+
 ```bash
-cd packages/dashboard
+git clone https://github.com/SammyTourani/evestack
+cd evestack/packages/dashboard
 cp .env.example .env.local   # WORKFLOW_POSTGRES_URL, optionally COMPOSIO_API_KEY
-npm run dev
+pnpm install
+pnpm run dev                 # http://localhost:4000
 ```
 
 Or as part of the full stack: `docker compose --profile full up -d` brings up Postgres and the

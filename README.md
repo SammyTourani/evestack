@@ -13,6 +13,7 @@ runs on your own hardware with one command, and we build the parts Vercel kept f
 npx create-evestack my-agent
 cd my-agent
 docker compose up -d postgres
+npm run db:bootstrap     # create the workflow schema — nothing creates it for you
 npm run dev
 ```
 
@@ -109,12 +110,18 @@ a hosted provider is the practical choice.
 ## Repository layout
 
 ```
-templates/default/          the agent: Postgres durability, Docker sandbox, memory
-packages/dashboard/         Next.js observability + control plane
-packages/create-evestack/   the one-command scaffolder
-packages/evestack-composio/ Composio wiring for one-click tool auth
-registry/                   the @evestack eve registry
+templates/default/             the agent: Postgres durability, Docker sandbox, memory
+packages/dashboard/            Next.js observability + control plane
+packages/create-evestack/      the one-command scaffolder            -> npm: create-evestack
+packages/evestack-composio/    Composio wiring for one-click tool auth -> npm: @evestack/composio
+packages/sandbox-opensandbox/  OpenSandbox sandbox backend            -> npm: @evestack/sandbox-opensandbox
+packages/website/              the landing page
+registry/                      the @evestack eve registry
 ```
+
+The dashboard, the website and the agent template are not published to npm — the dashboard runs
+from this repository, and the template ships *inside* `create-evestack`. Release order for the
+three that are published is in [RELEASING.md](./RELEASING.md).
 
 ## Notes from building this
 

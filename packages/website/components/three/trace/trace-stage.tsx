@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
+import { useTheme } from "next-themes";
 import { canRunHeroScene } from "../shared/fallback-gate";
 
 const TraceCanvas = dynamic(() => import("./trace-canvas"), { ssr: false, loading: () => null });
@@ -14,6 +15,8 @@ export function TraceStage() {
   const ref = useRef<HTMLDivElement>(null);
   const [mount, setMount] = useState(false);
   const [inView, setInView] = useState(false);
+  const { resolvedTheme } = useTheme();
+  const theme: "dark" | "light" = resolvedTheme === "light" ? "light" : "dark";
 
   useEffect(() => {
     const el = ref.current;
@@ -51,7 +54,7 @@ export function TraceStage() {
           "radial-gradient(ellipse 75% 80% at 50% 50%, black 55%, transparent 100%)",
       }}
     >
-      {mount ? <TraceCanvas inView={inView} /> : null}
+      {mount ? <TraceCanvas key={theme} inView={inView} theme={theme} /> : null}
     </div>
   );
 }

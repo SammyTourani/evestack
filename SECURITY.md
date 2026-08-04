@@ -45,3 +45,11 @@ disclosure.
 - **`EVESTACK_AUTH_PASSWORD` is generated per project**, never defaulted, specifically so a
   shipped default password can never be the only thing standing between a stranger and your
   agent. Rotate it if `.env.local` is ever exposed.
+- **The loopback bypass is decided from the `Host` header**, because that is the only thing an
+  HTTP request carries about where it thinks it is going. `agent/channels/eve.ts` therefore
+  matches literal loopback names only — `localhost`, `::1`, and addresses inside `127.0.0.0/8`
+  — rather than calling `eve`'s `localDev()` directly, whose `/^127\./` and `*.localhost` tests
+  also accept hostile names such as `127.evil.com` and `evil.localhost` (measured against eve
+  0.29.5: `Host: 127.evil.com` was answered 200 where `Host: evil.example.com` was 401). This
+  is a real bypass in `eve` and out of scope above, so evestack narrows it locally instead of
+  relying on it.
