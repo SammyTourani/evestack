@@ -1,4 +1,4 @@
-import { type AuthFn, httpBasic, localDev } from "eve/channels/auth";
+import { httpBasic, localDev } from "eve/channels/auth";
 import { eveChannel } from "eve/channels/eve";
 
 /**
@@ -10,54 +10,35 @@ import { eveChannel } from "eve/channels/eve";
  * replace them with HTTP Basic, whose credentials `create-evestack` generates
  * for you and writes to .env.local.
  *
- * The loopback bypass goes first so `eve dev` needs no credentials on your own
+ * `localDev()` goes first so `eve dev` needs no credentials on your own
  * machine; HTTP Basic sits underneath it for everything else.
- */
-
-/**
- * Hostnames that mean "this machine", matched exactly.
  *
- * eve's own `localDev()` decides this with an unanchored `/^127\./` plus
- * `endsWith(".localhost")` over the Host header. Neither is as narrow as it
- * reads: `127.evil.com`, `127.0.0.1.evil.com` and `evil.localhost` are all names
- * someone else can register and point at your agent, and each one is handed a
- * full `local-dev` principal with no credentials. Measured against eve 0.29.5 —
- * a request carrying `Host: 127.evil.com` was answered 200 where `Host:
- * evil.example.com` was correctly 401.
+ * ─ A note on why this file used to be longer ─
  *
- * Host is attacker-controlled, so it can only ever be used to *deny*. This
- * narrows the match to literal loopback names and then defers to eve for the
- * principal itself. Anything else falls through to HTTP Basic.
+ * On eve 0.29.x, `localDev()` decided "is this my machine" from the request's
+ * Host header, using an unanchored `/^127\./` plus `endsWith(".localhost")`.
+ * Host is attacker-controlled, so `127.evil.com` — a name anyone can register
+ * and point at your agent — was handed a full local-dev principal with no
+ * credentials. We measured it: that Host answered 200 where a plain foreign
+ * host answered 401. This template shipped a `strictLocalDev()` wrapper that
+ * narrowed the match to literal loopback names.
+ *
+ * eve 0.30.0 fixed it properly upstream: `localDev()` now grants based on the
+ * deployment being an `eve dev` / `vercel dev` process rather than on anything
+ * in the request, and `isLoopbackRequest` was removed. Keeping our wrapper on
+ * 0.30 would be worse than useless — it can no longer add protection, and it
+ * would reject legitimate local-dev access over a LAN IP, a tunnel, or a
+ * container hostname. So it is gone, and the package pins eve ^0.30.2.
+ *
+ * If you are pinned to eve 0.29.x for some reason, you still need that guard:
+ * see git history for the version this replaced.
  */
-const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
-const LOOPBACK_IPV4 = /^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
-
-function isLoopbackHostname(hostname: string): boolean {
-  const host = hostname.toLowerCase();
-  if (LOOPBACK_HOSTNAMES.has(host)) return true;
-  const octets = LOOPBACK_IPV4.exec(host);
-  return octets !== null && octets.slice(1).every((octet) => Number(octet) <= 255);
-}
-
-function strictLocalDev(): AuthFn<Request> {
-  const grant = localDev();
-  return (request) => {
-    let hostname: string;
-    try {
-      hostname = new URL(request.url).hostname;
-    } catch {
-      return null;
-    }
-    return isLoopbackHostname(hostname) ? grant(request) : null;
-  };
-}
-
 const username = process.env.EVESTACK_AUTH_USER;
 const password = process.env.EVESTACK_AUTH_PASSWORD;
 
 export default eveChannel({
   auth: [
-    strictLocalDev(),
+    localDev(),
     ...(username && password
       ? [httpBasic({ username, password }, { realm: "evestack" })]
       : []),

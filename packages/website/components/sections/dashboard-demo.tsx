@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import {
   baseSessions,
@@ -244,31 +244,35 @@ export function DashboardDemo() {
       rafBox.id = requestAnimationFrame(step);
     };
 
-  /* ── Sessions live loop (unchanged behavior) ─────────────────────── */
+  /* ── Sessions live loop: ENDLESS passes. Each pass runs the three live
+     sessions with ticking numbers, settles briefly, then collapses and
+     replays. Time only elapses while the demo is on screen AND unhovered —
+     scroll away and it waits; scroll back and it is always moving. ── */
   useEffect(() => {
     const root = rootRef.current;
     if (!root || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     stopRef.current = false;
 
-    const TOTAL_MS =
+    const FIRST_TOTAL =
       150 +
       (baseSessions.length - 1) * 90 +
       700 +
       (liveSessions.length - 1) * 5940 +
       3200;
-    const prog = { elapsed: 0 };
+    const REPEAT_TOTAL = (liveSessions.length - 1) * 5940 + 3200;
+    const prog = { elapsed: 0, total: FIRST_TOTAL };
 
     const timer = (ms: number, onFrame: ((t: number) => void) | null, onDone: () => void) => {
       let last = performance.now();
       let elapsed = 0;
       const step = (now: number) => {
         if (stopRef.current) return;
-        if (!pausedRef.current) {
+        if (!pausedRef.current && inViewRef.current) {
           const d = now - last;
           elapsed += d;
           prog.elapsed += d;
           const bar = barRef.current;
-          if (bar) bar.style.transform = `scaleX(${Math.min(prog.elapsed / TOTAL_MS, 1)})`;
+          if (bar) bar.style.transform = `scaleX(${Math.min(prog.elapsed / prog.total, 1)})`;
         }
         last = now;
         const t = Math.min(elapsed / ms, 1);
@@ -298,12 +302,25 @@ export function DashboardDemo() {
             timer(300, null, () => {
               setLive((l) => l && { ...l, flash: false });
               if (k + 1 >= liveSessions.length) {
-                // hard cap: settle forever — retire the progress hairline
+                // pass complete: settle, breathe, then replay from the top —
+                // the demo is ALWAYS alive whenever it's on screen
                 const bar = barRef.current;
                 if (bar) {
                   bar.style.transform = "scaleX(1)";
                   bar.style.opacity = "0";
                 }
+                timer(5000, null, () => {
+                  setLive((l) => l && { ...l, shown: false });
+                  timer(300, null, () => {
+                    prog.elapsed = 0;
+                    prog.total = REPEAT_TOTAL;
+                    if (bar) {
+                      bar.style.transform = "scaleX(0)";
+                      bar.style.opacity = "1";
+                    }
+                    cycle(0);
+                  });
+                });
                 return;
               }
               timer(2500, null, () => {
@@ -389,8 +406,10 @@ export function DashboardDemo() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reduced]);
 
-  /* ── Chat: play the conversation on every activation ─────────────── */
-  useEffect(() => {
+  /* ── Chat: play the conversation on every activation. useLayoutEffect:
+     the reset must land BEFORE paint, or the settled conversation flashes
+     for one frame when the tab opens (user-reported on Integrations). ── */
+  useLayoutEffect(() => {
     if (reduced || tab !== "Chat") return;
     const stopped = { v: false };
     const rafBox = { id: 0 };
@@ -431,8 +450,9 @@ export function DashboardDemo() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, reduced]);
 
-  /* ── Integrations: connect live on every activation ──────────────── */
-  useEffect(() => {
+  /* ── Integrations: connect live on every activation. useLayoutEffect —
+     pre-paint reset, so the settled "connected" rows never flash. ── */
+  useLayoutEffect(() => {
     if (reduced || tab !== "Integrations") return;
     const stopped = { v: false };
     const rafBox = { id: 0 };
@@ -659,32 +679,42 @@ export function DashboardDemo() {
           }}
         >
           <div data-panel-anim className="flex min-h-[300px] flex-col justify-end gap-3 p-4">
-            {CHAT.slice(0, chat.shown).map((m, i) => (
-              <ChatBubble key={i} role={m.role}>
-                {m.text}
-              </ChatBubble>
-            ))}
-            {chat.streamWords > 0 ? (
-              <ChatBubble role="assistant">
-                {CHAT_WORDS[chat.shown].slice(0, chat.streamWords).join(" ")}
-                <span
-                  aria-hidden
-                  className="ml-0.5 inline-block h-[0.95em] w-[2px] translate-y-[0.15em] bg-blue-700"
-                />
-              </ChatBubble>
-            ) : null}
+            {/* the streaming bubble IS the final bubble (same key) — it fills
+                in place instead of being swapped out, so nothing jumps */}
+            {CHAT.slice(0, chat.streamWords > 0 ? chat.shown + 1 : chat.shown).map((m, i) => {
+              const streaming = chat.streamWords > 0 && i === chat.shown;
+              return (
+                <div key={i} className="chat-row">
+                  <div>
+                    <ChatBubble role={m.role}>
+                      {streaming ? CHAT_WORDS[i].slice(0, chat.streamWords).join(" ") : m.text}
+                      {streaming ? (
+                        <span
+                          aria-hidden
+                          className="ml-0.5 inline-block h-[0.95em] w-[2px] translate-y-[0.15em] bg-blue-700"
+                        />
+                      ) : null}
+                    </ChatBubble>
+                  </div>
+                </div>
+              );
+            })}
             {chat.thinking ? (
-              <div className="mr-auto flex items-center gap-2.5" aria-hidden>
-                <span className="mt-0.5 shrink-0 font-mono text-copy-14 leading-none text-blue-700">▚</span>
-                <span className="flex items-center gap-1.5 rounded-lg rounded-bl-sm border border-border-subtle bg-background-100 px-3 py-2.5">
-                  {[0, 1, 2].map((d) => (
-                    <span
-                      key={d}
-                      className="chat-dot h-1.5 w-1.5 rounded-full bg-blue-700 shadow-[0_0_6px_var(--ds-blue-700)]"
-                      style={{ animationDelay: `${d * 0.18}s` }}
-                    />
-                  ))}
-                </span>
+              <div className="chat-row" aria-hidden>
+                <div>
+                  <div className="mr-auto flex items-center gap-2.5">
+                    <span className="mt-0.5 shrink-0 font-mono text-copy-14 leading-none text-blue-700">▚</span>
+                    <span className="flex items-center gap-1.5 rounded-lg rounded-bl-sm border border-border-subtle bg-background-100 px-3 py-2.5">
+                      {[0, 1, 2].map((d) => (
+                        <span
+                          key={d}
+                          className="chat-dot h-1.5 w-1.5 rounded-full bg-blue-700 shadow-[0_0_6px_var(--ds-blue-700)]"
+                          style={{ animationDelay: `${d * 0.18}s` }}
+                        />
+                      ))}
+                    </span>
+                  </div>
+                </div>
               </div>
             ) : null}
             <p aria-hidden className="mt-2 flex items-center justify-between rounded-lg border border-border-default bg-background-100 px-3 py-2.5">

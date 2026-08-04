@@ -133,6 +133,14 @@ Things that cost real time, written down so they don't cost you any:
   Forward only `/eve/` and sessions start, then stall when callbacks can't get back.
 - **`placeholderAuth()` and `vercelOidc()` are both wrong off Vercel.** eve fails closed, so
   swap in `httpBasic` or you'll 401 everything that isn't loopback.
+- **In self-hosted production, loopback gets a 401 too — that is correct.** From eve 0.30,
+  `localDev()` grants only inside an `eve dev` / `vercel dev` process, so a built server
+  (`eve build && eve start`) grants nothing implicitly and every request, including
+  `127.0.0.1`, needs the Basic credentials. Measured: all hosts 401, correct credentials 200.
+  On 0.29.x this was the reverse *and exploitable* — `localDev()` matched an unanchored
+  `/^127\./` against the attacker-controlled `Host` header, so `127.evil.com` obtained an
+  unauthenticated principal. We found and patched that; Vercel fixed it upstream in 0.30.0.
+  Pin eve `^0.30.2` or newer.
 - **Adding `agent/instrumentation.ts` disables eve's zero-config trace spool**, so `eve traces`
   stops working. The dashboard supersedes it; delete the file to get it back.
 - **Cancellation is cooperative.** `POST /eve/v1/session/:id/cancel` returns 202 immediately,

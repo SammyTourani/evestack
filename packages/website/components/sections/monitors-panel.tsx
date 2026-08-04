@@ -330,7 +330,7 @@ export function MonitorsPanel() {
             {SESSIONS.map((s, i) => {
               const maxIn = Math.max(...SESSIONS.map((x) => x.tokensIn));
               return (
-                <div key={s.id} className="flex flex-1 items-end justify-center gap-0.5">
+                <div key={s.id} className="flex h-full flex-1 items-end justify-center gap-0.5">
                   <span
                     data-anim="bar-y"
                     style={

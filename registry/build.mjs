@@ -109,12 +109,12 @@ const ITEMS = [
       "Replace vercelOidc()/placeholderAuth() with HTTP Basic, for agents that run off Vercel.",
     files: [{ source: "agent/channels/eve.ts", target: "agent/channels/eve.ts" }],
     docs:
-      "Set EVESTACK_AUTH_USER and EVESTACK_AUTH_PASSWORD. Requests whose Host is a literal " +
-      "loopback name still need no credentials, so `eve dev` keeps working; the file wraps " +
-      "eve's localDev() in a stricter host check because eve 0.29.5 matches `/^127./` " +
-      "unanchored and any `*.localhost`, which lets a hostile DNS name skip auth entirely. " +
-      "eve fails closed, so without these set, non-loopback traffic gets a 401 — which is " +
-      "the intended behavior, not a bug.",
+      "Set EVESTACK_AUTH_USER and EVESTACK_AUTH_PASSWORD. Requires eve >= 0.30, where " +
+      "localDev() grants on the deployment being a dev process rather than on the request " +
+      "Host header — on 0.29.x that header was attacker-controlled and `127.evil.com` could " +
+      "obtain an unauthenticated local-dev principal. In production nothing is granted " +
+      "implicitly, so every request including loopback needs the Basic credentials; eve " +
+      "fails closed and a 401 there is the intended behavior, not a bug.",
   },
 ];
 

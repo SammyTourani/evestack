@@ -462,6 +462,36 @@
   animation: panel-in 0.35s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+/* chat messages rise in on an eased grid-row expansion — surrounding
+   messages are pushed up smoothly instead of snapping (0fr→1fr
+   interpolation; older engines just skip the animation) */
+.chat-row {
+  display: grid;
+  grid-template-rows: 1fr;
+  animation: chat-row-in 0.55s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.chat-row > div {
+  overflow: hidden;
+  min-height: 0;
+}
+@keyframes chat-row-in {
+  from {
+    grid-template-rows: 0fr;
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    grid-template-rows: 1fr;
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-row {
+    animation: none;
+  }
+}
+
 /* the agent "thinking" — blue pulse, staggered per dot */
 @keyframes chat-dot {
   0%,

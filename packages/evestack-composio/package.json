@@ -40,7 +40,7 @@
   },
   "devDependencies": {
     "@types/node": "24.x",
-    "eve": "^0.29.5",
+    "eve": "^0.30.2",
     "typescript": "7.0.2"
   },
   "engines": {
