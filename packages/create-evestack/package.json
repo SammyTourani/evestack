@@ -1,0 +1,15 @@
+{
+  "name": "create-evestack",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Create a fully self-hosted eve agent: durable Postgres sessions, a Docker sandbox, a dashboard, and one-click tool sign-in. No Vercel account, $0 infrastructure.",
+  "license": "Apache-2.0",
+  "keywords": ["eve", "agent", "self-hosted", "ai", "postgres", "composio", "dashboard"],
+  "bin": { "create-evestack": "./index.mjs" },
+  "files": ["index.mjs", "template/", "README.md"],
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "prepack": "node scripts/sync-template.mjs",
+    "test": "node scripts/sync-template.mjs && node --check index.mjs"
+  }
+}
