@@ -1,0 +1,16 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+  "name": "basic-auth",
+  "type": "registry:item",
+  "title": "HTTP Basic route auth",
+  "description": "Replace vercelOidc()/placeholderAuth() with HTTP Basic, for agents that run off Vercel.",
+  "files": [
+    {
+      "path": "registry/basic-auth/agent/channels/eve.ts",
+      "target": "agent/channels/eve.ts",
+      "type": "registry:file",
+      "content": "import { httpBasic, localDev } from \"eve/channels/auth\";\nimport { eveChannel } from \"eve/channels/eve\";\n\n/**\n * Route auth. eve fails closed: anything not matched here gets a 401.\n *\n * The stock `eve init` template ships `vercelOidc()` and `placeholderAuth()`.\n * Both are wrong off Vercel — vercelOidc only verifies Vercel-issued tokens,\n * and placeholderAuth explicitly refuses browser traffic in production. So we\n * replace them with HTTP Basic, whose credentials `create-evestack` generates\n * for you and writes to .env.\n *\n * localDev() first so `eve dev` on loopback needs no credentials. It only\n * matches loopback hostnames, so it cannot wave through public traffic — but\n * it does trust the Host header, which is why Basic sits underneath it rather\n * than being the only line of defense.\n */\nconst username = process.env.EVESTACK_AUTH_USER;\nconst password = process.env.EVESTACK_AUTH_PASSWORD;\n\nexport default eveChannel({\n  auth: [\n    localDev(),\n    ...(username && password\n      ? [httpBasic({ username, password }, { realm: \"evestack\" })]\n      : []),\n  ],\n});\n"
+    }
+  ],
+  "docs": "Set EVESTACK_AUTH_USER and EVESTACK_AUTH_PASSWORD. localDev() still accepts loopback with no credentials. eve fails closed, so without these set, non-loopback traffic gets a 401 — which is the intended behavior, not a bug."
+}

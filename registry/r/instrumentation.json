@@ -1,0 +1,19 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+  "name": "instrumentation",
+  "type": "registry:item",
+  "title": "evestack dashboard traces",
+  "description": "Export OpenTelemetry traces from an eve agent to a self-hosted evestack dashboard.",
+  "dependencies": [
+    "@vercel/otel"
+  ],
+  "files": [
+    {
+      "path": "registry/instrumentation/agent/instrumentation.ts",
+      "target": "agent/instrumentation.ts",
+      "type": "registry:file",
+      "content": "import { OTLPHttpJsonTraceExporter, registerOTel } from \"@vercel/otel\";\nimport { defineInstrumentation } from \"eve/instrumentation\";\n\n/**\n * Ships traces to the evestack dashboard.\n *\n * A TRADE-OFF WORTH KNOWING: the mere existence of this file disables eve's\n * zero-config local trace spool (`.eve/traces/v1`), which is what `eve traces`\n * reads. eve hands control to authored instrumentation and does not install its\n * own writer alongside it. Delete this file to get `eve traces` back.\n *\n * That is an acceptable trade here because the dashboard supersedes the spool:\n * it keeps history past the spool's bounded retention (7 days / 512 MB / 20\n * traces), and it survives `eve dev` exiting.\n *\n * JSON, not protobuf: the dashboard's ingest route parses OTLP/HTTP JSON, so\n * OTLPHttpProtoTraceExporter — the exporter eve's own `instrumentation/jaeger`\n * registry item uses — would post bytes the endpoint cannot read.\n *\n * With EVESTACK_DASHBOARD_URL unset we register nothing, so an agent running\n * without the dashboard pays no exporter cost and fails no exports.\n */\nconst endpoint = process.env.EVESTACK_DASHBOARD_URL;\n\nexport default defineInstrumentation({\n  setup: ({ agentName }) => {\n    if (!endpoint) return;\n    registerOTel({\n      serviceName: agentName,\n      traceExporter: new OTLPHttpJsonTraceExporter({ url: endpoint }),\n    });\n  },\n  // Prompts and tool results are the reason to open a trace at all — without\n  // them the dashboard can show that a turn happened but not what it did.\n  // Set both false for sensitive or regulated data.\n  recordInputs: process.env.EVESTACK_TRACE_CONTENT !== \"off\",\n  recordOutputs: process.env.EVESTACK_TRACE_CONTENT !== \"off\",\n});\n"
+    }
+  ],
+  "docs": "Set EVESTACK_DASHBOARD_URL to your dashboard's ingest endpoint (http://localhost:4000/api/ingest/v1/traces). Leave it unset and no exporter is registered. NOTE: the presence of agent/instrumentation.ts disables eve's zero-config local trace spool, so `eve traces` stops working — delete the file to get it back."
+}

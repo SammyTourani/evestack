@@ -1,0 +1,26 @@
+{
+  "name": "evestack",
+  "homepage": "https://github.com/SammyTourani/evestack",
+  "items": [
+    {
+      "name": "memory",
+      "title": "Long-term memory (pgvector)",
+      "description": "Semantic long-term memory for an eve agent, stored in your own Postgres with pgvector. No vector service, no extra container, no bill."
+    },
+    {
+      "name": "instrumentation",
+      "title": "evestack dashboard traces",
+      "description": "Export OpenTelemetry traces from an eve agent to a self-hosted evestack dashboard."
+    },
+    {
+      "name": "docker-sandbox",
+      "title": "Docker sandbox",
+      "description": "Run the agent's sandbox in a local Docker container instead of hosted Vercel Sandbox."
+    },
+    {
+      "name": "basic-auth",
+      "title": "HTTP Basic route auth",
+      "description": "Replace vercelOidc()/placeholderAuth() with HTTP Basic, for agents that run off Vercel."
+    }
+  ]
+}

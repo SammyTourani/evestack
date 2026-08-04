@@ -1,0 +1,16 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+  "name": "docker-sandbox",
+  "type": "registry:item",
+  "title": "Docker sandbox",
+  "description": "Run the agent's sandbox in a local Docker container instead of hosted Vercel Sandbox.",
+  "files": [
+    {
+      "path": "registry/docker-sandbox/agent/sandbox/sandbox.ts",
+      "target": "agent/sandbox/sandbox.ts",
+      "type": "registry:file",
+      "content": "import { defineSandbox } from \"eve/sandbox\";\nimport { docker } from \"eve/sandbox/docker\";\n\n/**\n * The agent's isolated bash environment.\n *\n * Docker is the default because it runs anywhere and most people already have\n * it. eve keeps one long-lived container per durable session and persists\n * /workspace across turns, with no idle timeout — so this is genuinely free to\n * run 24/7 on your own machine.\n *\n * Swaps, one line each:\n *   microsandbox() — real VM isolation, domain-level network policy, and\n *                    credential brokering. macOS/Apple Silicon or Linux+KVM.\n *   justbash()     — no daemon at all, but simulated bash with no real binaries.\n *\n * Note the Docker backend honors only \"allow-all\" and \"deny-all\" for network\n * policy; domain allow-lists need microsandbox.\n */\nexport default defineSandbox({\n  backend: docker(),\n});\n"
+    }
+  ],
+  "docs": "Needs a reachable Docker daemon. eve keeps one long-lived container per durable session and persists /workspace across turns with no idle timeout. The Docker backend honors only allow-all and deny-all network policies; use microsandbox for domain allow-lists."
+}
