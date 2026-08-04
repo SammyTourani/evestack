@@ -1,0 +1,201 @@
+import { Sandbox } from "@alibaba-group/opensandbox";
+
+/**
+ * An eve `SandboxBackend` backed by Alibaba OpenSandbox.
+ *
+ * eve ships four backends: `vercel()` (hosted, metered), `docker()`,
+ * `microsandbox()`, and `justbash()`. This adds a fifth for people who want
+ * gVisor-grade isolation without paying Vercel — OpenSandbox intercepts syscalls
+ * at the kernel boundary rather than relying on container namespaces, and is
+ * Apache-2.0 like the rest of this stack.
+ *
+ * Reach for it when the agent runs code you do not trust. Docker is the right
+ * default for everything else and needs no server.
+ */
+
+/** Shape eve requires of a backend. Structural, so eve stays a peer dependency. */
+interface SandboxBackendLike {
+  readonly name: string;
+  create(input: CreateInput): Promise<BackendHandle>;
+  prewarm(input: PrewarmInput): Promise<{ reused: boolean }>;
+}
+
+interface CreateInput {
+  readonly templateKey: string | null;
+  readonly sessionKey: string;
+  readonly existingMetadata?: Record<string, unknown>;
+}
+
+interface PrewarmInput {
+  readonly templateKey: string;
+  readonly log?: (message: string) => void;
+  readonly seedFiles: ReadonlyArray<{ path: string; content: string | Uint8Array }>;
+}
+
+interface BackendHandle {
+  readonly session: SandboxSessionLike;
+  readonly useSessionFn: () => SandboxSessionLike;
+  captureState(): Promise<{ backendName: string; metadata: Record<string, unknown> }>;
+  shutdown(): Promise<void>;
+}
+
+interface RunResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+}
+
+interface SandboxSessionLike {
+  readonly id: string;
+  resolvePath(path: string): string;
+  run(options: { command: string; cwd?: string; env?: Record<string, string> }): Promise<RunResult>;
+  readTextFile(options: { path: string }): Promise<string>;
+  writeTextFile(options: { path: string; content: string }): Promise<void>;
+  readBinaryFile(options: { path: string }): Promise<Uint8Array>;
+  writeBinaryFile(options: { path: string; content: Uint8Array }): Promise<void>;
+  readFile(options: { path: string }): Promise<Uint8Array>;
+  writeFile(options: { path: string; content: Uint8Array }): Promise<void>;
+}
+
+export interface OpenSandboxOptions {
+  /** Container image. Must contain bash — eve verifies that during setup. */
+  readonly image?: string;
+  /** OpenSandbox server, e.g. `https://sandbox.internal:8080`. */
+  readonly domain?: string;
+  readonly apiKey?: string;
+  /** Idle lifetime. eve reattaches by id, so a short value is safe and cheap. */
+  readonly timeoutSeconds?: number;
+  readonly workingDirectory?: string;
+}
+
+const WORKSPACE = "/workspace";
+
+/**
+ * `/workspace` is one namespace across every eve backend, so a relative path
+ * must resolve the same way here as it does on Docker or Vercel.
+ */
+function resolvePath(path: string): string {
+  if (path.startsWith("/")) return path;
+  if (path.startsWith("$HOME/")) return `/root/${path.slice(6)}`;
+  return `${WORKSPACE}/${path}`;
+}
+
+/** OutputMessage carries the text under one of a few keys depending on source. */
+function joinOutput(messages: readonly unknown[] | undefined): string {
+  if (!messages) return "";
+  return messages
+    .map((m) => {
+      if (typeof m === "string") return m;
+      const record = m as Record<string, unknown>;
+      const value = record.text ?? record.content ?? record.line ?? record.data;
+      return typeof value === "string" ? value : "";
+    })
+    .join("");
+}
+
+function wrapSession(sandbox: Sandbox): SandboxSessionLike {
+  const readBytes = async (path: string): Promise<Uint8Array> => {
+    const bytes = await sandbox.files.readBytes(resolvePath(path));
+    return bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes as ArrayBuffer);
+  };
+
+  const write = async (path: string, data: string | Uint8Array): Promise<void> => {
+    await sandbox.files.writeFiles([{ path: resolvePath(path), data }]);
+  };
+
+  return {
+    id: String(sandbox.id),
+    resolvePath,
+
+    async run({ command, cwd, env }) {
+      const execution = await sandbox.commands.run(command, {
+        workingDirectory: cwd ? resolvePath(cwd) : WORKSPACE,
+        ...(env ? { envs: env } : {}),
+      });
+      return {
+        stdout: joinOutput(execution.logs?.stdout),
+        stderr: joinOutput(execution.logs?.stderr),
+        // A null exitCode means the process was killed rather than exiting.
+        // Reporting 0 there would tell the model a failed command succeeded.
+        exitCode: execution.exitCode ?? (execution.error ? 1 : 0),
+      };
+    },
+
+    readTextFile: ({ path }) => sandbox.files.readFile(resolvePath(path)),
+    writeTextFile: ({ path, content }) => write(path, content),
+    readBinaryFile: ({ path }) => readBytes(path),
+    writeBinaryFile: ({ path, content }) => write(path, content),
+    readFile: ({ path }) => readBytes(path),
+    writeFile: ({ path, content }) => write(path, content),
+  };
+}
+
+export function opensandbox(options: OpenSandboxOptions = {}): SandboxBackendLike {
+  const connectionConfig =
+    options.domain || options.apiKey
+      ? {
+          ...(options.domain ? { domain: options.domain } : {}),
+          ...(options.apiKey ? { apiKey: options.apiKey } : {}),
+        }
+      : undefined;
+
+  return {
+    // Participates in eve's cache-key derivation and reconnect state, so it
+    // must not collide with the built-in "vercel" or "local".
+    name: "opensandbox",
+
+    async create({ existingMetadata }) {
+      const previousId = existingMetadata?.sandboxId;
+
+      // Reattach before creating. eve keys sandboxes to durable sessions, so a
+      // server restart must land back in the same filesystem rather than
+      // silently handing the agent an empty one.
+      let sandbox: Sandbox | null = null;
+      if (typeof previousId === "string" && previousId.length > 0) {
+        try {
+          sandbox = await Sandbox.connect({
+            sandboxId: previousId,
+            ...(connectionConfig ? { connectionConfig } : {}),
+          });
+        } catch {
+          // Expired or reaped upstream — fall through and make a new one.
+          sandbox = null;
+        }
+      }
+
+      sandbox ??= await Sandbox.create({
+        image: options.image ?? "ubuntu",
+        ...(options.timeoutSeconds ? { timeoutSeconds: options.timeoutSeconds } : {}),
+        ...(connectionConfig ? { connectionConfig } : {}),
+      });
+
+      const live = sandbox;
+      await live.files.createDirectories([{ path: options.workingDirectory ?? WORKSPACE }]);
+      const session = wrapSession(live);
+
+      return {
+        session,
+        useSessionFn: () => session,
+        captureState: async () => ({
+          backendName: "opensandbox",
+          // The id is the whole reconnect story; without persisting it every
+          // restart would orphan a running sandbox and start a fresh one.
+          metadata: { sandboxId: String(live.id) },
+        }),
+        shutdown: async () => {
+          // pause(), not kill(): eve reattaches by id on the next turn, and
+          // killing here would discard /workspace that the session still owns.
+          await live.pause().catch(() => live.kill().catch(() => {}));
+        },
+      };
+    },
+
+    async prewarm({ log }) {
+      // OpenSandbox has snapshots, but eve only needs prewarm to be idempotent
+      // and honest. Reporting `reused: false` costs a cold start on first use
+      // and never lies to the build log about state that was not captured.
+      log?.("[opensandbox] no template snapshot captured; sessions start cold");
+      return { reused: false };
+    },
+  };
+}
