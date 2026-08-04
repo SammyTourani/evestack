@@ -27,5 +27,26 @@ services:
       retries: 20
       start_period: 5s
 
+  # The dashboard reads the same Postgres the agent writes to — no ingest
+  # pipeline, no second source of truth. Bound to localhost by default: it is a
+  # control plane that can start and cancel agent runs, so it must not be
+  # reachable from the network without auth in front of it.
+  dashboard:
+    build:
+      context: ./packages/dashboard
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      WORKFLOW_POSTGRES_URL: postgres://${POSTGRES_USER:-evestack}:${POSTGRES_PASSWORD:-evestack}@postgres:5432/${POSTGRES_DB:-evestack}
+      EVESTACK_AGENT_URL: ${EVESTACK_AGENT_URL:-http://host.docker.internal:2000}
+      COMPOSIO_API_KEY: ${COMPOSIO_API_KEY:-}
+    ports:
+      - "127.0.0.1:${DASHBOARD_PORT:-4000}:4000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    profiles: ["full"]
+
 volumes:
   evestack-pgdata:
