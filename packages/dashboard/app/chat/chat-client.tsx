@@ -48,6 +48,9 @@ export function ChatClient({ initialSessionId }: { initialSessionId?: string }) 
   const [draft, setDraft] = useState("");
 
   const abortRef = useRef<AbortController | null>(null);
+  // `consume` is declared below this effect, so hold it behind a ref
+  // rather than reordering the file around a hook dependency.
+  const consumeRef = useRef<((id: string, signal: AbortSignal) => Promise<void>) | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -57,6 +60,33 @@ export function ChatClient({ initialSessionId }: { initialSessionId?: string }) 
   // Close the stream when the tab does; an abandoned reader would otherwise
   // hold an open response against the agent for the life of the page.
   useEffect(() => () => abortRef.current?.abort(), []);
+
+  // Attach to a session this page did not start (`/chat?session=…`). Sessions
+  // are durable and outlive the tab, so one begun from curl, Slack, or a
+  // previous visit has to be joinable — without this the id was accepted and
+  // then silently ignored, leaving an empty transcript.
+  useEffect(() => {
+    if (!initialSessionId) return;
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setStatus("streaming");
+    void consumeRef.current?.(initialSessionId, controller.signal).catch((e) => {
+      if (controller.signal.aborted) return;
+      setError(e instanceof Error ? e.message : String(e));
+      setStatus("error");
+    });
+
+    // Releasing the ref here is what makes this survive React's double-invoke
+    // in development, and any genuine remount in production. An earlier version
+    // guarded on `abortRef.current` being empty: the first mount's cleanup
+    // aborted the stream, the remount saw a non-null ref and returned early,
+    // and the transcript stayed empty forever behind a "running" badge.
+    return () => {
+      controller.abort();
+      if (abortRef.current === controller) abortRef.current = null;
+    };
+  }, [initialSessionId]);
 
   const upsertAssistant = useCallback((turnKey: string, text: string) => {
     setEntries((prev) => {
@@ -106,6 +136,8 @@ export function ChatClient({ initialSessionId }: { initialSessionId?: string }) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
+
+  consumeRef.current = consume;
 
   const handleEvent = useCallback(
     (id: string, event: { type?: string; data?: Record<string, unknown> }) => {
