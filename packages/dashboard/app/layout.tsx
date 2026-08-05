@@ -19,6 +19,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           <nav className="topnav">
             <a href="/">Sessions</a>
             <a href="/chat">Chat</a>
+            <a href="/memory">Memory</a>
             <a href="/approvals">Approvals</a>
             <a href="/integrations">Integrations</a>
           </nav>
