@@ -3,21 +3,19 @@
   "eveVersion": "0.30.8",
   "eveReleasedAt": "2026-08-05T20:15:39.773Z",
   "eveLatestTagAtCertification": "0.30.8",
-  "certifiedAt": "2026-08-05T21:48:16.891Z",
-  "evestackCommit": "fe15fdb",
-  "evestackPin": "^0.30.6",
+  "certifiedAt": "2026-08-05T22:00:18.802Z",
+  "evestackCommit": "3f8c664",
+  "evestackPin": "^0.30.8",
   "source": {
-    "kind": "npm-tarball",
-    "spec": "eve@0.30.8",
-    "tarball": "eve-0.30.8.tgz",
-    "integrity": "sha512-ATF9CHJQBNce7+3leWH87w6Cc7TlsNlfpGAENzmkD4d7oBpSI+P7KB3cvtGM75t+9gT+nJ0R+u7u8hF8BJdBiw=="
+    "kind": "installed",
+    "spec": "templates/default"
   },
   "ok": true,
   "counts": {
     "contracts": 15,
     "failedContracts": 0,
-    "skippedContracts": 1,
-    "assertions": 213,
+    "skippedContracts": 0,
+    "assertions": 225,
     "failedAssertions": 0
   },
   "contracts": [
@@ -27,9 +25,57 @@
       "assumption": "One eve version satisfies templates/default, both publishable packages' peer ranges, and the scaffolder.",
       "evestackUse": "evestack declares eve in several manifests at once: templates/default pins the version users install, @evestack/composio and @evestack/sandbox-opensandbox declare peer ranges that decide whether npm lets users install them beside their eve, and packages/create-evestack ships templates/default verbatim. A version that satisfies one and not the others produces an install that resolves in this repo and fails at `npx create-evestack` — or, worse, a published peer range that quietly promises support for an eve nothing here has ever been tested against.",
       "file": "contract/contracts/01-version.contract.mjs",
-      "status": "skip",
-      "skipReason": "repo-scoped: describes this checkout's install, not eve 0.30.8",
-      "assertions": [],
+      "status": "pass",
+      "assertions": [
+        {
+          "detail": "eve reports a parseable version (0.30.8)",
+          "passed": true
+        },
+        {
+          "detail": "found 9 declared eve ranges across the repo's manifests",
+          "passed": true
+        },
+        {
+          "detail": "eve 0.30.8 satisfies dependencies.eve = \"^0.30.8\" in templates/default/package.json",
+          "passed": true
+        },
+        {
+          "detail": "eve 0.30.8 satisfies devDependencies.eve = \"^0.30.8\" in packages/evestack-budget/package.json",
+          "passed": true
+        },
+        {
+          "detail": "eve 0.30.8 satisfies peerDependencies.eve = \">=0.30.0 <1.0.0\" in packages/evestack-budget/package.json",
+          "passed": true
+        },
+        {
+          "detail": "eve 0.30.8 satisfies devDependencies.eve = \"^0.30.8\" in packages/evestack-composio/package.json",
+          "passed": true
+        },
+        {
+          "detail": "eve 0.30.8 satisfies peerDependencies.eve = \">=0.30.0 <1.0.0\" in packages/evestack-composio/package.json",
+          "passed": true
+        },
+        {
+          "detail": "eve 0.30.8 satisfies devDependencies.eve = \"^0.30.8\" in packages/evestack-schedules/package.json",
+          "passed": true
+        },
+        {
+          "detail": "eve 0.30.8 satisfies peerDependencies.eve = \">=0.30.0 <1.0.0\" in packages/evestack-schedules/package.json",
+          "passed": true
+        },
+        {
+          "detail": "eve 0.30.8 satisfies devDependencies.eve = \"^0.30.8\" in packages/sandbox-opensandbox/package.json",
+          "passed": true
+        },
+        {
+          "detail": "eve 0.30.8 satisfies peerDependencies.eve = \">=0.30.0 <1.0.0\" in packages/sandbox-opensandbox/package.json",
+          "passed": true
+        },
+        {
+          "detail": "templates/default declares eve as a direct dependency",
+          "passed": true
+        }
+      ],
       "crash": null
     },
     {
