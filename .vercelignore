@@ -1,0 +1,11 @@
+# `vercel deploy` uploads the working tree, and unlike git it does not skip
+# gitignored paths — so local-only junk reaches the builder and, in Tailwind's
+# case, gets scanned for class names. Keep the upload to what actually builds.
+.firecrawl
+qa-shots
+docs-site
+out
+.next
+node_modules
+assets/screenshots-raw
+**/*.log

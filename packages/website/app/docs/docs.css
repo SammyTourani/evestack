@@ -6,6 +6,13 @@
 @import "fumadocs-ui/css/preset.css";
 
 @source "../../node_modules/fumadocs-ui/dist/**/*.js";
+/* This file starts its own Tailwind scan, so it needs the same exclusion
+   globals.css carries: .firecrawl/ holds scraped third-party pages from the
+   animation research, and Tailwind v4 auto-scans anything not gitignored,
+   happily generating utilities out of another site's markup. It only shows
+   up on a deploy — the directory is gitignored, so no clean checkout has it,
+   but `vercel deploy` uploads the working tree. */
+@source not "../../.firecrawl";
 
 /* Same typefaces as the landing page — the variables are set on <html> by
    the root layout, so the docs inherit them instead of falling back to
