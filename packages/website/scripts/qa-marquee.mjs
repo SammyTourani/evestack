@@ -33,13 +33,23 @@ async function run(engine, name) {
   const groups = page.locator('ul[aria-label="Supported integrations"] > li');
   await groups.first().waitFor();
 
-  // 1. Width is reserved before the bytes arrive: measure immediately, then
-  //    after every image has decoded, and require no change.
+  // 1. Every image actually loads, including the three duplicate groups that
+  //    sit outside the viewport horizontally. WebKit never fired their
+  //    lazy-load intersection, so they scrolled through the row blank.
   const before = await groups.evaluateAll((els) => els.map((e) => e.getBoundingClientRect().width));
   await page.waitForFunction(() => {
     const imgs = [...document.querySelectorAll('ul[aria-label="Supported integrations"] img')];
     return imgs.length > 0 && imgs.every((i) => i.complete && i.naturalWidth > 0);
-  }, null, { timeout: 20_000 });
+  }, null, { timeout: 30_000 }).then(
+    () => ok("every image in all four groups loads"),
+    async () => {
+      const n = await page.evaluate(() => {
+        const imgs = [...document.querySelectorAll('ul[aria-label="Supported integrations"] img')];
+        return `${imgs.filter((i) => i.complete && i.naturalWidth > 0).length}/${imgs.length}`;
+      });
+      bad("every image in all four groups loads", `only ${n} loaded — blank groups will scroll through the row`);
+    },
+  );
   const after = await groups.evaluateAll((els) => els.map((e) => e.getBoundingClientRect().width));
 
   const drift = before.map((w, i) => Math.abs(w - after[i]));
