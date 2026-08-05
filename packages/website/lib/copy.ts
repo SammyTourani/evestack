@@ -70,7 +70,7 @@ export const comparison = {
     ["Account required", "Vercel account", "None"],
     ["Compute", "Metered", "Your machine — $0.00"],
     ["Agent state", "Managed workflow store", "Your Postgres on :5433"],
-    ["Trace retention", "Platform-defined", "Unbounded — your database"],
+    ["Run history kept", "12h free · 1d Pro · 3d Enterprise", "Forever — it's your database"],
     ["Agent Runs dashboard", "Read-only, hosted", "Observe and control, self-hosted"],
     ["Approve gated tools", "—", "From your browser"],
     ["Telemetry", "Platform", "Nothing here phones home"],

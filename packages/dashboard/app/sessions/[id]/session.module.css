@@ -39,6 +39,27 @@
 .sectionHead h2 { margin: 0; font-size: 14px; }
 .sectionNote { font-size: 12px; color: var(--text-faint); }
 
+/* ---- promote to eval ---- */
+.actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 24px 0 4px;
+}
+.promote {
+  display: inline-block;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.promote:hover { border-color: var(--accent); color: var(--accent); }
+.actionNote { font-size: 12px; }
+
 /* ---- tree ---- */
 .tree,
 .children {

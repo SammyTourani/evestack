@@ -203,6 +203,9 @@ export default async function SessionDetailPage(props: PageProps<"/sessions/[id]
 
   const roots = buildTree(rows, session.id);
   const runs = rows.filter((r) => r.id !== session.id);
+  // A failed turn is the session most worth promoting to an eval, so the button
+  // says so rather than making the user infer it from the tree below.
+  const failedTurn = runs.find((r) => r.errorCode || r.noModelCall);
   const subagents = runs.filter((r) => r.type === "subagent");
   // getSession() rolls up turns only, but the session list adds every child run,
   // so subagent spend is folded back in here to keep the two pages agreeing.
@@ -278,6 +281,17 @@ export default async function SessionDetailPage(props: PageProps<"/sessions/[id]
           <div className="stat-label">Model spend</div>
           <div className="stat-value">{formatUsd(totalCost)}</div>
         </div>
+      </div>
+
+      <div className={styles.actions}>
+        <a className={styles.promote} href={`/api/evals/promote/${encodeURIComponent(session.id)}`}>
+          Promote to eval
+        </a>
+        <span className={`faint ${styles.actionNote}`}>
+          {failedTurn
+            ? "This session failed — promoting it gives you the regression test for the bug."
+            : "Downloads a draft evals/*.eval.ts replaying this session's real messages."}
+        </span>
       </div>
 
       <div className={styles.sectionHead}>

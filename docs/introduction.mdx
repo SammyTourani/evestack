@@ -4,8 +4,15 @@ description: eve on your own machine, with a dashboard you can drive. $0 infrast
 ---
 
 [Vercel's `eve`](https://github.com/vercel/eve) is a genuinely good, Apache-2.0 agent
-framework. Run it off Vercel, though, and you lose one thing with no open replacement: the
-**Agent Runs dashboard**. Self-hosting means flying blind on terminal logs.
+framework, and self-hosting it is a supported path — Vercel says so themselves. What you give
+up off-platform is the **Agent Runs dashboard**; their own answer is to export OpenTelemetry
+to a collector you run.
+
+That leaves you with real tools and a real gap. Jaeger will show you spans, the Workflow
+DevKit inspector will show you runs, and eve's dev TUI can even attach to a deployment and
+approve a tool call from your terminal. What none of them give you is one place that
+understands *sessions, turns, tokens, cost and approvals* — and lets more than one person
+use it.
 
 evestack is to `eve` what Ubuntu is to the Linux kernel — not a fork, a distribution. It
 packages `eve` to run on your own hardware with one command, and builds the dashboard Vercel

@@ -13,6 +13,8 @@
     "typecheck": "pnpm -r --if-present typecheck",
     "build": "pnpm -r --if-present build",
     "contract": "node contract/run.mjs",
+    "contract:record": "node contract/record.mjs",
+    "contract:compat": "node contract/render-compat.mjs",
     "test": "node contract/run.mjs && pnpm -r --if-present test"
   }
 }

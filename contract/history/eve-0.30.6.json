@@ -1,0 +1,843 @@
+{
+  "schemaVersion": 1,
+  "eveVersion": "0.30.6",
+  "eveReleasedAt": "2026-08-04T23:01:01.308Z",
+  "eveLatestTagAtCertification": "0.30.6",
+  "certifiedAt": "2026-08-05T07:09:06.818Z",
+  "evestackCommit": "dcd6e1e",
+  "evestackPin": "^0.30.6",
+  "source": {
+    "kind": "npm-tarball",
+    "spec": "eve@0.30.6",
+    "tarball": "eve-0.30.6.tgz",
+    "integrity": "sha512-sSO04d1vcPtI/Nf3nQfUAfIG7BrZNLih1Kr70Fab87llaIjGQOwXs0C5LYSfTnrdcZwD+wEWjZ8EDhFIQcp6Ig=="
+  },
+  "ok": true,
+  "counts": {
+    "contracts": 13,
+    "failedContracts": 0,
+    "assertions": 169,
+    "failedAssertions": 0
+  },
+  "contracts": [
+    {
+      "id": "version/installed-satisfies-every-declared-range",
+      "title": "the installed eve satisfies every eve range this repo declares",
+      "assumption": "One eve version satisfies templates/default, both publishable packages' peer ranges, and the scaffolder.",
+      "evestackUse": "evestack declares eve in several manifests at once: templates/default pins the version users install, @evestack/composio and @evestack/sandbox-opensandbox declare peer ranges that decide whether npm lets users install them beside their eve, and packages/create-evestack ships templates/default verbatim. A version that satisfies one and not the others produces an install that resolves in this repo and fails at `npx create-evestack` — or, worse, a published peer range that quietly promises support for an eve nothing here has ever been tested against.",
+      "file": "contract/contracts/01-version.contract.mjs",
+      "status": "pass",
+      "assertions": [
+        {
+          "detail": "eve reports a parseable version (0.30.6)",
+          "passed": true
+        },
+        {
+          "detail": "found 7 declared eve ranges across the repo's manifests",
+          "passed": true
+        },
+        {
+          "detail": "eve 0.30.6 satisfies dependencies.eve = \"^0.30.6\" in templates/default/package.json",
+          "passed": true
+        },
+        {
+          "detail": "eve 0.30.6 satisfies devDependencies.eve = \"^0.30.6\" in packages/evestack-budget/package.json",
+          "passed": true
+        },
+        {
+          "detail": "eve 0.30.6 satisfies peerDependencies.eve = \">=0.30.0 <1.0.0\" in packages/evestack-budget/package.json",
+          "passed": true
+        },
+        {
+          "detail": "eve 0.30.6 satisfies devDependencies.eve = \"^0.30.6\" in packages/evestack-composio/package.json",
+          "passed": true
+        },
+        {
+          "detail": "eve 0.30.6 satisfies peerDependencies.eve = \">=0.30.0 <1.0.0\" in packages/evestack-composio/package.json",
+          "passed": true
+        },
+        {
+          "detail": "eve 0.30.6 satisfies devDependencies.eve = \"^0.30.6\" in packages/sandbox-opensandbox/package.json",
+          "passed": true
+        },
+        {
+          "detail": "eve 0.30.6 satisfies peerDependencies.eve = \">=0.30.0 <1.0.0\" in packages/sandbox-opensandbox/package.json",
+          "passed": true
+        },
+        {
+          "detail": "templates/default declares eve as a direct dependency",
+          "passed": true
+        }
+      ],
+      "crash": null
+    },
+    {
+      "id": "modules/imported-subpaths-resolve",
+      "title": "every eve subpath evestack imports still exists",
+      "assumption": "The `eve/*` subpaths evestack imports are all present in eve's exports map and resolve to real files.",
+      "evestackUse": "These specifiers appear in templates/default (the agent users scaffold), in packages/dashboard, and inlined as strings inside registry/r/*.json — the files `eve add @evestack/memory` writes into a user's project. A subpath that disappears breaks `pnpm build` for every scaffolded agent, and for the registry copies it breaks at the user's machine with no failing build in this repo to warn us first.",
+      "file": "contract/contracts/02-module-surface.contract.mjs",
+      "status": "pass",
+      "assertions": [
+        {
+          "detail": "found 14 distinct eve specifiers in evestack's own source",
+          "passed": true
+        },
+        {
+          "detail": "eve declares \"eve\" in its exports map — imported by templates/default/agent/agent.ts",
+          "passed": true
+        },
+        {
+          "detail": "\"eve\" resolves to a file on disk",
+          "passed": true
+        },
+        {
+          "detail": "eve declares \"eve/channels/auth\" in its exports map — imported by registry/r/basic-auth.json → agent/channels/eve.ts (+1 more)",
+          "passed": true
+        },
+        {
+          "detail": "\"eve/channels/auth\" resolves to a file on disk",
+          "passed": true
+        },
+        {
+          "detail": "eve declares \"eve/channels/discord\" in its exports map — imported by registry/r/channel-discord.json → agent/channels/discord.ts (+1 more)",
+          "passed": true
+        },
+        {
+          "detail": "\"eve/channels/discord\" resolves to a file on disk",
+          "passed": true
+        },
+        {
+          "detail": "eve declares \"eve/channels/eve\" in its exports map — imported by registry/r/basic-auth.json → agent/channels/eve.ts (+1 more)",
+          "passed": true
+        },
+        {
+          "detail": "\"eve/channels/eve\" resolves to a file on disk",
+          "passed": true
+        },
+        {
+          "detail": "eve declares \"eve/channels/slack\" in its exports map — imported by registry/r/channel-slack.json → agent/channels/slack.ts (+1 more)",
+          "passed": true
+        },
+        {
+          "detail": "\"eve/channels/slack\" resolves to a file on disk",
+          "passed": true
+        },
+        {
+          "detail": "eve declares \"eve/channels/telegram\" in its exports map — imported by registry/r/channel-telegram.json → agent/channels/telegram.ts (+1 more)",
+          "passed": true
+        },
+        {
+          "detail": "\"eve/channels/telegram\" resolves to a file on disk",
+          "passed": true
+        },
+        {
+          "detail": "eve declares \"eve/evals\" in its exports map — imported by packages/dashboard/lib/promote-eval.ts (+5 more)",
+          "passed": true
+        },
+        {
+          "detail": "\"eve/evals\" resolves to a file on disk",
+          "passed": true
+        },
+        {
+          "detail": "eve declares \"eve/evals/expect\" in its exports map — imported by templates/default/evals/memory.eval.ts (+1 more)",
+          "passed": true
+        },
+        {
+          "detail": "\"eve/evals/expect\" resolves to a file on disk",
+          "passed": true
+        },
+        {
+          "detail": "eve declares \"eve/hooks\" in its exports map — imported by packages/evestack-budget/src/hook.ts",
+          "passed": true
+        },
+        {
+          "detail": "\"eve/hooks\" resolves to a file on disk",
+          "passed": true
+        },
+        {
+          "detail": "eve declares \"eve/instrumentation\" in its exports map — imported by registry/r/instrumentation.json → agent/instrumentation.ts (+1 more)",
+          "passed": true
+        },
+        {
+          "detail": "\"eve/instrumentation\" resolves to a file on disk",
+          "passed": true
+        },
+        {
+          "detail": "eve declares \"eve/sandbox\" in its exports map — imported by registry/r/docker-sandbox.json → agent/sandbox/sandbox.ts (+1 more)",
+          "passed": true
+        },
+        {
+          "detail": "\"eve/sandbox\" resolves to a file on disk",
+          "passed": true
+        },
+        {
+          "detail": "eve declares \"eve/sandbox/docker\" in its exports map — imported by registry/r/docker-sandbox.json → agent/sandbox/sandbox.ts (+1 more)",
+          "passed": true
+        },
+        {
+          "detail": "\"eve/sandbox/docker\" resolves to a file on disk",
+          "passed": true
+        },
+        {
+          "detail": "eve declares \"eve/tools\" in its exports map — imported by packages/evestack-budget/src/guard.ts (+6 more)",
+          "passed": true
+        },
+        {
+          "detail": "\"eve/tools\" resolves to a file on disk",
+          "passed": true
+        },
+        {
+          "detail": "eve declares \"eve/tools/approval\" in its exports map — imported by registry/r/memory.json → agent/tools/forget.ts (+1 more)",
+          "passed": true
+        },
+        {
+          "detail": "\"eve/tools/approval\" resolves to a file on disk",
+          "passed": true
+        }
+      ],
+      "crash": null
+    },
+    {
+      "id": "modules/imported-values-are-exported",
+      "title": "every value evestack imports from eve is still exported at runtime",
+      "assumption": "The named value exports evestack binds from each eve subpath still exist in the compiled module.",
+      "evestackUse": "`tsc` catches this for templates/default and packages/*, but not for registry/r/*.json: those items carry agent source inlined as JSON strings and are never typechecked by anything. `eve add @evestack/memory` writes them straight into a user's project, so a renamed export fails there first and here never. This assertion is the only typecheck those files get.",
+      "file": "contract/contracts/02-module-surface.contract.mjs",
+      "status": "pass",
+      "assertions": [
+        {
+          "detail": "eve exports `defineAgent` — used by templates/default/agent/agent.ts",
+          "passed": true
+        },
+        {
+          "detail": "eve/channels/auth exports `httpBasic` — used by registry/r/basic-auth.json → agent/channels/eve.ts",
+          "passed": true
+        },
+        {
+          "detail": "eve/channels/auth exports `localDev` — used by registry/r/basic-auth.json → agent/channels/eve.ts",
+          "passed": true
+        },
+        {
+          "detail": "eve/channels/discord exports `defaultDiscordAuth` — used by registry/r/channel-discord.json → agent/channels/discord.ts",
+          "passed": true
+        },
+        {
+          "detail": "eve/channels/discord exports `discordChannel` — used by registry/r/channel-discord.json → agent/channels/discord.ts",
+          "passed": true
+        },
+        {
+          "detail": "eve/channels/eve exports `eveChannel` — used by registry/r/basic-auth.json → agent/channels/eve.ts",
+          "passed": true
+        },
+        {
+          "detail": "eve/channels/slack exports `defaultSlackAuth` — used by registry/r/channel-slack.json → agent/channels/slack.ts",
+          "passed": true
+        },
+        {
+          "detail": "eve/channels/slack exports `slackChannel` — used by registry/r/channel-slack.json → agent/channels/slack.ts",
+          "passed": true
+        },
+        {
+          "detail": "eve/channels/telegram exports `telegramChannel` — used by registry/r/channel-telegram.json → agent/channels/telegram.ts",
+          "passed": true
+        },
+        {
+          "detail": "eve/evals exports `defineEval` — used by packages/dashboard/lib/promote-eval.ts",
+          "passed": true
+        },
+        {
+          "detail": "eve/evals exports `defineEvalConfig` — used by packages/dashboard/lib/promote-eval.ts",
+          "passed": true
+        },
+        {
+          "detail": "eve/evals/expect exports `includes` — used by templates/default/evals/memory.eval.ts",
+          "passed": true
+        },
+        {
+          "detail": "eve/hooks exports `defineHook` — used by packages/evestack-budget/src/hook.ts",
+          "passed": true
+        },
+        {
+          "detail": "eve/instrumentation exports `defineInstrumentation` — used by registry/r/instrumentation.json → agent/instrumentation.ts",
+          "passed": true
+        },
+        {
+          "detail": "eve/sandbox exports `defineSandbox` — used by registry/r/docker-sandbox.json → agent/sandbox/sandbox.ts",
+          "passed": true
+        },
+        {
+          "detail": "eve/sandbox/docker exports `docker` — used by registry/r/docker-sandbox.json → agent/sandbox/sandbox.ts",
+          "passed": true
+        },
+        {
+          "detail": "eve/tools exports `defineDynamic` — used by packages/evestack-budget/src/guard.ts",
+          "passed": true
+        },
+        {
+          "detail": "eve/tools exports `defineTool` — used by packages/evestack-budget/src/guard.ts",
+          "passed": true
+        },
+        {
+          "detail": "eve/tools/approval exports `always` — used by registry/r/memory.json → agent/tools/forget.ts",
+          "passed": true
+        }
+      ],
+      "crash": null
+    },
+    {
+      "id": "tools/approval-is-the-gating-field",
+      "title": "`approval` gates tool calls, and its helpers still return the statuses that park a turn",
+      "assumption": "eve gates tools with an `approval` field returning `\"user-approval\"` to park a turn — not the AI SDK's `needsApproval`.",
+      "evestackUse": "templates/default/agent/tools/forget.ts carries `approval: always()` because deleting a memory is the one irreversible memory operation. If eve renames the field, changes the status vocabulary, or moves to the AI SDK's `needsApproval`, that tool keeps compiling and stops asking — the agent deletes user memories with no human in the loop, and the dashboard's approve/deny UI has nothing to render. packages/dashboard/lib/agent-client.ts also hard-codes the `tool-approval` input kind that this gate produces.",
+      "file": "contract/contracts/03-tool-approval.contract.mjs",
+      "status": "pass",
+      "assertions": [
+        {
+          "detail": "eve/tools/approval exports `always()`",
+          "passed": true
+        },
+        {
+          "detail": "eve/tools/approval exports `never()`",
+          "passed": true
+        },
+        {
+          "detail": "eve/tools/approval exports `once()`",
+          "passed": true
+        },
+        {
+          "detail": "always() demands user approval every call",
+          "passed": true
+        },
+        {
+          "detail": "never() waives approval",
+          "passed": true
+        },
+        {
+          "detail": "once() demands approval the first time a tool is called in a session",
+          "passed": true
+        },
+        {
+          "detail": "once() waives approval after the tool has been approved in this session",
+          "passed": true
+        },
+        {
+          "detail": "ToolDefinition still declares an `approval` field",
+          "passed": true
+        },
+        {
+          "detail": "ApprovalStatus still includes `user-approval`",
+          "passed": true
+        },
+        {
+          "detail": "ApprovalStatus still includes `denied`",
+          "passed": true
+        },
+        {
+          "detail": "`needsApproval` has not appeared on eve's public surface (it is the AI SDK's field, not eve's)",
+          "passed": true
+        },
+        {
+          "detail": "the parked-input kind for an approval is still `tool-approval`",
+          "passed": true
+        }
+      ],
+      "crash": null
+    },
+    {
+      "id": "tools/approval-survives-defineTool",
+      "title": "defineTool preserves the approval policy and brands the entry",
+      "assumption": "`defineTool` returns the approval function untouched and stamps the `eve:tool-brand` symbol.",
+      "evestackUse": "Every gated tool evestack ships goes through `defineTool`. eve's own resolver uses the brand symbol to tell a single tool entry from a map of them; @evestack/composio returns entries from a dynamic resolver and depends on that distinction being made the same way.",
+      "file": "contract/contracts/03-tool-approval.contract.mjs",
+      "status": "pass",
+      "assertions": [
+        {
+          "detail": "defineTool keeps the exact approval function it was given",
+          "passed": true
+        },
+        {
+          "detail": "defineTool stamps Symbol.for('eve:tool-brand') on the entry it returns",
+          "passed": true
+        }
+      ],
+      "crash": null
+    },
+    {
+      "id": "tools/dynamic-sentinel-and-events",
+      "title": "defineDynamic still produces the `eve:dynamic` sentinel and still dispatches `step.started`",
+      "assumption": "defineDynamic returns `{ kind: \"eve:dynamic\", events }`, and `step.started` is a tool event eve will dispatch.",
+      "evestackUse": "@evestack/composio (packages/evestack-composio, published to npm) resolves a user's connected Composio apps into tools on `step.started` — step scope, because a tool the user connects mid-session has to appear without restarting the session, and because only step-scoped entries keep a live `execute` closure across replay. If the sentinel kind changes, eve stops recognising the export and silently loads zero tools: no error, no tools, an agent that has quietly lost every integration. If `step.started` drops out of the dispatch set, the same silence.",
+      "file": "contract/contracts/04-dynamic-tools.contract.mjs",
+      "status": "pass",
+      "assertions": [
+        {
+          "detail": "eve/tools exports `defineDynamic()`",
+          "passed": true
+        },
+        {
+          "detail": "the sentinel's discriminator is still the string `eve:dynamic`",
+          "passed": true
+        },
+        {
+          "detail": "the sentinel carries the handler under the literal key `step.started`",
+          "passed": true
+        },
+        {
+          "detail": "eve's DYNAMIC_SENTINEL_KIND constant is unchanged",
+          "passed": true
+        },
+        {
+          "detail": "eve's own isDynamicSentinel() accepts what defineDynamic() produced",
+          "passed": true
+        },
+        {
+          "detail": "eve's isBrandedToolEntry() accepts an entry built by defineTool inside a resolver",
+          "passed": true
+        },
+        {
+          "detail": "ALLOWED_DYNAMIC_TOOL_EVENTS is still a Set of event names",
+          "passed": true
+        },
+        {
+          "detail": "`step.started` is still an allowed dynamic-tool event",
+          "passed": true
+        },
+        {
+          "detail": "`session.started` is still an allowed dynamic-tool event",
+          "passed": true
+        },
+        {
+          "detail": "`turn.started` is still an allowed dynamic-tool event",
+          "passed": true
+        }
+      ],
+      "crash": null
+    },
+    {
+      "id": "protocol/http-surface-the-dashboard-drives",
+      "title": "eve's session routes, stream headers and cancel statuses are unchanged",
+      "assumption": "eve serves POST /eve/v1/session, POST /eve/v1/session/:sessionId(/cancel), GET .../stream as NDJSON, and cancellation answers with status \"accepted\" or \"no_active_turn\".",
+      "evestackUse": "packages/dashboard/lib/agent-client.ts is the dashboard's entire write path: creating sessions, sending follow-up messages, delivering human approve/deny answers as `inputResponses`, cancelling a turn, and tailing the durable event stream. Those routes and header names are string literals in that file. Nothing typechecks them against eve, so a rename ships green and fails as a 404 in the browser — and the two stream headers are how the client resumes a stream after a reconnect, so losing them turns into silently duplicated or dropped events rather than an error.",
+      "file": "contract/contracts/05-http-protocol.contract.mjs",
+      "status": "pass",
+      "assertions": [
+        {
+          "detail": "the route prefix is still /eve/v1",
+          "passed": true
+        },
+        {
+          "detail": "session creation is still POST /eve/v1/session",
+          "passed": true
+        },
+        {
+          "detail": "follow-up messages and HITL answers still go to POST /eve/v1/session/:sessionId",
+          "passed": true
+        },
+        {
+          "detail": "cancellation is still POST /eve/v1/session/:sessionId/cancel",
+          "passed": true
+        },
+        {
+          "detail": "the durable event stream is still GET /eve/v1/session/:sessionId/stream",
+          "passed": true
+        },
+        {
+          "detail": "eve's own cancel path builder agrees with the pattern the dashboard interpolates",
+          "passed": true
+        },
+        {
+          "detail": "the event stream is still newline-delimited JSON, not text/event-stream",
+          "passed": true
+        },
+        {
+          "detail": "the session id header is still x-eve-session-id",
+          "passed": true
+        },
+        {
+          "detail": "the stream resume cursor header is still x-eve-stream-tail-index",
+          "passed": true
+        },
+        {
+          "detail": "CancelTurnStatus still includes `accepted`",
+          "passed": true
+        },
+        {
+          "detail": "CancelTurnStatus still includes `no_active_turn`",
+          "passed": true
+        },
+        {
+          "detail": "eve still has no dedicated approval route — HITL answers ride POST /eve/v1/session/:sessionId",
+          "passed": true
+        }
+      ],
+      "crash": null
+    },
+    {
+      "id": "attributes/queried-names-still-emitted",
+      "title": "every $eve.* attribute evestack queries is still produced by eve",
+      "assumption": "The `$eve.*` run-attribute names evestack reads out of Postgres are still the names eve writes.",
+      "evestackUse": "packages/dashboard/lib/queries.ts computes session lists, token totals and — via lib/pricing.ts — every dollar figure the dashboard shows, entirely from these keys. They are string literals inside SQL, so nothing typechecks them. A renamed key makes `attributes->>'$eve.input_tokens'` return NULL, `SUM()` return NULL, and the cost column read $0.00 for a session that really did spend money. No error anywhere — just wrong numbers presented as right ones.",
+      "file": "contract/contracts/06-run-attributes.contract.mjs",
+      "status": "pass",
+      "assertions": [
+        {
+          "detail": "found 12 distinct $eve.* attributes in evestack's source",
+          "passed": true
+        },
+        {
+          "detail": "eve still writes `$eve.cache_read_tokens` — read by packages/dashboard/lib/queries.ts",
+          "passed": true
+        },
+        {
+          "detail": "eve still writes `$eve.cache_write_tokens` — read by packages/dashboard/lib/queries.ts",
+          "passed": true
+        },
+        {
+          "detail": "eve still writes `$eve.input_tokens` — read by packages/dashboard/lib/queries.ts",
+          "passed": true
+        },
+        {
+          "detail": "eve still writes `$eve.model` — read by packages/dashboard/lib/queries.ts",
+          "passed": true
+        },
+        {
+          "detail": "eve still writes `$eve.output_tokens` — read by packages/dashboard/lib/queries.ts",
+          "passed": true
+        },
+        {
+          "detail": "eve still writes `$eve.parent` — read by packages/dashboard/lib/queries.ts",
+          "passed": true
+        },
+        {
+          "detail": "eve still writes `$eve.root` — read by packages/dashboard/lib/queries.ts",
+          "passed": true
+        },
+        {
+          "detail": "eve still writes `$eve.subagent` — read by packages/dashboard/lib/queries.ts",
+          "passed": true
+        },
+        {
+          "detail": "eve still writes `$eve.title` — read by packages/dashboard/lib/queries.ts",
+          "passed": true
+        },
+        {
+          "detail": "eve still writes `$eve.tool_count` — read by packages/dashboard/lib/queries.ts",
+          "passed": true
+        },
+        {
+          "detail": "eve still writes `$eve.trigger` — read by packages/dashboard/lib/queries.ts",
+          "passed": true
+        },
+        {
+          "detail": "eve still writes `$eve.type` — read by packages/dashboard/lib/queries.ts",
+          "passed": true
+        }
+      ],
+      "crash": null
+    },
+    {
+      "id": "attributes/run-type-discriminator",
+      "title": "$eve.type still distinguishes session, turn and subagent runs",
+      "assumption": "eve stamps runs with `$eve.type` of \"session\", \"turn\" or \"subagent\", and leaves internal runs untagged.",
+      "evestackUse": "Every dashboard query filters on `$eve.type` — not for tidiness, but because eve's own sessionTimeoutWorkflow writes rows into the same table with no `$eve.type` at all. Without the filter those internal rows are counted as user sessions: inflated session counts, a session list full of phantom entries, and per-session cost divided across runs that never called a model. The three literal values are hard-coded in packages/dashboard/lib/queries.ts.",
+      "file": "contract/contracts/06-run-attributes.contract.mjs",
+      "status": "pass",
+      "assertions": [
+        {
+          "detail": "a session run is still tagged $eve.type = \"session\"",
+          "passed": true
+        },
+        {
+          "detail": "a session run still carries $eve.title (the dashboard's session label)",
+          "passed": true
+        },
+        {
+          "detail": "a session run still carries $eve.trigger (which channel started it)",
+          "passed": true
+        },
+        {
+          "detail": "a turn run is still tagged $eve.type = \"turn\"",
+          "passed": true
+        },
+        {
+          "detail": "a turn still points at its session through $eve.parent",
+          "passed": true
+        },
+        {
+          "detail": "a turn still carries $eve.root",
+          "passed": true
+        },
+        {
+          "detail": "a subagent run is still tagged $eve.type = \"subagent\"",
+          "passed": true
+        },
+        {
+          "detail": "a subagent still carries $eve.root back to the originating session",
+          "passed": true
+        },
+        {
+          "detail": "the tool loop still stamps `$eve.model` on a turn that reached a model",
+          "passed": true
+        },
+        {
+          "detail": "the tool loop still stamps `$eve.input_tokens` on a turn that reached a model",
+          "passed": true
+        },
+        {
+          "detail": "the tool loop still stamps `$eve.output_tokens` on a turn that reached a model",
+          "passed": true
+        },
+        {
+          "detail": "the tool loop still stamps `$eve.cache_read_tokens` on a turn that reached a model",
+          "passed": true
+        }
+      ],
+      "crash": null
+    },
+    {
+      "id": "auth/local-dev-must-not-trust-the-request",
+      "title": "localDev() grants on process state, never on anything the caller controls",
+      "assumption": "localDev() decides from the running process (EVE_DEV / vercel dev), and no Host header or URL hostname can make it grant.",
+      "evestackUse": "templates/default/agent/channels/eve.ts puts `localDev()` first in the auth chain of every scaffolded agent, so that `eve dev` needs no credentials on your own machine, with HTTP Basic underneath it for everything else. Every evestack agent is therefore exactly as exposed as localDev() is permissive. If eve reintroduces a request-derived grant, anyone who can reach the agent's port gets an unauthenticated local-dev principal — full session creation, full tool execution — by sending a Host header. That is a remote authentication bypass in the default template, and it is what eve 0.29.5 actually shipped. See the long comment in that file for the history.",
+      "file": "contract/contracts/07-auth.contract.mjs",
+      "status": "pass",
+      "assertions": [
+        {
+          "detail": "eve/channels/auth still exports localDev()",
+          "passed": true
+        },
+        {
+          "detail": "localDev() denies a request claiming to come from \"127.evil.com\"",
+          "passed": true
+        },
+        {
+          "detail": "localDev() denies a request claiming to come from \"127.0.0.1.evil.com\"",
+          "passed": true
+        },
+        {
+          "detail": "localDev() denies a request claiming to come from \"127.0.0.1.nip.io\"",
+          "passed": true
+        },
+        {
+          "detail": "localDev() denies a request claiming to come from \"evil.localhost\"",
+          "passed": true
+        },
+        {
+          "detail": "localDev() denies a request claiming to come from \"localhost.evil.com\"",
+          "passed": true
+        },
+        {
+          "detail": "localDev() denies a request claiming to come from \"attacker.example.com\"",
+          "passed": true
+        },
+        {
+          "detail": "localDev() still grants inside an `eve dev` process, regardless of the request's host",
+          "passed": true
+        },
+        {
+          "detail": "the dev grant is still a `local-dev` principal",
+          "passed": true
+        }
+      ],
+      "crash": null
+    },
+    {
+      "id": "auth/http-basic-fails-closed",
+      "title": "httpBasic() rejects missing and wrong credentials",
+      "assumption": "eve's httpBasic() returns no principal without correct credentials, and eve 401s when no authenticator matches.",
+      "evestackUse": "HTTP Basic is the credential evestack generates at scaffold time and writes to .env.local (EVESTACK_AUTH_USER / EVESTACK_AUTH_PASSWORD); it is the only thing standing between a self-hosted agent and the internet once localDev() declines, and packages/dashboard authenticates to the agent with it. `create-evestack` tells users this protects their agent. If it ever failed open — or if routeAuth stopped 401ing when every authenticator declines — that promise would be false on every install, and the CI assertion that .env.local carries a non-empty password would be guarding nothing.",
+      "file": "contract/contracts/07-auth.contract.mjs",
+      "status": "pass",
+      "assertions": [
+        {
+          "detail": "httpBasic() denies a request with no Authorization header",
+          "passed": true
+        },
+        {
+          "detail": "httpBasic() denies a wrong password",
+          "passed": true
+        },
+        {
+          "detail": "httpBasic() grants on the configured credentials",
+          "passed": true
+        },
+        {
+          "detail": "the granted principal is identified by the configured username",
+          "passed": true
+        },
+        {
+          "detail": "routeAuth() answers 401 when every authenticator declines — eve still fails closed",
+          "passed": true
+        }
+      ],
+      "crash": null
+    },
+    {
+      "id": "hooks/observe-only-and-event-names",
+      "title": "hook handlers stay side-effect-only, and the events evestack watches still exist",
+      "assumption": "A hook handler returns `void | Promise<void>` — it cannot block, park or alter a turn — and eve still surfaces the session/turn/step lifecycle events to authored hooks.",
+      "evestackUse": "evestack's observability and any hook-driven control loop depend on this being true. Because a hook cannot park a turn, cancellation has to go through POST /eve/v1/session/:sessionId/cancel and lands *between* steps — eve does not thread an abortSignal into model calls, so an in-flight generation keeps streaming regardless (vercel/eve#483). docs/ and packages/dashboard both describe cancellation that way. If eve makes handlers blocking, that design is stale and a much better enforcement point exists; if these event names disappear, hooks stop firing with no error at all.",
+      "file": "contract/contracts/08-hooks.contract.mjs",
+      "status": "pass",
+      "assertions": [
+        {
+          "detail": "eve/hooks still exports defineHook()",
+          "passed": true
+        },
+        {
+          "detail": "StreamEventHook still returns `void | Promise<void>` — handlers remain observe-only",
+          "passed": true
+        },
+        {
+          "detail": "HookEventMap still exposes `session.started` to authored hooks",
+          "passed": true
+        },
+        {
+          "detail": "HookEventMap still exposes `session.waiting` to authored hooks",
+          "passed": true
+        },
+        {
+          "detail": "HookEventMap still exposes `turn.started` to authored hooks",
+          "passed": true
+        },
+        {
+          "detail": "HookEventMap still exposes `turn.completed` to authored hooks",
+          "passed": true
+        },
+        {
+          "detail": "HookEventMap still exposes `turn.cancelled` to authored hooks",
+          "passed": true
+        },
+        {
+          "detail": "HookEventMap still exposes `step.started` to authored hooks",
+          "passed": true
+        },
+        {
+          "detail": "HookEventMap still exposes `step.completed` to authored hooks",
+          "passed": true
+        },
+        {
+          "detail": "HookEventMap still exposes `actions.requested` to authored hooks",
+          "passed": true
+        },
+        {
+          "detail": "HookEventMap still exposes `input.requested` to authored hooks",
+          "passed": true
+        }
+      ],
+      "crash": null
+    },
+    {
+      "id": "sandbox/backend-interface-is-structurally-stable",
+      "title": "eve's SandboxBackend still has the shape @evestack/sandbox-opensandbox duck-types",
+      "assumption": "A SandboxBackend is `{ name, create(input), prewarm(input) }`; its handle exposes session/useSessionFn/captureState/shutdown; create takes templateKey + sessionKey + existingMetadata; prewarm takes templateKey + seedFiles and returns `{ reused }`.",
+      "evestackUse": "packages/sandbox-opensandbox is published to npm and declares its own copy of this interface so eve can stay a peer dependency — which means `tsc` never compares the two and CI cannot notice them diverging. templates/default/agent/sandbox/sandbox.ts wires `docker()` the same way, and the README offers the OpenSandbox backend as a one-line swap. A renamed method or a changed create/prewarm input ships a green build to npm and breaks at the user's first `eve build` with a type error in a package they did not write.",
+      "file": "contract/contracts/09-sandbox-backend.contract.mjs",
+      "status": "pass",
+      "assertions": [
+        {
+          "detail": "a built-in backend still exposes a string `name`",
+          "passed": true
+        },
+        {
+          "detail": "a built-in backend still implements `create()`",
+          "passed": true
+        },
+        {
+          "detail": "a built-in backend still implements `prewarm()`",
+          "passed": true
+        },
+        {
+          "detail": "eve/sandbox still exports defineSandbox()",
+          "passed": true
+        },
+        {
+          "detail": "defineSandbox({ backend }) still returns a definition",
+          "passed": true
+        },
+        {
+          "detail": "eve still declares the SandboxBackend interface",
+          "passed": true
+        },
+        {
+          "detail": "SandboxBackendHandle still carries `session`",
+          "passed": true
+        },
+        {
+          "detail": "SandboxBackendHandle still carries `useSessionFn`",
+          "passed": true
+        },
+        {
+          "detail": "SandboxBackendHandle still carries `captureState`",
+          "passed": true
+        },
+        {
+          "detail": "SandboxBackendHandle still carries `shutdown`",
+          "passed": true
+        },
+        {
+          "detail": "SandboxBackendCreateInput still carries `templateKey`",
+          "passed": true
+        },
+        {
+          "detail": "SandboxBackendCreateInput still carries `sessionKey`",
+          "passed": true
+        },
+        {
+          "detail": "SandboxBackendCreateInput still carries `existingMetadata`",
+          "passed": true
+        },
+        {
+          "detail": "SandboxBackendPrewarmInput still carries `seedFiles`",
+          "passed": true
+        },
+        {
+          "detail": "SandboxBackendPrewarmInput still carries `bootstrap`",
+          "passed": true
+        },
+        {
+          "detail": "prewarm() still reports `reused`",
+          "passed": true
+        },
+        {
+          "detail": "SandboxSession still declares `id`",
+          "passed": true
+        },
+        {
+          "detail": "SandboxSession still declares `resolvePath`",
+          "passed": true
+        },
+        {
+          "detail": "SandboxSession still declares `run`",
+          "passed": true
+        },
+        {
+          "detail": "SandboxSession still declares `readTextFile`",
+          "passed": true
+        },
+        {
+          "detail": "SandboxSession still declares `writeTextFile`",
+          "passed": true
+        },
+        {
+          "detail": "SandboxSession still declares `readBinaryFile`",
+          "passed": true
+        },
+        {
+          "detail": "SandboxSession still declares `writeBinaryFile`",
+          "passed": true
+        },
+        {
+          "detail": "SandboxSession still declares `readFile`",
+          "passed": true
+        },
+        {
+          "detail": "SandboxSession still declares `writeFile`",
+          "passed": true
+        }
+      ],
+      "crash": null
+    }
+  ]
+}

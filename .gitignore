@@ -37,3 +37,6 @@ pnpm-debug.log*
 
 # Scraped research scratch (third-party page content) — never commit.
 .firecrawl/
+
+# Local dev-server config for the Claude Code preview pane; not part of the product.
+.claude/
