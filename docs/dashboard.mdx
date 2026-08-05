@@ -22,6 +22,37 @@ This is where evestack diverges from Agent Runs, which is read-only:
   for the actual protocol underneath
 - **Cancel a run** — read [the cooperative-cancellation note](/architecture#cooperative-cancellation)
   before building anything that assumes a cancel is instant
+- **Promote a session to an eval** — turn any run, especially one that went wrong, into a real
+  `evals/*.eval.ts` replaying its actual messages
+
+## Who approved it
+
+A browser button that can approve a shell command invites one fair question: approved by whom?
+eve cannot answer it — its human-in-the-loop protocol records that a request was answered and
+with which option, because that is all it needs to resume the turn. Identity is not part of it.
+
+So evestack records every decision itself, in `evestack.approvals`, and shows them under
+**Approvals**: the tool, the decision, the person, the session, and — the column that matters —
+*how* the identity was established.
+
+evestack deliberately ships no identity provider. The dashboard is meant to sit behind whatever
+you already trust, so it reads identity from the request and is explicit about its provenance:
+
+| Source | Recorded as | Worth |
+| --- | --- | --- |
+| `EVESTACK_APPROVER_HEADER` (a header you name) | `header` | as trustworthy as your proxy |
+| `X-Forwarded-User` / `X-Forwarded-Email` | `forwarded-user` / `forwarded-email` | set by oauth2-proxy, Cloudflare Access, and friends |
+| HTTP Basic user | `basic` | one shared credential — identifies a deployment, not a person |
+| nothing | `unidentified` | recorded anyway, and flagged |
+
+An anonymous decision is still written down. A silent gap in an audit log is worse than a visible
+one, and the Approvals page counts them at the top so they cannot be missed. Set
+`EVESTACK_REQUIRE_APPROVER=1` to refuse them outright — the API answers `403 approver_required`
+and the turn stays parked.
+
+The audit row is written *after* eve accepts the answer, so the log never claims a decision that
+did not take effect. Retention is unbounded: this is the row you want a year later, when someone
+asks why the agent deleted the thing it deleted.
 
 ## Running it
 

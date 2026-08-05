@@ -4,6 +4,7 @@ import {
   type InputRequest,
   type InputResponse,
 } from "@/lib/agent-client";
+import { identifyApprover, recordApproval, requiresApprover } from "@/lib/approvals";
 import {
   handleRouteError,
   isResponse,
@@ -119,6 +120,20 @@ export async function POST(
     const targets = selectTargets(snapshot.pendingRequests, requestId);
     if (isResponse(targets)) return targets;
 
+    // Identify BEFORE resuming the turn. A deployment that demands a named
+    // approver must refuse the decision, not discover afterwards that it could
+    // not attribute one it already carried out.
+    const identity = identifyApprover(request);
+    if (identity.approver === null && requiresApprover()) {
+      return jsonError(
+        "EVESTACK_REQUIRE_APPROVER is set and this request carries no identity. Put the " +
+          "dashboard behind a proxy that sets X-Forwarded-User (or name a header in " +
+          "EVESTACK_APPROVER_HEADER) so approvals can be attributed to a person.",
+        403,
+        "approver_required",
+      );
+    }
+
     const inputResponses: InputResponse[] = [];
     for (const target of targets) {
       const answer = answerFor(target, { decision, optionId, text });
@@ -133,10 +148,41 @@ export async function POST(
       signal: request.signal,
     });
 
+    // Audit AFTER eve accepts, so the log never claims a decision that did not
+    // take effect. A failure to write must not un-approve what already happened,
+    // so it is reported on the response instead of thrown.
+    let audited = true;
+    try {
+      await Promise.all(
+        inputResponses.map((answer) => {
+          const target = targets.find((entry) => entry.requestId === answer.requestId);
+          return recordApproval({
+            sessionId: id,
+            turnId: snapshot.turnId ?? null,
+            requestId: answer.requestId,
+            requestKind: target?.kind ?? null,
+            toolName: target?.action?.toolName ?? null,
+            optionId: answer.optionId ?? null,
+            answerText: answer.text ?? null,
+            identity,
+            remoteAddr:
+              request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+              request.headers.get("x-real-ip"),
+            userAgent: request.headers.get("user-agent"),
+          });
+        }),
+      );
+    } catch {
+      audited = false;
+    }
+
     return jsonOk({
       sessionId: result.sessionId,
       answered: inputResponses,
       resolvedContinuationToken: providedToken === undefined,
+      approver: identity.approver,
+      approverVia: identity.via,
+      audited,
     });
   } catch (error) {
     return handleRouteError(error, request);

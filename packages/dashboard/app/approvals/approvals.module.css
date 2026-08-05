@@ -1,0 +1,47 @@
+/* Scoped to this page so globals.css stays the shared vocabulary. Colors come
+   from the same CSS variables used everywhere else. */
+
+.sub {
+  color: var(--text-dim);
+  font-size: 13px;
+  margin: 6px 0 20px;
+  max-width: 70ch;
+}
+
+/* Deliberately loud. An audit log with unattributable rows is the exact thing
+   this page exists to make impossible to ignore. */
+.warn {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warn, #c98a2b);
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--text-dim);
+  margin: 0 0 18px;
+  max-width: 90ch;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.table th {
+  text-align: left;
+  font-weight: 500;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  padding: 0 12px 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.table td {
+  padding: 9px 12px 9px 0;
+  border-bottom: 1px solid var(--border-subtle, var(--border));
+  vertical-align: middle;
+}
+
+.table tbody tr:hover { background: var(--bg-hover, rgba(127, 127, 127, 0.06)); }
