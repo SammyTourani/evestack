@@ -268,6 +268,7 @@ export const footerColumns = [
   {
     title: "Open source",
     links: [
+      { label: "Docs", href: "/docs" },
       { label: "GitHub", href: site.github },
       { label: "License — Apache-2.0", href: `${site.github}/blob/main/LICENSE` },
       { label: "eve (upstream)", href: "https://eve.dev" },

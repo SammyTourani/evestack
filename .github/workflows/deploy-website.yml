@@ -10,6 +10,7 @@ on:
     branches: [main]
     paths:
       - "packages/website/**"
+      - "docs/**"
       - "docker-compose.yml"
       - "templates/default/agent/**"
       - ".github/workflows/deploy-website.yml"

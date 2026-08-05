@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { createMDX } from "fumadocs-mdx/next";
 
 const config: NextConfig = {
   output: "export",
@@ -15,4 +16,6 @@ const config: NextConfig = {
   reactStrictMode: true,
 };
 
-export default config;
+/* Compiles the repo-root docs/ tree (see source.config.ts) into the .source
+   bundle the /docs route loads. */
+export default createMDX()(config);

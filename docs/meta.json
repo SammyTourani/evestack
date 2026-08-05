@@ -1,0 +1,28 @@
+{
+  "title": "Documentation",
+  "pages": [
+    "---Get started---",
+    "index",
+    "quickstart",
+    "local-setup",
+    "---How it works---",
+    "architecture",
+    "dashboard",
+    "composio-auth",
+    "memory",
+    "---Channels---",
+    "channels",
+    "---Reference---",
+    "registry",
+    "cli",
+    "upgrading",
+    "troubleshooting",
+    "---Upstream: eve---",
+    "external:[Agent config](https://eve.dev/docs/agent-config)",
+    "external:[Tools](https://eve.dev/docs/tools)",
+    "external:[Human in the loop](https://eve.dev/docs/human-in-the-loop)",
+    "external:[Subagents](https://eve.dev/docs/subagents)",
+    "external:[Evals](https://eve.dev/docs/evals/overview)",
+    "external:[CLI reference](https://eve.dev/docs/reference/cli)"
+  ]
+}

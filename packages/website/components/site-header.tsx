@@ -1,4 +1,5 @@
 import { nav, site } from "@/lib/copy";
+import { withBase } from "@/lib/asset";
 import { Button } from "@/components/ui/button";
 import { GitHubIcon } from "@/components/ui/github-icon";
 
@@ -32,6 +33,14 @@ export function SiteHeader() {
         </nav>
 
         <div className="hidden items-center gap-3 md:flex">
+          {/* Outside the scrollspy nav on purpose: that list is anchor-only,
+              and a route link would never match a section. */}
+          <a
+            href={withBase("/docs")}
+            className="text-copy-14 text-gray-900 transition-colors hover:text-gray-1000"
+          >
+            Docs
+          </a>
           <a
             href={site.github}
             target="_blank"
@@ -73,6 +82,14 @@ export function SiteHeader() {
                 </li>
               ))}
               <li className="mt-1 border-t border-border-subtle pt-1">
+                <a
+                  href={withBase("/docs")}
+                  className="block rounded-lg px-3 py-2 text-copy-14 text-gray-900 hover:bg-gray-100 hover:text-gray-1000"
+                >
+                  Docs
+                </a>
+              </li>
+              <li>
                 <a
                   href={site.github}
                   target="_blank"

@@ -19,10 +19,10 @@ packages `eve` to run on your own hardware with one command, and builds the dash
 kept for itself.
 
 <CardGroup cols={2}>
-  <Card title="Quickstart" icon="rocket" href="/quickstart">
+  <Card title="Quickstart" icon="rocket" href="/docs/quickstart">
     `npx create-evestack my-agent` to a running agent in one command.
   </Card>
-  <Card title="Architecture" icon="diagram-project" href="/architecture">
+  <Card title="Architecture" icon="diagram-project" href="/docs/architecture">
     How the dashboard reads eve's own Postgres tables directly — no ingest pipeline.
   </Card>
 </CardGroup>
@@ -38,7 +38,7 @@ kept for itself.
 | One-click tool sign-in | 1,070 apps (Composio) | 4 managed connectors |
 | Long-term memory | included (pgvector) | not included |
 
-The only real cost is model tokens — and [Ollama](/local-setup#ollama) takes that to zero too.
+The only real cost is model tokens — and [Ollama](/docs/local-setup#ollama) takes that to zero too.
 
 ## The honest tradeoffs
 
@@ -46,8 +46,8 @@ evestack doesn't hide the parts of self-hosting that are genuinely harder than p
 
 - **Frictionless auth needs someone else's OAuth app.** Composio's managed auth is one click,
   but shows a Composio-branded consent screen and shares rate limits across every Composio
-  customer. Read [Composio auth](/composio-auth) before onboarding real users.
+  customer. Read [Composio auth](/docs/composio-auth) before onboarding real users.
 - **Cancellation is cooperative, not immediate.** We measured a cancelled turn continuing to
-  stream for roughly 90 seconds. See [Architecture](/architecture#cooperative-cancellation).
+  stream for roughly 90 seconds. See [Architecture](/docs/architecture#cooperative-cancellation).
 - **You own operations.** Backups, uptime, and scaling are yours — that's the actual trade for
   $0 infrastructure and full data ownership.

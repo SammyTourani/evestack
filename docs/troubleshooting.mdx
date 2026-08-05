@@ -20,12 +20,12 @@ sense that the agent keeps working, just without the durability you expected fro
 If you're running a customized memory setup rather than the shipped
 `@evestack/memory` registry item, check the vector index type. IVFFlat built on a table that
 started empty can return zero rows for a query that should obviously match — see
-[Memory](/memory) for the full explanation and the fix (HNSW).
+[Memory](/docs/memory) for the full explanation and the fix (HNSW).
 
 ## "A stop/cancel button in my own UI doesn't seem to work"
 
 It almost certainly did — cancellation is cooperative, not immediate. Read
-[Architecture § cooperative cancellation](/architecture#cooperative-cancellation) for the
+[Architecture § cooperative cancellation](/docs/architecture#cooperative-cancellation) for the
 measured ~90-second tail and the actual event ordering.
 
 ## "The dashboard shows sessions starting in the future"

@@ -1,0 +1,16 @@
+/* Fumadocs' Tailwind preset, scoped to the /docs route by importing it from
+   the docs layout rather than app/globals.css. The landing page has its own
+   hand-tuned token scale and a preset loaded globally would collide with it. */
+@import "tailwindcss";
+@import "fumadocs-ui/css/neutral.css";
+@import "fumadocs-ui/css/preset.css";
+
+@source "../../node_modules/fumadocs-ui/dist/**/*.js";
+
+/* Same typefaces as the landing page — the variables are set on <html> by
+   the root layout, so the docs inherit them instead of falling back to
+   system-ui and reading like a different product. */
+@theme {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
