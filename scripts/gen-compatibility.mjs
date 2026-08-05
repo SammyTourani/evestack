@@ -76,13 +76,25 @@ function runContracts() {
       stdio: ["ignore", "pipe", "inherit"],
     });
   } catch (error) {
-    // run.mjs exits 1 on a broken contract and 2 when it cannot even find eve.
-    // Both are refusals to generate, but they need different advice.
+    // run.mjs exits 1 on a broken contract, 2 when it cannot even find eve, and
+    // 3 when the suite shrank below contract/floor.json. All three are refusals
+    // to generate, and they need different advice.
     if (error.status === 2) die("the contract runner could not load eve — run `pnpm install` first.");
     if (error.status === 1) {
       die(
         "the contract suite is red, so there is no verified version to publish.\n" +
           "  Run `node contract/run.mjs` and read docs/upgrading.mdx before regenerating.",
+      );
+    }
+    if (error.status === 3) {
+      // Publishing here is the specific harm the floor exists to prevent: the
+      // page would render a smaller, entirely green table and read as though
+      // nothing had changed. The stderr from the runner already names which
+      // contracts shrank and by how much.
+      die(
+        "the suite shrank below contract/floor.json, so publishing it would understate coverage.\n" +
+          "  Run `node contract/run.mjs` for the details. If the loss is intentional,\n" +
+          "  lower the floor deliberately with `node contract/run.mjs --write-floor`.",
       );
     }
     die(`could not run ${RUNNER}: ${error.message}`);

@@ -179,6 +179,20 @@ function runSuite(eveDir) {
 
   // 0 = all green, 1 = contracts failed — both are results worth recording.
   // 2 is the runner refusing to start (no eve found), which is not a verdict.
+  //
+  // 3 is the floor: the suite shrank. That must never be recorded, and the
+  // reason is specific to this file. A history entry is what the public matrix
+  // is built from, and record.mjs's promise — "nobody hand-edits a green cell
+  // into existence" — covers the eve tarball, not the size of the suite. A run
+  // against a hollowed-out suite is a genuinely real run of a smaller thing,
+  // and once written it is indistinguishable from a correct row forever.
+  if (result.status === 3) {
+    throw new Error(
+      `refusing to record eve ${eveDir ?? "installed"}: the suite is below contract/floor.json.\n` +
+        `${result.stderr}\n` +
+        "Recording this would publish reduced coverage as a certification.",
+    );
+  }
   if (result.status !== 0 && result.status !== 1) {
     throw new Error(`contract/run.mjs exited ${result.status}:\n${result.stderr || result.stdout}`);
   }

@@ -15,13 +15,18 @@
  *   node contract/run.mjs --format=markdown   PR-body-ready report
  *   node contract/run.mjs --only=auth         run contracts whose id matches
  *   node contract/run.mjs --verbose           show passing assertions too
+ *   node contract/run.mjs --write-floor       re-record contract/floor.json
  *
  *   EVESTACK_CONTRACT_EVE_DIR=path/to/eve node contract/run.mjs
  *       run the same contracts against a different eve install
+ *
+ * Exit codes: 0 green · 1 a contract failed · 2 the runner could not start ·
+ * 3 the suite shrank below contract/floor.json (see contract/lib/floor.mjs).
  */
 import { readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { FLOOR_EXIT_CODE, checkFloor, readFloor, writeFloor } from "./lib/floor.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -33,6 +38,7 @@ const args = process.argv.slice(2);
 const format = (args.find((a) => a.startsWith("--format="))?.slice(9) ?? "human").toLowerCase();
 const only = args.find((a) => a.startsWith("--only="))?.slice(7) ?? null;
 const verbose = args.includes("--verbose");
+const writeFloorFlag = args.includes("--write-floor");
 
 if (!["human", "json", "markdown"].includes(format)) {
   process.stderr.write(`Unknown --format=${format}. Use human, json or markdown.\n`);
@@ -191,9 +197,47 @@ async function main() {
     contracts: results,
   };
 
-  if (format === "json") process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+  // Re-recording the floor is an authoring action, not a verdict: it must not
+  // happen on an incomplete run, or `--only=auth --write-floor` would silently
+  // erase every other contract's minimum.
+  if (writeFloorFlag) {
+    if (only !== null) {
+      process.stderr.write("--write-floor cannot be combined with --only: it would erase the other floors.\n");
+      process.exit(2);
+    }
+    const written = writeFloor(report);
+    const total = Object.values(written.contracts).reduce((n, v) => n + v, 0);
+    process.stdout.write(
+      `contract/floor.json written: ${Object.keys(written.contracts).length} contracts, ${total} assertions.\n`,
+    );
+    process.exit(0);
+  }
+
+  const violations = checkFloor(report, readFloor());
+
+  if (format === "json") process.stdout.write(`${JSON.stringify({ ...report, floorViolations: violations }, null, 2)}\n`);
   else if (format === "markdown") process.stdout.write(renderMarkdown(report));
   else process.stdout.write(renderHuman(report, verbose));
+
+  // Reported after the table, and before the exit, because it is a statement
+  // about the table itself rather than about eve: everything above may be green
+  // and still be describing less than it used to.
+  if (violations.length > 0) {
+    const lines = [
+      "",
+      "  THE SUITE SHRANK. Everything above may be green and still cover less than it did:",
+      ...violations.map((v) => `    · ${v}`),
+      "",
+      "  These assertions are generated from evestack's own source, so this usually means",
+      "  an import, a query column or a route was removed and took its coverage with it.",
+      "  If the loss is intentional, lower the floor deliberately:",
+      "",
+      "    node contract/run.mjs --write-floor",
+      "",
+    ];
+    process.stderr.write(`${lines.join("\n")}\n`);
+    process.exit(FLOOR_EXIT_CODE);
+  }
 
   process.exit(report.ok ? 0 : 1);
 }

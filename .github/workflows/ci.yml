@@ -45,6 +45,39 @@ jobs:
       # nothing and fails if it drifted.
       - run: node scripts/gen-compatibility.mjs --check
 
+  # The workspace's own tests. `pnpm test` at the root is
+  # `node contract/run.mjs && pnpm -r --if-present test`, and docs/upgrading.mdx
+  # has told readers it runs since it was written — but no workflow invoked it,
+  # so the 19 cron-parser tests, create-evestack's syntax checks and the entire
+  # website Playwright suite had never once run in CI. That is now this job.
+  #
+  # Separate from `typecheck` because it needs a browser download and a Next
+  # build; folding it in would put two minutes in front of the fast feedback
+  # everything else depends on.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Same cold-checkout rule as every other job: workspace types and the
+      # dashboard's cron import both resolve through a gitignored dist/.
+      - run: pnpm -r --if-present run build
+      # chromium only — the suite pins one browser, and --with-deps pulls the
+      # system libraries a bare runner does not have.
+      - run: pnpm --filter @evestack/website exec playwright install --with-deps chromium
+      # A deliberate, fixed timezone. templates/default's date handling has had
+      # a UTC-vs-local bug before, and a runner that is always UTC makes that
+      # class of bug invisible — a green suite here would mean "no test ran in a
+      # timezone where it could fail".
+      - run: pnpm test
+        env:
+          TZ: America/New_York
+
   dashboard-build:
     runs-on: ubuntu-latest
     steps:

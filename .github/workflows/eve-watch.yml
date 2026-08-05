@@ -57,6 +57,39 @@ jobs:
             latest="${{ inputs.version }}"
           else
             latest="$(npm view eve version)"
+
+            # Cooldown. A version published in the last COOLDOWN_HOURS is left
+            # alone until tomorrow's run.
+            #
+            # This job's whole purpose is to move fast, so slowing it down needs
+            # a reason: the npm registry is where supply-chain compromises are
+            # delivered, and the window that matters is hours. Both major 2026
+            # incidents were unpublished within roughly 2.5 and 12 hours of going
+            # live — inside a one-day cooldown, outside a "bump it the moment it
+            # appears" policy. Renovate ships `minimumReleaseAge`, Dependabot has
+            # a cooldown, and pnpm 11 defaults to one; this is the same idea in
+            # ten lines.
+            #
+            # It costs at most a day of latency on a release nobody is waiting
+            # for, and the manual `workflow_dispatch` path deliberately skips it
+            # so an urgent upgrade is always one click away.
+            # Age is computed entirely in node: `date -u -d` is GNU-only and
+            # this has to keep working if the runner image ever changes.
+            # Prints whole hours, or "unknown".
+            age_hours="$(npm view "eve@$latest" time --json 2>/dev/null | node -e 'let raw="";process.stdin.on("data",c=>raw+=c);process.stdin.on("end",()=>{try{const t=JSON.parse(raw);const at=typeof t==="string"?t:t[process.argv[1]];const ms=Date.parse(at);process.stdout.write(Number.isNaN(ms)?"unknown":String(Math.floor((Date.now()-ms)/3600000)));}catch{process.stdout.write("unknown");}});' "$latest")"
+
+            COOLDOWN_HOURS=24
+            if [ "$age_hours" = "unknown" ] || [ -z "$age_hours" ]; then
+              # A registry hiccup must not silently disable the cooldown, but it
+              # must not wedge the job forever either. Proceed, loudly.
+              echo "::warning::could not read the publish time for eve $latest; proceeding without a cooldown check."
+            elif [ "$age_hours" -lt "$COOLDOWN_HOURS" ]; then
+              echo "eve $latest was published ${age_hours}h ago; cooldown is ${COOLDOWN_HOURS}h — waiting."
+              echo "proceed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            else
+              echo "eve $latest is ${age_hours}h old, past the ${COOLDOWN_HOURS}h cooldown."
+            fi
           fi
           echo "current=$current" >> "$GITHUB_OUTPUT"
           echo "latest=$latest"   >> "$GITHUB_OUTPUT"
