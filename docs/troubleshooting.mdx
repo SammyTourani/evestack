@@ -44,6 +44,20 @@ daily request cap rather than anything in your setup: an OpenAI account with no 
 allows **50 requests per day**, and a day of building against it exhausts that faster than you
 would guess. The message names the limit and how long to wait.
 
+## "I denied a tool approval and the whole session died"
+
+You are running a template from before 2026-08-05, or you removed the model middleware from
+`agent/agent.ts`. eve records a denied call with `output.type = "execution-denied"`, which is
+not part of the AI SDK's tool-output contract — so on the next turn `@ai-sdk/openai` serializes
+it as `output: undefined`, OpenAI answers 400 (`Missing required parameter: 'input[N].output'`),
+and the session fails permanently. Approving never triggers it; only denial does, on every eve
+version we tested (0.30.2 and 0.30.6).
+
+The template's `surviveDeniedToolResults` middleware normalizes the denied result to
+`error-json` before the provider sees it, and the model then answers the denial normally. If
+you built your agent without our template, copy that middleware from
+`templates/default/agent/agent.ts` — it is a no-op once eve emits a conforming type.
+
 ## "A turn shows as completed but the agent produced nothing"
 
 `eve`'s event stream and its workflow store disagree here, and the store is the misleading one.

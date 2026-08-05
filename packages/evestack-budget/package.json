@@ -47,7 +47,7 @@
   "devDependencies": {
     "@types/node": "24.x",
     "@types/pg": "^8.20.3",
-    "eve": "^0.30.2",
+    "eve": "^0.30.6",
     "typescript": "7.0.2"
   },
   "engines": {

@@ -1,6 +1,6 @@
 {
   "name": "@evestack/composio",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "One browser flow signs an eve agent into 1000+ tools. Wires Composio's Tool Router into eve, and degrades to a no-op when no API key is set.",
   "license": "Apache-2.0",
@@ -36,11 +36,11 @@
     "@composio/experimental": "0.2.1"
   },
   "peerDependencies": {
-    "eve": ">=0.29.0 <1.0.0"
+    "eve": ">=0.30.0 <1.0.0"
   },
   "devDependencies": {
     "@types/node": "24.x",
-    "eve": "^0.30.2",
+    "eve": "^0.30.6",
     "typescript": "7.0.2"
   },
   "engines": {

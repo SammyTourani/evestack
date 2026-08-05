@@ -36,11 +36,11 @@
     "@alibaba-group/opensandbox": "^0.1.11"
   },
   "peerDependencies": {
-    "eve": ">=0.29.0 <1.0.0"
+    "eve": ">=0.30.0 <1.0.0"
   },
   "devDependencies": {
     "@types/node": "24.x",
-    "eve": "^0.30.2",
+    "eve": "^0.30.6",
     "typescript": "7.0.2"
   },
   "engines": {

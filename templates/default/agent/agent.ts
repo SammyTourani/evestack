@@ -1,6 +1,7 @@
 import { openai } from "@ai-sdk/openai";
 import { defineAgent } from "eve";
 import { createOllama } from "ai-sdk-ollama";
+import { wrapLanguageModel, type LanguageModelMiddleware } from "ai";
 
 /**
  * Durable session storage.
@@ -32,7 +33,48 @@ const workflow = process.env.WORKFLOW_POSTGRES_URL
  */
 const provider = process.env.EVESTACK_PROVIDER ?? "openai";
 
-const model =
+/**
+ * Denying a tool approval must not kill the session — but without this
+ * middleware it does, on every eve version we tested (0.30.2 and 0.30.6).
+ *
+ * When a human denies a gated tool call, eve records the result with
+ * `output.type = "execution-denied"`. That type is not part of the AI SDK's
+ * tool-output contract (`text` | `json` | `error-text` | `error-json` |
+ * `content`), so when the next turn replays the transcript, @ai-sdk/openai's
+ * mapping switch falls through and serializes the denied call as
+ * `function_call_output` with `output: undefined`. OpenAI rejects the request —
+ * "Missing required parameter: 'input[N].output'" — and the turn, and with it
+ * the whole durable session, dies with `session.failed`. Approving is fine;
+ * only denial poisons the transcript. Observed live, both versions, and the
+ * offending request body was captured before writing this.
+ *
+ * The fix is at the one seam we own: the model passes through here before eve
+ * ever calls it, so normalize any tool result the SDK's switch cannot map into
+ * `error-json`. The model then sees the denial verbatim ("Tool execution was
+ * denied") and answers accordingly — verified end to end. Harmless once eve
+ * emits a conforming type; the normalization simply never fires.
+ */
+const SDK_TOOL_OUTPUT_TYPES = new Set(["text", "json", "error-text", "error-json", "content"]);
+
+const surviveDeniedToolResults: LanguageModelMiddleware = {
+  transformParams: async ({ params }) => {
+    for (const message of params.prompt) {
+      if (message.role !== "tool") continue;
+      for (const part of message.content) {
+        if (part.type !== "tool-result") continue;
+        const output = part.output as { type?: string } | undefined;
+        if (output && SDK_TOOL_OUTPUT_TYPES.has(output.type ?? "")) continue;
+        console.warn(
+          `[evestack] normalized a tool result the AI SDK cannot serialize (type=${output?.type ?? "undefined"}, tool=${part.toolName}); without this the provider rejects the turn`,
+        );
+        part.output = { type: "error-json", value: (output ?? { error: "tool did not run" }) as never };
+      }
+    }
+    return params;
+  },
+};
+
+const baseModel =
   provider === "ollama"
     ? createOllama({
         // Host only — no /api suffix. ai-sdk-ollama appends the path itself, so
@@ -40,6 +82,8 @@ const model =
         baseURL: process.env.OLLAMA_BASE_URL ?? "http://127.0.0.1:11434",
       })(process.env.EVESTACK_MODEL ?? "qwen3")
     : openai(process.env.EVESTACK_MODEL ?? "gpt-5-mini");
+
+const model = wrapLanguageModel({ model: baseModel, middleware: surviveDeniedToolResults });
 
 /**
  * Local models need their context window declared.

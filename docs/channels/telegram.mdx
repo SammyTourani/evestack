@@ -23,7 +23,7 @@ The Telegram Bot API offers two ways to receive updates: `getUpdates` (long poll
 process calls out) and `setWebhook` (Telegram calls in). Polling needs no public URL at all,
 which would make this channel trivial to self-host.
 
-eve 0.30.2 implements only the second one. We checked the shipped adapter rather than guessing:
+eve 0.30.6 implements only the second one. We checked the shipped adapter rather than guessing:
 
 - `getUpdates` does not appear anywhere in the `eve` package.
 - The adapter calls exactly these Bot API methods: `sendMessage`, `sendChatAction`,
@@ -93,7 +93,7 @@ idle, exactly like `agent/tools/composio.ts` without its key:
 It is already in the default template. To add it to an existing eve project:
 
 ```bash
-eve registry add @evestack=https://registry.evestack.dev/r/{name}.json
+eve registry add @evestack=https://raw.githubusercontent.com/SammyTourani/evestack/main/registry/r/{name}.json
 eve add @evestack/channel-telegram
 ```
 

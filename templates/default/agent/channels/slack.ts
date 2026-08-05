@@ -6,7 +6,7 @@ import { defaultSlackAuth, slackChannel } from "eve/channels/slack";
  * eve's bundled Slack doc is written entirely around Vercel Connect and says
  * outright that "there's no SLACK_BOT_TOKEN or SLACK_SIGNING_SECRET for you to
  * manage". That is a description of the Connect path, not a requirement of the
- * adapter. In eve 0.30.2 `credentials` is optional and every field falls back
+ * adapter. In eve 0.30.6 `credentials` is optional and every field falls back
  * to the environment: `resolveSlackBotToken` defaults to
  * `process.env.SLACK_BOT_TOKEN`, and inbound verification defaults to
  * `process.env.SLACK_SIGNING_SECRET` whenever no `webhookVerifier` was passed.

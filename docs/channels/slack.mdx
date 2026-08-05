@@ -9,7 +9,7 @@ eve's own Slack documentation is written entirely around Vercel Connect and stat
 credentials "run through Vercel Connect... so there's no `SLACK_BOT_TOKEN` or
 `SLACK_SIGNING_SECRET` for you to manage." Read quickly, that sounds like a requirement.
 
-It is not. In eve 0.30.2 the whole `credentials` object is optional and every field falls back
+It is not. In eve 0.30.6 the whole `credentials` object is optional and every field falls back
 to the environment:
 
 | What Connect supplies | What eve falls back to | Where |
@@ -232,7 +232,7 @@ dropped, so a slow first turn does not get delivered twice.
 ## Installing this into an existing eve project
 
 ```bash
-eve registry add @evestack=https://registry.evestack.dev/r/{name}.json
+eve registry add @evestack=https://raw.githubusercontent.com/SammyTourani/evestack/main/registry/r/{name}.json
 eve add @evestack/channel-slack
 ```
 

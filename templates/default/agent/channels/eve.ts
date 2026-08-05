@@ -28,7 +28,8 @@ import { eveChannel } from "eve/channels/eve";
  * in the request, and `isLoopbackRequest` was removed. Keeping our wrapper on
  * 0.30 would be worse than useless — it can no longer add protection, and it
  * would reject legitimate local-dev access over a LAN IP, a tunnel, or a
- * container hostname. So it is gone, and the package pins eve ^0.30.2.
+ * container hostname. So it is gone, and the template pins an eve new enough
+ * to carry the fix (0.30.0 is the floor; the pin itself moves with upstream).
  *
  * If you are pinned to eve 0.29.x for some reason, you still need that guard:
  * see git history for the version this replaced.

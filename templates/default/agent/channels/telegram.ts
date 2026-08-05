@@ -10,7 +10,7 @@ import { telegramChannel } from "eve/channels/telegram";
  * ─ Webhook only. There is no polling mode. ─
  *
  * We checked, because polling would remove the one hard prerequisite here — a
- * public HTTPS URL. It does not exist in eve 0.30.2. The whole Telegram
+ * public HTTPS URL. It does not exist as of eve 0.30.6. The whole Telegram
  * adapter calls exactly five Bot API methods (sendMessage, sendChatAction,
  * answerCallbackQuery, editMessageReplyMarkup, getFile) plus the raw file
  * download, and every one of them is outbound;

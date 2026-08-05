@@ -148,6 +148,28 @@ run tree (`$rootRunId`/`$parentRunId`), model, token totals, and status all come
 - gpt-5-mini answered the bash question without calling the tool. Sandbox works (verified
   directly); this is model laziness. Consider `gpt-5` in the template if tool use matters.
 
+## VERIFIED (2026-08-05) — denying a tool approval killed the whole session
+
+Found by a live smoke test of the 0.30.2 → 0.30.6 upgrade; the offline contract suite
+(169/169 green on both versions) could not see it, which is the strongest argument yet for
+runtime smoke tests alongside the contracts.
+
+- **Symptom:** approve → everything fine. Deny → the resumed turn dies on
+  `Missing required parameter: 'input[N].output'` (OpenAI 400) and takes the durable session
+  with it: `step.failed → turn.failed → session.failed`. One human "No" bricked the session.
+- **Mechanism (captured from the actual request body):** eve records a denied call with
+  `output.type = "execution-denied"`. The AI SDK's tool-output contract knows only
+  `text | json | error-text | error-json | content`, so `@ai-sdk/openai`'s mapping switch
+  falls through and emits `{type: "function_call_output", call_id, output: undefined}`.
+- **Not a 0.30.6 regression:** reproduced identically on a clean 0.30.2 project
+  (standalone repro, local world, same provider). It was always there; earlier approval
+  verification checked that deny *resolved the card* but never drove a model call after it.
+- **Fix shipped:** `wrapLanguageModel` middleware in `templates/default/agent/agent.ts`
+  normalizes any tool-result output the SDK cannot map into `error-json` before the
+  provider sees it. Deny → resume → `turn.completed` verified on the real stack
+  (eve 0.30.6, Postgres world, budget hooks on). The middleware is a no-op the day eve
+  emits a conforming type. Upstream issue text prepared for vercel/eve.
+
 ## Open risks
 
 1. **Composio breach (May 2026)** — ~5,241 API keys + ~5,001 GitHub OAuth tokens exfiltrated;
