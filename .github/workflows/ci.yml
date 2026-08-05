@@ -55,6 +55,12 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Same cold-checkout problem as the typecheck job: the dashboard imports
+      # @evestack/schedules/cron, which resolves to a gitignored dist/, so
+      # Turbopack fails with "Module not found" on a fresh clone. Every job that
+      # compiles the dashboard has to build the workspace first — fixing only
+      # the typecheck job left this one red for exactly one commit.
+      - run: pnpm -r --if-present --filter '!@evestack/dashboard' run build
       # No real Postgres in this job — next build only needs the schema to
       # typecheck, not a live connection, since all queries are server-only
       # code that Next traces but does not execute at build time.
