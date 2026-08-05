@@ -4,36 +4,43 @@
   "items": [
     {
       "name": "memory",
+      "type": "registry:item",
       "title": "Long-term memory (pgvector)",
       "description": "Semantic long-term memory for an eve agent, stored in your own Postgres with pgvector. No vector service, no extra container, no bill."
     },
     {
       "name": "instrumentation",
+      "type": "registry:item",
       "title": "evestack dashboard traces",
       "description": "Export OpenTelemetry traces from an eve agent to a self-hosted evestack dashboard."
     },
     {
       "name": "docker-sandbox",
+      "type": "registry:item",
       "title": "Docker sandbox",
       "description": "Run the agent's sandbox in a local Docker container instead of hosted Vercel Sandbox."
     },
     {
       "name": "basic-auth",
+      "type": "registry:item",
       "title": "HTTP Basic route auth",
       "description": "Replace vercelOidc()/placeholderAuth() with HTTP Basic, for agents that run off Vercel."
     },
     {
       "name": "channel-slack",
+      "type": "registry:item",
       "title": "Slack channel",
       "description": "Answer @mentions and DMs in Slack from a self-hosted eve agent. Bot token plus signing secret — no Vercel account and no Connect connector."
     },
     {
       "name": "channel-discord",
+      "type": "registry:item",
       "title": "Discord channel",
       "description": "Answer Discord slash commands from a self-hosted eve agent. Application public key plus bot token — no Vercel Connect client."
     },
     {
       "name": "channel-telegram",
+      "type": "registry:item",
       "title": "Telegram channel",
       "description": "Text your self-hosted eve agent from Telegram. One BotFather token, no app review and no workspace admin — the fastest channel to actually finish."
     }

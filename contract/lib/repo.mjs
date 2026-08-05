@@ -146,7 +146,7 @@ export function eveImports() {
   const registryDir = join(REPO_ROOT, "registry", "r");
   let registryEntries = [];
   try {
-    registryEntries = readdirSync(registryDir).filter((f) => f.endsWith(".json") && f !== "index.json");
+    registryEntries = readdirSync(registryDir).filter((f) => f.endsWith(".json") && f !== "registry.json");
   } catch {
     registryEntries = [];
   }

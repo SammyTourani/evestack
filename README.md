@@ -55,9 +55,13 @@ evestack ships as an [eve registry](https://eve.dev/docs), so an existing eve pr
 a single part without migrating anything:
 
 ```bash
-eve registry add @evestack=https://registry.evestack.dev/r/{name}.json
+eve registry add @evestack=https://raw.githubusercontent.com/SammyTourani/evestack/main/registry/r/{name}.json
 eve add @evestack/memory
 ```
+
+The registry is served straight off `main` on GitHub rather than a branded domain — evestack
+owns no domain, and a URL nobody can resolve is worse than an ugly one. See
+[docs/registry.mdx](docs/registry.mdx#where-the-registry-is-hosted) before changing it.
 
 | Item | What it adds |
 | --- | --- |

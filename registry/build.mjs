@@ -4,13 +4,20 @@
  *
  * eve consumes third-party registries in the shadcn registry-item format:
  *
- *   eve registry add @evestack=https://registry.evestack.dev/r/{name}.json
+ *   eve registry add @evestack=https://raw.githubusercontent.com/SammyTourani/evestack/main/registry/r/{name}.json
  *   eve add @evestack/memory
  *
  * That is why evestack ships as a registry and not a fork. Anyone already
  * running eve can take one piece — memory, the dashboard exporter, Postgres
  * durability — without migrating a project or tracking our releases. We stay
  * additive to eve instead of competing with it.
+ *
+ * The URL is raw.githubusercontent.com, not registry.evestack.dev, because we
+ * own no domain: evestack.dev is unregistered, and the branded URL this comment
+ * used to show died with getaddrinfo ENOTFOUND on the first command a stranger
+ * ran. If someone buys the domain, see docs/registry.mdx — it lists every place
+ * the URL appears and the two constraints eve's registry client imposes on any
+ * replacement host ({name} is mandatory; Content-Type is not checked).
  *
  * Item content is inlined from the real files under templates/default, so the
  * registry can never drift from the code we actually test.
@@ -207,12 +214,21 @@ for (const item of ITEMS) {
     ...(item.docs ? { docs: item.docs } : {}),
   };
   writeFileSync(join(outDir, `${item.name}.json`), `${JSON.stringify(json, null, 2)}\n`);
-  index.push({ name: item.name, title: item.title, description: item.description });
+  // `type` is required here too: eve validates the catalog against the same
+  // discriminated union as items, and entries without it fail parsing with
+  // "Invalid discriminator value" — observed, not assumed.
+  index.push({ name: item.name, type: "registry:item", title: item.title, description: item.description });
   console.log(`✓ r/${item.name}.json  (${item.files.length} file${item.files.length > 1 ? "s" : ""})`);
 }
 
+// The catalog MUST be named registry.json, not index.json. `eve registry list`
+// resolves a namespace's catalog by substituting the literal name `registry`
+// into the item URL template — so for our mapping it fetches r/registry.json.
+// This shipped as index.json first, and `eve registry list --registry @evestack`
+// answered "The item at .../registry.json was not found" while every
+// `eve add` worked, because only the catalog lookup uses that fixed name.
 writeFileSync(
-  join(outDir, "index.json"),
+  join(outDir, "registry.json"),
   `${JSON.stringify({ name: "evestack", homepage: "https://github.com/SammyTourani/evestack", items: index }, null, 2)}\n`,
 );
-console.log(`✓ r/index.json  (${index.length} items)`);
+console.log(`✓ r/registry.json  (${index.length} items)`);

@@ -7,7 +7,7 @@ evestack ships as an [`eve` registry](https://eve.dev/docs) in the shadcn regist
 — the same mechanism `eve add channel/slack` uses for the official catalog.
 
 ```bash
-eve registry add @evestack=https://registry.evestack.dev/r/{name}.json
+eve registry add @evestack=https://raw.githubusercontent.com/SammyTourani/evestack/main/registry/r/{name}.json
 eve add @evestack/memory
 ```
 
@@ -38,3 +38,29 @@ Dependencies are pinned to the ranges `templates/default` is tested against, gen
 that manifest at build time — `pg@^8.20.3`, `ai@^7.0.38`, `@ai-sdk/openai@^2.0.0`. A bare,
 unversioned name would resolve to whatever npm calls latest on the day you run it, which is
 how you end up with `@ai-sdk/openai@4` next to code only ever exercised against v2.
+
+## Where the registry is hosted
+
+The URL is `raw.githubusercontent.com` and not `registry.evestack.dev` because **evestack owns
+no domain**. `evestack.dev` is unregistered — it returns NXDOMAIN — so the branded URL that used
+to be documented here died with `getaddrinfo ENOTFOUND` on the first command a stranger ran.
+Serving the JSON straight off `main` costs nothing and works today.
+
+If you ever buy `evestack.dev`, point it at `registry/r/` and change the URL in the five places
+that carry it: this file, `README.md`, `docs/channels/slack.mdx`, `docs/channels/telegram.mdx`,
+and the example in the header comment of `registry/build.mjs`. (`llms.txt` links the docs by raw
+URL for the same reason, but those are docs pages, not registry items.) Nothing in the shipped
+code reads the registry URL — it only ever lands in a user's own `package.json` under
+`registries`, written there by `eve registry add`.
+
+Two constraints on any replacement host, both read out of eve's registry client
+(`eve/dist/src/cli/commands/registry-project.js` and eve's bundled shadcn client):
+
+- The URL **must** contain the literal `{name}` placeholder. `eve registry add` rejects the
+  mapping outright otherwise, before it ever touches the network.
+- The `Content-Type` does **not** matter. raw.githubusercontent.com serves these files as
+  `text/plain; charset=utf-8` and eve parses the body as JSON anyway; it reads `content-type`
+  only on the error path, to pull a message out of a non-2xx response.
+
+The one real cost of the raw URL is caching: GitHub sends `cache-control: max-age=300`, so a
+freshly pushed registry change can take up to five minutes to reach users.

@@ -45,15 +45,18 @@ path (`npx create-evestack my-agent`).
 
 ## Docs
 
-- [Introduction](https://evestack.dev/introduction.mdx)
-- [Quickstart](https://evestack.dev/quickstart.mdx)
-- [Architecture](https://evestack.dev/architecture.mdx)
-- [Dashboard](https://evestack.dev/dashboard.mdx)
-- [Composio auth](https://evestack.dev/composio-auth.mdx)
-- [Memory](https://evestack.dev/memory.mdx)
-- [Registry](https://evestack.dev/registry.mdx)
-- [CLI](https://evestack.dev/cli.mdx)
-- [Troubleshooting](https://evestack.dev/troubleshooting.mdx)
+Served from `main` on GitHub, not from a docs domain: `evestack.dev` is unregistered, so the
+`https://evestack.dev/*.mdx` links that used to be listed here resolved to nothing.
+
+- [Introduction](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/introduction.mdx)
+- [Quickstart](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/quickstart.mdx)
+- [Architecture](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/architecture.mdx)
+- [Dashboard](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/dashboard.mdx)
+- [Composio auth](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/composio-auth.mdx)
+- [Memory](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/memory.mdx)
+- [Registry](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/registry.mdx)
+- [CLI](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/cli.mdx)
+- [Troubleshooting](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/troubleshooting.mdx)
 
 ## Repository
 
