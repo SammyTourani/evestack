@@ -1,3 +1,4 @@
+import { anthropic } from "@ai-sdk/anthropic";
 import { openai } from "@ai-sdk/openai";
 import { defineAgent } from "eve";
 import { createOllama } from "ai-sdk-ollama";
@@ -31,7 +32,43 @@ const workflow = process.env.WORKFLOW_POSTGRES_URL
  * A missing key should be a clear error, never an implicit decision to consume
  * every spare gigabyte on the host.
  */
-const provider = process.env.EVESTACK_PROVIDER ?? "openai";
+const PROVIDERS = ["openai", "anthropic", "ollama"] as const;
+type Provider = (typeof PROVIDERS)[number];
+
+const provider = readProvider();
+
+/**
+ * An unrecognised EVESTACK_PROVIDER is a hard error, not a silent fallback.
+ *
+ * `?? "openai"` on its own hid the interesting case: `EVESTACK_PROVIDER=ollamma`
+ * — or `claude`, or `anthropic-api` — quietly handed the local model name to the
+ * OpenAI provider, which then failed hundreds of lines later with a message
+ * about AI Gateway context-window metadata that names neither the typo nor the
+ * variable. Unset still means openai, because that is a choice; misspelled does
+ * not, because that is a mistake.
+ */
+function readProvider(): Provider {
+  const raw = process.env.EVESTACK_PROVIDER?.trim().toLowerCase();
+  if (!raw) return "openai";
+  if ((PROVIDERS as readonly string[]).includes(raw)) return raw as Provider;
+  throw new Error(
+    `EVESTACK_PROVIDER="${process.env.EVESTACK_PROVIDER}" is not a provider this agent knows. ` +
+      `Use one of: ${PROVIDERS.join(", ")}.`,
+  );
+}
+
+/**
+ * Each provider's default model, used when EVESTACK_MODEL is unset.
+ *
+ * Keep these in step with @evestack/budget's `envModel()`, which reconstructs
+ * the same `provider/model` string to price tokens — a default that only one of
+ * the two knows about prices the run as "unpriced".
+ */
+const DEFAULT_MODEL: Record<Provider, string> = {
+  openai: "gpt-5-mini",
+  anthropic: "claude-sonnet-5",
+  ollama: "qwen3",
+};
 
 /**
  * Denying a tool approval must not kill the session — but without this
@@ -74,14 +111,30 @@ const surviveDeniedToolResults: LanguageModelMiddleware = {
   },
 };
 
+// Trimmed and length-checked rather than `?? DEFAULT`: `??` only falls back on
+// null and undefined, so `EVESTACK_MODEL=` — a blank line in .env.local, or a
+// CI job passing through an unset input — sets it to "" and survives, producing
+// `openai("")` and a provider error that names no cause. An empty value plainly
+// means "not configured".
+const modelId = process.env.EVESTACK_MODEL?.trim() || DEFAULT_MODEL[provider];
+
+/**
+ * Direct provider calls, one branch each.
+ *
+ * Nothing here reads a key: every provider package picks its own up from the
+ * environment (OPENAI_API_KEY, ANTHROPIC_API_KEY), so a missing key surfaces as
+ * that provider's own authentication error rather than as an evestack one.
+ */
 const baseModel =
   provider === "ollama"
     ? createOllama({
         // Host only — no /api suffix. ai-sdk-ollama appends the path itself, so
         // including it yields "OllamaError: 404 page not found".
-        baseURL: process.env.OLLAMA_BASE_URL ?? "http://127.0.0.1:11434",
-      })(process.env.EVESTACK_MODEL ?? "qwen3")
-    : openai(process.env.EVESTACK_MODEL ?? "gpt-5-mini");
+        baseURL: process.env.OLLAMA_BASE_URL?.trim() || "http://127.0.0.1:11434",
+      })(modelId)
+    : provider === "anthropic"
+      ? anthropic(modelId)
+      : openai(modelId);
 
 const model = wrapLanguageModel({ model: baseModel, middleware: surviveDeniedToolResults });
 
@@ -102,7 +155,7 @@ const model = wrapLanguageModel({ model: baseModel, middleware: surviveDeniedToo
  * 32768 matches Qwen3's native window. Override for a model with a different
  * one; too high and compaction triggers too late to save the turn.
  */
-const localContextWindow = Number(process.env.EVESTACK_CONTEXT_WINDOW ?? 32768);
+const localContextWindow = Number(process.env.EVESTACK_CONTEXT_WINDOW?.trim() || 32768);
 
 export default defineAgent({
   model,

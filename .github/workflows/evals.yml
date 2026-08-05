@@ -1,0 +1,203 @@
+name: Evals
+
+# The only job in this repository that spends money, and the only one whose
+# result depends on what a language model chose to say.
+#
+# ── Why it is not part of CI ─────────────────────────────────────────────────
+#
+# `eve eval` drives a real model through a real Docker sandbox. On
+# `pull_request` that means any fork — including a hostile one — can spend the
+# repository owner's provider budget by opening a PR, which is why ci.yml
+# deliberately does not run it. `schedule` and `workflow_dispatch` run only on
+# the default branch, are unreachable by fork PRs, and receive secrets.
+#
+# ── Why it is not a gate ─────────────────────────────────────────────────────
+#
+# These evals are nondeterministic. deny-survives is documented at roughly three
+# passes in four on gpt-5-mini, and its failure mode is usually *vacuous*: the
+# model answers in prose, never calls the gated tool, and the test never reaches
+# its subject. A gate that is wrong one run in four gets muted within a week,
+# and a muted gate is worse than an absent one — so this reports, and a human
+# reads it.
+#
+# What makes the report worth reading is the negative control below.
+
+on:
+  schedule:
+    # Nightly, well after eve-watch, so a red eval can be read against a known
+    # eve version rather than racing an upgrade.
+    - cron: "43 7 * * *"
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "EVESTACK_MODEL to run against (default: the template's own default)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: evals
+  cancel-in-progress: false
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: evestack
+          POSTGRES_PASSWORD: evestack
+          POSTGRES_DB: evestack
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U evestack -d evestack"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      WORKFLOW_POSTGRES_URL: postgres://evestack:evestack@localhost:5433/evestack
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      EVESTACK_MODEL: ${{ inputs.model }}
+      TZ: America/New_York
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: is a provider key configured?
+        id: key
+        run: |
+          if [ -n "$OPENAI_API_KEY" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::no OPENAI_API_KEY secret — evals skipped. This job checks nothing without it."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.key.outputs.enabled == 'true'
+        run: pnpm install --frozen-lockfile
+      - if: steps.key.outputs.enabled == 'true'
+        run: pnpm -r --if-present run build
+
+      - name: bootstrap the workflow schema
+        if: steps.key.outputs.enabled == 'true'
+        run: cd templates/default && npm run db:bootstrap
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # The negative control, FIRST.
+      #
+      # Running it before the real suite is deliberate. If the deny gate cannot
+      # fail, then whatever the real suite reports afterwards means nothing, and
+      # finding that out first stops a green run from being published as
+      # evidence. This repository has shipped a QA check that asserted nothing
+      # before; the contract suite is pointed at eve 0.29.5 for exactly this
+      # reason.
+      # ─────────────────────────────────────────────────────────────────────────
+      - name: the deny gate must fail against a build with the fix removed
+        if: steps.key.outputs.enabled == 'true'
+        run: |
+          BROKEN="$(node contract/runtime/negative-control.mjs /tmp/agent-without-the-fix)"
+          echo "built sabotaged agent at $BROKEN"
+
+          cd "$BROKEN"
+          pnpm install --no-frozen-lockfile > /tmp/nc-install.log 2>&1 || {
+            echo "::error::could not install the negative-control agent"; tail -40 /tmp/nc-install.log; exit 1;
+          }
+
+          npx eve dev --port 2998 > /tmp/nc-agent.log 2>&1 &
+          echo $! > /tmp/nc.pid
+          for i in $(seq 1 90); do
+            curl -sf -o /dev/null http://localhost:2998/ 2>/dev/null && break
+            sleep 1
+          done
+
+          set +e
+          npx eve eval deny-survives --url http://127.0.0.1:2998/ > /tmp/nc-eval.log 2>&1
+          RESULT=$?
+          set -e
+          kill "$(cat /tmp/nc.pid)" 2>/dev/null || true
+
+          echo "── the sabotaged run ───────────────────────────────────────"
+          cat /tmp/nc-eval.log
+
+          if [ $RESULT -eq 0 ]; then
+            echo "::error::THE DENY GATE PASSED AGAINST A BUILD WITH THE FIX REMOVED."
+            echo "The eval is not exercising the denial path. Everything it reports about the"
+            echo "real agent is decoration until this is fixed — see contract/runtime/negative-control.mjs."
+            exit 1
+          fi
+          echo "negative control held: the gate went red without the fix, so it can still detect the bug."
+
+      - name: the real suite
+        if: steps.key.outputs.enabled == 'true'
+        id: suite
+        continue-on-error: true
+        run: |
+          cd templates/default
+          npx eve dev --port 2997 > /tmp/agent.log 2>&1 &
+          echo $! > /tmp/agent.pid
+          for i in $(seq 1 90); do
+            curl -sf -o /dev/null http://localhost:2997/ 2>/dev/null && break
+            sleep 1
+          done
+
+          set +e
+          npx eve eval --url http://127.0.0.1:2997/ 2>&1 | tee /tmp/evals.log
+          echo "result=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+          set -e
+          kill "$(cat /tmp/agent.pid)" 2>/dev/null || true
+
+      - name: report
+        if: steps.key.outputs.enabled == 'true' && steps.suite.outputs.result != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # An issue rather than a failed job, because a nondeterministic result
+          # needs a human to say which kind of failure it was. The distinction
+          # that matters is in the body: a *vacuous* run never reached its
+          # subject, while a real regression fails on session.failed.
+          {
+            echo "The nightly eval run was not clean. **The negative control passed**, so the deny"
+            echo "gate is still capable of detecting the bug — this is a real result, not a broken"
+            echo "harness."
+            echo
+            echo "Before treating it as a regression, check which kind of failure it is:"
+            echo
+            echo "- **Vacuous** — \`parked (0%): it ended \"waiting\" with no pending requests\`."
+            echo "  The model answered in prose and never called the gated tool, so the test never"
+            echo "  reached its subject. Documented at roughly one run in four on gpt-5-mini."
+            echo "  Re-run, or dispatch this workflow with \`model: gpt-5\`."
+            echo "- **Real** — a failure on \`session.failed\` or \`turn.failed\`. That is the"
+            echo "  deny-path bug, or something new in the same family."
+            echo
+            echo '```'
+            tail -c 40000 /tmp/evals.log
+            echo '```'
+          } > /tmp/issue.md
+
+          TITLE="Nightly evals were not clean ($(date -u +%Y-%m-%d))"
+          # One open issue at a time, updated rather than duplicated: a nightly
+          # that files a new issue every morning is a nightly people mute.
+          EXISTING="$(gh issue list --state open --label eval-run --json number --jq '.[0].number // empty')"
+          gh label create eval-run --color B60205 --description "Nightly eval run needs a look" 2>/dev/null || true
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body-file /tmp/issue.md
+          else
+            gh issue create --title "$TITLE" --body-file /tmp/issue.md --label eval-run
+          fi
+
+      - name: logs
+        if: always() && steps.key.outputs.enabled == 'true'
+        run: |
+          echo "── agent ───────────────────────────────────────────────────"
+          tail -c 20000 /tmp/agent.log 2>/dev/null || echo "(none)"
+          echo "── negative-control agent ──────────────────────────────────"
+          tail -c 20000 /tmp/nc-agent.log 2>/dev/null || echo "(none)"

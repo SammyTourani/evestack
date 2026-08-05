@@ -41,7 +41,7 @@ const ACK = "HEARTBEAT_OK";
  */
 const MIN_INTERESTING_CHARS = 300;
 
-const CRON = process.env.EVESTACK_HEARTBEAT_CRON ?? "0 * * * *";
+const CRON = process.env.EVESTACK_HEARTBEAT_CRON?.trim() || "0 * * * *";
 
 /**
  * The channel-specific address to post to, as JSON.
@@ -79,7 +79,7 @@ async function readTasks(): Promise<string | null> {
   // Read at fire time, not at boot: the point of a file is that you can edit it
   // and have the next wake-up honour the change.
   try {
-    const path = process.env.EVESTACK_HEARTBEAT_FILE ?? join(process.cwd(), "HEARTBEAT.md");
+    const path = process.env.EVESTACK_HEARTBEAT_FILE?.trim() || join(process.cwd(), "HEARTBEAT.md");
     const text = await readFile(path, "utf8");
     return text.trim() || null;
   } catch {
