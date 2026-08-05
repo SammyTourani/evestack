@@ -45,7 +45,7 @@ path (`npx create-evestack my-agent`).
 
 ## Docs
 
-Rendered at https://sammytourani.github.io/evestack/docs. The raw sources below are served
+Rendered at https://evestack.vercel.app/docs. The raw sources below are served
 from `main` on GitHub rather than a docs domain: `evestack.dev` is unregistered, so the
 `https://evestack.dev/*.mdx` links that used to be listed here resolved to nothing.
 

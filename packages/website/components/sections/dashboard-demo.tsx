@@ -2,7 +2,6 @@
 
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import { withBase } from "@/lib/asset";
 import {
   baseSessions,
   baseStats,
@@ -764,7 +763,7 @@ export function DashboardDemo() {
                   <div className="flex min-w-0 items-center gap-3">
                     <span aria-hidden className="logo-tile h-8 w-8 shrink-0 rounded-lg">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={withBase(`/logos/${slug}.svg`)} alt="" className="h-[62%] w-[62%]" loading="lazy" />
+                      <img src={`/logos/${slug}.svg`} alt="" className="h-[62%] w-[62%]" loading="lazy" />
                     </span>
                     <div className="min-w-0">
                       <p className="text-copy-14 text-gray-1000">{name}</p>

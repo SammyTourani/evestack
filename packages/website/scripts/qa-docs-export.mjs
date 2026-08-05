@@ -1,20 +1,19 @@
-/* Verifies the Fumadocs /docs route as GitHub Pages will serve it: under the
-   /evestack prefix, static, no server. Checks rendering, the upstream-link
-   nav (the capability the platform was chosen for), and asset resolution.
+/* Verifies the Fumadocs /docs route as deployed. Checks rendering, the
+   upstream-link nav (the capability the platform was chosen for), and that
+   no link still carries the retired /evestack path prefix.
 
-   Serves out/ itself, because Pages resolves an extensionless /docs/x to
-   x.html while a plain static server returns the directory of RSC payloads
-   Next writes alongside it — testing against that would prove nothing.
+   Defaults to the live site; pass a preview URL to check a PR before merge.
+   A local directory still works if one is ever passed.
 
-   Usage: node scripts/qa-docs-export.mjs <outDir> [exportDir|liveUrl] */
+   Usage: node scripts/qa-docs-export.mjs <outDir> [liveUrl|dir] */
 import { chromium } from "@playwright/test";
 import { createServer } from "node:http";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
 const OUT = process.argv[2] ?? ".";
-const TARGET = process.argv[3] ?? "";
-const PREFIX = "/evestack";
+const TARGET = process.argv[3] ?? "https://evestack.vercel.app";
+const PREFIX = ""; // served from the domain root on Vercel
 
 const TYPES = {
   ".html": "text/html", ".js": "text/javascript", ".css": "text/css",
@@ -73,8 +72,8 @@ const info = await page.evaluate(() => {
       .map((e) => e.tagName.toLowerCase())
       .filter((t) => ["note", "warning", "cardgroup", "card", "steps", "step"].includes(t)),
     upstreamLinks: links.filter((h) => h?.includes("eve.dev")),
-    internalDocLinks: links.filter((h) => h?.startsWith("/evestack/docs")).length,
-    unprefixed: links.filter((h) => h?.startsWith("/") && !h.startsWith("/evestack")),
+    internalDocLinks: links.filter((h) => h?.startsWith("/docs")).length,
+    stalePrefix: links.filter((h) => h?.startsWith("/evestack")),
     styled: getComputedStyle(body).backgroundColor,
     fontFamily: getComputedStyle(document.querySelector("h1") ?? body).fontFamily,
   };
@@ -98,7 +97,7 @@ console.log(`h1: ${info.h1}`);
 console.log(`mintlify tags left unmapped: ${info.unknownTags.length ? info.unknownTags.join(",") : "none ✓"}`);
 console.log(`upstream eve.dev links in nav: ${info.upstreamLinks.length} → ${info.upstreamLinks.slice(0, 3).join(", ")}`);
 console.log(`internal /docs links: ${info.internalDocLinks}`);
-console.log(`unprefixed internal links: ${info.unprefixed.length ? info.unprefixed.join(",") : "none ✓"}`);
+console.log(`stale /evestack links: ${info.stalePrefix.length ? info.stalePrefix.join(",") : "none ✓"}`);
 console.log(`body bg: ${info.styled} | h1 font: ${info.fontFamily.split(",")[0]}`);
 console.log(`sidebar: ${navText.slice(0, 240)}`);
 console.log(`request failures: ${failures.length}`);
@@ -108,7 +107,7 @@ const pass =
   !!info.h1 &&
   info.unknownTags.length === 0 &&
   info.upstreamLinks.length >= 4 &&
-  info.unprefixed.length === 0 &&
+  info.stalePrefix.length === 0 &&
   failures.length === 0;
 console.log(pass ? "DOCS EXPORT PASS" : "DOCS EXPORT FAIL");
 process.exit(pass ? 0 : 1);

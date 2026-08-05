@@ -2,7 +2,6 @@ import { Section } from "@/components/ui/section";
 import { Button } from "@/components/ui/button";
 import { CommandPill } from "@/components/ui/command-pill";
 import { closing, site } from "@/lib/copy";
-import { withBase } from "@/lib/asset";
 
 export function ClosingCta() {
   return (
@@ -27,7 +26,7 @@ export function ClosingCta() {
         <p className="text-copy-14 text-gray-700">
           Or read the{" "}
           <a
-            href={withBase("/docs")}
+            href="/docs"
             className="text-gray-1000 underline decoration-border-strong underline-offset-4 transition-colors hover:decoration-current"
           >
             documentation

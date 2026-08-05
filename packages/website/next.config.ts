@@ -1,23 +1,34 @@
 import type { NextConfig } from "next";
 import { createMDX } from "fumadocs-mdx/next";
 
+/* Security headers. These are the concrete thing static export on GitHub
+   Pages could not do at all — Pages serves no custom headers, so the site
+   shipped with none. Deliberately no CSP yet: the hero runs WebGL through
+   blob: workers and the theme script is inline, so a strict policy needs its
+   own measured pass rather than a guess bolted onto a hosting migration. */
+const securityHeaders = [
+  { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
+  { key: "X-Content-Type-Options", value: "nosniff" },
+  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+  { key: "X-Frame-Options", value: "SAMEORIGIN" },
+  { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), interest-cohort=()" },
+];
+
 const config: NextConfig = {
-  /* Vercel gets a real Next app; everywhere else still static-exports.
-     `VERCEL` is set by their build image, so one config serves both targets
-     and GitHub Pages keeps working as a fallback. Export is what forbids
-     headers() and redirects() — the two things worth having on Vercel. */
-  output: process.env.VERCEL ? undefined : "export",
-  // GitHub Pages serves at /<repo>; CI sets NEXT_PUBLIC_BASE_PATH=/evestack.
-  // Unset in dev so localhost:3000 and every QA script keep root paths.
-  // Raw <img>/<a> URLs that bypass Next go through lib/asset.ts withBase().
-  basePath: process.env.NEXT_PUBLIC_BASE_PATH || undefined,
-  // Export goes to out/ (Next default). Deliberately NOT distDir:"dist" —
-  // that setting also becomes the dev working dir, and dev artifacts would
-  // ship inside the published site.
-  // Static export has no image optimizer; scripts/optimize-images.mjs pre-bakes AVIF/WebP.
-  images: { unoptimized: true },
+  /* No `output: "export"` and no basePath: the site is served from the root
+     of a Vercel project, which is also what makes headers() below possible.
+     Both settings existed only for GitHub Pages, which is retired. */
+  images: {
+    /* scripts/optimize-images.mjs already pre-bakes AVIF/WebP at the exact
+       sizes the layout uses, so the optimizer would re-encode already-optimal
+       files and spend transformations for nothing. */
+    unoptimized: true,
+  },
   transpilePackages: ["three"],
   reactStrictMode: true,
+  async headers() {
+    return [{ source: "/:path*", headers: securityHeaders }];
+  },
 };
 
 /* Compiles the repo-root docs/ tree (see source.config.ts) into the .source

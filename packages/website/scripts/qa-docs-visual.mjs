@@ -8,8 +8,8 @@ import { readFile, stat, mkdir } from "node:fs/promises";
 import path from "node:path";
 
 const OUT = process.argv[2] ?? ".";
-const TARGET = process.argv[3] ?? "out";
-const PREFIX = "/evestack";
+const TARGET = process.argv[3] ?? "https://evestack.vercel.app";
+const PREFIX = ""; // served from the domain root on Vercel
 await mkdir(OUT, { recursive: true });
 
 const TYPES = {

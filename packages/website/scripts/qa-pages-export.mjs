@@ -1,9 +1,9 @@
-/* Verifies the static export exactly as GitHub Pages will serve it:
-   under the /evestack prefix. Walks the whole page, collects every failed
-   request, checks all images decoded, and audits outbound links. */
+/* Walks the deployed landing page: collects every failed request, checks
+   all images decoded, and audits outbound links. Defaults to the live site;
+   pass a preview URL to check a PR before merge. */
 import { chromium } from "@playwright/test";
 
-const URL = process.argv[3] ?? "http://localhost:8123/evestack/";
+const URL = process.argv[3] ?? "https://evestack.vercel.app/";
 const OUT = process.argv[2] ?? ".";
 
 const browser = await chromium.launch();
@@ -43,7 +43,7 @@ const imgAudit = await page.evaluate(() =>
   })),
 );
 const broken = imgAudit.filter((i) => i.complete && !i.decoded && !i.src?.endsWith(".svg"));
-const unprefixed = imgAudit.filter((i) => i.src?.startsWith("/") && !i.src.startsWith("/evestack/"));
+const unprefixed = imgAudit.filter((i) => i.src?.startsWith("/evestack/"));
 const distinctSrcs = [...new Set(imgAudit.map((i) => i.src).filter((s) => s?.startsWith("/")))];
 const http = await page.evaluate(async (srcs) => {
   const bad = [];
@@ -59,7 +59,7 @@ const links = await page.evaluate(() =>
     .map((a) => a.getAttribute("href"))
     .filter((h) => h.startsWith("http") || (h.startsWith("/") && !h.startsWith("/evestack"))),
 );
-const badInternal = links.filter((h) => h.startsWith("/"));
+const badInternal = links.filter((h) => h.startsWith("/evestack"));
 const staleGithub = links.filter((h) => h.includes("github.com/evestack"));
 const realGithub = links.filter((h) => h.includes("github.com/SammyTourani/evestack")).length;
 

@@ -1,5 +1,4 @@
 import { Button } from "@/components/ui/button";
-import { withBase } from "@/lib/asset";
 import { site } from "@/lib/copy";
 
 export default function NotFound() {
@@ -12,7 +11,7 @@ export default function NotFound() {
       <p className="max-w-md text-copy-16 text-gray-900">
         The stack is four layers deep, but this page isn&apos;t one of them.
       </p>
-      <Button href={withBase("/")} size="lg">
+      <Button href="/" size="lg">
         Back to evestack
       </Button>
       <p className="font-mono text-mono-13 text-gray-700">{site.motto}</p>

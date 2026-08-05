@@ -1,8 +1,8 @@
 # evestack docs
 
-Content for https://sammytourani.github.io/evestack/docs, rendered by
+Content for https://evestack.vercel.app/docs, rendered by
 [Fumadocs](https://fumadocs.dev) from inside `packages/website` — the same Next.js app as the
-landing page, published in the same GitHub Pages artifact. There is no docs vendor and no
+landing page, published in the same Vercel deployment. There is no docs vendor and no
 second deploy: `pnpm --filter @evestack/website build` produces the whole site.
 
 The pages live at the repo root rather than inside the website package (`source.config.ts`
@@ -22,10 +22,10 @@ Everything is wired in five places:
 ## Why Fumadocs, and not Mintlify
 
 These pages were originally written for Mintlify. Two things ruled it out. Mintlify hosts docs
-itself — static export and self-hosting are both Enterprise-only — so the docs could not join
-the landing page on GitHub Pages, which sits badly with a project whose promise is *$0
-infrastructure, nothing phones home*. And its `docs.json` navigation accepts only page paths,
-so the **Upstream: eve** section below could not exist there at all.
+itself — static export and self-hosting are both Enterprise-only — so the docs could never
+share a deployment with the landing page, and would have lived on a separate domain behind a
+"Powered by Mintlify" footer. And its `docs.json` navigation accepts only page paths, so the
+**Upstream: eve** section below could not exist there at all.
 
 The MDX was not rewritten. `mdx-components.tsx` maps `<Note>`, `<Warning>`, `<Card>` and
 `<CardGroup>` onto Fumadocs equivalents (`<Steps>`/`<Step>` needed no mapping — the tag names

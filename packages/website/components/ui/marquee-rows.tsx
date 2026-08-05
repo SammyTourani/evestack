@@ -1,5 +1,4 @@
 import { cn } from "@/lib/utils";
-import { withBase } from "@/lib/asset";
 
 interface Item {
   name: string;
@@ -43,7 +42,7 @@ export function LogoMarquee({ items }: { items: readonly Item[] }) {
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   key={item.name}
-                  src={withBase(`/logos/wordmarks/${item.slug}.svg`)}
+                  src={`/logos/wordmarks/${item.slug}.svg`}
                   alt={item.name}
                   loading="lazy"
                   className={cn(
