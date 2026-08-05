@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { site } from "@/lib/copy";
 
 /* @vercel/analytics and @vercel/speed-insights inject <script src="/_vercel/…">
    tags that only exist inside Vercel's runtime. Served anywhere else — which
@@ -53,9 +54,11 @@ test.describe("evestack landing page", () => {
     ]) {
       await expect(page.locator(`#${id}`)).toBeAttached();
     }
-    await expect(page.getByRole("heading", { level: 1 })).toContainText(
-      "run eve agents in production",
-    );
+    /* Asserted against lib/copy.ts rather than a hardcoded phrase. The previous
+       version pinned the substring "run eve agents in production", which went
+       stale the moment the tagline changed — and because it was a fragment
+       rather than the whole line, a grep for the old tagline did not find it. */
+    await expect(page.getByRole("heading", { level: 1 })).toContainText(site.tagline);
     expect(errors).toEqual([]);
     expect(missing).toEqual([]);
   });
