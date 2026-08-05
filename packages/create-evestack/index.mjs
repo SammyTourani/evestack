@@ -69,7 +69,7 @@ async function main() {
   say();
   say(`  ${C.bold}Model provider${C.reset}`);
   dim("1) OpenAI or Anthropic API key  — best tool-calling, costs per token");
-  dim("2) Ollama (local)               — genuinely $0, weaker tool-calling");
+  dim("2) Ollama (local)               — $0, weaker tool-calling, needs RAM headroom");
   const modelChoice = await ask("Choose 1 or 2:", "1");
   const useOllama = modelChoice.trim() === "2";
 
@@ -79,7 +79,21 @@ async function main() {
     if (!hasOllama()) {
       warn("Ollama not found on PATH — install it from https://ollama.com, then `ollama pull qwen3`.");
     }
-    modelLine = "EVESTACK_MODEL=qwen3";
+    // The wizard is where this warning has to land. By the time someone reads
+    // the README section on local models they have usually already run the
+    // stack — and on a machine short of memory the failure is not a slow reply,
+    // it is the whole host going down. qwen3 is 5.2 GB on top of Docker,
+    // Postgres, the dashboard and the agent.
+    warn("qwen3 is 5.2 GB. Budget model size + 4 GB free RAM on top of Docker, Postgres");
+    warn("and the dashboard, or the machine can hang. A hosted key is safer on a laptop.");
+    // EVESTACK_PROVIDER is what actually selects the local path. agent/agent.ts
+    // reads it (defaulting to "openai"), and without it the model name alone is
+    // handed to the OpenAI provider — the agent then refuses to boot with
+    // `compaction trigger model "openai/qwen3" does not have known AI Gateway
+    // context window metadata`, because modelContextWindowTokens is only set on
+    // the ollama branch. Setting the model without the provider is not a
+    // partial configuration, it is a broken one.
+    modelLine = "EVESTACK_PROVIDER=ollama\nEVESTACK_MODEL=qwen3";
     apiKeyLine = "# Local models need no API key.";
   } else {
     say();
@@ -172,7 +186,13 @@ async function main() {
   );
   ok("Generated .env.local with a unique auth password");
 
-  writeFileSync(join(target, "docker-compose.yml"), composeFile());
+  // Compose only accepts [a-z0-9][a-z0-9_-]* as a project name, and a directory
+  // name is not constrained to that — so normalise rather than emit a file that
+  // fails to parse.
+  const composeProject =
+    basename(target).toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^[^a-z0-9]+/, "") ||
+    "evestack";
+  writeFileSync(join(target, "docker-compose.yml"), composeFile(composeProject));
   ok("Wrote docker-compose.yml");
 
   // ---- install --------------------------------------------------------------
@@ -287,9 +307,16 @@ function readdirSafe(p) {
   }
 }
 
-function composeFile() {
+function composeFile(projectName) {
+  // The compose project name has to be per-directory, not the literal string
+  // "evestack". Compose treats `name:` as the project identity, so two scaffolds
+  // — or one scaffold plus a cloned evestack repo, which the printed next-steps
+  // tell you to set up — become the SAME project. The second `docker compose up`
+  // then recreates the first one's container and both agents silently share one
+  // database. Observed live: scaffolding into a new directory recreated an
+  // unrelated running evestack-postgres-1.
   return `# evestack — your whole stack, on your machine, for $0.
-name: evestack
+name: ${projectName}
 
 services:
   postgres:

@@ -11,8 +11,29 @@ For zero cost, total:
 ollama pull qwen3
 ```
 
-Then set `EVESTACK_MODEL=qwen3` in `.env.local`. `create-evestack` offers this as an option at
-scaffold time — you don't have to configure it by hand.
+Then set **both** of these in `.env.local`:
+
+```bash
+EVESTACK_PROVIDER=ollama
+EVESTACK_MODEL=qwen3
+```
+
+`EVESTACK_PROVIDER` is the one that selects the local path. The model name on its own is handed
+to the OpenAI provider, and the agent then refuses to boot:
+
+```
+Cannot compile agent compaction because the primary compaction trigger model
+"openai/qwen3" does not have known AI Gateway context window metadata.
+```
+
+`create-evestack` offers this as an option at scaffold time and writes both lines for you.
+
+<Warning>
+  **Check your free RAM first.** qwen3 is 5.2 GB, and it loads on top of Docker, Postgres, the
+  dashboard and the agent. On a machine without roughly *model size + 4 GB* to spare, this does
+  not degrade gracefully — it can take minutes to answer a one-word prompt and can take the host
+  down. On a laptop already running the rest of the stack, a hosted key is the practical choice.
+</Warning>
 
 <Note>
   Local models generally have weaker tool-calling than gpt-5-mini or Claude. That's the honest
