@@ -79,6 +79,15 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
 
+  packages/evestack-mcp:
+    devDependencies:
+      '@types/node':
+        specifier: 24.x
+        version: 24.13.3
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+
   packages/sandbox-opensandbox:
     dependencies:
       '@alibaba-group/opensandbox':
