@@ -18,7 +18,7 @@
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.30",
-    "@ai-sdk/openai": "^2.0.0",
+    "@ai-sdk/openai": "^4.0.0",
     "@evestack/budget": "workspace:*",
     "@evestack/composio": "workspace:*",
     "@evestack/schedules": "workspace:*",
@@ -36,7 +36,10 @@
     "typescript": "7.0.2"
   },
   "overrides": {
-    "ai": "^7.0.38"
+    "ai": "^7.0.38",
+    "@workflow/world-local": {
+      "undici": "^7.29.0"
+    }
   },
   "engines": {
     "node": ">=24"

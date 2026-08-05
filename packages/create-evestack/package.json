@@ -1,6 +1,6 @@
 {
   "name": "create-evestack",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "type": "module",
   "description": "Self-hosted eve, with a dashboard that drives your agents — not just watches them. Durable Postgres sessions, a Docker sandbox, and one command. No Vercel account.",
   "license": "Apache-2.0",
