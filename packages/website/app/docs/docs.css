@@ -14,3 +14,190 @@
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 }
+
+/* ── Fumadocs' palette, expressed in the site's tokens ────────────────────
+   Stock Fumadocs is #121212 on a filled #191919 sidebar with 600-weight
+   headings. The landing page is pure black, Geist 450, hairline borders.
+   Every --color-fd-* below is mapped onto the --ds-* scale from
+   globals.css so the two halves of the site cannot drift apart: change a
+   token there and the docs follow. */
+:root,
+.dark {
+  --color-fd-background: var(--ds-background-100);
+  --color-fd-foreground: var(--ds-gray-1000);
+  --color-fd-muted: var(--ds-gray-100);
+  --color-fd-muted-foreground: var(--ds-gray-900);
+  --color-fd-border: var(--ds-border-subtle);
+  --color-fd-card: var(--ds-background-100);
+  --color-fd-card-foreground: var(--ds-gray-1000);
+  --color-fd-popover: var(--ds-background-200);
+  --color-fd-popover-foreground: var(--ds-gray-1000);
+  --color-fd-primary: var(--ds-gray-1000);
+  --color-fd-primary-foreground: var(--ds-background-100);
+  --color-fd-secondary: var(--ds-background-200);
+  --color-fd-secondary-foreground: var(--ds-gray-1000);
+  --color-fd-accent: var(--ds-gray-100);
+  --color-fd-accent-foreground: var(--ds-gray-1000);
+  --color-fd-ring: var(--ds-blue-700);
+}
+
+/* neutral.css lightens the sidebar with its own #nd-sidebar block; this has
+   to match that specificity to win. Vercel's sidebars are transparent with a
+   single hairline, never a filled panel. */
+#nd-sidebar,
+.dark #nd-sidebar {
+  --color-fd-muted: var(--ds-gray-100);
+  --color-fd-secondary: var(--ds-background-200);
+  --color-fd-muted-foreground: var(--ds-gray-700);
+  background-color: transparent;
+  border-right: 1px solid var(--ds-border-subtle);
+}
+
+/* ── Display type ────────────────────────────────────────────────────────
+   The signature of this family is weight 450 with real negative tracking.
+   Stock docs headings are 600/normal, which is what made the two pages look
+   like different companies. Values follow the heading-* presets in
+   globals.css, one step down for a docs measure. */
+#nd-page h1 {
+  font-size: 2rem;
+  line-height: 2.5rem;
+  font-weight: 450;
+  letter-spacing: -1.6px;
+}
+#nd-page h2 {
+  font-size: 1.5rem;
+  line-height: 2rem;
+  font-weight: 450;
+  letter-spacing: -0.96px;
+  margin-top: 3rem;
+  padding-top: 2rem;
+  border-top: 1px solid var(--ds-border-subtle);
+}
+#nd-page h3 {
+  font-size: 1.125rem;
+  line-height: 1.75rem;
+  font-weight: 500;
+  letter-spacing: -0.36px;
+}
+#nd-page h4 {
+  font-weight: 500;
+  letter-spacing: -0.2px;
+}
+/* the lede under the title — secondary, not another heading */
+#nd-page > div > p:first-of-type {
+  color: var(--ds-gray-900);
+}
+
+/* ── Links ───────────────────────────────────────────────────────────────
+   Underline stays, but at hairline weight and offset, so prose doesn't read
+   as a wall of blue. */
+#nd-page article a {
+  text-decoration-color: var(--ds-border-strong);
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+  transition: text-decoration-color 150ms;
+}
+#nd-page article a:hover {
+  text-decoration-color: currentColor;
+}
+
+/* ── Code ────────────────────────────────────────────────────────────────
+   Inline chips were heavy filled boxes mid-sentence; hairline + the raised
+   surface reads as a token, not a button. */
+#nd-page :not(pre) > code {
+  background-color: var(--ds-background-200);
+  border: 1px solid var(--ds-border-subtle);
+  border-radius: 5px;
+  padding: 0.1em 0.36em;
+  font-size: 0.875em;
+  font-weight: 400;
+}
+#nd-page figure:has(pre),
+#nd-page pre {
+  border-radius: 12px;
+}
+#nd-page figure:has(pre) {
+  border: 1px solid var(--ds-border-subtle);
+  background-color: var(--ds-background-200);
+}
+
+/* ── Tables ──────────────────────────────────────────────────────────────
+   Hairline rules only — the stock theme boxes every cell. */
+#nd-page table {
+  font-size: 0.9375rem;
+  border-collapse: collapse;
+}
+/* The preset fills every th with --color-fd-muted and rules each cell with an
+   inline-start border; both have to be named explicitly to be undone. */
+#nd-page :is(th, td) {
+  background: transparent;
+  border-inline-start: none;
+  padding: 0.625rem 1.25rem 0.625rem 0;
+}
+#nd-page th {
+  font-weight: 500;
+  color: var(--ds-gray-1000);
+  text-align: left;
+  border-bottom: 1px solid var(--ds-border-default);
+}
+#nd-page td {
+  border-bottom: 1px solid var(--ds-border-subtle);
+  color: var(--ds-gray-900);
+}
+#nd-page tr > :is(th, td):last-child {
+  padding-right: 0;
+}
+
+/* ── Cards, callouts, sidebar items ──────────────────────────────────────
+   Surfaces are delineated by borders, never by lighter fills. */
+#nd-page a[class*="card"],
+#nd-page div[class*="card"] {
+  background-color: transparent;
+  border-color: var(--ds-border-subtle);
+  transition: border-color 150ms;
+}
+#nd-page a[class*="card"]:hover {
+  border-color: var(--ds-border-strong);
+  background-color: transparent;
+}
+#nd-sidebar a[data-active="true"] {
+  background-color: var(--ds-gray-100);
+  color: var(--ds-gray-1000);
+}
+#nd-sidebar a:not([data-active="true"]) {
+  color: var(--ds-gray-700);
+}
+#nd-sidebar a:not([data-active="true"]):hover {
+  color: var(--ds-gray-1000);
+}
+
+/* Group labels, including the "Upstream: eve" hand-off — mono uppercase, the
+   same eyebrow treatment the landing page uses. They render as bare <p> in
+   the sidebar tree (no utility class worth targeting), and nothing else in
+   #nd-sidebar is a <p>. */
+#nd-sidebar p {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ds-gray-700);
+}
+
+/* ── TOC ─────────────────────────────────────────────────────────────── */
+#nd-toc {
+  font-size: 0.8125rem;
+}
+#nd-toc a {
+  color: var(--ds-gray-700);
+}
+#nd-toc a[data-active="true"] {
+  color: var(--ds-gray-1000);
+}
+/* Headings that contain inline code turn into a row of boxed chips in the
+   TOC, which reads as clutter at 13px. Flatten to plain mono there. */
+#nd-toc code {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+}

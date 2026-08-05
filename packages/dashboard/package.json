@@ -12,6 +12,7 @@
     "typecheck": "next typegen && tsc --noEmit"
   },
   "dependencies": {
+    "@evestack/schedules": "workspace:*",
     "next": "16.3.0-preview.6",
     "pg": "^8.20.3",
     "react": "19.2.6",
