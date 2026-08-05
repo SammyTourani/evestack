@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>eve compatibility — evestack</title>
-<meta name="description" content="Every published eve release, run through evestack's 15-contract, 225-assertion suite. Green, red, and the exact assertions that failed.">
+<meta name="description" content="Every published eve release, run through evestack's 16-contract, 231-assertion suite. Green, red, and the exact assertions that failed.">
 <meta name="color-scheme" content="light dark">
 <style>
 :root{
@@ -177,15 +177,15 @@ footer p{margin:0 0 6px}
 <div class="wrap">
 
   <div class="verdict">
-    <h2><span class="dot">●</span> Certified against eve 0.30.8 — npm <code>latest</code></h2>
-    <p>eve published <b>0.30.8</b> on 5 Aug 2026, 20:15 UTC. evestack certified it <b>1h 45m later</b> — 14 API contracts, 213 assertions, <b>all green</b>. templates/default pins <code>^0.30.8</code>.</p>
+    <h2><span class="dot">●</span> Tested against eve 0.30.8 — npm <code>latest</code></h2>
+    <p>eve published <b>0.30.8</b> on 5 Aug 2026, 20:15 UTC. evestack tested it <b>3h 32m later</b> — 15 API contracts, 219 assertions, <b>all green</b>. templates/default pins <code>^0.30.8</code>.</p>
   </div>
 
   <div class="stats">
     <div class="stat"><span class="n">10</span><span class="l">eve releases tested</span></div>
-    <div class="stat"><span class="n">9</span><span class="l">hold every API contract</span></div>
-    <div class="stat"><span class="n">14</span><span class="l">API contracts</span></div>
-    <div class="stat"><span class="n">225</span><span class="l">assertions per run</span></div>
+    <div class="stat"><span class="n">1</span><span class="l">hold every API contract</span></div>
+    <div class="stat"><span class="n">15</span><span class="l">API contracts</span></div>
+    <div class="stat"><span class="n">231</span><span class="l">assertions per run</span></div>
     <div class="stat"><span class="n">7</span><span class="l">eve releases on 4 Aug 2026 alone</span></div>
   </div>
 
@@ -197,9 +197,19 @@ footer p{margin:0 0 6px}
       either holds or does not. <code>auth/local-dev-must-not-trust-the-request</code>, for instance, hands eve's
       <code>localDev()</code> a request whose <code>Host</code> header claims to be <code>127.evil.com</code> and asserts
       that no principal comes back.</p>
-    <p>There are <b>15</b> of them and <b>225</b> assertions.
+    <p>There are <b>16</b> of them and <b>231</b> assertions.
       The whole suite runs in well under a second: no mocks, no model calls, no network, no database, no Docker. That is
       what makes it affordable to run against every single eve release rather than the one we happen to ship.</p>
+    <p><b>Two numbers, one suite.</b> The verdict above counts
+      <b>15 contracts and 219 assertions</b>; this paragraph and
+      <a href="https://github.com/SammyTourani/evestack/blob/main/docs/compatibility.mdx">docs/compatibility.mdx</a> count
+      <b>16 and 231</b>. The difference is exactly
+      <code>version/installed-satisfies-every-declared-range</code>, whose 12 assertions
+      describe evestack's own manifests rather than eve — see <a href="#what-a-contract-is">below</a>. Both figures are
+      computed from the same reports in <code>contract/history/</code>; neither is typed by hand.</p>
+    <p>A skip is the third outcome and is not a pass:
+      <b>9</b> of the 10 recorded runs skipped at least one contract
+      (0.29.5–0.30.7), which is what the ⊘ cells in the matrix mean. They are excluded from both counts above, not counted green.</p>
 
     <h3>Why this page exists</h3>
     <p>eve moves fast — <b>7 releases went out on 4 Aug 2026 alone</b>. The fair criticism of anything built on top of it is that it will quietly rot: a wrapper that compiles
@@ -217,7 +227,7 @@ footer p{margin:0 0 6px}
     <p>The row marked <em>bookkeeping, not eve</em> asks whether the eve under test satisfies the version ranges
       evestack's own manifests declare <em>today</em>. Every release older than the current pin fails it by
       construction — that is a fact about our <code>package.json</code> files, not about eve. Only the
-      <b>14 API contracts</b> above it describe eve itself, and the headline verdict counts
+      <b>15 API contracts</b> above it describe eve itself, and the headline verdict counts
       those alone.</p>
   </section>
 
@@ -284,8 +294,8 @@ footer p{margin:0 0 6px}
         </thead>
         <tbody>
           <tr class="overall">
-            <th scope="row" class="ch"><code>API contracts overall</code><span class="ct">all 14 contracts that describe eve</span></th>
-            <td class="s s-pass" title="eve 0.30.8: 213 assertions held"><span aria-hidden="true">✓</span><span class="sr">pass</span><b>213/213</b></td>
+            <th scope="row" class="ch"><code>API contracts overall</code><span class="ct">all 15 contracts that describe eve</span></th>
+            <td class="s s-pass" title="eve 0.30.8: 219 assertions held"><span aria-hidden="true">✓</span><span class="sr">pass</span><b>219/219</b></td>
             <td class="s s-pass" title="eve 0.30.7: 213 assertions held"><span aria-hidden="true">✓</span><span class="sr">pass</span><b>213/213</b></td>
             <td class="s s-pass" title="eve 0.30.6: 213 assertions held"><span aria-hidden="true">✓</span><span class="sr">pass</span><b>213/213</b></td>
             <td class="s s-pass" title="eve 0.30.5: 213 assertions held"><span aria-hidden="true">✓</span><span class="sr">pass</span><b>213/213</b></td>
@@ -520,6 +530,22 @@ footer p{margin:0 0 6px}
       <td class="s s-pass" title="telemetry/agent-spans-reachable-only-from-local-runtime — 11 assertions held on eve 0.30.0"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
       <td class="s s-pass" title="telemetry/agent-spans-reachable-only-from-local-runtime — 11 assertions held on eve 0.29.5"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
     </tr>
+          <tr>
+      <th scope="row" class="ch">
+        <code>protocol/action-events-promote-eval-reads</code>
+        <span class="ct">the denial verdict still arrives on a terminal action.result, not a partial</span>
+      </th>
+      <td class="s s-pass" title="protocol/action-events-promote-eval-reads — 6 assertions held on eve 0.30.8"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-none" title="not run against eve 0.30.7">·</td>
+      <td class="s s-none" title="not run against eve 0.30.6">·</td>
+      <td class="s s-none" title="not run against eve 0.30.5">·</td>
+      <td class="s s-none" title="not run against eve 0.30.4">·</td>
+      <td class="s s-none" title="not run against eve 0.30.3">·</td>
+      <td class="s s-none" title="not run against eve 0.30.2">·</td>
+      <td class="s s-none" title="not run against eve 0.30.1">·</td>
+      <td class="s s-none" title="not run against eve 0.30.0">·</td>
+      <td class="s s-none" title="not run against eve 0.29.5">·</td>
+    </tr>
           <tr class="row-pin">
       <th scope="row" class="ch">
         <code>version/installed-satisfies-every-declared-range</code><em class="badge badge-pin">bookkeeping, not eve</em>
@@ -596,8 +622,8 @@ node contract/render-compat.mjs</code></pre>
         <tr>
           <td class="ver">0.30.8</td>
           <td>5 Aug 2026, 20:15 UTC</td>
-          <td>5 Aug 2026, 22:00 UTC</td>
-          <td class="mono">3f8c664</td>
+          <td>5 Aug 2026, 23:47 UTC</td>
+          <td class="mono">ba280ea</td>
           <td class="mono">templates/default</td>
         </tr>
         <tr>
@@ -672,7 +698,7 @@ node contract/render-compat.mjs</code></pre>
 <footer>
   <div class="wrap">
     <p>Generated by <code>contract/render-compat.mjs</code> from 10 committed reports in
-      <code>contract/history/</code>. Most recent certification 5 Aug 2026, 22:00 UTC.</p>
+      <code>contract/history/</code>. Most recent certification 5 Aug 2026, 23:47 UTC.</p>
     <p>Tested range: eve 0.29.5 → 0.30.8 ·
       <a href="https://github.com/SammyTourani/evestack/tree/main/contract">contract suite source</a> ·
       <a href="https://github.com/SammyTourani/evestack/tree/main/contract/history">raw reports</a></p>

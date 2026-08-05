@@ -8,6 +8,7 @@
     "hooks/observe-only-and-event-names": 11,
     "modules/imported-subpaths-resolve": 31,
     "modules/imported-values-are-exported": 20,
+    "protocol/action-events-promote-eval-reads": 6,
     "protocol/http-surface-the-dashboard-drives": 12,
     "sandbox/backend-interface-is-structurally-stable": 25,
     "telemetry/agent-spans-reachable-only-from-local-runtime": 11,

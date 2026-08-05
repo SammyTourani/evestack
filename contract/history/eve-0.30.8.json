@@ -3,8 +3,8 @@
   "eveVersion": "0.30.8",
   "eveReleasedAt": "2026-08-05T20:15:39.773Z",
   "eveLatestTagAtCertification": "0.30.8",
-  "certifiedAt": "2026-08-05T22:00:18.802Z",
-  "evestackCommit": "3f8c664",
+  "certifiedAt": "2026-08-05T23:47:10.405Z",
+  "evestackCommit": "ba280ea",
   "evestackPin": "^0.30.8",
   "source": {
     "kind": "installed",
@@ -12,10 +12,10 @@
   },
   "ok": true,
   "counts": {
-    "contracts": 15,
+    "contracts": 16,
     "failedContracts": 0,
     "skippedContracts": 0,
-    "assertions": 225,
+    "assertions": 231,
     "failedAssertions": 0
   },
   "contracts": [
@@ -1079,6 +1079,41 @@
         },
         {
           "detail": "no public eve specifier resolves into dist/src/tracing",
+          "passed": true
+        }
+      ],
+      "crash": null
+    },
+    {
+      "id": "protocol/action-events-promote-eval-reads",
+      "title": "the denial verdict still arrives on a terminal action.result, not a partial",
+      "assumption": "eve's stream carries `actions.requested` naming a turn's tools and `action.result` carrying the terminal verdict for each, and `action.partial` — when present — is a preliminary snapshot that never replaces it.",
+      "evestackUse": "packages/dashboard/lib/promote-eval.ts builds an eval from the durable event stream: it reads tool names from `actions.requested` and detects denials from `action.result`. A promoted eval for a denied session asserts `calledTool(name, { status: 'rejected' })`, which is the whole point of promoting it. If the verdict stopped arriving on a terminal event, every promoted eval would silently lose that assertion and pass regardless.",
+      "file": "contract/contracts/15-action-events.contract.mjs",
+      "status": "pass",
+      "assertions": [
+        {
+          "detail": "eve still declares a stream event `actions.requested`",
+          "passed": true
+        },
+        {
+          "detail": "eve still declares a stream event `action.result`",
+          "passed": true
+        },
+        {
+          "detail": "the action.result event still carries a `result` payload",
+          "passed": true
+        },
+        {
+          "detail": "eve still has a TOOL_EXECUTION_DENIED marker for a refused tool call",
+          "passed": true
+        },
+        {
+          "detail": "action.partial is still documented as preliminary, with action.result as the final snapshot",
+          "passed": true
+        },
+        {
+          "detail": "promote-eval still derives its assertions from terminal events only",
           "passed": true
         }
       ],

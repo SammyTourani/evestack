@@ -213,7 +213,12 @@ async function main() {
     process.exit(0);
   }
 
-  const violations = checkFloor(report, readFloor());
+  // The floor describes the WHOLE suite, so it can only be judged against a
+  // whole run. Under `--only` every unselected contract looks deleted, which
+  // turns a routine `--only=auth` into an alarm about erosion that did not
+  // happen — and an alarm that fires when nothing is wrong is how a real one
+  // gets ignored.
+  const violations = only === null ? checkFloor(report, readFloor()) : [];
 
   if (format === "json") process.stdout.write(`${JSON.stringify({ ...report, floorViolations: violations }, null, 2)}\n`);
   else if (format === "markdown") process.stdout.write(renderMarkdown(report));
