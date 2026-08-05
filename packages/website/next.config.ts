@@ -2,7 +2,11 @@ import type { NextConfig } from "next";
 import { createMDX } from "fumadocs-mdx/next";
 
 const config: NextConfig = {
-  output: "export",
+  /* Vercel gets a real Next app; everywhere else still static-exports.
+     `VERCEL` is set by their build image, so one config serves both targets
+     and GitHub Pages keeps working as a fallback. Export is what forbids
+     headers() and redirects() — the two things worth having on Vercel. */
+  output: process.env.VERCEL ? undefined : "export",
   // GitHub Pages serves at /<repo>; CI sets NEXT_PUBLIC_BASE_PATH=/evestack.
   // Unset in dev so localhost:3000 and every QA script keep root paths.
   // Raw <img>/<a> URLs that bypass Next go through lib/asset.ts withBase().

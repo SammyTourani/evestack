@@ -40,3 +40,4 @@ pnpm-debug.log*
 
 # Local dev-server config for the Claude Code preview pane; not part of the product.
 .claude/
+.vercel
