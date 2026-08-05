@@ -43,20 +43,37 @@ CREATE TABLE IF NOT EXISTS evestack.spans (
   scope_name      text,
   scope_version   text,
 
-  -- The join back to workflow.workflow_runs: eve sets `agent.session.id` to the
-  -- same `wrun_...` id that keys a workflow run. Projecting it into a stored
-  -- column lets Postgres index it instead of reaching into JSONB per row.
+  -- The join back to workflow.workflow_runs: the id here is the same `wrun_...`
+  -- that keys a workflow run. Projecting it into a stored column lets Postgres
+  -- index it instead of reaching into JSONB per row.
   --
-  -- These are NULL on a large share of spans. Only eve's own spans (agent.*)
-  -- carry the ids; the AI SDK spans underneath them (ai.streamText,
-  -- ai.streamText.doStream, ai.toolCall) carry none — and those are precisely
-  -- the spans holding prompt bodies and tool arguments. So they identify which
-  -- traces belong to a session; they are not a filter for fetching its spans.
-  -- Read a session by resolving it to trace ids first, then taking whole
-  -- traces (see listSpansBySession in lib/traces.ts).
-  session_id      text GENERATED ALWAYS AS (attributes ->> 'agent.session.id')      STORED,
+  -- These stay NULL on a large share of spans either way — workflow plumbing and
+  -- fetch spans carry no agent identity at all — so they identify which traces
+  -- belong to a session rather than acting as a filter for fetching its spans.
+  -- Read a session by resolving it to trace ids first, then taking whole traces
+  -- (see listSpansBySession in lib/traces.ts).
+  --
+  -- TWO VOCABULARIES, and getting this wrong makes the whole trace tier look
+  -- broken. eve names these ids differently depending on who is emitting:
+  --
+  --   agent.session.id                        eve's own `eve.agent` tracer
+  --   ai.settings.context.eve.session.id      the vendored AI SDK exporter
+  --
+  -- Only the second ever reaches an external collector. The `eve.agent` tracer
+  -- lives in the local tracing runtime, which eve installs ONLY when the project
+  -- authors no agent/instrumentation.ts — so the moment you export anywhere, the
+  -- vocabulary you receive is the AI SDK one. Reading just `agent.session.id`
+  -- (as this did originally) leaves every exported span with a NULL session and
+  -- makes it look as though nothing was ingested at all.
+  session_id      text GENERATED ALWAYS AS (
+                    COALESCE(attributes ->> 'agent.session.id',
+                             attributes ->> 'ai.settings.context.eve.session.id')) STORED,
+  -- No AI SDK counterpart exists for the root session, so subagent traces can
+  -- only be stitched when the local tracer produced them.
   root_session_id text GENERATED ALWAYS AS (attributes ->> 'agent.root.session.id') STORED,
-  turn_id         text GENERATED ALWAYS AS (attributes ->> 'agent.turn.id')         STORED,
+  turn_id         text GENERATED ALWAYS AS (
+                    COALESCE(attributes ->> 'agent.turn.id',
+                             attributes ->> 'ai.settings.context.eve.turn.id')) STORED,
 
   received_at     timestamptz NOT NULL DEFAULT now(),
 
@@ -88,3 +105,39 @@ CREATE INDEX IF NOT EXISTS spans_name_idx
 -- message histories (eve caps each value at 32 KB), so a GIN index would
 -- tokenize entire conversations to serve containment queries this dashboard
 -- does not make. The projected columns above cover the lookups that matter.
+
+-- MIGRATION: teach the id columns the AI SDK vocabulary.
+--
+-- CREATE TABLE IF NOT EXISTS silently does nothing on an existing table, so a
+-- database created before session_id learned to COALESCE would keep the old
+-- single-key expression forever and keep dropping every exported span. Dropping
+-- and re-adding a generated column is safe here because `attributes` is the only
+-- source — Postgres recomputes every row, nothing is lost, and re-running is a
+-- no-op once the expression already matches.
+DO $$
+DECLARE
+  current_expr text;
+BEGIN
+  SELECT pg_get_expr(d.adbin, d.adrelid) INTO current_expr
+  FROM pg_attrdef d
+  JOIN pg_attribute a ON a.attrelid = d.adrelid AND a.attnum = d.adnum
+  WHERE d.adrelid = 'evestack.spans'::regclass AND a.attname = 'session_id';
+
+  IF current_expr IS NOT NULL AND current_expr NOT LIKE '%ai.settings.context.eve.session.id%' THEN
+    ALTER TABLE evestack.spans DROP COLUMN session_id;
+    ALTER TABLE evestack.spans ADD COLUMN session_id text GENERATED ALWAYS AS (
+      COALESCE(attributes ->> 'agent.session.id',
+               attributes ->> 'ai.settings.context.eve.session.id')) STORED;
+
+    ALTER TABLE evestack.spans DROP COLUMN turn_id;
+    ALTER TABLE evestack.spans ADD COLUMN turn_id text GENERATED ALWAYS AS (
+      COALESCE(attributes ->> 'agent.turn.id',
+               attributes ->> 'ai.settings.context.eve.turn.id')) STORED;
+
+    -- Dropping the columns took their indexes with them.
+    CREATE INDEX IF NOT EXISTS spans_session_idx
+      ON evestack.spans (session_id) WHERE session_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS spans_turn_idx
+      ON evestack.spans (session_id, turn_id) WHERE turn_id IS NOT NULL;
+  END IF;
+END $$;

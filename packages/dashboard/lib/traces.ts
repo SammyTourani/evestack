@@ -589,22 +589,34 @@ const num = (value: unknown): number | null => {
 export async function listModelCalls(sessionId: string): Promise<ModelCall[]> {
   const { nodes, byId } = await loadSpanIndex(sessionId);
   return nodes
-    .filter((span) => span.name === "ai.streamText.doStream")
+    // The exporter names its spans "chat <model>" / "execute_tool <tool>", so
+    // these are prefix matches, not equality. Matching exactly finds nothing and
+    // looks exactly like "no traces were ingested".
+    .filter((span) => span.name === "ai.streamText.doStream" || span.name.startsWith("chat "))
     .map((span) => {
       const a = span.attributes;
       return {
         spanId: span.spanId,
         turnId: span.turnId,
-        stepIndex: num(ancestorAttribute(span, byId, "agent.step.index")),
+        stepIndex:
+          num(ancestorAttribute(span, byId, "agent.step.index")) ??
+          num(a["ai.settings.context.eve.step.index"]),
         model: str(a["gen_ai.request.model"]) ?? str(ancestorAttribute(span, byId, "agent.model.id")),
         provider: str(a["gen_ai.provider.name"]),
-        systemPrompt: str(a["ai.prompt.system"]),
-        promptMessages: str(a["ai.prompt.messages"]),
-        responseText: str(a["ai.response.text"]),
+        // Two vocabularies again, for the same reason as the id columns in
+        // sql/traces.sql: `ai.prompt.*` comes from eve's local tracer, which
+        // never runs once the project authors instrumentation, and `gen_ai.*`
+        // comes from the AI SDK exporter, which is what an external collector
+        // actually receives. Reading only the first left every exported trace
+        // looking like it carried no prompts at all.
+        systemPrompt: str(a["ai.prompt.system"]) ?? str(a["gen_ai.system_instructions"]),
+        promptMessages: str(a["ai.prompt.messages"]) ?? str(a["gen_ai.input.messages"]),
+        responseText: str(a["ai.response.text"]) ?? str(a["gen_ai.output.messages"]),
         responseToolCalls: str(a["ai.response.tool_calls"]),
-        finishReason: str(a["ai.response.finish_reason"]),
-        inputTokens: num(a["agent.usage.input_tokens"]),
-        outputTokens: num(a["agent.usage.output_tokens"]),
+        finishReason:
+          str(a["ai.response.finish_reason"]) ?? str(a["gen_ai.response.finish_reasons"]),
+        inputTokens: num(a["agent.usage.input_tokens"]) ?? num(a["gen_ai.usage.input_tokens"]),
+        outputTokens: num(a["agent.usage.output_tokens"]) ?? num(a["gen_ai.usage.output_tokens"]),
         cacheReadTokens: num(a["gen_ai.usage.cache_read.input_tokens"]),
         startTime: span.startTime,
         durationMs: span.durationMs,
@@ -618,18 +630,24 @@ export async function listModelCalls(sessionId: string): Promise<ModelCall[]> {
  * eve wraps each one in an `agent.action` span that knows the step and the
  * tool name; the AI SDK's `ai.toolCall` child underneath it holds the actual
  * payloads. Neither alone is a complete record, so the parent fills the gaps.
+ *
+ * `execute_tool` is the same call seen through the exporter rather than the
+ * local tracer — it carries the `gen_ai.tool.*` payloads directly, with no
+ * `agent.action` parent to inherit from.
  */
 export async function listToolCalls(sessionId: string): Promise<ToolCall[]> {
   const { nodes, byId } = await loadSpanIndex(sessionId);
 
   return nodes
-    .filter((node) => node.name === "ai.toolCall")
+    .filter((node) => node.name === "ai.toolCall" || node.name.startsWith("execute_tool "))
     .map((node) => {
       const a = node.attributes;
       return {
         spanId: node.spanId,
         turnId: node.turnId,
-        stepIndex: num(ancestorAttribute(node, byId, "agent.step.index")),
+        stepIndex:
+          num(ancestorAttribute(node, byId, "agent.step.index")) ??
+          num(a["ai.settings.context.eve.step.index"]),
         name: str(a["gen_ai.tool.name"]) ?? str(ancestorAttribute(node, byId, "agent.action.name")),
         callId:
           str(a["gen_ai.tool.call.id"]) ?? str(ancestorAttribute(node, byId, "agent.action.call_id")),
