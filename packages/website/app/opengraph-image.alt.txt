@@ -1,1 +1,1 @@
-evestack — run eve agents on infrastructure you own. A self-hosted distribution of the eve agent framework: durable Postgres sessions, a Docker sandbox, and a dashboard that drives the agent. One command.
+evestack — everything you need to run eve agents in production. Self-hosted eve with durable sessions, sandboxing, 1,070 tool integrations, memory, approvals, schedules, and a dashboard that drives the agent. One command.

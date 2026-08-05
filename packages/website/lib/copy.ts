@@ -11,9 +11,9 @@ export const site = {
   name: "evestack",
   mark: "▚",
   title: "evestack — the self-hosted distribution of eve",
-  tagline: "Run eve agents on infrastructure you own.",
+  tagline: "Everything you need to run eve agents in production.",
   subhead:
-    "A self-hosted distribution of the eve agent framework. Durable Postgres sessions, a Docker sandbox, and a dashboard that drives the agent — not just watches it. One command.",
+    "Self-hosted eve with durable sessions, sandboxing, 1,070 tool integrations, memory, approvals, schedules, and a dashboard that drives the agent. One command.",
   eyebrow: "Open source · Apache-2.0",
   command: "npx create-evestack",
   github: "https://github.com/SammyTourani/evestack",
