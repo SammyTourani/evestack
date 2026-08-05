@@ -1,0 +1,27 @@
+/* Two severities only. A wedged session is a fault; one waiting on a person is
+   a to-do. Rendering them identically would train the reader to skim past the
+   first because the second is common. */
+
+.bad,
+.warn {
+  border-radius: 8px;
+  padding: 11px 14px;
+  margin: 0 0 18px;
+  font-size: 13px;
+  max-width: 96ch;
+}
+
+.bad {
+  border: 1px solid var(--err, #d15b5b);
+}
+
+.warn {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warn, #c98a2b);
+}
+
+.line { margin: 0; }
+.line + .line { margin-top: 7px; }
+
+.line a { color: var(--accent); }
+.line code { font-size: 12px; }

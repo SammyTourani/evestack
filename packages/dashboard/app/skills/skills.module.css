@@ -1,0 +1,180 @@
+/* Scoped to this page; colors come from the same variables as everywhere else. */
+
+.sub {
+  color: var(--text-dim);
+  font-size: 13px;
+  margin: 6px 0 18px;
+  max-width: 78ch;
+}
+
+/* Where the files came from. Always shown: a page listing "installed skills"
+   that never says which directory it read is a page you cannot trust. */
+.source {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.sourcePath {
+  font-family: var(--mono);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.sourceTag {
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-faint);
+}
+.sourceCount { margin-left: auto; font-variant-numeric: tabular-nums; }
+
+/* The honesty box. Open by default would shout on every visit; closed with a
+   summary that states the conclusion is the compromise. */
+.limits {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.limits > summary {
+  cursor: pointer;
+  color: var(--warn);
+  list-style: none;
+}
+.limits > summary::-webkit-details-marker { display: none; }
+.limits > summary::before { content: "▸ "; }
+.limits[open] > summary::before { content: "▾ "; }
+.limits ul { margin: 10px 0 0; padding-left: 18px; }
+.limits li { margin-bottom: 5px; max-width: 82ch; }
+
+.canary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text-dim);
+  margin: 0 0 22px;
+}
+.canaryBad { color: var(--err); }
+
+.list { list-style: none; margin: 0; padding: 0; }
+
+.skill {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  padding: 14px 16px;
+  margin-bottom: 10px;
+}
+.skillCritical { border-color: color-mix(in srgb, var(--err) 45%, var(--border)); }
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+.name { font-family: var(--mono); font-size: 14px; font-weight: 600; }
+.kind {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.verdictWarn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+.headMeta { margin-left: auto; font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+
+.desc {
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 9px 0 0;
+  max-width: 84ch;
+  overflow-wrap: anywhere;
+}
+.descNote { color: var(--text-faint); font-size: 11px; margin-left: 6px; }
+
+.problems {
+  margin: 10px 0 0;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--warn);
+}
+.problems ul { margin: 0; padding-left: 16px; }
+.problems li + li { margin-top: 4px; }
+
+.findings { margin-top: 11px; font-size: 12px; }
+.findings > summary { cursor: pointer; color: var(--text-dim); list-style: none; }
+.findings > summary::-webkit-details-marker { display: none; }
+.findings > summary::before { content: "▸ "; }
+.findings[open] > summary::before { content: "▾ "; }
+.findings > summary:hover { color: var(--text); }
+
+.finding {
+  border-top: 1px solid var(--border);
+  padding: 10px 0 2px;
+  margin-top: 8px;
+}
+.findingHead { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.findingTitle { font-weight: 600; color: var(--text); }
+.where { font-family: var(--mono); font-size: 11px; color: var(--text-faint); margin-left: auto; }
+
+.sev {
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border: 1px solid;
+  border-radius: 4px;
+  padding: 0 5px;
+}
+.sevCritical { color: var(--err); border-color: color-mix(in srgb, var(--err) 50%, transparent); }
+.sevHigh { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
+.sevMedium { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+.sevLow { color: var(--text-faint); border-color: var(--border); }
+
+/* The offending line, verbatim. Scrolls rather than wrapping so a long shell
+   command stays one line and stays readable. */
+.excerpt {
+  display: block;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 7px 9px;
+  margin: 7px 0 0;
+  overflow-x: auto;
+  white-space: pre;
+}
+.why { color: var(--text-dim); margin: 7px 0 0; max-width: 84ch; line-height: 1.5; }
+.rule { font-family: var(--mono); font-size: 10.5px; color: var(--text-faint); }
+
+.foot {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 11px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.foot .path { font-family: var(--mono); overflow-wrap: anywhere; }
+.foot a { color: var(--text-dim); }
+.foot a:hover { color: var(--accent); }
+.dot { opacity: 0.5; }

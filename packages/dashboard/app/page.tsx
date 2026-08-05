@@ -1,3 +1,4 @@
+import { FleetBanner } from "./fleet-banner";
 import { isPriced } from "@/lib/pricing";
 import { formatUsd } from "@/lib/pricing";
 import { getTotals, listSessions } from "@/lib/queries";
@@ -41,6 +42,9 @@ export default async function SessionsPage() {
       <p className="page-sub">
         Every agent run on this machine. Read straight from your own Postgres.
       </p>
+
+      {/* Renders nothing when nothing is wrong — see fleet-banner.tsx. */}
+      <FleetBanner />
 
       <div className="stat-row">
         <div className="stat">

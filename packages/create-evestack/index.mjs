@@ -2,6 +2,18 @@
 /**
  * create-evestack — one command to a self-hosted eve agent.
  *
+ * Two commands, one binary:
+ *
+ *   npx create-evestack my-agent      scaffold a new agent
+ *   npx create-evestack attach [dir]  wrap an eve project you already have
+ *
+ * `attach` is a subcommand rather than a second bin on PATH. A package called
+ * create-evestack that installs a general-purpose `evestack` command is a
+ * surprise, and it would collide with any real evestack CLI later — while npm's
+ * own `create-*` convention already makes `npx create-evestack <anything>` the
+ * obvious way in. The one cost: a project you actually want to name "attach"
+ * has to be written `npx create-evestack ./attach`.
+ *
  * Deliberately dependency-free. A scaffolder that installs a prompt library
  * before it can ask its first question is slower than the thing it scaffolds,
  * and every dependency here is one more supply-chain surface for a tool that
@@ -10,29 +22,10 @@
 import { execSync, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { createInterface } from "node:readline/promises";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
-
-const HERE = dirname(fileURLToPath(import.meta.url));
-const C = {
-  reset: "\x1b[0m", dim: "\x1b[2m", bold: "\x1b[1m",
-  cyan: "\x1b[36m", green: "\x1b[32m", yellow: "\x1b[33m", red: "\x1b[31m",
-};
-const say = (s = "") => console.log(s);
-const step = (s) => say(`${C.cyan}▚${C.reset} ${s}`);
-const ok = (s) => say(`  ${C.green}✓${C.reset} ${s}`);
-const warn = (s) => say(`  ${C.yellow}!${C.reset} ${s}`);
-const dim = (s) => say(`  ${C.dim}${s}${C.reset}`);
-
-function templateDir() {
-  // Published layout first, then the monorepo layout for local development.
-  for (const candidate of [join(HERE, "template"), join(HERE, "..", "..", "templates", "default")]) {
-    if (existsSync(join(candidate, "package.json"))) return candidate;
-  }
-  console.error(`${C.red}Could not locate the agent template.${C.reset}`);
-  process.exit(1);
-}
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import {
+  basename, C, detectPm, dim, makePrompter, ok, say, step, templateDir, warn,
+} from "./shared.mjs";
 
 function hasDocker() {
   const r = spawnSync("docker", ["info"], { stdio: "ignore" });
@@ -45,6 +38,12 @@ function hasOllama() {
 
 async function main() {
   const argv = process.argv.slice(2);
+  if (argv[0] === "attach") {
+    const { attach } = await import("./attach.mjs");
+    return attach(argv.slice(1));
+  }
+  if (argv.includes("--help") || argv.includes("-h")) return usage();
+
   // Non-interactive when asked for, or when stdin is not a terminal (CI, a
   // piped heredoc, a Dockerfile). Without this the process would reach EOF
   // mid-prompt and exit 0 having created nothing, which looks like success.
@@ -52,33 +51,7 @@ async function main() {
     argv.includes("--yes") || argv.includes("-y") || !process.stdin.isTTY;
   const positional = argv.filter((a) => !a.startsWith("-"));
 
-  const rl = nonInteractive
-    ? null
-    : createInterface({ input: process.stdin, output: process.stdout });
-
-  let stdinClosed = false;
-  rl?.on("close", () => {
-    stdinClosed = true;
-  });
-
-  const ask = async (q, fallback = "") => {
-    if (!rl || stdinClosed) return fallback;
-    // Guard the EOF case explicitly: after stdin closes, question() never
-    // settles, so race it against the close event rather than hanging.
-    const answer = await Promise.race([
-      rl.question(`${C.bold}?${C.reset} ${q} `),
-      new Promise((res) => rl.once("close", () => res(null))),
-    ]);
-    if (answer === null) {
-      stdinClosed = true;
-      return fallback;
-    }
-    return answer.trim() || fallback;
-  };
-  const confirm = async (q, def = true) => {
-    const a = (await ask(`${q} ${C.dim}(${def ? "Y/n" : "y/N"})${C.reset}`)).toLowerCase();
-    return a === "" ? def : a.startsWith("y");
-  };
+  const { ask, confirm, close } = await makePrompter(nonInteractive);
 
   say();
   say(`${C.cyan}${C.bold}  evestack${C.reset} ${C.dim}— eve on your own machine, $0 infrastructure${C.reset}`);
@@ -129,7 +102,7 @@ async function main() {
     composioLine = ck ? `COMPOSIO_API_KEY=${ck}` : "COMPOSIO_API_KEY=";
   }
 
-  rl?.close();
+  close();
 
   // ---- scaffold -------------------------------------------------------------
   say();
@@ -291,8 +264,19 @@ function isTemplateFile(templateRoot, src) {
   return !rel.split(sep).some((segment) => EXCLUDED_SEGMENTS.has(segment));
 }
 
-function basename(p) {
-  return p.split(/[\\/]/).filter(Boolean).pop() ?? "agent";
+function usage() {
+  say();
+  say(`${C.cyan}${C.bold}  evestack${C.reset} ${C.dim}— eve on your own machine, $0 infrastructure${C.reset}`);
+  say();
+  say(`  ${C.bold}npx create-evestack${C.reset} [name] ${C.dim}[--yes]${C.reset}`);
+  dim("Scaffold a new self-hosted eve agent: Postgres sessions, Docker sandbox, memory.");
+  say();
+  say(`  ${C.bold}npx create-evestack attach${C.reset} [dir] ${C.dim}[--yes] [--dry-run]${C.reset}`);
+  dim("Wrap an eve project you already have with evestack's control plane. Additive,");
+  dim("never overwrites your files, and prints an undo line for everything it writes.");
+  say();
+  dim("To scaffold a project actually named `attach`, write `npx create-evestack ./attach`.");
+  say();
 }
 
 function readdirSafe(p) {
@@ -301,14 +285,6 @@ function readdirSafe(p) {
   } catch {
     return [];
   }
-}
-
-function detectPm() {
-  const ua = process.env.npm_config_user_agent ?? "";
-  if (ua.startsWith("pnpm")) return "pnpm";
-  if (ua.startsWith("yarn")) return "yarn";
-  if (ua.startsWith("bun")) return "bun";
-  return "npm";
 }
 
 function composeFile() {

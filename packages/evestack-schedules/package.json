@@ -1,0 +1,67 @@
+{
+  "name": "@evestack/schedules",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Durable, observable, pausable schedules for a self-hosted eve agent. Wraps eve's own defineSchedule so every cron fire is recorded in your Postgres, failures are visible, a schedule can be paused without a redeploy, and ticks missed while the process was down can be replayed.",
+  "license": "Apache-2.0",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./cron": {
+      "types": "./dist/cron.d.ts",
+      "default": "./dist/cron.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "eve",
+    "agent",
+    "cron",
+    "schedule",
+    "heartbeat",
+    "proactive"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test test/*.test.mjs",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "pg": "^8.20.3"
+  },
+  "peerDependencies": {
+    "eve": ">=0.30.0 <1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.x",
+    "@types/pg": "^8.20.3",
+    "eve": "^0.30.6",
+    "typescript": "7.0.2"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "homepage": "https://github.com/SammyTourani/evestack#readme",
+  "bugs": {
+    "url": "https://github.com/SammyTourani/evestack/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SammyTourani/evestack.git",
+    "directory": "packages/evestack-schedules"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
