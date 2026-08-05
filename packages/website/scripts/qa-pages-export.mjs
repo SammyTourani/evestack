@@ -3,7 +3,7 @@
    request, checks all images decoded, and audits outbound links. */
 import { chromium } from "@playwright/test";
 
-const URL = "http://localhost:8123/evestack/";
+const URL = process.argv[3] ?? "http://localhost:8123/evestack/";
 const OUT = process.argv[2] ?? ".";
 
 const browser = await chromium.launch();

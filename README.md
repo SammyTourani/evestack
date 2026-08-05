@@ -2,6 +2,8 @@
 
 **eve on your own machine, with a dashboard you can actually drive. $0 infrastructure.**
 
+**[sammytourani.github.io/evestack](https://sammytourani.github.io/evestack/)** — see it before you run it.
+
 [Vercel's eve](https://github.com/vercel/eve) is a genuinely good agent framework, and it's
 Apache-2.0. But the moment you run it off Vercel you lose the Agent Runs dashboard, and there
 is no open replacement — so self-hosting means flying blind on terminal logs.
