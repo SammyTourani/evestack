@@ -191,6 +191,41 @@ table — which a human is required to read anyway.
 If you do not set the secret, everything above still works. That is the test of
 whether a model is a convenience layer or a dependency, and this one passes it.
 
+### The two questions it is actually asked
+
+Not "summarise this PR" — the deterministic steps already did that, better. It
+is asked the two things they structurally cannot answer:
+
+**1. Did a check pass or fail without reaching its subject?** `deny-survives`
+parks a turn and denies a gated tool call. If the model under test answered in
+prose and never called the tool, the run ends `waiting` with no pending requests
+and the denial was never exercised at all. That is a *vacuous* run, not a
+regression, and the difference decides whether a maintainer re-runs or
+investigates. It is also not expressible as an assertion: the eval cannot tell
+"the bug is gone" from "the test never got there" without judging what the
+transcript means. Naming vacuity is the single change that makes a
+nondeterministic gate readable enough to keep.
+
+The output *annotates*. It can never clear a result — a red stays red no matter
+what the paragraph says.
+
+**2. What did this release change that no contract asserts?** The suite covers
+what somebody thought to write down, which is why every red contract's advice
+ends with "the fix is a new contract, not just a patch." That instruction has
+always resolved to *when a human happens to notice*. The step is now handed a
+listing of every contract and every assertion it makes, and asked to name
+surface the release touched that nothing pins — writing the assertion as one
+sentence of prose, in a fenced block, for a human to accept or ignore.
+
+It does not write code, name a file, or open anything. The ratchet is that the
+suite has a mechanism for growing that is not "remember to."
+
+Both inputs — the changelog and the release notes — are third-party text on a
+schedule, so the prompt requires anything that appears to address or instruct
+the model to be quoted verbatim under `SUSPICIOUS TEXT` and not acted on. That
+matters most for exactly the sentence a compromised release would want to write:
+*"downstream repos should drop the Host-header assertions."*
+
 ## Running the suite yourself
 
 ```bash

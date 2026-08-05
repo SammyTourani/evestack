@@ -84,6 +84,61 @@ contract immediately, with no list here to remember to update. It scans
 `registry/r/*.json` too — those items inline agent source as JSON strings and
 are never typechecked by anything, so this suite is the only check they get.
 
+## The floor: the suite is not allowed to shrink
+
+`floor.json` records a per-contract minimum assertion count, checked on every
+run. Dropping below one exits **3** — a code of its own, because it means
+something categorically different from a contract failing: the suite did not get
+smaller because eve moved, it got smaller because evestack did.
+
+That is not hypothetical, and it follows directly from the section above. Three
+contracts generate their assertions from evestack's own source, so deleting an
+import or a queried column simply stops generating the matching assertion. The
+contract still passes. Every artifact downstream then reports the new number as
+though it were the old one:
+
+> All 15 contracts hold against eve 0.31.0 — 219 assertions, all green
+
+Every word of that is true, and it is the most misleading thing this project
+could publish. `record.mjs` refuses to certify below the floor and
+`gen-compatibility.mjs` refuses to publish below it, so a hollowed-out suite
+cannot reach the public page.
+
+Per-contract rather than one total, because a total hides erosion behind growth:
+twelve assertions lost from telemetry and twelve gained elsewhere nets to zero.
+
+```bash
+node contract/run.mjs --write-floor   # after deliberately adding or removing
+```
+
+Raising it is automatic. Lowering it is a decision that shows up in a diff.
+
+## The runtime tier
+
+`contract/runtime/` is the other half, and it exists because everything above is
+structurally blind to the bugs this project actually ships. A static assertion
+cannot see a denied approval killing a session, an index that answers nothing, or
+`attach` corrupting the file it just rewrote and printing "Done." Those share a
+shape — **the system reports success and is wrong** — and the only way to catch
+it is to run the thing.
+
+```bash
+node contract/runtime/run.mjs                    # skips what it cannot reach
+node contract/runtime/run.mjs --require=postgres # ...or fails instead of skipping
+node contract/runtime/run.mjs --list
+```
+
+Deterministic only. No model calls: a check that is right three times in four
+gets muted, and a muted check is worse than an absent one. Model-dependent
+verification is `eve eval`, gated on a key and run nightly by
+`.github/workflows/evals.yml` — behind a negative control that removes the
+deny-path fix and requires the eval to go red against it, because a gate that
+cannot fail is decoration.
+
+A probe that cannot run **skips** locally and **fails** under `--require`. CI
+always passes `--require`, so a runtime job cannot report green having quietly
+checked nothing.
+
 ## Adding one
 
 Write it when you discover an assumption, not when you have time. The test that
@@ -91,6 +146,13 @@ would have caught the bug you just fixed is worth more than three you wrote
 speculatively. If a red contract turns out to be a legitimate upstream change,
 update the contract in the same commit as the code — a contract that no longer
 describes eve is worse than none.
+
+Both probes in `contract/runtime/` were wrong before they were right, and both
+were caught by their own guards rather than by review — one built a simplified
+schema and manufactured two failures that were artifacts of its own fixture, the
+other drove a module that only exports a function and would have passed forever
+having done nothing. If a probe has no assertion that it *did something*, it does
+not have enough assertions.
 
 See `docs/upgrading.mdx` for the standing policy and what to do when the suite
 goes red.
