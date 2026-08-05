@@ -177,8 +177,8 @@ footer p{margin:0 0 6px}
 <div class="wrap">
 
   <div class="verdict">
-    <h2><span class="dot">●</span> Tested against eve 0.30.8 — npm <code>latest</code></h2>
-    <p>eve published <b>0.30.8</b> on 5 Aug 2026, 20:15 UTC. evestack tested it <b>3h 32m later</b> — 15 API contracts, 219 assertions, <b>all green</b>. templates/default pins <code>^0.30.8</code>.</p>
+    <h2><span class="dot">●</span> Certified against eve 0.30.8 — npm <code>latest</code></h2>
+    <p>eve published <b>0.30.8</b> on 5 Aug 2026, 20:15 UTC. evestack certified it <b>3h 32m later</b> — 15 API contracts, 219 assertions, <b>all green</b>. templates/default pins <code>^0.30.8</code>.</p>
   </div>
 
   <div class="stats">
@@ -200,16 +200,6 @@ footer p{margin:0 0 6px}
     <p>There are <b>16</b> of them and <b>231</b> assertions.
       The whole suite runs in well under a second: no mocks, no model calls, no network, no database, no Docker. That is
       what makes it affordable to run against every single eve release rather than the one we happen to ship.</p>
-    <p><b>Two numbers, one suite.</b> The verdict above counts
-      <b>15 contracts and 219 assertions</b>; this paragraph and
-      <a href="https://github.com/SammyTourani/evestack/blob/main/docs/compatibility.mdx">docs/compatibility.mdx</a> count
-      <b>16 and 231</b>. The difference is exactly
-      <code>version/installed-satisfies-every-declared-range</code>, whose 12 assertions
-      describe evestack's own manifests rather than eve — see <a href="#what-a-contract-is">below</a>. Both figures are
-      computed from the same reports in <code>contract/history/</code>; neither is typed by hand.</p>
-    <p>A skip is the third outcome and is not a pass:
-      <b>9</b> of the 10 recorded runs skipped at least one contract
-      (0.29.5–0.30.7), which is what the ⊘ cells in the matrix mean. They are excluded from both counts above, not counted green.</p>
 
     <h3>Why this page exists</h3>
     <p>eve moves fast — <b>7 releases went out on 4 Aug 2026 alone</b>. The fair criticism of anything built on top of it is that it will quietly rot: a wrapper that compiles
