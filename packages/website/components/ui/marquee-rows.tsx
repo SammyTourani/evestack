@@ -1,3 +1,4 @@
+import { wordmarkDims } from "@/lib/logo-dims";
 import { cn } from "@/lib/utils";
 
 interface Item {
@@ -13,8 +14,16 @@ interface Item {
    color; dark theme runs grayscale+invert — knockout details survive and
    every mark lands as silver-on-black (the Vercel customer-strip look).
    The same group renders 4× and each copy animates by exactly its own
-   width + one gap, so the hand-off is invisible at any viewport. Hover
-   pauses; reduced motion shows a static row. Zero JS. */
+   width + one gap, so the hand-off is invisible at any viewport. Reduced
+   motion shows a static row. Zero JS.
+
+   Two things here are load-bearing and easy to undo by accident:
+   - every image carries real width/height, so a group's width is final
+     before the lazy SVG arrives. WebKit resolves the keyframe's `-100%`
+     once and never again, so a group that widens mid-animation desyncs and
+     tears a gap in the row (see lib/logo-dims.ts).
+   - the row never pauses. It is ambient, not a control, so hover does
+     nothing — a marquee that stops under the cursor reads as a hang. */
 export function LogoMarquee({ items }: { items: readonly Item[] }) {
   return (
     <div
@@ -34,7 +43,7 @@ export function LogoMarquee({ items }: { items: readonly Item[] }) {
           <li
             key={dup}
             aria-hidden={dup > 0}
-            className="flex shrink-0 animate-marquee items-center gap-[var(--marquee-gap)] group-hover:[animation-play-state:paused] motion-reduce:animate-none"
+            className="flex shrink-0 animate-marquee items-center gap-[var(--marquee-gap)] motion-reduce:animate-none"
             style={{ animationDuration: "110s" }}
           >
             {items.map((item) =>
@@ -45,6 +54,7 @@ export function LogoMarquee({ items }: { items: readonly Item[] }) {
                   src={`/logos/wordmarks/${item.slug}.svg`}
                   alt={item.name}
                   loading="lazy"
+                  {...wordmarkDims(item.slug)}
                   className={cn(
                     "w-auto shrink-0 dark:[filter:grayscale(1)_invert(1)_brightness(1.35)]",
                     item.pad ? "h-11" : "h-7",
