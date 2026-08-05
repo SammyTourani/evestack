@@ -47,6 +47,22 @@ The name is passed explicitly (`tracked("digest", …)`) because eve derives a s
 from its file path at compile time and does not hand that name to the handler at runtime. Repeating
 it is the price of not guessing.
 
+## Testing a schedule locally
+
+`eve dev` registers schedules but does not drive them from a clock — the timer arrives with a
+built server (`eve build && eve start`, which runs Nitro's schedule runner). In dev you fire one
+by hand:
+
+```bash
+curl -X POST http://localhost:2000/eve/v1/dev/schedules/<name>
+```
+
+`<name>` is the filename under `agent/schedules/`. A 404 lists the ids eve actually compiled,
+which is the quickest way to find out whether it saw your file.
+
+A dispatched fire is recorded exactly like a scheduled one, so everything below works the same
+either way.
+
 ## Catch-up
 
 Off by default, and that default is the honest one — replaying is right for "post the digest I owe

@@ -73,21 +73,45 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: node packages/create-evestack/scripts/sync-template.mjs
 
-      - name: substitute the workspace build of @evestack/composio
-        # The template depends on @evestack/composio, which only exists on the
-        # public registry after a release — so on every other day this job would
-        # stop at a 404 instead of testing the template. Packing the workspace
-        # build and pointing the dependency at it tests the dependency set we
-        # actually ship, independent of publish order.
+      - name: substitute the workspace build of every @evestack dependency
+        # The scaffolded template depends on our own packages, which only exist
+        # on the public registry after a release. Resolving them from npm means
+        # this job 404s on any package added since the last publish — and, worse,
+        # tests the LAST PUBLISHED build rather than the one in this commit, so a
+        # broken package passes CI until someone publishes it.
+        #
+        # Every @evestack dependency is therefore packed from the workspace and
+        # substituted. Discovered by iterating the manifest rather than by a
+        # hardcoded list, because the previous version named @evestack/composio
+        # alone and broke the moment a third package was added.
         run: |
-          pnpm --filter @evestack/composio run build
-          npm pack --pack-destination /tmp ./packages/evestack-composio
+          pnpm -r --if-present run build
           node -e '
             const fs = require("fs");
+            const { execSync } = require("child_process");
             const p = "packages/create-evestack/template/package.json";
             const manifest = JSON.parse(fs.readFileSync(p, "utf8"));
-            manifest.dependencies["@evestack/composio"] =
-              "file:/tmp/evestack-composio-" + manifest.dependencies["@evestack/composio"].replace(/^\^/, "") + ".tgz";
+
+            // package directory names do not match their scoped npm names
+            // (@evestack/budget lives in packages/evestack-budget), so the map
+            // is built from the workspace rather than guessed from the name.
+            const dirs = fs.readdirSync("packages");
+            const byName = new Map();
+            for (const dir of dirs) {
+              const file = `packages/${dir}/package.json`;
+              if (!fs.existsSync(file)) continue;
+              byName.set(JSON.parse(fs.readFileSync(file, "utf8")).name, dir);
+            }
+
+            for (const [dep, range] of Object.entries(manifest.dependencies)) {
+              if (!dep.startsWith("@evestack/")) continue;
+              const dir = byName.get(dep);
+              if (!dir) throw new Error(`${dep} is not a workspace package`);
+              const out = execSync(`npm pack --pack-destination /tmp ./packages/${dir}`)
+                .toString().trim().split("\n").pop();
+              manifest.dependencies[dep] = `file:/tmp/${out}`;
+              console.log(`${dep} ${range} -> file:/tmp/${out}`);
+            }
             fs.writeFileSync(p, JSON.stringify(manifest, null, 2) + "\n");
           '
 
@@ -102,7 +126,20 @@ jobs:
           # what let a scaffolder that 404s on install, prints a green "Done."
           # and exits 0 pass this job.
           test -d ci-smoke-test/node_modules/eve
-          test -d ci-smoke-test/node_modules/@evestack/composio
+          # Every @evestack dependency the template declares must actually be
+          # installed, not just the one somebody thought to assert.
+          node -e '
+            const fs = require("fs");
+            const deps = JSON.parse(fs.readFileSync("ci-smoke-test/package.json", "utf8")).dependencies;
+            for (const dep of Object.keys(deps)) {
+              if (!dep.startsWith("@evestack/")) continue;
+              if (!fs.existsSync(`ci-smoke-test/node_modules/${dep}`)) {
+                console.error(`${dep} is declared but was not installed`);
+                process.exit(1);
+              }
+              console.log(`${dep} installed`);
+            }
+          '
 
       - name: scaffolds from an npx-shaped install path
         # `npx` stages the package under

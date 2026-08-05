@@ -52,6 +52,28 @@ every fire, so editing it takes effect on the next wake-up — no restart, no re
 - Anything I asked you to follow up on that has gone quiet for more than two days.
 ```
 
+## `eve dev` does not fire schedules on a timer
+
+Worth knowing before you conclude the heartbeat is broken, because everything
+*looks* right: the schedule compiles, the agent boots clean, and nothing ever happens.
+
+Under `eve dev`, schedules are registered but not driven by a clock. They fire when you ask:
+
+```bash
+curl -X POST http://localhost:2000/eve/v1/dev/schedules/heartbeat
+# {"scheduleId":"heartbeat","sessionIds":["wrun_…"]}
+```
+
+The id is the filename under `agent/schedules/`. A 404 lists the ids that do exist, which is the
+fastest way to check eve found your file at all.
+
+The clock arrives with a built server — `eve build && eve start` runs Nitro's schedule runner, and
+that is what fires the cron in production. So the loop to expect is: develop against the dev
+route, deploy for the timer.
+
+This is eve's behaviour, not evestack's; `tracked()` records a dispatched fire exactly as it
+records a scheduled one, so the Schedules page fills in either way.
+
 ## Why it does not become spam
 
 This is the part that decides whether the feature survives contact with real use.
