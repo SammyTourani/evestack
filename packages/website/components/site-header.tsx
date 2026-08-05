@@ -3,6 +3,12 @@ import { withBase } from "@/lib/asset";
 import { Button } from "@/components/ui/button";
 import { GitHubIcon } from "@/components/ui/github-icon";
 
+/* The header is shared with the /docs route, where a bare "#compare" points
+   at a section that isn't on the page. Home-absolute anchors work from both:
+   on the landing page the browser still treats them as same-document. */
+const homeAnchor = (href: string) =>
+  href.startsWith("#") ? `${withBase("/")}${href}` : href;
+
 export function SiteHeader() {
   return (
     <header
@@ -22,7 +28,7 @@ export function SiteHeader() {
             {nav.map((item) => (
               <li key={item.href}>
                 <a
-                  href={item.href}
+                  href={homeAnchor(item.href)}
                   className="text-copy-14 text-gray-900 transition-colors hover:text-gray-1000 data-active:text-gray-1000"
                 >
                   {item.label}
@@ -50,7 +56,7 @@ export function SiteHeader() {
           >
             <GitHubIcon />
           </a>
-          <Button href="#quickstart" size="md">
+          <Button href={homeAnchor("#quickstart")} size="md">
             Get started
           </Button>
         </div>

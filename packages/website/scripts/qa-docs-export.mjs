@@ -59,7 +59,7 @@ page.on("console", (m) => {
   if (m.type() === "error") failures.push(`console: ${m.text()}`);
 });
 
-await page.goto(`${BASE}/docs/introduction`, { waitUntil: "networkidle" });
+await page.goto(`${BASE}/docs`, { waitUntil: "networkidle" });
 await page.waitForTimeout(1200);
 
 /* the page rendered real content, not an unstyled MDX dump */

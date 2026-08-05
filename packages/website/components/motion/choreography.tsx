@@ -486,10 +486,13 @@ function Choreography() {
         }
 
         /* ── Header scrollspy ──────────────────────────────────────── */
+        /* Match on the hash, not the whole href: since the site gained a
+           /docs route the header links are home-absolute (/#compare), and
+           feeding that to querySelector throws on an invalid selector. */
         document
-          .querySelectorAll<HTMLAnchorElement>("[data-scrollspy] a[href^='#']")
+          .querySelectorAll<HTMLAnchorElement>("[data-scrollspy] a[href*='#']")
           .forEach((link) => {
-            const target = document.querySelector(link.getAttribute("href")!);
+            const target = link.hash ? document.querySelector(link.hash) : null;
             if (!target) return;
             ScrollTrigger.create({
               trigger: target,
