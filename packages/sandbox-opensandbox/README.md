@@ -50,9 +50,24 @@ You need a reachable OpenSandbox server. See its
 
 ## Status
 
-The adapter is written against the real `@alibaba-group/opensandbox` SDK types (v0.1.11) and
-typechecks against them, but **it has not been exercised against a live OpenSandbox server** —
-the machine this was built on could not spare the memory to run one. Treat it as a starting
-point rather than a proven path, and please open an issue with what breaks.
+**Verified against a live OpenSandbox server** (`uvx opensandbox-server`, Docker runtime, v0.1.11
+SDK): create, `run` with exit codes, text file read/write, `captureState`, `shutdown`, and
+reattach-after-shutdown with the workspace intact.
+
+Running it found two bugs that types alone could never have caught, both now fixed:
+
+- **stdout lost every newline.** OpenSandbox returns one message *per line* with the newline
+  stripped, so `printf "a\nb\nc\n"` arrived as `[{text:"a"},{text:"b"},{text:"c"}]` and the
+  original join produced `"abc"`. Every multi-line command the model ran came back mashed
+  together. Output now matches eve's Docker backend byte for byte.
+- **Reattach silently created a new sandbox.** `shutdown()` pauses, and `connect()` fails on a
+  paused sandbox — so the adapter fell through to `create()` and handed the session a brand new,
+  empty filesystem while reporting success. That is the worst kind of bug: a durability
+  guarantee that looks fine and quietly is not. It now falls back to `resume()`, and the
+  reattached id matches the captured one.
+
+Not yet exercised: gVisor / Kata / Firecracker isolation (the server reports "secure runtime is
+not configured" under Docker Desktop on macOS, so this was tested on the plain Docker runtime),
+`prewarm` snapshots, and network policy. Please open an issue with what breaks.
 
 Apache-2.0.

@@ -80,17 +80,26 @@ function resolvePath(path: string): string {
   return `${WORKSPACE}/${path}`;
 }
 
-/** OutputMessage carries the text under one of a few keys depending on source. */
+/**
+ * OpenSandbox returns stdout as one message PER LINE with the newline stripped:
+ * `printf "a\nb\nc\n"` arrives as `[{text:"a"},{text:"b"},{text:"c"}]`. Joining
+ * those with "" — as this did originally — produced "abc", so every multi-line
+ * command the model ran came back as one mashed-together string. Verified
+ * against a live server before and after.
+ *
+ * Re-adding the separators makes this backend agree with eve's Docker backend,
+ * which hands back raw stdout including its trailing newline. A tool result has
+ * to look the same whichever sandbox produced it.
+ */
 function joinOutput(messages: readonly unknown[] | undefined): string {
-  if (!messages) return "";
-  return messages
-    .map((m) => {
-      if (typeof m === "string") return m;
-      const record = m as Record<string, unknown>;
-      const value = record.text ?? record.content ?? record.line ?? record.data;
-      return typeof value === "string" ? value : "";
-    })
-    .join("");
+  if (!messages || messages.length === 0) return "";
+  const lines = messages.map((m) => {
+    if (typeof m === "string") return m;
+    const record = m as Record<string, unknown>;
+    const value = record.text ?? record.content ?? record.line ?? record.data;
+    return typeof value === "string" ? value : "";
+  });
+  return `${lines.join("\n")}\n`;
 }
 
 function wrapSession(sandbox: Sandbox): SandboxSessionLike {
@@ -150,16 +159,31 @@ export function opensandbox(options: OpenSandboxOptions = {}): SandboxBackendLik
       // Reattach before creating. eve keys sandboxes to durable sessions, so a
       // server restart must land back in the same filesystem rather than
       // silently handing the agent an empty one.
+      //
+      // `connect` alone is not enough, and getting this wrong is silent. Our
+      // shutdown() pauses the sandbox, and connect() on a paused sandbox fails
+      // — so the original version fell straight through to Sandbox.create and
+      // handed the session a brand new, empty filesystem while reporting
+      // success. Measured: the reattached id never matched the captured one.
+      // `resume` is what wakes a paused sandbox, so it is the fallback.
+      const reconnect: Array<(id: string) => Promise<Sandbox>> = [
+        (id) =>
+          Sandbox.connect({ sandboxId: id, ...(connectionConfig ? { connectionConfig } : {}) }),
+        (id) =>
+          Sandbox.resume({ sandboxId: id, ...(connectionConfig ? { connectionConfig } : {}) }),
+      ];
+
       let sandbox: Sandbox | null = null;
       if (typeof previousId === "string" && previousId.length > 0) {
-        try {
-          sandbox = await Sandbox.connect({
-            sandboxId: previousId,
-            ...(connectionConfig ? { connectionConfig } : {}),
-          });
-        } catch {
-          // Expired or reaped upstream — fall through and make a new one.
-          sandbox = null;
+        for (const attempt of reconnect) {
+          try {
+            sandbox = await attempt(previousId);
+            break;
+          } catch {
+            // Try the next strategy; only a genuinely gone sandbox falls all
+            // the way through to create().
+            sandbox = null;
+          }
         }
       }
 
