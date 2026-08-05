@@ -127,16 +127,42 @@ export async function recall(
   const limit = Math.min(options.limit ?? 5, 50);
   const tags = options.tags ?? [];
 
-  // `<=>` is cosine DISTANCE (0 = identical), so similarity is 1 - distance.
-  const { rows } = await getPool().query<MemoryRow>(
-    `SELECT id, content, tags, created_at,
-            1 - (embedding <=> $1::vector) AS similarity
-     FROM evestack.memories
-     WHERE ($2::text[] = '{}' OR tags && $2::text[])
-     ORDER BY embedding <=> $1::vector
-     LIMIT $3`,
-    [JSON.stringify(embedding), tags, limit],
-  );
+  // HNSW returns at most `hnsw.ef_search` rows, and that default is 40 — below
+  // the 50 this function's own cap advertises. Once the table is big enough for
+  // the planner to choose the index (measured: 5,000 rows), asking for 50
+  // silently returns 40, and asking for 45 silently returns 40. No error, no
+  // warning, just a short answer that looks complete.
+  //
+  // That is the same shape as the IVFFlat bug documented above — ask for more,
+  // get less — so the fix is to make the search width follow the request rather
+  // than to quietly lower the cap. pgvector's guidance is ef_search >= limit;
+  // doubling it costs a little recall work and buys the ordering back at the
+  // boundary.
+  //
+  // SET LOCAL, so it applies to this query and reverts with the transaction
+  // instead of leaking onto whatever else this pooled connection serves next.
+  const client = await getPool().connect();
+  let rows: MemoryRow[];
+  try {
+    await client.query("BEGIN");
+    await client.query(`SET LOCAL hnsw.ef_search = ${Math.max(40, limit * 2)}`);
+    ({ rows } = await client.query<MemoryRow>(
+      // `<=>` is cosine DISTANCE (0 = identical), so similarity is 1 - distance.
+      `SELECT id, content, tags, created_at,
+              1 - (embedding <=> $1::vector) AS similarity
+       FROM evestack.memories
+       WHERE ($2::text[] = '{}' OR tags && $2::text[])
+       ORDER BY embedding <=> $1::vector
+       LIMIT $3`,
+      [JSON.stringify(embedding), tags, limit],
+    ));
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
 
   const floor = options.minSimilarity ?? 0;
   return rows

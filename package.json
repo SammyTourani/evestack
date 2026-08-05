@@ -15,6 +15,11 @@
     "contract": "node contract/run.mjs",
     "contract:record": "node contract/record.mjs",
     "contract:compat": "node contract/render-compat.mjs",
+    "runtime": "node contract/runtime/run.mjs",
     "test": "node contract/run.mjs && pnpm -r --if-present test"
+  },
+  "devDependencies": {
+    "pg": "^8.22.0",
+    "typescript": "6.0.3"
   }
 }
