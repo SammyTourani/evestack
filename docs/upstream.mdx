@@ -1,0 +1,154 @@
+---
+title: Upstream eve
+description: evestack is a distribution, not a fork — what eve documents, what evestack documents, and why the best eve docs are already on your disk.
+---
+
+evestack packages [Vercel's `eve`](https://github.com/vercel/eve). It does not fork it, wrap
+its API, or re-document it. Every page here covers a seam that self-hosting creates — the
+Postgres world, auth off-platform, the dashboard, the Docker sandbox — or a subject eve has no
+page for at all. For the framework itself, these docs link out.
+
+That is a deliberate policy, not a gap in coverage.
+
+## Why evestack does not mirror eve's docs
+
+**eve ships about two releases a day.** Measured from npm on 2026-08-05
+(`npm view eve time --json`): **37 releases in the 20 days ending 2026-08-04**, or 1.85 per
+day. Seven of them landed on 2026-08-04 alone — `0.30.0` through `0.30.6`, from 14:26 to 23:01
+UTC.
+
+**It is pre-1.0, so breaking changes ride minor versions.** Seven minors shipped between
+`0.24.0` (2026-07-14) and `0.30.0` (2026-08-04). Two of them, from eve's own `CHANGELOG.md`:
+
+| Version | Date | What broke |
+|---|---|---|
+| `0.29.0` | 2026-07-30 | `eve trace` renamed to `eve traces`; the singular form removed. `eve channels add` and the `/channels` and `/connect` TUI commands removed. |
+| `0.30.0` | 2026-08-04 | `localDev()` grants on process state instead of the request host; the exported `isLoopbackRequest` helper removed; the default channel auth fallback changed to `[vercelOidc(), localDev(), placeholderAuth()]`. |
+
+Those two landed five days apart. A mirrored copy of eve's docs would have been stale within a
+week and actively wrong about auth defaults and CLI commands within a month — which is worse
+than no copy, because a reader has no way to tell a stale page from a current one.
+
+<Note>
+  eve is Apache-2.0 and its docs ship inside the npm package under that same license, so
+  evestack could legally mirror them. It chooses not to. The constraint here is accuracy, not
+  permission.
+</Note>
+
+## Read the docs that match your pin
+
+eve's `package.json` lists `docs` in its `files` array, so **every install carries the full
+documentation set for exactly the version you resolved**. In a scaffolded evestack project:
+
+```bash
+ls node_modules/eve/docs
+node -p "require('eve/package.json').version"
+```
+
+Against the version this repo pins, that is **82 Markdown pages in 12 subdirectories, 864 KB**,
+matching `eve@0.30.6` exactly. Some practical uses:
+
+```bash
+# every page mentioning the auth primitive you're debugging — 43 hits in 12 files
+grep -rn "localDev" node_modules/eve/docs
+
+# the guide for the version you actually run, not the version eve.dev documents
+less node_modules/eve/docs/guides/auth-and-route-protection.md
+
+# the changelog ships too — 992 lines of it
+less node_modules/eve/CHANGELOG.md
+```
+
+This beats the website for any pinned project, and eve says so itself. From
+[eve.dev/llms.txt](https://eve.dev/llms.txt): "prefer `node_modules/eve/docs/`: those docs
+match the installed eve version".
+
+<Warning>
+  [eve.dev](https://eve.dev/docs/getting-started) always documents the latest release. On a day
+  like 2026-08-04 that is up to seven versions ahead of what you installed this morning. When a
+  website page and your local copy disagree, your local copy is the one describing the code you
+  are running.
+</Warning>
+
+The site does serve Markdown directly — append `.md` to any docs URL, and
+[eve.dev/sitemap.md](https://eve.dev/sitemap.md) lists every page — which is the right source
+when you are deliberately reading ahead of your pin, for example while reviewing an
+[upgrade](/docs/upgrading).
+
+## Who documents what
+
+### eve owns the framework
+
+Everything about authoring and running an agent is upstream. These links point at eve.dev
+because they describe eve's surface, not evestack's; read the matching file under
+`node_modules/eve/docs/` when the version matters.
+
+| Topic | Upstream page |
+|---|---|
+| Agent configuration — model, reasoning effort, compaction | [agent-config](https://eve.dev/docs/agent-config) |
+| Tools | [tools](https://eve.dev/docs/tools) |
+| Approvals and human-in-the-loop gating | [human-in-the-loop](https://eve.dev/docs/human-in-the-loop) |
+| Subagents | [subagents](https://eve.dev/docs/subagents) |
+| Skills | [skills](https://eve.dev/docs/skills) |
+| Channels — HTTP, Slack, Discord, GitHub, Linear | [channels/overview](https://eve.dev/docs/channels/overview) |
+| Connections — MCP and OpenAPI servers | [connections](https://eve.dev/docs/connections) |
+| Extensions | [extensions](https://eve.dev/docs/extensions) |
+| Sandbox — shell, filesystem, lifecycle, network policy | [sandbox](https://eve.dev/docs/sandbox) |
+| Schedules | [schedules](https://eve.dev/docs/schedules) |
+| Evals | [evals/overview](https://eve.dev/docs/evals/overview) |
+| CLI reference | [reference/cli](https://eve.dev/docs/reference/cli) |
+| TypeScript API | [reference/typescript-api](https://eve.dev/docs/reference/typescript-api) |
+| Execution model and durability | [concepts/execution-model-and-durability](https://eve.dev/docs/concepts/execution-model-and-durability) |
+| Security model | [concepts/security-model](https://eve.dev/docs/concepts/security-model) |
+| Auth and route protection | [guides/auth-and-route-protection](https://eve.dev/docs/guides/auth-and-route-protection) |
+| Instrumentation and OpenTelemetry export | [guides/instrumentation](https://eve.dev/docs/guides/instrumentation) |
+| Deploying to Vercel, and framework-level self-hosting | [guides/deployment/self-hosting](https://eve.dev/docs/guides/deployment/self-hosting) |
+
+### evestack owns the seam
+
+| Topic | Page |
+|---|---|
+| The dashboard — sessions, turns, tokens, computed cost, driving the agent | [/docs/dashboard](/docs/dashboard) |
+| Running the whole stack on your own hardware | [/docs/self-hosting](/docs/self-hosting) |
+| Postgres as the workflow world, and the `@beta` pinning trap | [/docs/local-setup](/docs/local-setup) |
+| Long-term memory on pgvector | [/docs/memory](/docs/memory) |
+| The `@evestack` registry, and taking one piece into an existing eve project | [/docs/registry](/docs/registry) |
+| Which eve versions this release is tested against | [/docs/compatibility](/docs/compatibility) |
+| Keeping up with a framework that ships daily | [/docs/upgrading](/docs/upgrading) |
+| Failures specific to running off-platform | [/docs/troubleshooting](/docs/troubleshooting) |
+
+The dividing rule: **a page belongs here when self-hosting changes the answer.** eve's
+[self-hosting guide](https://eve.dev/docs/guides/deployment/self-hosting) tells you the
+framework supports running off Vercel; [/docs/self-hosting](/docs/self-hosting) is the runbook
+for the machine you actually have. eve's
+[instrumentation guide](https://eve.dev/docs/guides/instrumentation) tells you how to export
+spans; [Architecture](/docs/architecture) explains why evestack's dashboard reads Postgres
+instead.
+
+## The one genuine gap: memory
+
+`https://eve.dev/docs/memory` returns 404, and no file under `node_modules/eve/docs/` has
+"memory" in its name except `patterns/multi-tenant-memory.md`. That page is a composition
+pattern — route auth, dynamic instructions, and ordinary tools — and it states plainly that the
+storage implementation sits outside eve, naming Postgres, a durable KV store, or a vector
+database as equally valid.
+
+So there is nothing upstream to link to for *storage*, which is exactly the part a self-hosted
+operator has to decide. [/docs/memory](/docs/memory) fills it: `remember` and `recall` on the
+Postgres already running your sessions, indexed with HNSW rather than IVFFlat, with the
+measured reason that choice is a correctness fix and not a preference.
+
+## Attribution
+
+evestack is built on [vercel/eve](https://github.com/vercel/eve) and is licensed Apache-2.0,
+same as eve. eve is a trademark of Vercel; evestack is an independent project and is not
+affiliated with or endorsed by Vercel.
+
+<CardGroup cols={2}>
+  <Card title="Compatibility" icon="check" href="/docs/compatibility">
+    The eve versions this release is tested against.
+  </Card>
+  <Card title="Upgrading eve" icon="arrow-up" href="/docs/upgrading">
+    The contract suite, and what to do when it goes red.
+  </Card>
+</CardGroup>

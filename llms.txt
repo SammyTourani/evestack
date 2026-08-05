@@ -45,15 +45,26 @@ path (`npx create-evestack my-agent`).
 
 ## Docs
 
-Served from `main` on GitHub, not from a docs domain: `evestack.dev` is unregistered, so the
+Rendered at https://sammytourani.github.io/evestack/docs. The raw sources below are served
+from `main` on GitHub rather than a docs domain: `evestack.dev` is unregistered, so the
 `https://evestack.dev/*.mdx` links that used to be listed here resolved to nothing.
 
-- [Introduction](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/introduction.mdx)
+These docs cover only the seam self-hosting creates. The framework itself is documented by
+eve, and for an installed project `node_modules/eve/docs/` matches the pinned version exactly
+while eve.dev tracks latest — prefer the local copy.
+
+- [Introduction](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/index.mdx)
 - [Quickstart](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/quickstart.mdx)
+- [Local setup](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/local-setup.mdx)
 - [Architecture](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/architecture.mdx)
 - [Dashboard](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/dashboard.mdx)
+- [Observability](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/observability.mdx)
 - [Composio auth](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/composio-auth.mdx)
 - [Memory](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/memory.mdx)
+- [Self-hosting](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/self-hosting.mdx)
+- [Supported versions](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/compatibility.mdx)
+- [Upgrading eve](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/upgrading.mdx)
+- [Upstream eve](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/upstream.mdx)
 - [Registry](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/registry.mdx)
 - [CLI](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/cli.mdx)
 - [Troubleshooting](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/troubleshooting.mdx)

@@ -41,7 +41,7 @@ Check that `WORKFLOW_POSTGRES_URL` is actually set and Postgres is reachable —
 not survive a container rebuild the way Postgres does.
 
 **`@workflow/world-postgres` fails at boot with a protocol version error.**
-It's pinned to `latest` instead of `beta` somewhere. `eve` 0.29.x needs the `5.0.0-beta` line;
+It's pinned to `latest` instead of `beta` somewhere. `eve` needs the `5.0.0-beta` line;
 npm's `latest` tag for that package is `4.3.3`.
 
 **The dashboard can't reach the database.**

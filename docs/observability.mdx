@@ -1,0 +1,345 @@
+---
+title: Observability
+description: eve keeps the session tree in workflow run tags, not on OTel spans — so evestack reads it back out of your own Postgres with SQL, and uses OpenTelemetry only for what SQL cannot hold.
+---
+
+## What you lose the moment you leave Vercel
+
+`eve` observes an agent through two independent systems, and only one of them travels over
+OpenTelemetry.
+
+The first is **workflow run tags**. eve stamps every session, turn and subagent run with
+reserved `$eve.*` attributes — the run's type, its parent, its root, its model, its running
+token counts. They are framework-owned, emitted whether or not you author an
+`instrumentation.ts`, and authored code cannot set or override the `$eve.` namespace. eve's own
+instrumentation guide is explicit about where they live: on the workflow run, and
+*"queryable in the Workflow dashboard, not on OTel spans"*.
+
+The second is the **OpenTelemetry export** you configure in `agent/instrumentation.ts`. That is
+the only mechanism eve offers for getting telemetry off the machine, and it is what eve's docs
+point at for Braintrust, PostHog, Arize, Honeycomb, Datadog and Jaeger.
+
+Those two facts compose badly for a self-hoster. The tags power Vercel's **Agent Runs** tab,
+which is a Vercel-only surface — the platform detects `eve` as the framework and renders the
+view under your project's Observability tab, currently gated per team. Export OTLP to Jaeger
+instead and you get spans: a flat waterfall of model calls and tool calls, correct on timing,
+with no session, no turn boundary, no subagent lineage and no token rollup. The structure was
+never on the wire.
+
+<Note>
+  This is the gap evestack closes, and the scope is worth stating before the mechanism. This is
+  not a provider-neutral answer to local agent observability, and it is not an OpenTelemetry
+  technique at all. It works because you run `@workflow/world-postgres` and therefore own the
+  table eve's tags land in — see
+  [Why this works, and where it stops](#why-this-works-and-where-it-stops).
+</Note>
+
+## The tags are already in your database
+
+`@workflow/world-postgres` persists a run's attributes to `workflow.workflow_runs.attributes`
+as JSONB. Nothing extra is configured; storing them is what the world does. A real turn row
+from the verified build:
+
+```json
+{"$eve.root":"wrun_…","$eve.type":"turn","$eve.model":"openai/gpt-5-mini",
+ "$eve.parent":"wrun_…","$eve.tool_count":"11","$eve.input_tokens":"4550",
+ "$eve.output_tokens":"101","$eve.cache_read_tokens":"2176","$eve.cache_write_tokens":"0"}
+```
+
+So the data behind Agent Runs is sitting in the same database that holds your durable sessions,
+in a column Postgres can index and query. The dashboard reads it directly —
+`packages/dashboard/lib/db.ts` opens one pool against `WORKFLOW_POSTGRES_URL`, and
+`packages/dashboard/lib/queries.ts` is the whole of the reconstruction. There is no ingest
+pipeline behind the session list, no second store, and nothing to keep in sync.
+
+### The keys evestack reads
+
+Verified against eve 0.30.6's own emitters (`buildSessionAttributes`, `buildTurnAttributes`,
+`buildSubagentRootAttributes`, and the per-step usage write in the tool loop) and pinned by
+`contract/contracts/06-run-attributes.contract.mjs`.
+
+| Key | On | What the dashboard does with it |
+| --- | --- | --- |
+| `$eve.type` | every agent run | `session` \| `turn` \| `subagent`. Every query filters on it |
+| `$eve.parent` | turn, subagent | Edge to the immediate parent session |
+| `$eve.root` | turn, subagent | Edge to the root of the chain — groups a whole tree |
+| `$eve.subagent` | subagent | Compiled graph node id, so a subagent run gets a name |
+| `$eve.title` | session | Session label, truncated from the first user message |
+| `$eve.trigger` | session, subagent | Which channel kind started it |
+| `$eve.model` | turn | Model id, and the input to cost |
+| `$eve.input_tokens` | turn | Cumulative, last write wins |
+| `$eve.output_tokens` | turn | Cumulative, last write wins |
+| `$eve.cache_read_tokens` | turn | Billed at the cache rate, not the input rate |
+| `$eve.cache_write_tokens` | turn | Shown per turn; not in eve's published tag list |
+| `$eve.tool_count` | turn | Tools **available** to the turn, not tools invoked |
+
+eve 0.30.6 emits four more that the dashboard does not read: `$eve.channel_request_id`,
+`$eve.parent_call`, `$eve.parent_turn`, and `$eve.cost_usd` — the last of which is written only
+when a Vercel AI Gateway response reported a cost, so a self-hosted run never has it. See
+[Cost is computed, never reported](#cost-is-computed-never-reported).
+
+### The query
+
+Simplified for reading — the real one in `queries.ts` uses a `LEFT JOIN LATERAL` and aggregates
+`(model, tokens)` tuples so each turn can be priced against its own model. The shape is
+faithful:
+
+```sql
+SELECT
+  s.id,
+  s.status,
+  s.attributes ->> '$eve.title'   AS title,
+  s.attributes ->> '$eve.trigger' AS trigger,
+  COUNT(*) FILTER (WHERE t.attributes ->> '$eve.type' = 'turn')  AS turns,
+  SUM((t.attributes ->> '$eve.input_tokens')::bigint)            AS input_tokens,
+  SUM((t.attributes ->> '$eve.output_tokens')::bigint)           AS output_tokens,
+  SUM((t.attributes ->> '$eve.cache_read_tokens')::bigint)       AS cache_read_tokens
+FROM workflow.workflow_runs s
+LEFT JOIN workflow.workflow_runs t
+       ON t.attributes ->> '$eve.root'   = s.id
+       OR t.attributes ->> '$eve.parent' = s.id
+WHERE s.attributes ->> '$eve.type' = 'session'
+GROUP BY s.id, s.status, s.attributes, s.created_at
+ORDER BY s.created_at DESC;
+```
+
+The `$eve.type` filter is load-bearing, not tidiness. One user message writes **three rows**:
+the session (`workflow//eve//workflowEntry`), the turn (`workflow//eve//turnWorkflow`), and an
+internal `workflow//eve//sessionTimeoutWorkflow` run carrying **no** `$eve.type` at all. Drop
+the filter and that third row is counted as a user session — inflated counts, phantom rows, and
+per-session cost divided across runs that never called a model.
+
+That same message produced **38 events** in Postgres and **zero** files on disk, which is how we
+confirmed the Postgres world was live rather than silently falling back to the local file world.
+
+## Why this works, and where it stops
+
+This is not a general OpenTelemetry technique. It works for one reason: **you run the Postgres
+world**, so a table you own holds the attributes. Stated precisely:
+
+- It depends on `@workflow/world-postgres` writing `workflow.workflow_runs.attributes`. On the
+  default local file world the same attributes exist, but in `.eve/.workflow-data/runs/*.json`
+  — durable, and not SQL.
+- It depends on eve's `$eve.*` names, which are framework-owned and can change. They are string
+  literals inside SQL, invisible to `tsc`, and a rename returns `NULL` rather than raising — the
+  dashboard would render a confident zero. That is why contract 06 exists and why it is the
+  contract with the least tolerance for drift.
+- It is not provider-neutral. It says nothing about observing an agent built on some other
+  framework, or on eve with a third-party world.
+
+## Tier two: OpenTelemetry, for what SQL cannot hold
+
+`workflow_runs` records that a turn happened, which model ran, and how many tokens it burned. It
+records nothing about content. The system prompt, the message history, the arguments the model
+passed to `bash` and what came back exist only on spans.
+
+| | Tier 1 — `workflow.workflow_runs` | Tier 2 — `evestack.spans` |
+| --- | --- | --- |
+| Written by | `@workflow/world-postgres` | your agent's OTLP exporter |
+| Configuration | none — always on | `EVESTACK_DASHBOARD_URL` |
+| Session / turn / subagent tree | yes | partial (see below) |
+| Model id and token counts | yes | yes |
+| Tools available to the turn | yes | **no** |
+| Duration and status | yes, per run | yes, per span |
+| System prompt, message history | **no** | yes |
+| Tool arguments and results | **no** | yes |
+| Safe to drop | no — durable session state | yes, it is replayable telemetry |
+
+The two schemas are separated on purpose. `workflow` belongs to world-postgres and evestack only
+ever reads it; everything evestack writes goes to `evestack`. An eve upgrade cannot collide with
+these tables, and `DROP SCHEMA evestack CASCADE` costs telemetry and never a durable session.
+
+The exporter is one file, and the template ships it:
+
+```ts title="agent/instrumentation.ts"
+export default defineInstrumentation({
+  setup: ({ agentName }) => {
+    if (!endpoint) return;
+    registerOTel({
+      serviceName: agentName,
+      traceExporter: new OTLPHttpJsonTraceExporter({ url: endpoint }),
+    });
+  },
+  recordInputs: process.env.EVESTACK_TRACE_CONTENT !== "off",
+  recordOutputs: process.env.EVESTACK_TRACE_CONTENT !== "off",
+});
+```
+
+With `EVESTACK_DASHBOARD_URL` unset it registers nothing, so an agent running without the
+dashboard pays no exporter cost and fails no exports. Set it to the **full path** —
+`http://localhost:4000/api/ingest/v1/traces`. `@vercel/otel` uses the `url` verbatim and appends
+nothing, so a bare origin or the conventional `:4318/v1/traces` never arrives.
+
+<Warning>
+  Use `OTLPHttpJsonTraceExporter`, not `OTLPHttpProtoTraceExporter`. eve's own
+  `instrumentation/jaeger` registry item uses the protobuf one, because Jaeger takes protobuf.
+  The ingest route parses JSON only and rejects protobuf by content type with `415` and a
+  message naming the fix, rather than half-decoding a span into the table. Nothing is stored on
+  that path.
+</Warning>
+
+Spans land in `evestack.spans`, keyed `(trace_id, span_id)` so an at-least-once retry upserts
+instead of duplicating. Read them through `packages/dashboard/lib/traces.ts` —
+`listModelCalls`, `listToolCalls`, `getSpanTree` — or with SQL directly:
+
+```sql
+SELECT attributes ->> 'gen_ai.tool.name' FROM evestack.spans WHERE name LIKE 'execute_tool %';
+```
+
+## Exporting changes the vocabulary you receive
+
+This is the sharpest edge in the whole trace tier, it is not documented upstream, and it cost us
+a working feature before we found it.
+
+eve has **two** telemetry emitters:
+
+```
+agent.* / ai.prompt.*                  eve's own `eve.agent` tracer
+gen_ai.* / ai.settings.context.eve.*   the vendored AI SDK exporter
+```
+
+Only the second ever leaves the machine. `createAgentOtelInstrumentation()` — the source of the
+rich `agent.session` / `agent.turn` / `agent.step` / `agent.action` family — has exactly one
+caller, `installLocalInstrumentationRuntime()`, and eve's dev host installs that runtime *only*
+when the app authors no `agent/instrumentation.ts`:
+
+```js
+compiledArtifacts.instrumentationPluginPath === void 0 &&
+  plugins.unshift(… local-tracing-runtime-plugin.ts)
+```
+
+So authoring instrumentation to export anywhere silently opts you out of the `agent.*` span
+family. Measured in our own database: of **5,542** exported spans, three carried a session id —
+and those three had been posted by hand out of the local spool during an experiment. Teaching
+the schema's generated columns the AI SDK vocabulary took that to 99, and prompts resolved for
+the first time.
+
+Three corrections to what we believed first, all from re-verifying rather than trusting the
+first pass:
+
+- **Not a 0.30.x regression.** The gate is byte-identical in every tarball from 0.29.5 to
+  0.30.6. There was never a working "before".
+- **Prompts are not lost when exporting.** They arrive under the AI SDK's conventions instead —
+  `gen_ai.input.messages` on `chat <model>` spans, `gen_ai.tool.call.arguments` and
+  `gen_ai.tool.call.result` on `execute_tool <name>`. The dashboard reads both vocabularies, so
+  either shape resolves.
+- **The root session id has no exported counterpart.** That is the one thing an exporting
+  deployment genuinely cannot reconstruct from spans, so subagent traces cannot be stitched to
+  their parent. Tier 1 has the lineage regardless, via `$eve.root`.
+
+`contract/contracts/14-telemetry.contract.mjs` pins that coupling. Read a failure there as good
+news: it most likely means eve made the agent instrumentation reachable from authored
+instrumentation, which is the fix we want.
+
+### The local spool's span tree
+
+For completeness, this is the shape eve's zero-config spool produces — the one you see from
+`eve traces`, and the one you get in `.eve/traces/v1` when there is **no** `instrumentation.ts`:
+
+```
+agent.session                 (ROOT)
+└── agent.turn
+    ├── agent.step
+    │   └── ai.streamText
+    │       └── ai.streamText.doStream
+    └── agent.turn.terminal
+```
+
+Do not expect that tree in a collector. It is exactly the family the export gate withholds.
+
+<Warning>
+  Adding `agent/instrumentation.ts` disables eve's zero-config trace spool, so `eve traces` and
+  the dev TUI's `/traces` viewer stop working. eve hands telemetry to authored instrumentation
+  and does not run its own writer alongside it. Delete the file to get them back.
+</Warning>
+
+The trade is deliberate. The spool's retention is bounded — 7 days, 512 MB, 20 traces, tunable
+with `EVE_TRACES_MAX_AGE_MS`, `EVE_TRACES_MAX_TOTAL_BYTES` and `EVE_TRACES_RETAIN_COUNT` — and
+it is local to one machine and one process. `evestack.spans` has no bound and survives `eve dev`
+exiting.
+
+## Cost is computed, never reported
+
+eve attaches `gen_ai.usage.cost` to a span, and `$eve.cost_usd` to a run, only when the call was
+served by Vercel's AI Gateway and the gateway's own metadata carried a price. A self-hosted
+agent calls its provider directly, so both are simply absent. Token *counts* are always there,
+which makes price × tokens the only path to a dollar figure.
+
+`packages/dashboard/lib/pricing.ts` does that arithmetic:
+
+- Cached reads are billed at the cache rate and subtracted from the input total, because eve
+  reports them *inside* it. Billing them twice is the obvious bug here.
+- `cacheRead` defaults to 10% of the input rate when a table entry omits it.
+- The built-in table goes stale — providers reprice, and a wrong table silently reports wrong
+  money. Override it without editing the file:
+
+  ```bash
+  EVESTACK_PRICING='{"openai/gpt-5-mini":{"input":0.25,"output":2,"cacheRead":0.025}}'
+  ```
+
+- A prefix wildcard covers a family: `ollama/*` is priced at zero, which is the honest number
+  for a model running on your own hardware.
+
+<Note>
+  A model with no configured price contributes `0` to the total and is labelled **`unpriced`**
+  in the UI, never silently counted as free. An unpriced model must never look cheap.
+</Note>
+
+## Privacy
+
+```bash
+EVESTACK_TRACE_CONTENT=off
+```
+
+Sets `recordInputs` and `recordOutputs` to `false`, so no prompt body, message history or tool
+result is recorded on a span. You keep span timing, model ids and token counts, and you keep the
+whole of tier 1 — the session tree, tokens and cost are unaffected, because they never came from
+spans in the first place.
+
+Leaving traces off entirely is also a supported configuration: unset `EVESTACK_DASHBOARD_URL`
+and the dashboard's sessions, turns, tokens, cost and approvals all still work. Neither tier
+reports anything to evestack or to any third party, and the dashboard's only required variable
+is `WORKFLOW_POSTGRES_URL`.
+
+## Two failure modes worth knowing before you trust a badge
+
+### A failed turn still records `status = 'completed'`
+
+eve's event stream emits `turn.failed`, but the workflow row disagrees: the workflow *handled*
+the error, so as far as it is concerned nothing failed. Trusting `status` alone paints a green
+badge on a turn that produced nothing.
+
+eve writes `$eve.model` and the token tags only once a model call reports usage, so their
+absence on a finished turn is the surviving evidence that the call never landed. `queries.ts`
+exposes that as `noModelCall` — a turn of `$eve.type = 'turn'`, with `completed_at` set, and no
+`$eve.model`. The run tree renders those turns as *no model call — turn produced nothing*
+alongside the `completed` status eve reported, rather than letting the status stand alone.
+
+### Cancellation is cooperative
+
+`POST /eve/v1/session/:id/cancel` returns `202` immediately, but the in-flight model call keeps
+streaming. We measured roughly **90 seconds**, and `turn.cancelled` arrives *after* a
+`session.waiting`:
+
+```
+message.completed → step.completed → turn.completed → session.waiting → turn.cancelled → session.waiting
+```
+
+Timing and token counts recorded during those 90 seconds are real spend. Don't build a stop
+button that assumes silence follows a 202.
+
+<CardGroup>
+  <Card title="Architecture" href="/docs/architecture">
+    The short version of this page, plus the approval protocol and the cancellation event order.
+  </Card>
+  <Card title="The dashboard" href="/docs/dashboard">
+    What the run tree actually renders, and the parts that drive the agent rather than watch it.
+  </Card>
+  <Card title="Self-hosting" href="/docs/self-hosting">
+    Running the agent and the dashboard off a laptop, including what the reverse proxy must
+    forward.
+  </Card>
+  <Card title="Compatibility" href="/docs/compatibility">
+    Which eve versions these attribute and span names were verified against.
+  </Card>
+</CardGroup>

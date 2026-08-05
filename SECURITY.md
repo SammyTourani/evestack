@@ -45,11 +45,19 @@ disclosure.
 - **`EVESTACK_AUTH_PASSWORD` is generated per project**, never defaulted, specifically so a
   shipped default password can never be the only thing standing between a stranger and your
   agent. Rotate it if `.env.local` is ever exposed.
-- **The loopback bypass is decided from the `Host` header**, because that is the only thing an
-  HTTP request carries about where it thinks it is going. `agent/channels/eve.ts` therefore
-  matches literal loopback names only — `localhost`, `::1`, and addresses inside `127.0.0.0/8`
-  — rather than calling `eve`'s `localDev()` directly, whose `/^127\./` and `*.localhost` tests
-  also accept hostile names such as `127.evil.com` and `evil.localhost` (measured against eve
-  0.29.5: `Host: 127.evil.com` was answered 200 where `Host: evil.example.com` was 401). This
-  is a real bypass in `eve` and out of scope above, so evestack narrows it locally instead of
-  relying on it.
+- **The local-dev grant is decided from the process, not the request.** `agent/channels/eve.ts`
+  calls `eve`'s `localDev()` directly, and from eve 0.30.0 that grants only inside an `eve dev`
+  / `vercel dev` process. Nothing a client sends — `Host` header, URL hostname — can obtain it.
+  A built server (`eve build && eve start`) therefore grants nothing implicitly: every request,
+  **including one from `127.0.0.1`**, must present the `httpBasic` credentials. That is the
+  intended posture, not a misconfiguration.
+
+  On eve 0.29.x this was reversed and exploitable: `localDev()` matched an unanchored `/^127\./`
+  against the attacker-controlled `Host` header, so `127.evil.com` — a name anyone can register
+  and point at your agent — received a full local-dev principal with no credentials (measured:
+  `Host: 127.evil.com` answered 200 where `Host: evil.example.com` answered 401). evestack
+  shipped a `strictLocalDev()` wrapper to narrow it; Vercel fixed it upstream in 0.30.0, at
+  which point the wrapper stopped adding protection and started rejecting legitimate local-dev
+  access over a LAN IP or a container hostname, so it was deleted. **Pin `eve` `>=0.30.0`** —
+  the peer range on every publishable evestack package enforces this, and
+  `contract/contracts/07-auth.contract.mjs` fails the build if the guarantee ever regresses.

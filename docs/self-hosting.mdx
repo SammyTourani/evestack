@@ -1,0 +1,348 @@
+---
+title: Self-hosting
+description: The production runbook behind eve's self-hosting spec — schema, proxy routes, auth off Vercel, and what each one does when it's wrong.
+---
+
+[eve's deployment guide](https://eve.dev/docs/guides/deployment/self-hosting) is short and
+correct. `eve build` writes a Nitro server to `.output/`, `eve start` serves it, a workflow
+world must be built against the same `@workflow/*` line as your eve release, `vercelOidc()` is
+not a production authenticator off Vercel, and your proxy must forward both `/eve/` and
+`/.well-known/workflow/`. Every one of those statements is true.
+
+It is a specification, not a runbook. It never names a database: no schema, no migration
+command, no connection-string variable, no reference topology, and no note about which of these
+failures are loud and which are silent. This page is that half — written from the stack in this
+repository, running.
+
+[Quickstart](/docs/quickstart) is the happy path on your laptop. This is what changes when the
+process is built rather than `eve dev`, and something other than you can reach the port.
+
+## Reference topology
+
+| Component | Port | Bound to | Notes |
+| --- | --- | --- | --- |
+| Agent, `eve dev` | 2000 | all interfaces | Auto-increments if 2000 is taken; read the startup log |
+| Agent, `eve start` | `$PORT`, else **3000** | `--host`, default all interfaces | Not 2000 — see below |
+| Postgres | host **5433** → container 5432 | all interfaces | 5433 so it never collides with a local Postgres on 5432 |
+| Dashboard | 4000 | `127.0.0.1` in compose | A control plane; see [Expose the dashboard last](#expose-the-dashboard-last) |
+
+<Note>
+  `eve dev` listens on 2000; `eve start` defaults to `$PORT` and then 3000. The dashboard's
+  default `EVESTACK_AGENT_URL` is `http://127.0.0.1:2000`, so run the built server as
+  `PORT=2000 eve start` and the rest of the stack needs no reconfiguration. Otherwise set
+  `EVESTACK_AGENT_URL` to wherever it actually landed.
+</Note>
+
+Note the asymmetry in the compose file: the dashboard's port mapping is written
+`127.0.0.1:4000:4000`, Postgres's is written `5433:5432`. Docker publishes the second on every
+interface. On a laptop behind a router that is unremarkable; on a host with a public address it
+means your session store is reachable from the internet with the default credentials in
+`.env.example`. Change them, or prefix the mapping with `127.0.0.1:` too.
+
+There is no OTLP collector in this topology and nothing listens on 4318. Trace export goes to
+the dashboard's own ingest route (`http://localhost:4000/api/ingest/v1/traces`), because
+`@vercel/otel` uses the configured URL verbatim — the conventional collector address will not
+reach it. See [Observability](/docs/observability).
+
+## Deploy
+
+<Steps>
+  <Step title="Pin the three versions that have to agree">
+    `eve`, the `@workflow/*` line, and the world package are one compatibility unit, and only one
+    of the three is checked for you. The shipped `package.json` pins `eve` at `^0.30.6` and
+    `@workflow/world-postgres` at the `beta` tag. `^0.30.2` is the floor for any deployment
+    reachable from a network — see [Auth off Vercel](#auth-off-vercel).
+  </Step>
+
+  <Step title="Bring up Postgres">
+    ```bash
+    docker compose up -d postgres
+    ```
+
+    The compose file uses `pgvector/pgvector:pg17` rather than plain `postgres`, because the
+    same database also backs [agent memory](/docs/memory) — one container, two jobs. Data lives
+    in the named volume `evestack-pgdata`.
+  </Step>
+
+  <Step title="Create the workflow schema">
+    ```bash
+    npm run db:bootstrap
+    ```
+
+    Nothing creates it for you. `@workflow/world-postgres` runs its migrations only from its own
+    CLI and eve never invokes it, so a server started against a fresh database starts against a
+    database with no tables. Run this before the first boot and again after upgrading the world
+    package.
+  </Step>
+
+  <Step title="Replace the authenticator">
+    `placeholderAuth()` and `vercelOidc()` — what stock `eve init` scaffolds — are both wrong
+    off Vercel. `agent/channels/eve.ts` in this template ships `httpBasic` reading
+    `EVESTACK_AUTH_USER` / `EVESTACK_AUTH_PASSWORD`, which `create-evestack` generates per
+    project. JWT (HMAC or ECDSA), generic OIDC, and custom verifiers are equally valid; eve owns
+    that surface and documents it in
+    [auth and route protection](https://eve.dev/docs/guides/auth-and-route-protection).
+  </Step>
+
+  <Step title="Build and start">
+    ```bash
+    npm run build          # eve build  -> .output/
+    PORT=2000 npm start    # eve start
+    ```
+
+    Every `eve` command loads `.env`/`.env.local` from the app root first, `eve start` included,
+    so the same file that drives `eve dev` drives the built server. Run it under whatever process
+    manager already supervises your Node services; eve does not supervise itself.
+  </Step>
+
+  <Step title="Put the proxy in front">
+    Forward `/eve/` **and** `/.well-known/workflow/`, unrewritten. Config for nginx and Caddy is
+    [below](#reverse-proxy). This is the step that silently half-works if you get it wrong.
+  </Step>
+
+  <Step title="Verify through the proxy, not around it">
+    ```bash
+    curl https://agent.example.com/eve/v1/health
+    curl -u "$EVESTACK_AUTH_USER:$EVESTACK_AUTH_PASSWORD" https://agent.example.com/eve/v1/info
+    ```
+
+    `/eve/v1/health` is a Nitro-level route outside the channel's auth policy, so a 200 there
+    proves the proxy path and nothing about your credentials. `/eve/v1/info` is registered and
+    authenticated with the same `auth` input as the session routes, so it is the one that proves
+    both. Then drive a real turn: `eve dev https://agent.example.com` attaches the TUI to a
+    deployed server.
+  </Step>
+</Steps>
+
+## The Postgres world
+
+<Warning>
+  Pin `@workflow/world-postgres` to the **`beta`** dist-tag, never `latest`. Observed on
+  2026-08-05: `{ beta: '5.0.0-beta.31', latest: '4.3.3' }`. eve 0.30.6 depends on
+  `@workflow/core@5.0.0-beta.39`, and the runtime rejects an incompatible protocol version
+  outright — the failure is at boot, which is the good case. Check the tags yourself before
+  changing that dependency: `npm view @workflow/world-postgres dist-tags`.
+</Warning>
+
+Selecting the world is one field in `agent/agent.ts`, and it is conditional on the connection
+string being present:
+
+```ts
+const workflow = process.env.WORKFLOW_POSTGRES_URL
+  ? { world: "@workflow/world-postgres" }
+  : undefined;
+```
+
+That conditional is the silent failure to know about. With `WORKFLOW_POSTGRES_URL` unset or
+unreachable, eve falls back to its on-disk world under `.eve/.workflow-data` and keeps working —
+the agent answers, sessions resume, and nothing in the logs reads like an error. You only find
+out when the container is replaced and the history is gone. If you deliberately run the on-disk
+world, mount that directory on persistent storage.
+
+`npm run db:bootstrap` creates three schemas — `workflow`, `workflow_drizzle`, and
+`graphile_worker` — and, inside `workflow`, the tables `workflow_runs`, `workflow_events`,
+`workflow_steps`, `workflow_hooks`, `workflow_waits`, and `workflow_stream_chunks`. `workflow_runs`
+is the one you will query: its `attributes` JSONB column holds eve's `$eve.*` run tags, which is
+why the dashboard needs no ingest pipeline. See [Architecture](/docs/architecture).
+
+<Warning>
+  Run bootstrap through the `db:bootstrap` script, not as
+  `npx --package=@workflow/world-postgres bootstrap`. That CLI loads `.env` through dotenv and
+  never reads `.env.local` — the only env file `create-evestack` writes — so it falls back to
+  `postgres://world:world@localhost:5432/world` and dies on `ECONNREFUSED`. The script passes
+  `--env-file-if-exists=.env.local` explicitly.
+</Warning>
+
+Two more variables matter under load. `world-postgres` defaults to a worker concurrency of 50
+against a pool of 10 and warns about it on every boot; `WORKFLOW_POSTGRES_MAX_POOL_SIZE` and
+`WORKFLOW_POSTGRES_WORKER_CONCURRENCY` (both 20 in the shipped `.env.example`) silence the
+warning and stop workers queueing on connections.
+
+## Auth off Vercel
+
+eve fails closed: when no authenticator in the chain grants, `routeAuth()` answers 401. That is
+the correct posture and it produces one result that reliably reads as a bug.
+
+<Warning>
+  **On a built server, `127.0.0.1` gets a 401 too — and that is correct.** From eve 0.30,
+  `localDev()` grants on the process being an `eve dev` / `vercel dev` run (`EVE_DEV=1`) and
+  consults nothing in the request. `eve build && eve start` is not that process, so nothing is
+  granted implicitly and every request needs the Basic credentials, loopback included. Measured
+  against this stack: all hosts 401, correct credentials 200.
+</Warning>
+
+The inverse used to be true, and it was exploitable. On eve 0.29.x, `localDev()` decided "is this
+my machine" from the request URL's hostname — derived from the client's `Host` header — matched
+against an unanchored `/^127\./` plus `endsWith(".localhost")`. So `127.evil.com`, a name anyone
+can register and point at your agent, received a full local-dev principal with no credentials:
+session creation and tool execution, unauthenticated, from the internet. We measured it (that
+host answered 200 where a plain foreign host answered 401) and shipped a `strictLocalDev()`
+wrapper. Vercel fixed it properly upstream in 0.30.0 and `isLoopbackRequest` is gone, so the
+wrapper was deleted rather than kept — on 0.30 it could add no protection and would have rejected
+legitimate local-dev access over a LAN IP, a tunnel, or a container hostname.
+
+**Pin `eve` to `^0.30.2` or newer.** `contract/contracts/07-auth.contract.mjs` asserts both
+halves of the fixed behaviour — that no hostile `Host` makes `localDev()` grant, and that it
+still grants inside `EVE_DEV=1` — and it goes red against 0.29.5. See
+[Compatibility](/docs/compatibility) for which eve versions have been run against this suite.
+
+### The route-auth policy does not cover everything under `/eve/`
+
+Two categories of framework route are outside it by design, and putting a blanket credential
+check in front of `/eve/` in your proxy breaks both:
+
+- **Callbacks.** `/eve/v1/callback/:token` and `/eve/v1/connections/:name/callback/:token` are
+  unauthenticated by design. An OAuth IdP arrives by 3xx redirect from a user's browser with no
+  eve credentials attached; the unguessable token is the capability that authorizes the resume.
+- **Chat channels.** `/eve/v1/slack`, `/eve/v1/telegram`, and `/eve/v1/discord` each carry their
+  own inbound verification — an HMAC signature, a secret token, an Ed25519 signature. No chat
+  provider can answer a Basic challenge, so fronting these paths with one trades a signature
+  check for nothing. See [Channels](/docs/channels/slack).
+
+## Reverse proxy
+
+Two prefixes, both forwarded, neither rewritten:
+
+- `/eve/` — health, sessions, streams, channels, tools, subagents
+- `/.well-known/workflow/` — workflow callbacks
+
+Forwarding only `/eve/` is the most common self-hosting failure and it is not a clean one: the
+session starts, returns `202` with a continuation token, and then stalls forever because the run's
+callback cannot get back in. Nothing errors. It just never finishes.
+
+```nginx
+server {
+  listen 443 ssl;
+  server_name agent.example.com;
+
+  # No URI part on proxy_pass — that is what keeps the path unrewritten.
+  # `proxy_pass http://127.0.0.1:2000/;` (trailing slash) strips the location
+  # prefix and breaks both route families.
+  location /eve/ {
+    proxy_pass http://127.0.0.1:2000;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 600s;   # a turn can run for minutes
+  }
+
+  location /.well-known/workflow/ {
+    proxy_pass http://127.0.0.1:2000;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+}
+```
+
+The equivalent Caddyfile — `reverse_proxy` passes the path through as received:
+
+```
+agent.example.com {
+  reverse_proxy /eve/* 127.0.0.1:2000
+  reverse_proxy /.well-known/workflow/* 127.0.0.1:2000
+}
+```
+
+You do not need to disable proxy buffering for nginx specifically: eve's message-stream route
+(`GET /eve/v1/session/:sessionId/stream`) sets `x-accel-buffering: no` and
+`cache-control: no-store, no-transform` on its own response. Any proxy that does not honour that
+header has to be told not to buffer, or streamed turns arrive all at once at the end.
+
+## Sandbox backend
+
+`docker()` is the default, set in `agent/sandbox/sandbox.ts`. Do not use `vercel()` off Vercel —
+it creates hosted Vercel sandboxes from your self-hosted process, which is the one thing this
+stack exists to avoid.
+
+eve keys sandboxes to durable sessions and keeps one long-lived container per session, persisting
+`/workspace` across turns with no idle timeout. Verified on this stack: a container named
+`eve-sbx-ses-docker-…-<runId>-__root__` came up per session, with working `bash`, `uname -s`
+reporting `Linux`, and a working directory of `/workspace`. It needs a Docker daemon the agent
+process can reach, and nothing else.
+
+One limit worth knowing before you plan network policy: the Docker backend honours only
+`allow-all` and `deny-all`. Domain allow-lists need `microsandbox()` (macOS on Apple Silicon, or
+Linux with KVM). For kernel-boundary isolation of code you did not write, there is
+[`@evestack/sandbox-opensandbox`](https://github.com/SammyTourani/evestack/tree/main/packages/sandbox-opensandbox)
+— gVisor, via an OpenSandbox server you run. Use Docker unless you have a specific reason not to.
+
+The one-line swap is also a [registry](/docs/registry) item, `@evestack/docker-sandbox`, if you
+are adding it to an existing eve project rather than starting from the template.
+
+## Expose the dashboard last
+
+The dashboard binds to `127.0.0.1` in `docker-compose.yml`, deliberately. It is not a viewer: it
+can start sessions, send follow-ups, resolve pending tool approvals, and cancel runs. It also
+ships no identity provider of its own, on purpose — it reads the approver's identity from the
+request (`EVESTACK_APPROVER_HEADER`, `X-Forwarded-User`, `X-Forwarded-Email`, or the Basic user)
+and records how that identity was established, so it is designed to sit behind something you
+already trust: a reverse proxy doing OAuth, Cloudflare Access, a VPN. Publishing port 4000 without
+one of those in front publishes an unauthenticated button that can approve a shell command.
+
+If the dashboard is not on the same host as the agent, give it `EVESTACK_AGENT_URL` plus the
+agent's own `EVESTACK_AUTH_USER` / `EVESTACK_AUTH_PASSWORD` — it attaches Basic credentials only
+when both are set. Its one required variable remains `WORKFLOW_POSTGRES_URL`; everything on the
+observe side is a SQL read. See [The dashboard](/docs/dashboard).
+
+## Operations
+
+### Restarts
+
+State never lives in the process, so restarting is not an event. On boot against Postgres,
+world-postgres reclaims what was in flight and says so:
+
+```
+[world-postgres] Re-enqueued 2 active run(s) on startup
+```
+
+We proved this the hard way rather than by reading it: killed the dev server, stopped and started
+the Postgres container, restarted the agent, and a follow-up on a pre-restart session recalled the
+first message verbatim. Ordering follows from that — Postgres has to be accepting connections
+before the agent starts, which is what the compose healthcheck and its `service_healthy`
+condition enforce for the dashboard.
+
+### Backups
+
+It is your database, which is the whole trade. Everything durable is in the one Postgres:
+
+| Schema | Owner | Holds |
+| --- | --- | --- |
+| `workflow`, `workflow_drizzle`, `graphile_worker` | `@workflow/world-postgres` | Durable sessions, runs, events, steps, hooks, waits, stream chunks |
+| `evestack` | evestack | `memories` (pgvector), `approvals`, the memory-deletion audit log, ingested spans |
+
+So a database-level dump is the backup — `pg_dump` of the whole database, not of a schema, and
+not a copy of the container. The `evestack-pgdata` volume is the other thing to know exists:
+`docker compose down -v` removes it and takes every session with it.
+
+Two schema-specific notes. `evestack.approvals` is retained forever by design — it is the row
+someone wants a year later, when they ask why the agent deleted the thing it deleted. And the
+agent's `evestack.memories` table is created lazily on the first `remember` call, so a restore
+into an empty database is fine; the table comes back on use, HNSW index and all.
+
+<Note>
+  A backup you have never restored is a hypothesis. Restoring into a scratch database and pointing
+  a throwaway agent at it costs one container and answers the question.
+</Note>
+
+### The trace spool expires; your database does not
+
+eve's zero-config trace spool under `.eve/traces/v1` is written only by local dev and is bounded
+on purpose: `EVE_TRACES_MAX_AGE_MS` defaults to 7 days, `EVE_TRACES_MAX_TOTAL_BYTES` to 512 MB,
+and `EVE_TRACES_RETAIN_COUNT` keeps the newest 20 regardless. eve sweeps when a session finishes
+and when the dev server starts. It is a debugging buffer, not a record.
+
+Two consequences for a self-hosted deployment. The spool is not a system of record — anything you
+need next quarter has to be in Postgres or in a backend you operate. And authoring
+`agent/instrumentation.ts` at all disables that spool, so `eve traces` stops working the moment
+you wire up trace export; delete the file to get it back. Details in
+[Observability](/docs/observability).
+
+<CardGroup cols={2}>
+  <Card title="Compatibility" icon="check" href="/docs/compatibility">
+    Which eve versions this stack has actually been run against, and what the contract suite pins.
+  </Card>
+  <Card title="Local setup" icon="wrench" href="/docs/local-setup">
+    Docker, Ollama, and the setup-time failures that are not deployment failures.
+  </Card>
+</CardGroup>

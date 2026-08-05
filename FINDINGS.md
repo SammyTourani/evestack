@@ -71,7 +71,9 @@ Retention is bounded: `EVE_TRACES_MAX_AGE_MS` (7d), `EVE_TRACES_MAX_TOTAL_BYTES`
 `EVE_TRACES_RETAIN_COUNT` (20). Our dashboard must ingest into its own store, not rely on
 the spool as the system of record.
 
-`EVE_TRACES_CONTENT=off` strips prompts/results — expose this as a privacy toggle.
+`EVESTACK_TRACE_CONTENT=off` strips prompts/results — expose this as a privacy toggle. (It is
+the template's own variable, read in `agent/instrumentation.ts`; `EVE_TRACES_CONTENT` is eve's
+separate spool setting and does not affect the export.)
 
 ### 2. `$eve.*` workflow run tags — literally what powers Agent Runs
 

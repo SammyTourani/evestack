@@ -35,6 +35,11 @@ jobs:
       # this because dist/ is warm there; only CI starts cold.
       - run: pnpm --filter @evestack/budget --filter @evestack/composio run build
       - run: pnpm -r typecheck
+      # The contract table in docs/compatibility.mdx is generated from the
+      # suite, so it can go stale the moment a contract is added — which is
+      # exactly when the published page most needs to be right. --check writes
+      # nothing and fails if it drifted.
+      - run: node scripts/gen-compatibility.mjs --check
 
   dashboard-build:
     runs-on: ubuntu-latest
