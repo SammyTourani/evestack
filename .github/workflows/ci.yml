@@ -78,6 +78,100 @@ jobs:
         env:
           TZ: America/New_York
 
+  # The runtime tier: the checks that need the stack to actually be running.
+  #
+  # This runs on a GitHub-hosted runner deliberately. The full stack — Postgres,
+  # a booted agent, and a Docker sandbox container per session — does not fit on
+  # the 8 GB laptop this project is developed on; eve re-enqueues active runs at
+  # startup and spawning their sandboxes took that machine down. ubuntu-latest is
+  # free and unlimited for public repos at 4 vCPU / 16 GB with Docker
+  # preinstalled, which is exactly the missing capability.
+  #
+  # No model key is used or needed. Every probe is deterministic: the HTTP probe
+  # only sends requests a correct eve rejects before it reaches a provider, so a
+  # request that DOES reach one is the bug being hunted rather than a cost.
+  # Model-dependent verification is `eve eval`, which is a separate, gated job.
+  runtime:
+    runs-on: ubuntu-latest
+    services:
+      # Same image as the compose file the scaffolder writes, so this is the
+      # database users actually get rather than a plain postgres that happens to
+      # be close enough.
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: evestack
+          POSTGRES_PASSWORD: evestack
+          POSTGRES_DB: evestack
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U evestack -d evestack"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      WORKFLOW_POSTGRES_URL: postgres://evestack:evestack@localhost:5433/evestack
+      # Deliberate and not UTC. The template has had a UTC-vs-local date bug
+      # before, and a runner that is always UTC makes that class of bug
+      # invisible — a green run would mean "nothing was tested anywhere it could
+      # fail".
+      TZ: America/New_York
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r --if-present run build
+
+      # Postgres-only and filesystem-only probes first. They are fast, they need
+      # no agent, and if they fail there is no point booting one.
+      - name: probes that need only Postgres
+        run: node contract/runtime/run.mjs --require=postgres,typescript
+
+      # A FRESH database for the agent, created per run, so nothing is ever
+      # re-enqueued from a previous job. That is not tidiness: re-enqueued runs
+      # each spawn a sandbox, which is what makes booting the agent expensive.
+      - name: boot the agent
+        id: agent
+        run: |
+          cd templates/default
+          npm run db:bootstrap
+          # No model key on purpose — see the note above the job.
+          npx eve dev --port 2999 > /tmp/eve-dev.log 2>&1 &
+          echo $! > /tmp/eve-dev.pid
+
+          # Wait for it, with a bound. A boot that never completes must fail the
+          # job rather than hang it until the 6h ceiling.
+          for i in $(seq 1 60); do
+            if curl -sf -o /dev/null http://localhost:2999/ 2>/dev/null; then
+              echo "agent up after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::the agent did not answer on :2999 within 60s"
+          cat /tmp/eve-dev.log
+          exit 1
+
+      - name: probes that need the agent
+        env:
+          EVESTACK_PROBE_AGENT_URL: http://localhost:2999
+        run: node contract/runtime/run.mjs --require=agent --only=protocol
+
+      - name: the agent's own log
+        # Always: a probe failure is usually explained by what the agent logged
+        # while it was being probed, and losing that means re-running the job to
+        # find out.
+        if: always()
+        run: |
+          echo "── eve dev log ──────────────────────────────────────────────"
+          cat /tmp/eve-dev.log || echo "(no log)"
+          kill "$(cat /tmp/eve-dev.pid)" 2>/dev/null || true
+
   dashboard-build:
     runs-on: ubuntu-latest
     steps:
