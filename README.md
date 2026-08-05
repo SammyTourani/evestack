@@ -1,14 +1,26 @@
+<div align="center">
+
 # evestack
 
-**eve on your own machine, with a dashboard you can actually drive. $0 infrastructure.**
+### The open replacement for Vercel Agent Runs.
 
-**[sammytourani.github.io/evestack](https://sammytourani.github.io/evestack/)** — see it before you run it.
+`eve` on your own machine — durable Postgres sessions, a Docker sandbox, and a dashboard that
+**observes *and drives*** the agent. $0 infrastructure. Nothing phones home.
 
-[Vercel's eve](https://github.com/vercel/eve) is a genuinely good agent framework, and it's
-Apache-2.0. But the moment you run it off Vercel you lose the Agent Runs dashboard, and there
-is no open replacement — so self-hosting means flying blind on terminal logs.
+[![CI](https://github.com/SammyTourani/evestack/actions/workflows/ci.yml/badge.svg)](https://github.com/SammyTourani/evestack/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/create-evestack?color=2563eb&label=create-evestack)](https://www.npmjs.com/package/create-evestack)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](./LICENSE)
 
-evestack is to eve what Ubuntu is to the Linux kernel. We don't fork eve. We package it so it
+**[See it before you run it →](https://sammytourani.github.io/evestack/)**
+
+</div>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/dashboard-dark.webp">
+  <img alt="The evestack dashboard: every agent session on this machine, with turns, tokens, computed cost, and an Infrastructure tile reading $0.00 — read straight from your own Postgres." src=".github/dashboard-light.webp">
+</picture>
+
+evestack is to `eve` what Ubuntu is to the Linux kernel. We don't fork eve. We package it so it
 runs on your own hardware with one command, and we build the parts Vercel kept for itself.
 
 ```bash
@@ -18,6 +30,17 @@ docker compose up -d postgres
 npm run db:bootstrap     # create the workflow schema — nothing creates it for you
 npm run dev
 ```
+
+## Why this exists
+
+[Vercel's eve](https://github.com/vercel/eve) is a genuinely good agent framework, it's
+Apache-2.0, and Vercel supports self-hosting it. What you give up off-platform is the Agent
+Runs dashboard — their own guidance is to export OpenTelemetry to a collector you operate.
+
+So you get Jaeger for spans and a terminal TUI for one session at a time. What no one ships
+is a single place that speaks *sessions, turns, tokens, cost and approvals* — that more than
+one person can open, that keeps your history longer than three days, and that can act on the
+agent instead of only watching it.
 
 ## What you get
 
