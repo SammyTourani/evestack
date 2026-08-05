@@ -17,6 +17,7 @@
     "db:bootstrap": "node --env-file-if-exists=.env.local node_modules/@workflow/world-postgres/bin/setup.js"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.30",
     "@ai-sdk/openai": "^2.0.0",
     "@evestack/budget": "workspace:*",
     "@evestack/composio": "workspace:*",
