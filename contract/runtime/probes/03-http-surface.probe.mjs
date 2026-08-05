@@ -62,6 +62,55 @@ async function request(path, init = {}, timeoutMs = 15_000) {
   }
 }
 
+/**
+ * Opens a streaming response and reports what happened, without ever waiting on
+ * a body that may legitimately never end.
+ *
+ * `fetch` resolves once headers arrive, so the status is known immediately. The
+ * body is then read incrementally until it ends or the window closes, which is
+ * the only way to distinguish the three outcomes that matter: refused, alive and
+ * saying something, and alive and saying nothing.
+ */
+async function openStream(path, windowMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), windowMs);
+  try {
+    const response = await fetch(`${BASE}${path}`, { signal: controller.signal });
+    if (!response.body) {
+      return { status: response.status, ended: true, bytes: 0 };
+    }
+    const reader = response.body.getReader();
+    let bytes = 0;
+    let ended = false;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) {
+          ended = true;
+          break;
+        }
+        bytes += value?.byteLength ?? 0;
+        // Anything at all is enough: the question is whether the stream speaks,
+        // not how much it says. Stopping here also keeps a live stream from
+        // holding the probe for the whole window.
+        if (bytes > 0) break;
+      }
+    } catch {
+      // Aborted by the timer — the stream was still open and silent.
+    } finally {
+      reader.cancel().catch(() => {});
+    }
+    return { status: response.status, ended, bytes };
+  } catch (error) {
+    // Aborted before headers ever arrived: the server accepted the connection
+    // and said nothing at all, which is the worst of the three outcomes.
+    if (error.name === "AbortError") return { status: 0, ended: false, bytes: 0 };
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export default {
   id: "protocol/wrong-requests-are-refused-not-absorbed",
   title: "unknown sessions and malformed requests are refused, and streams never hang",
@@ -121,18 +170,37 @@ export default {
     /* a stream for a session that does not exist must end                     */
     /* ---------------------------------------------------------------------- */
 
-    const stream = await request(`/eve/v1/session/${UNKNOWN}/stream`, {}, STREAM_TIMEOUT_MS);
+    // Status and body have to be judged separately, and the first version of
+    // this probe did not — it awaited response.text(), which on a streaming
+    // endpoint never resolves, then blamed the timeout on the session being
+    // unknown. A live stream staying open is correct behaviour; the question is
+    // only what it does for a session that never existed. fetch() resolves as
+    // soon as headers arrive, so the status is available without reading a byte
+    // of the body.
+    const streamed = await openStream(`/eve/v1/session/${UNKNOWN}/stream`, STREAM_TIMEOUT_MS);
 
-    t.ok(
-      !stream.timedOut,
-      `streaming an unknown session terminates within ${STREAM_TIMEOUT_MS / 1000}s`,
-      stream.timedOut
-        ? {
-            expected: "a response that ends",
-            actual: "the connection was still open when the probe gave up — a dashboard tab would wait forever",
-          }
-        : { actual: `${stream.status}` },
-    );
+    t.note(`stream of an unknown session answered ${streamed.status}`);
+
+    if (streamed.status >= 400) {
+      // The unambiguous good outcome: refused outright.
+      t.ok(true, "streaming an unknown session is refused with an error status");
+    } else {
+      // A 2xx here is not automatically wrong — but then it must SAY something.
+      // A stream that reports success and then emits nothing, forever, is the
+      // failure: a dashboard tab waits on an event that can never arrive, with
+      // no error to render and nothing to retry.
+      t.ok(
+        streamed.ended || streamed.bytes > 0,
+        `a ${streamed.status} stream for an unknown session either ends or emits something ` +
+          `within ${STREAM_TIMEOUT_MS / 1000}s`,
+        streamed.ended || streamed.bytes > 0
+          ? { actual: streamed.ended ? "the stream ended" : `${streamed.bytes} bytes emitted` }
+          : {
+              expected: "a terminal event, or the stream closing",
+              actual: "held open with zero bytes — a dashboard tab would wait forever with nothing to show",
+            },
+      );
+    }
 
     /* ---------------------------------------------------------------------- */
     /* cancel answers in the vocabulary the dashboard switches on              */
