@@ -23,6 +23,9 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  # For the fallback in "open the pull request": if PR creation is refused by
+  # repository policy, the report is filed as an issue rather than thrown away.
+  issues: write
 
 # One upgrade attempt at a time. Two concurrent runs would race to create the
 # same branch, and the loser would fail on push after doing all the work.
@@ -70,6 +73,17 @@ jobs:
           # bot becomes one people mute.
           if gh pr list --state open --head "eve-watch/$latest" --json number --jq 'length' | grep -qv '^0$'; then
             echo "a PR for $latest is already open"
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Same rule for the issue fallback. Without this, a repository that
+          # refuses Actions-created PRs would collect one identical issue per
+          # day — the exact noise the PR check above exists to prevent, just
+          # through the other door.
+          if gh issue list --state open --label eve-upgrade --search "$latest in:title" \
+               --json number --jq 'length' | grep -qv '^0$'; then
+            echo "an issue for $latest is already open"
             echo "proceed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -150,6 +164,28 @@ jobs:
           # keeps the job going — it does not rewrite the outcome. Guarding this
           # with `|| true` would report every upgrade as green forever.
           node contract/run.mjs
+
+      - name: record the verdict and refresh the compatibility page
+        if: steps.check.outputs.proceed == 'true' && steps.install.outcome == 'success'
+        # Without this every PR this job opens is born red. ci.yml runs
+        # `gen-compatibility.mjs --check`, which regenerates the table from the
+        # eve that is now installed and fails if the committed page disagrees —
+        # and the bump guarantees it disagrees. A bot whose PRs always arrive
+        # failing is a bot whose failures stop meaning anything.
+        #
+        # It also fills in the public matrix. The page at /compat is a function
+        # of contract/history/, so a release that is never recorded is a release
+        # the page silently omits — the gap being least visible exactly when a
+        # version is new, which is when someone is most likely to look.
+        #
+        # Runs whether or not the contracts held: a red verdict is what the page
+        # exists to show. Tolerant of its own failure, because losing the
+        # bookkeeping is not a reason to lose the upgrade report too.
+        continue-on-error: true
+        run: |
+          node contract/record.mjs || echo "::warning::could not record the contract run"
+          node contract/render-compat.mjs || echo "::warning::could not render the compat matrix"
+          node scripts/gen-compatibility.mjs || echo "::warning::could not regenerate docs/compatibility.mdx"
 
       - name: assemble the pull-request body
         if: steps.check.outputs.proceed == 'true'
@@ -234,13 +270,46 @@ jobs:
 
           gh label create eve-upgrade --color 0E8A16 --description "Automated eve version bump" 2>/dev/null || true
 
-          url="$(gh pr create \
-            --title "eve ${{ steps.check.outputs.current }} → ${{ steps.check.outputs.latest }}${{ steps.contracts.outcome != 'success' && ' — CONTRACTS BROKEN' || '' }}" \
+          title="eve ${{ steps.check.outputs.current }} → ${{ steps.check.outputs.latest }}${{ steps.contracts.outcome != 'success' && ' — CONTRACTS BROKEN' || '' }}"
+
+          # The branch is pushed and every check has run by this point, so the
+          # report exists — the only question is where it lands. Opening the PR
+          # can fail for a reason that has nothing to do with the upgrade:
+          # "GitHub Actions is not permitted to create or approve pull requests"
+          # is a repository setting, off by default, and it took this job down
+          # with a red X and no artifact at all. Everything the run learned was
+          # discarded at the last line.
+          #
+          # So a failure here degrades to an issue carrying the same body. The
+          # branch is already pushed either way, so the upgrade is one click
+          # from a PR whenever somebody wants it.
+          if url="$(gh pr create \
+            --title "$title" \
             --body-file /tmp/pr-body.md \
             --head "${{ steps.check.outputs.branch }}" \
             --base "${{ github.event.repository.default_branch }}" \
-            --label eve-upgrade)"
-          echo "url=$url" >> "$GITHUB_OUTPUT"
+            --label eve-upgrade 2>/tmp/pr-error.txt)"; then
+            echo "url=$url" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::could not open a pull request; filing an issue instead"
+            cat /tmp/pr-error.txt
+            {
+              echo "> Could not open a pull request, so this is an issue instead. The branch"
+              echo "> \`${{ steps.check.outputs.branch }}\` is pushed and carries every change described below —"
+              echo "> open a PR from it to merge. If the reason was \"GitHub Actions is not permitted to"
+              echo "> create or approve pull requests\", that is Settings → Actions → General."
+              echo
+              echo '```'
+              cat /tmp/pr-error.txt
+              echo '```'
+              echo
+              echo "---"
+              echo
+              cat /tmp/pr-body.md
+            } > /tmp/issue-body.md
+            url="$(gh issue create --title "$title" --body-file /tmp/issue-body.md --label eve-upgrade)"
+            echo "url=$url" >> "$GITHUB_OUTPUT"
+          fi
         env:
           GH_TOKEN: ${{ github.token }}
 
