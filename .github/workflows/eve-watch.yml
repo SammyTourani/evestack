@@ -36,9 +36,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Deliberately no `version:` — see the note in ci.yml. Passing one
+      # alongside `packageManager` in package.json makes the action refuse to
+      # install pnpm at all ("Multiple versions of pnpm specified").
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
       - uses: actions/setup-node@v4
         with:
@@ -122,7 +123,18 @@ jobs:
           # step would be marked green, and the PR would claim a typecheck passed
           # that did not.
           set -o pipefail
-          pnpm -r typecheck 2>&1 | tee /tmp/typecheck.txt
+          # The build is inside the braces, not a step of its own: this runner
+          # starts cold, and templates/default's tsc needs the two workspace
+          # packages' dist/ (gitignored) just like ci.yml does. Anything that
+          # fails in here — build or typecheck — must land in typecheck.txt,
+          # because that file is the PR body's only diagnostic. A separate
+          # failing line above the tee would abort the step (bash -e) with the
+          # file never written, and the PR would report a red typecheck with
+          # nothing to show for it.
+          {
+            pnpm --filter @evestack/budget --filter @evestack/composio run build &&
+            pnpm -r typecheck
+          } 2>&1 | tee /tmp/typecheck.txt
 
       - name: contract suite
         if: steps.check.outputs.proceed == 'true' && steps.install.outcome == 'success'
@@ -205,6 +217,12 @@ jobs:
         # green suite sufficient to ship that — and a suite can only assert the
         # assumptions somebody thought to write down. A human reads the changelog.
         run: |
+          # `next typegen` in the typecheck step rewrites this tracked file from
+          # the `next dev` variant to the build variant. That has nothing to do
+          # with the eve bump, and `git add -A` below would otherwise drop it
+          # into every PR this job opens. A no-op when typecheck was skipped.
+          git checkout -- packages/dashboard/next-env.d.ts
+
           git config user.name  "eve-watch[bot]"
           git config user.email "eve-watch@users.noreply.github.com"
           git checkout -b "${{ steps.check.outputs.branch }}"

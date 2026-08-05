@@ -16,14 +16,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # No `version:` here, or in any other job. Given one while package.json
+      # also has `packageManager`, the action refuses to install at all —
+      # "Error: Multiple versions of pnpm specified" — which killed every run
+      # of this workflow in ~15s, before any real step ever executed. Left
+      # bare, the action reads packageManager, so the pin lives in exactly one
+      # place.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # templates/default imports @evestack/budget and @evestack/composio,
+      # whose types resolve to their dist/ — which is gitignored, so a clean
+      # checkout has no dist and a bare `pnpm -r typecheck` dies on TS2307
+      # before checking a single line of template code. Local trees never see
+      # this because dist/ is warm there; only CI starts cold.
+      - run: pnpm --filter @evestack/budget --filter @evestack/composio run build
       - run: pnpm -r typecheck
 
   dashboard-build:
@@ -31,8 +41,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -48,8 +56,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -144,7 +150,7 @@ jobs:
           node -e '
             const fs = require("fs");
             for (const f of fs.readdirSync("registry/r")) {
-              if (f === "index.json") continue;
+              if (f === "registry.json") continue;
               const item = JSON.parse(fs.readFileSync(`registry/r/${f}`, "utf8"));
               for (const file of item.files ?? []) {
                 if (!file.content || file.content.length < 20) {
@@ -165,7 +171,7 @@ jobs:
             const template = JSON.parse(fs.readFileSync("templates/default/package.json", "utf8"));
             let failed = false;
             for (const f of fs.readdirSync("registry/r")) {
-              if (f === "index.json") continue;
+              if (f === "registry.json") continue;
               const item = JSON.parse(fs.readFileSync(`registry/r/${f}`, "utf8"));
               for (const [field, source] of [["dependencies", "dependencies"], ["devDependencies", "devDependencies"]]) {
                 for (const entry of item[field] ?? []) {
