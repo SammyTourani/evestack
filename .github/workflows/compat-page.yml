@@ -6,36 +6,25 @@ name: Compat page
 #
 # ── Read this before adding a deploy step ────────────────────────────────────
 #
-# GitHub Pages is already owned by .github/workflows/deploy-website.yml, which
-# static-exports packages/website and publishes packages/website/out via
-# actions/deploy-pages to https://sammytourani.github.io/evestack/. A Pages
-# deployment replaces the WHOLE site — there is no per-path deploy — so a
-# second workflow calling deploy-pages with only the compat page would take the
-# landing page down. That is why this workflow does not call it.
+# This workflow deliberately does not publish. The site now deploys to Vercel
+# (https://evestack.vercel.app) from packages/website on every push to main, so
+# the old constraint that made publishing hard — Pages replacing the whole site
+# on every deploy — is gone. Publishing is now a one-line choice:
 #
-# What a human must wire up to serve the page at /evestack/compat/ — one of:
+#   A. Preferred. Next copies packages/website/public/** verbatim into the
+#      build, so the page only has to exist there when Vercel builds. Add one
+#      step to packages/website's `prebuild`, or commit the rendered file to
+#      packages/website/public/compat/index.html and let the check below keep
+#      it honest. Either way it is live at /compat with no second deployment.
 #
-#   A. Preferred, no new deployment. Next copies packages/website/public/**
-#      verbatim into out/, so the compat page only has to land there before the
-#      site builds. In deploy-website.yml, add to the `paths:` filter:
+#   B. Download this workflow's `compat-page` artifact and publish it anywhere.
+#      It is a single self-contained HTML file with no external CSS, JS, fonts
+#      or images.
 #
-#            - "contract/history/**"
-#            - "contract/render-compat.mjs"
-#
-#      and add one step before `pnpm --filter @evestack/website build`:
-#
-#            - run: node contract/render-compat.mjs --out=packages/website/public/compat/index.html
-#
-#      The site then ships /compat as a sub-path of its own artifact and the two
-#      workflows never contend.
-#
-#   B. Commit the rendered file to packages/website/public/compat/index.html and
-#      let the existing path filter carry it. Simpler, but the page goes stale
-#      the moment someone records a report and forgets to re-render.
-#
-#   C. Download this workflow's `compat-page` artifact and publish it wherever
-#      else you like. It is a single self-contained HTML file with no external
-#      CSS, JS, fonts or images.
+# The reason it is still unpublished is content, not plumbing: contract/history/
+# holds reports for fewer contracts than the suite currently asserts, so the
+# matrix would go public understating what is actually covered. Re-record the
+# history (see contract/history/README.md) before wiring up A.
 #
 # Whichever is chosen, the page's own links assume it is served from a directory
 # (…/compat/), not from the site root.

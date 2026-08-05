@@ -43,7 +43,9 @@ const imgAudit = await page.evaluate(() =>
   })),
 );
 const broken = imgAudit.filter((i) => i.complete && !i.decoded && !i.src?.endsWith(".svg"));
-const unprefixed = imgAudit.filter((i) => i.src?.startsWith("/evestack/"));
+/* The site moved off GitHub Pages to the domain root, so the old /evestack/
+   deploy prefix must appear nowhere — its presence means a stale hardcoded path. */
+const stalePrefixed = imgAudit.filter((i) => i.src?.startsWith("/evestack/"));
 const distinctSrcs = [...new Set(imgAudit.map((i) => i.src).filter((s) => s?.startsWith("/")))];
 const http = await page.evaluate(async (srcs) => {
   const bad = [];
@@ -54,10 +56,13 @@ const http = await page.evaluate(async (srcs) => {
   return bad;
 }, distinctSrcs);
 
+/* Collect absolute and root-relative hrefs WITHOUT excluding the retired
+   /evestack prefix — that prefix is exactly what badInternal below has to be
+   able to see. Filtering it out here would make that gate vacuously pass. */
 const links = await page.evaluate(() =>
   [...document.querySelectorAll("a[href]")]
     .map((a) => a.getAttribute("href"))
-    .filter((h) => h.startsWith("http") || (h.startsWith("/") && !h.startsWith("/evestack"))),
+    .filter((h) => h.startsWith("http") || h.startsWith("/")),
 );
 const badInternal = links.filter((h) => h.startsWith("/evestack"));
 const staleGithub = links.filter((h) => h.includes("github.com/evestack"));
@@ -65,10 +70,10 @@ const realGithub = links.filter((h) => h.includes("github.com/SammyTourani/evest
 
 await page.screenshot({ path: `${OUT}/pages-bottom.png` });
 console.log(
-  `images: ${imgAudit.length} total, ${broken.length} decode-broken, ${unprefixed.length} unprefixed, ${distinctSrcs.length} distinct srcs HTTP-checked (${http.length} bad)`,
+  `images: ${imgAudit.length} total, ${broken.length} decode-broken, ${stalePrefixed.length} stale-prefixed, ${distinctSrcs.length} distinct srcs HTTP-checked (${http.length} bad)`,
 );
 broken.slice(0, 5).forEach((b) => console.log(`  broken: ${b.src}`));
-unprefixed.slice(0, 5).forEach((b) => console.log(`  unprefixed: ${b.src}`));
+stalePrefixed.slice(0, 5).forEach((b) => console.log(`  stale-prefixed: ${b.src}`));
 http.slice(0, 10).forEach((b) => console.log(`  http: ${b}`));
 console.log(`links: ${realGithub} → SammyTourani/evestack, ${staleGithub.length} stale, ${badInternal.length} bad internal`);
 console.log(`request failures: ${failures.length}`);
@@ -77,7 +82,7 @@ failures.slice(0, 10).forEach((f) => console.log(`  ${f}`));
 await browser.close();
 const pass =
   broken.length === 0 &&
-  unprefixed.length === 0 &&
+  stalePrefixed.length === 0 &&
   http.length === 0 &&
   staleGithub.length === 0 &&
   badInternal.length === 0 &&
