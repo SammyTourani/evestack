@@ -1,0 +1,207 @@
+---
+title: Upgrading eve
+description: What to do when the contract suite goes red, and the standing policy for keeping up with a framework that ships daily.
+---
+
+Vercel merged 252 pull requests into eve in fourteen days. eve shipped 0.30.0,
+0.30.1 and 0.30.2 on the same day evestack launched. That cadence is the
+environment evestack lives in, and it has one practical consequence:
+
+<Warning>
+  Anything evestack builds inside eve's own surface area has a shelf life
+  measured in weeks. Assume every assumption below is temporary and write it
+  down where a machine can check it.
+</Warning>
+
+## The policy
+
+1. **Every assumption evestack makes about eve is a contract in `contract/`.**
+   If you find yourself writing "eve does X, so we can do Y", that belongs in
+   the suite before it belongs in the code.
+2. **`eve-watch` opens the pull request. A human merges it.** There is no
+   auto-merge and there will not be one.
+3. **A red contract is a decision, not a bug.** Sometimes eve is wrong,
+   sometimes we are, sometimes both are right and the contract has gone stale.
+   Those three outcomes need different fixes.
+4. **Deterministic checks decide; a model may advise.** See
+   [On putting a model in CI](#on-putting-a-model-in-ci).
+
+## Why a typecheck is not enough
+
+evestack once shipped a `strictLocalDev()` wrapper. eve 0.29.x decided "is this
+request from my own machine" by matching the request's own hostname against an
+unanchored `/^127\./`, and a request URL is built from the client's `Host`
+header. So `127.evil.com` — a name anyone can register and point at your agent —
+received a full local-dev principal with no credentials at all. We measured it:
+that host answered 200 where a plain foreign host answered 401.
+
+eve 0.30.0 fixed it properly upstream. `localDev()` now grants based on the
+process being an `eve dev` run, and consults nothing in the request. At that
+moment our wrapper stopped adding protection and started rejecting legitimate
+local-dev access over a LAN IP, a tunnel, or a container hostname. It had to be
+deleted.
+
+**It typechecked perfectly on both days.** `tsc` had nothing to say when it was
+load-bearing and nothing to say when it became harmful, because its *types*
+never changed — only eve's *meaning* did.
+
+That is the entire argument for the contract suite. A typecheck cannot catch
+semantic drift. A behavioural assertion can:
+
+```bash
+# green against the eve we ship
+node contract/run.mjs --only=auth
+
+# red against the eve that had the bug — naming the exact hostile Host header
+EVESTACK_CONTRACT_EVE_DIR=node_modules/.pnpm/eve@0.29.5.../node_modules/eve \
+  node contract/run.mjs --only=auth
+```
+
+## When the suite goes red
+
+Read the failure first. Every contract prints the assumption it pins and what
+evestack does with it, so the report tells you the blast radius before you open
+a single file.
+
+<Steps>
+  <Step title="Reproduce it locally">
+    ```bash
+    pnpm install
+    pnpm contract
+    node contract/run.mjs --only=<the failing id> --verbose
+    ```
+    The suite is free and offline. There is never a reason to debug this from
+    CI logs alone.
+  </Step>
+
+  <Step title="Decide which of three things happened">
+    | What you find | What it means | What to do |
+    |---|---|---|
+    | eve changed behaviour we depend on, deliberately | The contract did its job | Update evestack's code, then update the contract to describe the new behaviour — **same commit** |
+    | eve changed behaviour and it looks like a regression | The contract found an upstream bug | File it at `vercel/eve`, pin the previous version, leave the contract red with a link |
+    | eve is unchanged; our contract was over-specified | The contract is wrong | Loosen it to assert what we actually depend on, not what we happened to observe |
+  </Step>
+
+  <Step title="Never delete a contract to make CI green">
+    A deleted contract is an assumption that silently stopped being checked, and
+    the next person has no way to know it was ever true. Loosen it, or replace
+    it with the narrower thing we genuinely rely on. If evestack really no longer
+    depends on it, delete the dependency in the same commit and say so in the
+    message.
+  </Step>
+
+  <Step title="If the baseline was already red, stop">
+    The pull request reports the suite against the **current** pin as well as the
+    candidate. If that column is red, `main` was broken before this upgrade and
+    the bump is a distraction — fix `main` first.
+  </Step>
+</Steps>
+
+## When it stays green and something breaks anyway
+
+This is the failure mode worth planning for. A green suite means *every
+assumption someone wrote down still holds* — not that the release is safe. eve
+can change something we depend on that no contract names, and the suite will
+report success with total confidence.
+
+When that happens, the fix is not just the patch. **Write the contract that
+would have caught it**, in the same pull request. That is the only mechanism
+that makes the suite better over time, and it costs about fifteen minutes while
+the failure is still fresh. `contract/README.md` describes the shape.
+
+## What is currently pinned
+
+| Contract | Assumption |
+|---|---|
+| `version/…` | One eve version satisfies every range this repo declares — templates, both published packages' peer ranges, the scaffolder |
+| `modules/…` | Every `eve/*` subpath evestack imports resolves, and every value it binds is still exported |
+| `tools/approval-…` | `approval` is the gating field (not the AI SDK's `needsApproval`), and `always()` still returns `"user-approval"` |
+| `tools/dynamic-…` | `defineDynamic` still produces `kind: "eve:dynamic"`, and `step.started` is still dispatched |
+| `protocol/…` | The session/cancel/stream routes, the NDJSON content type and the stream resume headers the dashboard drives |
+| `attributes/…` | Every `$eve.*` run attribute the dashboard reads out of Postgres is still one eve writes |
+| `auth/…` | `localDev()` grants on process state and never on the request; `httpBasic()` and `routeAuth()` fail closed |
+| `hooks/…` | Hook handlers return `void` — they cannot block or park a turn |
+| `sandbox/…` | The `SandboxBackend` shape `@evestack/sandbox-opensandbox` duck-types, which nothing typechecks |
+
+The import and attribute lists are derived from evestack's own source at run
+time, so they widen automatically as the codebase grows.
+
+## The `eve-watch` workflow
+
+`.github/workflows/eve-watch.yml` runs daily and on demand. It asks npm for the
+latest eve; if it is newer than the pinned range it creates a branch, bumps
+every manifest with a caret pin, installs, typechecks, runs the contract suite,
+and opens a pull request reporting all of it alongside the eve changelog entries
+that touch something the suite pins.
+
+Two details are deliberate:
+
+- **Peer ranges are not bumped.** `peerDependencies.eve` on the published
+  packages is a compatibility promise to users. Widening it automatically would
+  publish support for a version nothing has been tested against. If a new eve
+  falls outside one, the version contract fails and a human decides.
+- **The baseline runs first.** The suite runs against the current pin before the
+  bump, so a red result after the bump is unambiguous.
+
+Run it by hand against a specific version when you want to test a release
+candidate:
+
+```
+Actions → eve-watch → Run workflow → version: 0.31.0
+```
+
+## On putting a model in CI
+
+The honest engineering read, since it comes up every time.
+
+**Where a model genuinely helps.** Reading a hundred-line changelog and telling
+a maintainer which three entries matter to a self-hosted, non-Vercel deployment
+is a real task with no deterministic solution, and a model is good at it. So is
+drafting a diff for a mechanical rename once a human has decided the rename is
+correct. Both are *suggestions to a person who is already reading the PR*.
+
+**Where it is dangerous.** Auto-merging a model's fix to an auth path. The
+`localDev()` story is the argument: the correct response to that change was to
+*delete* protective code, and deleting security code on a model's say-so, on a
+schedule, with nobody watching, is how you ship an authentication bypass to
+everyone who ran `npx create-evestack`. A model asked "does this patch still
+help?" would very plausibly have said yes — the patch looked defensive and
+compiled fine.
+
+There is also a supply-chain problem. A changelog is third-party text that
+arrives on a schedule. A model reading it inside a job that can write to the
+repository is a prompt-injection target with commit access. The mitigation is
+not a better prompt; it is not giving it commit access.
+
+**So the rule is:**
+
+<Note>
+  Deterministic checks are the mechanism. A model is a convenience layer on top
+  — optional, gated on a secret being present, and able only to comment.
+</Note>
+
+The optional step in `eve-watch` follows exactly that. It runs only if
+`ANTHROPIC_API_KEY` is set, it reads results the deterministic steps already
+produced, and its single capability is `gh pr comment`. It cannot commit, push,
+merge, re-run the suite, or change what the PR reports. Its output is labelled
+as generated and non-authoritative. If it is prompt-injected by a hostile
+changelog, the worst outcome is a misleading paragraph next to the real contract
+table — which a human is required to read anyway.
+
+If you do not set the secret, everything above still works. That is the test of
+whether a model is a convenience layer or a dependency, and this one passes it.
+
+## Running the suite yourself
+
+```bash
+pnpm contract                        # all contracts
+node contract/run.mjs --verbose      # show passing assertions
+node contract/run.mjs --only=auth    # one family
+node contract/run.mjs --format=json  # for scripts
+
+# point it at any other eve install
+EVESTACK_CONTRACT_EVE_DIR=path/to/eve node contract/run.mjs
+```
+
+`pnpm test` runs the contract suite before the workspace tests, so it is hard to
+skip by accident.

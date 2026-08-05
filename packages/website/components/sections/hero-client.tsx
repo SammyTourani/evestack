@@ -4,11 +4,12 @@ import { HeroStage } from "@/components/three/hero/hero-stage";
 import { SLABS } from "@/components/three/hero/slab-data";
 
 /* Row screen positions for the disassembled stack — derived from the scene
-   constants (camera z 9.6, fov 30 → half-height 2.57u; rows at ±1.95/±0.65).
-   Percentages of the canvas box; the box's fixed aspect keeps them stable. */
-const ROW_TOP = [12.1, 37.35, 62.65, 87.9];
-const LABEL_LEFT = 67;
-const SPINE_X = 64;
+   constants (camera z 9.6, fov 30 → half-height 2.57u; rows at ±1.95/±0.65)
+   projected through the 1112×460 INNER frame, expressed as percentages of
+   the 1240×580 outer (bleed) box. The box's fixed aspect keeps them stable. */
+const ROW_TOP = [19.9, 40.0, 60.0, 80.1];
+const LABEL_LEFT = 65.2;
+const SPINE_X = 62.6;
 
 export function HeroClient({ children }: { children: React.ReactNode }) {
   return (
@@ -17,9 +18,18 @@ export function HeroClient({ children }: { children: React.ReactNode }) {
       <div
         data-hero-stage
         aria-hidden
-        className="pointer-events-none absolute left-1/2 top-1/2 z-0 aspect-[1112/460] w-[min(1112px,96vw)] -translate-x-1/2 -translate-y-[calc(50%+2.5rem)]"
+        className="pointer-events-none absolute left-1/2 top-1/2 z-0 aspect-[1240/580] w-[min(1240px,107vw)] -translate-x-1/2 -translate-y-[calc(50%+2.5rem)]"
       >
-        <HeroStage />
+        {/* The canvas renders with film-back bleed (hero-canvas expands the
+            frustum, composition unchanged) and these nested masks feather the
+            bleed margin — glow dissolves into the page instead of hitting the
+            buffer edge. Nested (not comma-composited) so no mask-composite
+            support is needed. Annotations stay outside: labels never fade. */}
+        <div className="absolute inset-0 [-webkit-mask-image:linear-gradient(to_right,transparent,black_5.2%,black_94.8%,transparent)] [mask-image:linear-gradient(to_right,transparent,black_5.2%,black_94.8%,transparent)]">
+          <div className="absolute inset-0 [-webkit-mask-image:linear-gradient(to_bottom,transparent,black_10.3%,black_89.7%,transparent)] [mask-image:linear-gradient(to_bottom,transparent,black_10.3%,black_89.7%,transparent)]">
+            <HeroStage />
+          </div>
+        </div>
 
         {/* Disassembly annotations: connector spine + layer labels.
             Pure decoration for the animated path — starts opacity-0 and only

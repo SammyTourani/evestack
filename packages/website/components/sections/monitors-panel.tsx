@@ -6,77 +6,135 @@ import { CountUp } from "@/components/ui/count-up";
 import { baseSessions, liveSessions } from "@/lib/demo-data";
 import { observability } from "@/lib/copy";
 
-/* Datadog-grade monitors panel, built from the SAME dataset the dashboard
-   demo shows (lib/demo-data.ts) — percentiles are computed, not typed, and
-   the latency spike in the chart is the real 41.0s essay run. SSR renders
-   the settled state (no-JS / reduced-motion truth); with motion allowed the
-   panel arms on mount and plays one staged pass when scrolled into view
-   (Axiom's waterfall recipe: bars scaleX 0→1, 0.5s ease-out, ~50ms/row).
-   The line chart is interactive — pointer crosshair + session tooltip. */
+/* The observability artwork is a REAL app screen (the Linear-homepage move):
+   sidebar nav, breadcrumb toolbar, environment + time-range pickers, dense
+   thin charts, a sessions table with pagination — the Vercel Observability
+   mold, in evestack's tokens. Every number still derives from
+   lib/demo-data.ts: the runs chart plots the 8 sessions as spikes at their
+   real relative start times, percentiles are computed, the duration chart's
+   peak is the genuine 41.0s essay run (crosshair tooltip kept). Color is
+   demoted to accents — thin blue series, tiny status dots. SSR = settled
+   truth; arms client-side, plays once in view. */
 
-/* chronological, oldest → newest (matches the dashboard's "started" column) */
 const SESSIONS = [
-  baseSessions[4], // race test            3.4s
-  baseSessions[3], // say ok               2.1s
-  baseSessions[2], // bash sandbox        12.8s
-  baseSessions[1], // subagent delegate   28.4s
-  baseSessions[0], // 1500-word essay     41.0s  ← the spike
-  liveSessions[0], // deploy email        18.2s
-  liveSessions[1], // error-log summary   14.6s
-  liveSessions[2], // release notes       16.9s
+  baseSessions[4], // race test            3.4s   ~5h ago
+  baseSessions[3], // say ok               2.1s   ~3h ago
+  baseSessions[2], // bash sandbox        12.8s   ~1h ago
+  baseSessions[1], // subagent delegate   28.4s   ~14m ago
+  baseSessions[0], // 1500-word essay     41.0s   ~2m ago
+  liveSessions[0], // deploy email        18.2s   just now
+  liveSessions[1], // error-log summary   14.6s   just now
+  liveSessions[2], // release notes       16.9s   just now
 ];
 
 const durations = SESSIONS.map((s) => s.durationS);
 const sorted = [...durations].sort((a, b) => a - b);
-const pct = (p: number) => {
+const pctl = (p: number) => {
   const i = (p / 100) * (sorted.length - 1);
   const lo = Math.floor(i);
   return sorted[lo] + (sorted[Math.min(lo + 1, sorted.length - 1)] - sorted[lo]) * (i - lo);
 };
-const P = [
-  { label: "p50", value: pct(50), cls: "text-gray-1000" },
-  { label: "p75", value: pct(75), cls: "text-blue-700" },
-  { label: "p95", value: pct(95), cls: "text-warn" },
-  { label: "p99", value: pct(99), cls: "text-err" },
+const CHIPS = [
+  { label: "p50", value: pctl(50), dot: "bg-gray-500" },
+  { label: "p75", value: pctl(75), dot: "bg-blue-700" },
+  { label: "p95", value: pctl(95), dot: "bg-warn" },
+  { label: "p99", value: pctl(99), dot: "bg-err" },
 ];
 
-/* line chart geometry (viewBox space) */
-const W = 560;
-const H = 180;
-const PX = 10;
-const PY = 18;
+/* ── runs chart: 8 runs as spikes at their real offsets in a 12h window ── */
+const RW = 520;
+const RH = 148;
+const RL = 26; // left gutter for y labels
+const RT = 14;
+const RB = 22;
+const rBase = RH - RB;
+const rY = (c: number) => rBase - (c * (rBase - RT)) / 2;
+/* fraction of the 12h window (0 = 12h ago, 1 = now) → spike count */
+const SPIKES: [number, number][] = [
+  [0.583, 1], // −5h  race test
+  [0.75, 1], //  −3h  say ok
+  [0.917, 1], // −1h  bash
+  [0.9806, 1], // −14m subagent
+  [0.9917, 1], // −6m? essay ramp-up
+  [0.9965, 2], // just-now cluster (deploy + logs)
+  [1, 1], //           release notes
+];
+const rX = (f: number) => RL + f * (RW - RL - 8);
+const RUNS_PATH = (() => {
+  let d = `M ${RL} ${rBase}`;
+  for (const [f, c] of SPIKES) {
+    const x = rX(f);
+    d += ` L ${(x - 1).toFixed(1)} ${rBase} L ${(x - 1).toFixed(1)} ${rY(c)} L ${(x + 1).toFixed(1)} ${rY(c)} L ${(x + 1).toFixed(1)} ${rBase}`;
+  }
+  return `${d} L ${RW - 8} ${rBase}`;
+})();
+
+/* ── duration chart (crosshair kept) ── */
+const DW = 520;
+const DH = 148;
+const DPX = 12;
+const DPY = 16;
 const MAXD = Math.max(...durations);
 const PTS = SESSIONS.map((s, i) => ({
-  x: PX + (i * (W - 2 * PX)) / (SESSIONS.length - 1),
-  y: H - PY - (s.durationS / MAXD) * (H - 2 * PY),
+  x: DPX + (i * (DW - 2 * DPX)) / (SESSIONS.length - 1),
+  y: DH - DPY - (s.durationS / MAXD) * (DH - 2 * DPY),
   s,
 }));
 const LINE = PTS.map((p, i) => `${i ? "L" : "M"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
-const AREA = `${LINE} L ${PTS[PTS.length - 1].x} ${H} L ${PTS[0].x} ${H} Z`;
+const AREA = `${LINE} L ${PTS[PTS.length - 1].x} ${DH - 6} L ${PTS[0].x} ${DH - 6} Z`;
 const SPIKE = PTS.reduce((a, b) => (b.s.durationS > a.s.durationS ? b : a));
+const P95Y = DH - DPY - (pctl(95) / MAXD) * (DH - 2 * DPY);
 
-/* span waterfall — the verified FINDINGS.md tree over the 41.0s essay turn.
-   Sub-span offsets are illustrative; the total is the session's real 41.0s. */
-const WATERFALL = [
-  { name: "agent.session", depth: 0, a: 0, b: 100, color: "var(--ds-gray-500)" },
-  { name: "agent.turn", depth: 1, a: 1, b: 99, color: "var(--ds-blue-700)" },
-  { name: "agent.step", depth: 2, a: 2.5, b: 97, color: "var(--ds-blue-700)" },
-  { name: "ai.streamText", depth: 3, a: 4, b: 96, color: "var(--ds-ok)" },
-  { name: "ai.streamText.doStream", depth: 4, a: 5, b: 95.5, color: "var(--ds-ok)" },
-  { name: "agent.turn.terminal", depth: 2, a: 97, b: 100, color: "var(--ds-warn)" },
-];
+/* table rows: the four biggest sessions */
+const ROWS = [baseSessions[0], baseSessions[1], liveSessions[0], liveSessions[2]];
+const spark = (s: (typeof ROWS)[number]) => {
+  const seq = [s.turns * 9, s.tools * 6, s.tokensOut % 37, s.tokensIn % 41, s.cached % 29, s.tools * 8];
+  const mx = Math.max(...seq, 1);
+  return seq
+    .map((v, i) => `${i ? "L" : "M"} ${(i * 56) / (seq.length - 1)} ${14 - (v / mx) * 12 + 1}`)
+    .join(" ");
+};
 
-/* log stream — every line traces to FINDINGS.md or the demo dataset */
-const LOGS = [
-  { text: "GET /eve/v1/health", tag: "200 ok", tone: "text-ok" },
-  { text: "run_created · wrun_01KZ6BJVMJ23…", tag: "essay run", tone: "text-gray-700" },
-  { text: "ai.streamText · doStream", tag: "streaming", tone: "text-blue-700" },
-  { text: "step_completed · 13 tool calls", tag: "41.0s", tone: "text-warn" },
-  { text: "session completed · $0.0077 model spend", tag: "✓", tone: "text-ok" },
-  { text: "[world-postgres] Re-enqueued 2 active run(s) on startup", tag: "restart", tone: "text-gray-700" },
-];
-
+const fmtInt = (n: number) => n.toLocaleString("en-US");
 const fmtS = (n: number) => `${n.toFixed(1)}s`;
+
+const NAV = [
+  { name: "Overview", icon: "M2 2.5h4.5V7H2zM9.5 2.5H14V7H9.5zM2 9h4.5v4.5H2zM9.5 9H14v4.5H9.5z" },
+  { name: "Sessions", icon: "M2.5 4h11M2.5 8h11M2.5 12h6.5" },
+  { name: "Chat", icon: "M2.5 3h11v7H8l-3 3v-3H2.5z" },
+  { name: "Integrations", icon: "M5.5 2v3M10.5 2v3M4 5h8v3.2a4 4 0 01-8 0zM8 12.2V14" },
+];
+const OBS_NAV = [
+  { name: "Monitors", icon: "M2.5 12a5.5 5.5 0 0111 0M8 12l2.6-4", active: true },
+  { name: "Traces", icon: "M2.5 3.5h9M4.5 8h8M6.5 12.5h5.5" },
+];
+
+function NavItem({ name, icon, active }: { name: string; icon: string; active?: boolean }) {
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-copy-14",
+        active ? "bg-gray-100 text-gray-1000" : "text-gray-700",
+      )}
+    >
+      <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden>
+        <path d={icon} />
+      </svg>
+      {name}
+    </div>
+  );
+}
+
+function PickerChip({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-md border border-border-subtle px-2.5 py-1 font-mono text-label-12 text-gray-900">
+      {children}
+      <svg viewBox="0 0 8 6" className="h-1.5 w-2 text-gray-600" fill="none" stroke="currentColor" strokeWidth="1.2" aria-hidden>
+        <path d="M1 1.5L4 4.5L7 1.5" />
+      </svg>
+    </span>
+  );
+}
 
 export function MonitorsPanel() {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -103,7 +161,7 @@ export function MonitorsPanel() {
 
   const onChartMove = (e: React.PointerEvent<SVGSVGElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
-    const x = ((e.clientX - r.left) / r.width) * W;
+    const x = ((e.clientX - r.left) / r.width) * DW;
     let best = 0;
     PTS.forEach((p, i) => {
       if (Math.abs(p.x - x) < Math.abs(PTS[best].x - x)) best = i;
@@ -114,269 +172,266 @@ export function MonitorsPanel() {
   return (
     <div
       ref={rootRef}
-      className="mon overflow-hidden rounded-xl border border-border-default bg-background-200"
+      className="mon flex overflow-hidden rounded-xl border border-border-default bg-background-200 text-left"
       data-armed={armed || undefined}
       data-live={live || undefined}
       data-drawn={live || undefined}
     >
-      {/* window chrome */}
-      <div className="flex h-11 items-center gap-3 border-b border-border-subtle px-4">
-        <p className="flex shrink-0 items-center gap-2 font-mono text-mono-13 text-gray-1000">
+      {/* ── sidebar ── */}
+      <div className="hidden w-44 shrink-0 flex-col gap-4 border-r border-border-subtle p-3 lg:flex">
+        <p className="flex items-center gap-2 px-2 pt-1 font-mono text-mono-13 text-gray-1000">
           <span aria-hidden className="text-blue-700">▚</span>
           evestack
         </p>
-        <span className="text-copy-14 text-gray-700">Monitors</span>
-        <span className="ml-auto inline-flex items-center gap-2 rounded-full border border-ok/40 px-2 py-0.5 font-mono text-label-12 text-ok">
-          <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-ok" />
-          self-hosted
-        </span>
+        <div className="flex flex-col gap-0.5">
+          {NAV.map((n) => (
+            <NavItem key={n.name} {...n} />
+          ))}
+        </div>
+        <div className="flex flex-col gap-0.5">
+          <p className="px-2.5 pb-1 font-mono text-label-12 uppercase text-gray-600">
+            Observability
+          </p>
+          {OBS_NAV.map((n) => (
+            <NavItem key={n.name} {...n} />
+          ))}
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-px bg-border-subtle lg:grid-cols-12">
-        {/* percentile tiles — computed from the demo dataset */}
-        {P.map((p, i) => (
-          <div
-            key={p.label}
-            data-anim="fade"
-            style={{ "--d": `${i * 0.07}s` } as React.CSSProperties}
-            className="flex flex-col gap-1 bg-background-100 p-5 lg:col-span-2"
-          >
-            <p className="font-mono text-label-12 uppercase text-gray-700">
-              {p.label} duration
-            </p>
-            <p className={cn("font-mono text-heading-24 tabular-nums", p.cls)}>
-              <CountUp value={p.value} suffix="s" decimals={1} delay={0.1 + i * 0.08} />
-            </p>
+      {/* ── main ── */}
+      <div className="min-w-0 flex-1">
+        {/* toolbar */}
+        <div className="flex h-12 items-center gap-3 border-b border-border-subtle px-4">
+          <p className="truncate text-copy-14">
+            <span className="text-gray-700">Observability</span>
+            <span className="mx-1.5 text-gray-500">/</span>
+            <span className="text-gray-1000">Monitors</span>
+          </p>
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            <PickerChip>Production</PickerChip>
+            <span className="hidden md:inline-flex">
+              <PickerChip>Last 12 hours</PickerChip>
+            </span>
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-ok/40 px-2 py-0.5 font-mono text-label-12 text-ok">
+              <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-ok" />
+              self-hosted
+            </span>
           </div>
-        ))}
-        <div
-          data-anim="fade"
-          style={{ "--d": "0.28s" } as React.CSSProperties}
-          className="flex flex-col gap-1 bg-background-100 p-5 lg:col-span-4"
-        >
-          <p className="font-mono text-label-12 uppercase text-gray-700">success · last 8 runs</p>
-          <div className="flex items-center gap-3">
-            <p className="font-mono text-heading-24 tabular-nums text-ok">8/8</p>
-            <div className="flex items-end gap-1" aria-hidden>
-              {SESSIONS.map((s, i) => (
-                <span
-                  key={i}
-                  data-anim="bar-y"
-                  style={{ "--d": `${0.3 + i * 0.05}s` } as React.CSSProperties}
-                  className="h-5 w-1.5 origin-bottom rounded-[2px] bg-ok/80"
-                />
+        </div>
+
+        {/* charts */}
+        <div className="grid grid-cols-1 gap-px border-b border-border-subtle bg-border-subtle xl:grid-cols-2">
+          <div data-anim="fade" className="bg-background-100 p-4">
+            <div className="flex items-baseline justify-between gap-3">
+              <p className="font-mono text-label-12 uppercase text-gray-700">Runs</p>
+              <p className="flex items-center gap-3 font-mono text-label-12 text-gray-700">
+                <span className="flex items-center gap-1.5">
+                  <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-err" />
+                  Error 0%
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-warn" />
+                  Timeout 0%
+                </span>
+              </p>
+            </div>
+            <p className="mt-0.5 font-mono text-heading-20 tabular-nums text-gray-1000">
+              <CountUp value={SESSIONS.length} delay={0.15} />
+            </p>
+            <svg viewBox={`0 0 ${RW} ${RH}`} className="mt-1 h-auto w-full" aria-hidden>
+              {[1, 2].map((c) => (
+                <g key={c}>
+                  <line x1={RL} x2={RW - 8} y1={rY(c)} y2={rY(c)} stroke="var(--ds-border-subtle)" strokeDasharray="3 5" />
+                  <text x={RL - 8} y={rY(c) + 3} textAnchor="end" className="fill-gray-600" style={{ font: "10px var(--font-mono)" }}>
+                    {c}
+                  </text>
+                </g>
               ))}
+              <text x={RL - 8} y={rBase + 3} textAnchor="end" className="fill-gray-600" style={{ font: "10px var(--font-mono)" }}>
+                0
+              </text>
+              {/* error series: flat zero */}
+              <line x1={RL} x2={RW - 8} y1={rBase} y2={rBase} stroke="var(--ds-warn)" strokeWidth="1" opacity="0.55" />
+              {[0.62, 0.78, 0.9].map((f) => (
+                <circle key={f} cx={rX(f)} cy={rBase} r="1.5" fill="var(--ds-warn)" opacity="0.8" />
+              ))}
+              <path
+                d={RUNS_PATH}
+                pathLength={1}
+                className={cn(armed && "beam-draw")}
+                style={{ "--beam-delay": "0.25s" } as React.CSSProperties}
+                stroke="var(--ds-blue-700)"
+                strokeWidth="1.25"
+                fill="none"
+              />
+              <text x={RL} y={RH - 6} className="fill-gray-600" style={{ font: "10px var(--font-mono)" }}>
+                12h ago
+              </text>
+              <text x={RW - 8} y={RH - 6} textAnchor="end" className="fill-gray-600" style={{ font: "10px var(--font-mono)" }}>
+                just now
+              </text>
+            </svg>
+          </div>
+
+          <div data-anim="fade" style={{ "--d": "0.1s" } as React.CSSProperties} className="relative bg-background-100 p-4">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+              <p className="font-mono text-label-12 uppercase text-gray-700">Session duration</p>
+              <p className="flex items-center gap-3 font-mono text-label-12 text-gray-900">
+                {CHIPS.map((c) => (
+                  <span key={c.label} className="flex items-center gap-1.5 whitespace-nowrap">
+                    <span aria-hidden className={cn("h-1.5 w-1.5 rounded-full", c.dot)} />
+                    <span className="text-gray-700">{c.label}</span>
+                    <span className="tabular-nums text-gray-1000">{fmtS(c.value)}</span>
+                  </span>
+                ))}
+              </p>
+            </div>
+            <p className="mt-0.5 font-mono text-heading-20 tabular-nums text-gray-1000">
+              {fmtS(MAXD)}
+              <span className="ml-1.5 font-mono text-label-12 uppercase text-gray-600">peak</span>
+            </p>
+            <div className="relative mt-1">
+              <svg
+                viewBox={`0 0 ${DW} ${DH}`}
+                className="h-auto w-full"
+                onPointerMove={onChartMove}
+                onPointerLeave={() => setTip(null)}
+              >
+                <line
+                  x1={DPX}
+                  x2={DW - DPX}
+                  y1={P95Y}
+                  y2={P95Y}
+                  stroke="var(--ds-warn)"
+                  strokeWidth="1"
+                  strokeDasharray="2 4"
+                  opacity="0.6"
+                />
+                <text x={DW - DPX} y={P95Y - 4} textAnchor="end" className="fill-gray-600" style={{ font: "10px var(--font-mono)" }}>
+                  p95
+                </text>
+                <path d={AREA} fill="url(#mon-area)" data-anim="fade" style={{ "--d": "0.9s" } as React.CSSProperties} />
+                <path
+                  d={LINE}
+                  pathLength={1}
+                  className={cn(armed && "beam-draw")}
+                  style={{ "--beam-delay": "0.35s" } as React.CSSProperties}
+                  stroke="var(--ds-blue-700)"
+                  strokeWidth="1.25"
+                  fill="none"
+                  strokeLinejoin="round"
+                />
+                <circle
+                  cx={SPIKE.x}
+                  cy={SPIKE.y}
+                  r="2.5"
+                  fill="var(--ds-warn)"
+                  data-anim="pop"
+                  style={{ "--d": "1.3s" } as React.CSSProperties}
+                />
+                {tip !== null ? (
+                  <g>
+                    <line x1={PTS[tip].x} x2={PTS[tip].x} y1={8} y2={DH - 8} stroke="var(--ds-border-strong)" strokeDasharray="2 3" />
+                    <circle cx={PTS[tip].x} cy={PTS[tip].y} r="2.5" fill="var(--ds-blue-700)" />
+                  </g>
+                ) : null}
+                <defs>
+                  <linearGradient id="mon-area" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="var(--ds-blue-700)" stopOpacity="0.14" />
+                    <stop offset="100%" stopColor="var(--ds-blue-700)" stopOpacity="0" />
+                  </linearGradient>
+                </defs>
+              </svg>
+              {tip !== null ? (
+                <div
+                  className="pointer-events-none absolute z-10 -translate-x-1/2 whitespace-nowrap rounded-md border border-border-default bg-background-200 px-2.5 py-1.5 font-mono text-label-12 shadow-lg"
+                  style={{
+                    left: `${(PTS[tip].x / DW) * 100}%`,
+                    top: `${Math.max(2, (PTS[tip].y / DH) * 100 - 20)}%`,
+                  }}
+                >
+                  <span className="tabular-nums text-gray-1000">{fmtS(PTS[tip].s.durationS)}</span>{" "}
+                  <span className="text-gray-700">
+                    · {PTS[tip].s.title.length > 24 ? `${PTS[tip].s.title.slice(0, 24)}…` : PTS[tip].s.title}
+                  </span>
+                </div>
+              ) : null}
             </div>
           </div>
         </div>
 
-        {/* latency chart — interactive crosshair; the spike is the real 41.0s essay run */}
-        <div className="relative flex flex-col gap-3 bg-background-100 p-5 lg:col-span-7">
-          <div className="flex items-baseline justify-between">
-            <p className="font-mono text-label-12 uppercase text-gray-700">
-              session duration · last 8 runs
-            </p>
-            <p className="font-mono text-label-12 text-gray-600">demo dataset · seconds</p>
-          </div>
-          <div className="relative">
-            <svg
-              viewBox={`0 0 ${W} ${H}`}
-              className="h-auto w-full"
-              onPointerMove={onChartMove}
-              onPointerLeave={() => setTip(null)}
-            >
-              {/* grid rules */}
-              {[0.25, 0.5, 0.75].map((f) => (
-                <line
-                  key={f}
-                  x1={PX}
-                  x2={W - PX}
-                  y1={PY + (H - 2 * PY) * f}
-                  y2={PY + (H - 2 * PY) * f}
-                  stroke="var(--ds-border-subtle)"
-                  strokeDasharray="3 5"
-                />
-              ))}
-              <path
-                d={AREA}
-                fill="url(#mon-area)"
-                data-anim="fade"
-                style={{ "--d": "1s" } as React.CSSProperties}
-              />
-              <path
-                d={LINE}
-                pathLength={1}
-                className={cn(armed && "beam-draw")}
-                style={{ "--beam-delay": "0.2s" } as React.CSSProperties}
-                stroke="var(--ds-blue-700)"
-                strokeWidth="1.5"
-                fill="none"
-                strokeLinejoin="round"
-                strokeLinecap="round"
-              />
-              {/* the real spike */}
-              <circle
-                cx={SPIKE.x}
-                cy={SPIKE.y}
-                r="3.5"
-                fill="var(--ds-warn)"
-                data-anim="pop"
-                style={{ "--d": "1.4s" } as React.CSSProperties}
-              />
-              {tip !== null ? (
-                <g>
-                  <line
-                    x1={PTS[tip].x}
-                    x2={PTS[tip].x}
-                    y1={PY - 6}
-                    y2={H - PY + 6}
-                    stroke="var(--ds-border-strong)"
-                    strokeDasharray="2 3"
-                  />
-                  <circle cx={PTS[tip].x} cy={PTS[tip].y} r="3" fill="var(--ds-blue-700)" />
-                </g>
-              ) : null}
-              <defs>
-                <linearGradient id="mon-area" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="var(--ds-blue-700)" stopOpacity="0.22" />
-                  <stop offset="100%" stopColor="var(--ds-blue-700)" stopOpacity="0" />
-                </linearGradient>
-              </defs>
+        {/* search */}
+        <div data-anim="fade" style={{ "--d": "0.2s" } as React.CSSProperties} className="border-b border-border-subtle bg-background-100 px-4 py-3">
+          <div aria-hidden className="flex items-center gap-2.5 rounded-md border border-border-subtle px-3 py-1.5">
+            <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 text-gray-600" fill="none" stroke="currentColor" strokeWidth="1.3">
+              <circle cx="7" cy="7" r="4.5" />
+              <path d="M10.5 10.5L14 14" />
             </svg>
-            {/* spike annotation */}
-            <p
-              data-anim="pop"
-              style={
-                {
-                  "--d": "1.5s",
-                  left: `${(SPIKE.x / W) * 100}%`,
-                  top: `${(SPIKE.y / H) * 100}%`,
-                } as React.CSSProperties
-              }
-              className="pointer-events-none absolute -translate-x-[104%] -translate-y-1/2 whitespace-nowrap font-mono text-label-12 text-warn"
-            >
-              41.0s · 13 tool calls
-            </p>
-            {tip !== null ? (
-              <div
-                className="pointer-events-none absolute z-10 -translate-x-1/2 rounded-md border border-border-default bg-background-200 px-2.5 py-1.5 font-mono text-label-12 shadow-lg"
-                style={{
-                  left: `${(PTS[tip].x / W) * 100}%`,
-                  top: `${(PTS[tip].y / H) * 100 - 16}%`,
-                }}
-              >
-                <span className="text-gray-1000">{fmtS(PTS[tip].s.durationS)}</span>{" "}
-                <span className="text-gray-700">
-                  · {PTS[tip].s.title.length > 26 ? `${PTS[tip].s.title.slice(0, 26)}…` : PTS[tip].s.title}
-                </span>
-              </div>
-            ) : null}
+            <span className="text-copy-14 text-gray-600">Search sessions…</span>
+            <span className="ml-auto rounded border border-border-subtle px-1.5 font-mono text-label-12 text-gray-600">/</span>
           </div>
         </div>
 
-        {/* span waterfall — Axiom recipe over the verified FINDINGS.md tree */}
-        <div className="flex flex-col gap-3 bg-background-100 p-5 lg:col-span-5">
-          <div className="flex items-baseline justify-between">
-            <p className="font-mono text-label-12 uppercase text-gray-700">span waterfall · one turn</p>
-            <p className="font-mono text-label-12 text-gray-600">41.0s total</p>
+        {/* sessions table */}
+        <div className="bg-background-100">
+          <div className="grid grid-cols-[minmax(0,1fr)_100px_72px_64px] items-center gap-x-4 border-b border-border-subtle px-4 py-2.5 md:grid-cols-[minmax(0,1fr)_150px_100px_72px_64px_24px]">
+            <p className="font-mono text-label-12 uppercase text-gray-700">Session</p>
+            <p className="hidden text-right font-mono text-label-12 uppercase text-gray-700 md:block">Activity</p>
+            <p className="text-right font-mono text-label-12 uppercase text-gray-700">Tokens</p>
+            <p className="text-right font-mono text-label-12 uppercase text-gray-700">Duration</p>
+            <p className="text-right font-mono text-label-12 uppercase text-gray-700">Cost</p>
+            <span className="hidden md:block" />
           </div>
-          <div className="flex flex-col gap-2">
-            {WATERFALL.map((row, i) => (
-              <div
-                key={row.name}
-                data-anim="fade"
-                style={{ "--d": `${0.35 + i * 0.06}s` } as React.CSSProperties}
-                className="flex items-center gap-2"
-              >
-                <p
-                  className="w-[46%] truncate font-mono text-label-12 text-gray-900"
-                  style={{ paddingLeft: row.depth * 10 }}
-                >
-                  {row.name}
-                </p>
-                <div className="relative h-2 flex-1">
-                  <span
-                    data-anim="bar-x"
-                    style={
-                      {
-                        "--d": `${0.45 + i * 0.06}s`,
-                        left: `${row.a}%`,
-                        width: `${row.b - row.a}%`,
-                        background: row.color,
-                      } as React.CSSProperties
-                    }
-                    className="absolute top-0 h-full origin-left rounded-[2px] opacity-90"
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="mt-1 flex justify-between font-mono text-label-12 text-gray-600" aria-hidden>
-            <span>0</span>
-            <span>10s</span>
-            <span>20s</span>
-            <span>30s</span>
-            <span>41.0s</span>
-          </div>
-        </div>
-
-        {/* tokens per session */}
-        <div className="flex flex-col gap-3 bg-background-100 p-5 lg:col-span-5">
-          <div className="flex items-baseline justify-between">
-            <p className="font-mono text-label-12 uppercase text-gray-700">tokens in / out</p>
-            <p className="font-mono text-label-12 text-gray-600">per session</p>
-          </div>
-          <div className="flex h-24 items-end gap-2" role="img" aria-label="Tokens per session, input and output bars">
-            {SESSIONS.map((s, i) => {
-              const maxIn = Math.max(...SESSIONS.map((x) => x.tokensIn));
-              return (
-                <div key={s.id} className="flex h-full flex-1 items-end justify-center gap-0.5">
-                  <span
-                    data-anim="bar-y"
-                    style={
-                      {
-                        "--d": `${0.5 + i * 0.05}s`,
-                        height: `${Math.max(6, (s.tokensIn / maxIn) * 100)}%`,
-                      } as React.CSSProperties
-                    }
-                    className="w-2.5 origin-bottom rounded-t-[2px] bg-blue-700/80"
-                  />
-                  <span
-                    data-anim="bar-y"
-                    style={
-                      {
-                        "--d": `${0.55 + i * 0.05}s`,
-                        height: `${Math.max(4, (s.tokensOut / maxIn) * 100)}%`,
-                      } as React.CSSProperties
-                    }
-                    className="w-2.5 origin-bottom rounded-t-[2px] bg-ok/70"
-                  />
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* log stream */}
-        <div className="flex flex-col gap-1.5 bg-background-100 p-5 lg:col-span-7">
-          <p className="mb-1 font-mono text-label-12 uppercase text-gray-700">live tail</p>
-          {LOGS.map((log, i) => (
-            <p
-              key={log.text}
+          {ROWS.map((s, i) => (
+            <div
+              key={s.id}
               data-anim="fade"
-              style={{ "--d": `${0.6 + i * 0.12}s` } as React.CSSProperties}
-              className="flex items-baseline gap-2 truncate font-mono text-mono-13 text-gray-900"
+              style={{ "--d": `${0.3 + i * 0.08}s` } as React.CSSProperties}
+              className="grid grid-cols-[minmax(0,1fr)_100px_72px_64px] items-center gap-x-4 border-b border-border-subtle px-4 py-2.5 transition-colors hover:bg-gray-100/40 md:grid-cols-[minmax(0,1fr)_150px_100px_72px_64px_24px]"
             >
-              <span className="truncate">{log.text}</span>
-              <span className={cn("shrink-0 font-mono text-label-12", log.tone)}>{log.tag}</span>
-            </p>
+              <p className="flex min-w-0 items-center gap-2.5">
+                <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-ok" />
+                <span className="truncate text-copy-14 text-gray-1000">{s.title}</span>
+              </p>
+              <span className="hidden justify-end md:flex" aria-hidden>
+                <svg viewBox="0 0 56 16" className="h-4 w-14">
+                  <path d={spark(s)} stroke="var(--ds-gray-500)" strokeWidth="1.25" fill="none" strokeLinejoin="round" />
+                </svg>
+              </span>
+              <p className="text-right font-mono text-mono-13 tabular-nums text-gray-900">
+                {fmtInt(s.tokensIn + s.tokensOut)}
+              </p>
+              <p className="text-right font-mono text-mono-13 tabular-nums text-gray-900">{fmtS(s.durationS)}</p>
+              <p className="text-right font-mono text-mono-13 tabular-nums text-gray-900">
+                {s.cost === 0 ? "$0.00" : `$${s.cost.toFixed(4)}`}
+              </p>
+              <svg viewBox="0 0 8 12" className="hidden h-3 w-2 justify-self-end text-gray-600 md:block" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden>
+                <path d="M1.5 1.5L6.5 6L1.5 10.5" />
+              </svg>
+            </div>
           ))}
+          <div className="flex items-center justify-between px-4 py-2.5">
+            <span className="inline-flex items-center gap-1.5 font-mono text-label-12 text-gray-700">
+              Show 10
+              <svg viewBox="0 0 8 6" className="h-1.5 w-2 text-gray-600" fill="none" stroke="currentColor" strokeWidth="1.2" aria-hidden>
+                <path d="M1 1.5L4 4.5L7 1.5" />
+              </svg>
+            </span>
+            <span className="flex items-center gap-3 font-mono text-label-12 text-gray-700">
+              1 of 1
+              <span className="flex gap-1" aria-hidden>
+                <span className="flex h-5 w-5 items-center justify-center rounded border border-border-subtle text-gray-600">‹</span>
+                <span className="flex h-5 w-5 items-center justify-center rounded border border-border-subtle text-gray-600">›</span>
+              </span>
+            </span>
+          </div>
         </div>
       </div>
+
       <p className="sr-only">
-        Monitors computed from the demo dataset: median session duration {fmtS(pct(50))}, p95{" "}
-        {fmtS(pct(95))}, 8 of 8 sessions completed. Span tree:{" "}
-        {observability.spanTree.map((s) => s.name).join(" → ")}.
+        evestack observability: 8 runs in the last 12 hours, 0 errors. Median session
+        duration {fmtS(pctl(50))}, p95 {fmtS(pctl(95))}, peak {fmtS(MAXD)} (the 1500-word
+        essay session). Span tree: {observability.spanTree.map((sp) => sp.name).join(" → ")}.
       </p>
     </div>
   );

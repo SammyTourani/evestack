@@ -12,6 +12,7 @@
   "scripts": {
     "typecheck": "pnpm -r --if-present typecheck",
     "build": "pnpm -r --if-present build",
-    "test": "pnpm -r --if-present test"
+    "contract": "node contract/run.mjs",
+    "test": "node contract/run.mjs && pnpm -r --if-present test"
   }
 }

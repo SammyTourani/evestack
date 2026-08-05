@@ -2,19 +2,25 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CommandPill } from "@/components/ui/command-pill";
 import { HeroClient } from "@/components/sections/hero-client";
+import { HeroGlyphField } from "@/components/sections/hero-glyph-field";
 import { site, architecture } from "@/lib/copy";
 
-/* §1+§2. 190vh scroll range + sticky viewport: native scroll, scrub-ready
-   (Phase 5 adds the disassembly timeline against #hero). The copy is RSC —
-   the h1 is the LCP element. */
+/* §1+§2. 250vh scroll range + sticky viewport: native scroll, scrub-ready
+   (the disassembly timeline runs against #hero; the extra runway past the
+   explosion is the "live architecture" dwell — spine pulses walk the
+   exploded layers). The copy is RSC — the h1 is the LCP element. */
 export function Hero() {
   return (
-    <section id="hero" aria-labelledby="hero-heading" className="relative h-[190vh]">
+    <section id="hero" aria-labelledby="hero-heading" className="relative h-[250vh]">
       {/* Layer labels for the scroll disassembly — real DOM, screen-reader
           visible list in every mode */}
       <p className="sr-only">{architecture.srSummary}</p>
 
       <div className="sticky top-0 flex h-svh flex-col items-center justify-center overflow-hidden">
+        {/* Ambient ASCII glyph field framing the copy + 3D stack (eve.dev
+            imprint port; masked out of the center, fades on scroll) */}
+        <HeroGlyphField />
+
         {/* Tri-gradient glow — the site's ONE gradient moment; survives every
             fallback rung */}
         <div

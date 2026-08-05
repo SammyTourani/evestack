@@ -50,7 +50,10 @@ test.describe("evestack landing page", () => {
     const page = await ctx.newPage();
     await page.goto("/");
     await page.waitForTimeout(1500);
-    expect(await page.locator("#hero canvas").count()).toBe(0);
+    // the 3D stage must fall back to the poster (no WebGL canvas); the glyph
+    // field canvas is allowed — it renders one static frame under reduced motion
+    expect(await page.locator("[data-hero-stage] canvas").count()).toBe(0);
+    expect(await page.locator("[data-glyph-field] canvas").count()).toBe(1);
     // content fully visible without animation
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
     await expect(page.locator("#compare table")).toBeAttached();

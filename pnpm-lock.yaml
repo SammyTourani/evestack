@@ -41,6 +41,25 @@ importers:
         specifier: 6.0.3
         version: 6.0.3
 
+  packages/evestack-budget:
+    dependencies:
+      pg:
+        specifier: ^8.20.3
+        version: 8.22.0
+    devDependencies:
+      '@types/node':
+        specifier: 24.x
+        version: 24.13.3
+      '@types/pg':
+        specifier: ^8.20.3
+        version: 8.20.3
+      eve:
+        specifier: ^0.30.2
+        version: 0.30.2(@opentelemetry/api@1.9.1)(ai@7.0.51(zod@4.4.3))(dotenv@17.3.1)(drizzle-orm@0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.20.3)(pg@8.22.0))(jiti@2.7.0)
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+
   packages/evestack-composio:
     dependencies:
       '@composio/core':
@@ -169,6 +188,9 @@ importers:
       '@ai-sdk/openai':
         specifier: ^2.0.0
         version: 2.0.117(zod@4.4.3)
+      '@evestack/budget':
+        specifier: workspace:*
+        version: link:../../packages/evestack-budget
       '@evestack/composio':
         specifier: workspace:*
         version: link:../../packages/evestack-composio

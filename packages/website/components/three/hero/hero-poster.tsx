@@ -15,7 +15,7 @@ export function HeroPoster() {
       style={{ perspective: "900px" }}
     >
       <div
-        className="grid aspect-square h-[74%] grid-cols-2 grid-rows-2 gap-[4.5%]"
+        className="grid aspect-square h-[59%] grid-cols-2 grid-rows-2 gap-[4.5%]"
         style={{ transform: "rotateX(6deg) rotateY(-9deg) translateY(-4%)" }}
       >
         <div className={`${slab} ${proud}`} />

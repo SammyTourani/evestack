@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import * as THREE from "three";
-import { Canvas, useFrame } from "@react-three/fiber";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Environment, Lightformer } from "@react-three/drei";
 import { EffectComposer, Bloom, Vignette, Noise } from "@react-three/postprocessing";
 import { StackMark } from "./stack-mark";
@@ -19,6 +19,34 @@ const QUALITY: Record<Quality, { dpr: number; msaa: number; bloom: boolean }> = 
   1: { dpr: 1.5, msaa: 2, bloom: true },
   0: { dpr: 1, msaa: 0, bloom: false },
 };
+
+/* Film-back bleed: the canvas box is larger than the composed frame so
+   bloom can dissolve inside the buffer instead of hard-clipping at the
+   rect (the dark-mode "cutoff box"). setViewOffset renders the original
+   1112×460 framing pixel-identically and exposes the extra margin around
+   it — same camera, bigger film. Requires camera `manual` (this component
+   owns the projection; R3F must not overwrite aspect on resize). */
+const BLEED = { x: 64 / 1240, y: 60 / 580 };
+
+function FilmBackBleed() {
+  const camera = useThree((s) => s.camera) as THREE.PerspectiveCamera;
+  const size = useThree((s) => s.size);
+  useEffect(() => {
+    const innerW = size.width * (1 - 2 * BLEED.x);
+    const innerH = size.height * (1 - 2 * BLEED.y);
+    camera.aspect = innerW / innerH;
+    camera.setViewOffset(
+      innerW,
+      innerH,
+      -size.width * BLEED.x,
+      -size.height * BLEED.y,
+      size.width,
+      size.height,
+    );
+    camera.updateProjectionMatrix();
+  }, [camera, size]);
+  return null;
+}
 
 function FirstFrameNotifier({ onReady }: { onReady: () => void }) {
   const [fired, setFired] = useState(false);
@@ -96,7 +124,7 @@ export default function HeroCanvas({ theme, onReady, onFailed, inView }: HeroSce
       }}
       dpr={[1, q.dpr]}
       frameloop={inView ? "always" : "never"}
-      camera={{ fov: 30, position: [0, 0, 7.5] }}
+      camera={{ fov: 30, position: [0, 0, 7.5], manual: true }}
       onCreated={({ gl }) => {
         gl.domElement.addEventListener(
           "webglcontextlost",
@@ -112,6 +140,7 @@ export default function HeroCanvas({ theme, onReady, onFailed, inView }: HeroSce
       className="pointer-events-none"
       aria-hidden
     >
+      <FilmBackBleed />
       <FirstFrameNotifier onReady={onReady} />
       {quality > 0 ? (
         <PerformanceLadder

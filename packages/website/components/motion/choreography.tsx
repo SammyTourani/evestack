@@ -155,9 +155,11 @@ function Choreography() {
           },
           defaults: { ease: "none" },
         });
-        // timeline positions ≡ progress fractions (duration 1)
+        // timeline positions ≡ progress fractions (duration 1).
+        // Beat map mirrors stack-mark.tsx: unglyph 0.10–0.36, explode
+        // 0.32–0.80 (staggered), live pulses from 0.85.
         if (heroCopy) {
-          scrub.fromTo(heroCopy, { y: 0, autoAlpha: 1 }, { y: -40, autoAlpha: 0, duration: 0.12 }, 0);
+          scrub.fromTo(heroCopy, { y: 0, autoAlpha: 1 }, { y: -40, autoAlpha: 0, duration: 0.1 }, 0);
         }
         if (toggle) {
           // explicit values + no immediate render: never captures a
@@ -170,14 +172,20 @@ function Choreography() {
           );
         }
         if (annotations) {
-          scrub.to(annotations, { autoAlpha: 1, duration: 0.02 }, 0.56);
+          scrub.to(annotations, { autoAlpha: 1, duration: 0.02 }, 0.5);
         }
         if (spine) {
-          scrub.to(spine, { strokeDashoffset: 0, duration: 0.3, ease: "power1.inOut" }, 0.6);
+          scrub.to(spine, { strokeDashoffset: 0, duration: 0.26, ease: "power1.inOut" }, 0.52);
         }
+        // each label lands in sync with its bar (explode window ends
+        // 0.68 + i*0.04 in stack-mark's map — arrive just before touchdown)
         labels.forEach((label, i) => {
-          scrub.to(label, { autoAlpha: 1, x: 0, duration: 0.1 }, 0.62 + i * 0.06);
+          scrub.to(label, { autoAlpha: 1, x: 0, duration: 0.08 }, 0.64 + i * 0.04);
         });
+        // Anchor: ScrollTrigger scrubs across the timeline's DURATION, so
+        // positions only read as progress fractions if the total is exactly
+        // 1 — pin it (last real tween ends at 0.84).
+        scrub.set({}, {}, 1);
 
         /* ── Site-wide reveals ─────────────────────────────────────── */
         gsap.utils.toArray<HTMLElement>("[data-reveal='lines']").forEach((el) => {
