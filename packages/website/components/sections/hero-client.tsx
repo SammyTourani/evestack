@@ -4,10 +4,10 @@ import { HeroStage } from "@/components/three/hero/hero-stage";
 import { SLABS } from "@/components/three/hero/slab-data";
 
 /* Row screen positions for the disassembled stack — derived from the scene
-   constants (camera z 9.6, fov 30 → half-height 2.57u; rows at ±1.95/±0.65)
+   constants (camera z 8.2, fov 30 → half-height 2.20u; rows at ±1.65/±0.55)
    projected through the 1112×460 INNER frame, expressed as percentages of
    the 1240×580 outer (bleed) box. The box's fixed aspect keeps them stable. */
-const ROW_TOP = [19.9, 40.0, 60.0, 80.1];
+const ROW_TOP = [20.2, 40.1, 59.9, 79.8];
 const LABEL_LEFT = 65.2;
 const SPINE_X = 62.6;
 

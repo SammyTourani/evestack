@@ -156,8 +156,8 @@ function Choreography() {
           defaults: { ease: "none" },
         });
         // timeline positions ≡ progress fractions (duration 1).
-        // Beat map mirrors stack-mark.tsx: unglyph 0.10–0.36, explode
-        // 0.32–0.80 (staggered), live pulses from 0.85.
+        // Beat map mirrors stack-mark.tsx: unglyph 0.10–0.38, explode
+        // 0.34–0.895 (stagger 0.045, travel-then-widen).
         if (heroCopy) {
           scrub.fromTo(heroCopy, { y: 0, autoAlpha: 1 }, { y: -40, autoAlpha: 0, duration: 0.1 }, 0);
         }
@@ -172,15 +172,17 @@ function Choreography() {
           );
         }
         if (annotations) {
-          scrub.to(annotations, { autoAlpha: 1, duration: 0.02 }, 0.5);
+          scrub.to(annotations, { autoAlpha: 1, duration: 0.02 }, 0.52);
         }
         if (spine) {
-          scrub.to(spine, { strokeDashoffset: 0, duration: 0.26, ease: "power1.inOut" }, 0.52);
+          scrub.to(spine, { strokeDashoffset: 0, duration: 0.26, ease: "power1.inOut" }, 0.54);
         }
-        // each label lands in sync with its bar (explode window ends
-        // 0.68 + i*0.04 in stack-mark's map — arrive just before touchdown)
+        // labels cascade strictly TOP → BOTTOM (user-locked: dashboard,
+        // agent runtime, Postgres, sandbox) — a steady reading rhythm,
+        // independent of the bars' deal order. Bars are ≥97% into their
+        // rows by the time their label lands, so nothing points at air.
         labels.forEach((label, i) => {
-          scrub.to(label, { autoAlpha: 1, x: 0, duration: 0.08 }, 0.64 + i * 0.04);
+          scrub.to(label, { autoAlpha: 1, x: 0, duration: 0.08 }, 0.68 + i * 0.045);
         });
         // Anchor: ScrollTrigger scrubs across the timeline's DURATION, so
         // positions only read as progress fractions if the total is exactly
@@ -279,48 +281,81 @@ function Choreography() {
         const terminal = document.querySelector<HTMLElement>("[data-terminal]");
         if (terminal) {
           const prompt = terminal.querySelector<HTMLElement>("[data-terminal-prompt]");
+          const cursor = terminal.querySelector<HTMLElement>(".terminal-cursor");
           const lines = gsap.utils.toArray<HTMLElement>("[data-terminal-line]", terminal);
           const result = document.querySelector<HTMLElement>("[data-terminal-result]");
-          const termTl = gsap.timeline({
-            scrollTrigger: { trigger: terminal, start: "top 70%", once: true },
-          });
-          if (prompt) {
-            const chars = SplitText.create(prompt, { type: "chars", aria: "none" });
-            termTl.set(chars.chars, { visibility: "hidden" });
-            /* human keystroke cadence: 30–65ms with jitter, never metronomic */
-            let typed = 0;
-            const keystrokes = chars.chars.map(() => (typed += 0.03 + Math.random() * 0.035));
-            termTl.to(chars.chars, {
-              visibility: "visible",
-              duration: 0.001,
-              stagger: (i: number) => keystrokes[i],
+          /* Same policy as the hero entrance: if this chunk initializes with
+             the terminal already at/past its trigger line (mid-page reload,
+             anchor link below it), the settled SSR content has been visible —
+             skip the hide-and-replay entirely rather than blank it. */
+          const alreadyRevealed =
+            terminal.getBoundingClientRect().top < window.innerHeight * 0.7;
+          if (!alreadyRevealed) {
+            /* The hidden state applies NOW, at setup — not inside the
+               timeline. A timeline-internal .set() only runs when the
+               trigger fires at "top 70%", so the settled SSR content would
+               flash fully-formed while the card scrolls from the viewport
+               bottom up to the trigger line, then blank and replay. Eager
+               sets live inside the reduced-motion matchMedia scope, so
+               no-JS and reduced-motion users never get content hidden. */
+            const chars = prompt
+              ? SplitText.create(prompt, { type: "chars", aria: "none" })
+              : null;
+            if (chars) gsap.set(chars.chars, { visibility: "hidden" });
+            /* the cursor only lands AFTER the command finishes typing — hide
+               it too. Its CSS blink keyframes animate opacity and would
+               override an inline opacity:0, so also inline-disable the
+               animation while hidden (cleared again on reveal). */
+            if (chars && cursor) gsap.set(cursor, { autoAlpha: 0, animation: "none" });
+            gsap.set(lines, { autoAlpha: 0 });
+            if (result) gsap.set(result, { autoAlpha: 0, y: 24, scale: 0.985 });
+
+            /* the timeline only ANIMATES the reveal — no hides inside it */
+            const termTl = gsap.timeline({
+              scrollTrigger: { trigger: terminal, start: "top 70%", once: true },
             });
-          }
-          termTl.set(lines, { autoAlpha: 0 }, 0);
-          if (result) termTl.set(result, { autoAlpha: 0, y: 24, scale: 0.985 }, 0);
-          /* the machine thinks before it speaks — a hard 450ms beat, then
-             output cascades at widening, non-uniform intervals */
-          const cascade = [0, 0.18, 0.38, 0.6, 0.86, 1.16, 1.48, 1.82, 2.18];
-          termTl.to(
-            lines,
-            {
-              autoAlpha: 1,
-              y: 0,
-              duration: 0.3,
-              ease: "power1.out",
-              stagger: (i: number) => cascade[Math.min(i, cascade.length - 1)],
-            },
-            ">+0.45",
-          );
-          if (result) {
-            // the payoff: the dashboard surfaces as the FIRST ✓ lands — it
-            // overlaps the cascade tail instead of waiting out the whole
-            // typing rhythm (which would leave ~5s of dead space below).
+            if (chars) {
+              /* human keystroke cadence: 30–65ms with jitter, never metronomic */
+              let typed = 0;
+              const keystrokes = chars.chars.map(() => (typed += 0.03 + Math.random() * 0.035));
+              termTl.to(chars.chars, {
+                visibility: "visible",
+                duration: 0.001,
+                stagger: (i: number) => keystrokes[i],
+              });
+              if (cursor) {
+                /* the cursor pops in at the end of the finished line the
+                   instant the last keystroke lands, then blinks through the
+                   450ms think beat — clearProps restores the CSS blink
+                   (which restarts at its opacity-1 phase) */
+                termTl.set(cursor, { clearProps: "all" }, ">");
+              }
+            }
+            /* the machine thinks before it speaks — a hard 450ms beat after
+               the last keystroke, then output cascades at widening,
+               non-uniform intervals */
+            const cascade = [0, 0.18, 0.38, 0.6, 0.86, 1.16, 1.48, 1.82, 2.18];
             termTl.to(
-              result,
-              { autoAlpha: 1, y: 0, scale: 1, duration: 0.6, ease: "power2.inOut" },
-              "<+1.0",
+              lines,
+              {
+                autoAlpha: 1,
+                y: 0,
+                duration: 0.3,
+                ease: "power1.out",
+                stagger: (i: number) => cascade[Math.min(i, cascade.length - 1)],
+              },
+              ">+0.45",
             );
+            if (result) {
+              // the payoff: the dashboard surfaces as the FIRST ✓ lands — it
+              // overlaps the cascade tail instead of waiting out the whole
+              // typing rhythm (which would leave ~5s of dead space below).
+              termTl.to(
+                result,
+                { autoAlpha: 1, y: 0, scale: 1, duration: 0.6, ease: "power2.inOut" },
+                "<+1.0",
+              );
+            }
           }
         }
 

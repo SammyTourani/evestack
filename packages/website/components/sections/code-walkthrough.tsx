@@ -20,12 +20,9 @@ export async function CodeWalkthrough() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3" data-reveal="decode">
         {highlighted.map((s) => (
           <div key={s.filename} className="flex min-w-0 flex-col gap-3">
-            <CodeCard
-              filename={s.filename}
-              html={s.html}
-              rawCode={s.code}
-              className="lg:h-[420px]"
-            />
+            {/* No fixed height: the samples are curated to 16 lines each in
+                code-samples.ts, so the cards size to content and stay equal. */}
+            <CodeCard filename={s.filename} html={s.html} rawCode={s.code} />
             <p className="px-1 text-copy-14 text-gray-700">{s.note}</p>
           </div>
         ))}

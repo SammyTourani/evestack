@@ -1,17 +1,17 @@
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { GitHubIcon } from "@/components/ui/github-icon";
 import { CommandPill } from "@/components/ui/command-pill";
 import { HeroClient } from "@/components/sections/hero-client";
 import { HeroGlyphField } from "@/components/sections/hero-glyph-field";
 import { site, architecture } from "@/lib/copy";
 
-/* §1+§2. 250vh scroll range + sticky viewport: native scroll, scrub-ready
-   (the disassembly timeline runs against #hero; the extra runway past the
-   explosion is the "live architecture" dwell — spine pulses walk the
-   exploded layers). The copy is RSC — the h1 is the LCP element. */
+/* §1+§2. 220vh scroll range + sticky viewport: native scroll, scrub-ready
+   (the disassembly timeline runs against #hero; a short dwell after the
+   last bar lands lets the labeled diagram read before handoff). The copy
+   is RSC — the h1 is the LCP element. */
 export function Hero() {
   return (
-    <section id="hero" aria-labelledby="hero-heading" className="relative h-[250vh]">
+    <section id="hero" aria-labelledby="hero-heading" className="relative h-[220vh]">
       {/* Layer labels for the scroll disassembly — real DOM, screen-reader
           visible list in every mode */}
       <p className="sr-only">{architecture.srSummary}</p>
@@ -25,17 +25,10 @@ export function Hero() {
             fallback rung */}
         <div
           aria-hidden
-          className="pointer-events-none absolute left-1/2 top-1/2 z-0 h-[560px] w-[900px] max-w-[120vw] -translate-x-1/2 -translate-y-1/2"
-          style={{
-            background:
-              "radial-gradient(ellipse 620px 380px at 50% 52%, rgba(0,124,240,0.28), rgba(0,223,216,0.10) 45%, transparent 70%)",
-          }}
+          className="hero-glow pointer-events-none absolute left-1/2 top-1/2 z-0 h-[560px] w-[900px] max-w-[120vw] -translate-x-1/2 -translate-y-1/2"
         />
 
         <HeroClient>
-          <div data-hero="badge">
-            <Badge>{site.eyebrow}</Badge>
-          </div>
           <h1
             id="hero-heading"
             className="max-w-4xl text-balance text-heading-40 sm:text-heading-48 lg:text-heading-56"
@@ -54,6 +47,7 @@ export function Hero() {
               Get started
             </Button>
             <Button href={site.github} external variant="ghost" size="lg">
+              <GitHubIcon />
               Star on GitHub
             </Button>
           </div>

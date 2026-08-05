@@ -83,23 +83,27 @@ function PerformanceLadder({ onDegrade }: { onDegrade: () => void }) {
    washes softened, rims darkened via contrast instead of glow. */
 const RIG = {
   dark: {
-    topRim: 7,
-    underRim: 2.2,
+    /* topRim split into a soft ring "softbox" (radial falloff → the reflected
+       glint is hottest mid-span and tapers at both ends) + a faint full-width
+       strip for edge definition. The old single rect at intensity 7 reflected
+       as a uniform clipped tube — no gradient, no taper. */
+    topGlint: 5.5,
+    topStrip: 1.4,
+    underRim: 1.8,
     leftWash: 2.6,
     rightWash: 2,
-    pointA: 2.5,
-    pointB: 2,
-    bloom: { intensity: 1.0, threshold: 0.32 },
+    /* bloom selects the upper-mid range (was 0.32 → whole streak bloomed
+       into a fat halo); high smoothing = gradual, breathing onset */
+    bloom: { intensity: 0.75, threshold: 0.55 },
     vignette: 0.55,
   },
   light: {
-    topRim: 4,
-    underRim: 1.6,
+    topGlint: 2.8,
+    topStrip: 1.0,
+    underRim: 1.2,
     leftWash: 1.1,
     rightWash: 0.9,
-    pointA: 1.2,
-    pointB: 1,
-    bloom: { intensity: 0.25, threshold: 0.9 },
+    bloom: { intensity: 0.22, threshold: 0.9 },
     vignette: 0.18,
   },
 } as const;
@@ -161,12 +165,25 @@ export default function HeroCanvas({ theme, onReady, onFailed, inView }: HeroSce
 
       {/* Rim-light rig: runtime PMREM environment, rendered once (frames=1) */}
       <Environment key={theme} resolution={256} frames={1}>
+        {/* Overhead softbox: ring form = radial falloff, so the glint the
+            slabs reflect tapers toward its ends instead of reading as a
+            uniform fluorescent tube. */}
+        <Lightformer
+          form="ring"
+          scale={[7, 2.4, 1]}
+          position={[0, 4, -2]}
+          rotation-x={Math.PI / 2}
+          intensity={rig.topGlint}
+          color="#ffffff"
+        />
+        {/* Faint full-width strip keeps the whole top edge defined without
+            pushing it into clip. */}
         <Lightformer
           form="rect"
           scale={[10, 0.8, 1]}
           position={[0, 4, -2]}
           rotation-x={Math.PI / 2}
-          intensity={rig.topRim}
+          intensity={rig.topStrip}
           color="#ffffff"
         />
         <Lightformer
@@ -193,11 +210,22 @@ export default function HeroCanvas({ theme, onReady, onFailed, inView }: HeroSce
           intensity={rig.rightWash}
           color="#FF0080"
         />
+        {/* Magenta under-wash: faces pitched toward the viewer's lower half
+            catch the same pink as the right wash, so the loved glare shows
+            from top/bottom pointer extremes, not just bottom-right. */}
+        <Lightformer
+          form="rect"
+          scale={[8, 3, 1]}
+          position={[0, -4.5, 1.5]}
+          rotation-x={-Math.PI / 2}
+          intensity={rig.rightWash * 0.85}
+          color="#FF0080"
+        />
       </Environment>
 
-      {/* Chamfer accents that move with mouse parallax */}
-      <pointLight position={[-3, 2.5, 4]} intensity={rig.pointA} color="#00DFD8" distance={12} />
-      <pointLight position={[3, -2, 4]} intensity={rig.pointB} color="#FF4D4D" distance={12} />
+      {/* No point lights: small spherical sources reflect as tiny specular
+          DOTS on the glossy faces at certain mouse/scroll angles. All color
+          comes from the broad env washes, which tint whole faces instead. */}
 
       <EffectComposer multisampling={q.msaa}>
         {q.bloom ? (
@@ -205,7 +233,7 @@ export default function HeroCanvas({ theme, onReady, onFailed, inView }: HeroSce
             mipmapBlur
             intensity={rig.bloom.intensity}
             luminanceThreshold={rig.bloom.threshold}
-            luminanceSmoothing={0.25}
+            luminanceSmoothing={0.5}
           />
         ) : (
           <></>

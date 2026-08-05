@@ -34,11 +34,13 @@ export function CodeCard({
         </span>
         <CopyButton text={rawCode} />
       </figcaption>
+      {/* 11.5px below lg so a 45-column sample line fits a 348px card with
+          no horizontal scroll; 13px once the three-column grid kicks in. */}
       <div
         tabIndex={0}
         role="region"
         aria-label={filename}
-        className="code-scroll min-h-0 min-w-0 flex-1 overflow-auto p-4 font-mono text-mono-13 [&_pre]:bg-transparent!"
+        className="code-scroll min-h-0 min-w-0 flex-1 overflow-auto p-4 font-mono text-[11.5px] leading-[18px] lg:text-[13px] lg:leading-[20px] [&_pre]:bg-transparent!"
         dangerouslySetInnerHTML={{ __html: html }}
       />
     </figure>

@@ -38,7 +38,7 @@ export const SLABS: SlabSpec[] = [
     y: SLAB.offset,
     z: SLAB.proudZ,
     proud: true,
-    rowY: 1.95,
+    rowY: 1.65,
   },
   {
     id: "agent",
@@ -48,7 +48,7 @@ export const SLABS: SlabSpec[] = [
     y: SLAB.offset,
     z: SLAB.recessedZ,
     proud: false,
-    rowY: 0.65,
+    rowY: 0.55,
   },
   {
     id: "postgres",
@@ -58,7 +58,7 @@ export const SLABS: SlabSpec[] = [
     y: -SLAB.offset,
     z: SLAB.recessedZ,
     proud: false,
-    rowY: -0.65,
+    rowY: -0.55,
   },
   {
     id: "sandbox",
@@ -68,6 +68,6 @@ export const SLABS: SlabSpec[] = [
     y: -SLAB.offset,
     z: SLAB.proudZ,
     proud: true,
-    rowY: -1.95,
+    rowY: -1.65,
   },
 ];

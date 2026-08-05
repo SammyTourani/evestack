@@ -582,3 +582,22 @@
     animation: none;
   }
 }
+
+/* ── Hero glow: the site's ONE gradient moment. Light mode runs softer —
+   the same alphas that glow on black read oversaturated on porcelain. */
+.hero-glow {
+  background: radial-gradient(
+    ellipse 620px 380px at 50% 52%,
+    rgba(0, 124, 240, 0.16),
+    rgba(0, 223, 216, 0.055) 45%,
+    transparent 70%
+  );
+}
+.dark .hero-glow {
+  background: radial-gradient(
+    ellipse 620px 380px at 50% 52%,
+    rgba(0, 124, 240, 0.28),
+    rgba(0, 223, 216, 0.1) 45%,
+    transparent 70%
+  );
+}

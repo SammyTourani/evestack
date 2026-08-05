@@ -26,8 +26,8 @@ export interface DemoSession {
 /** A session that "arrives" during one animation cycle; status is animated. */
 export type LiveDemoSession = Omit<DemoSession, "status">;
 
-/** Stat-tile rollup BEFORE any live session arrives (30 prior sessions).
-    spend renders "$0.05" and crosses to "$0.06" during cycle one. */
+/** Stat-tile rollup WITHOUT the three live rows (30 prior sessions).
+    spend renders "$0.05" while a pass re-earns it and settles at "$0.06". */
 export const baseStats = { sessions: 30, turns: 112, tokensIn: 148_210, tokensOut: 46_920, spend: 0.0545 };
 
 const done = "completed" as const;
@@ -43,7 +43,10 @@ export const baseSessions: DemoSession[] = [
   { id: "wrun_01KZ5WQJ8M3E…", title: "race test", status: done, turns: 3, model: m4o, tokensIn: 2210, tokensOut: 18, cost: 0, started: "5h ago", durationS: 3.4, cached: 1792, tools: 0 },
 ];
 
-/** One entry per loop cycle (hard cap 3); the demo settles on the last. */
+/** The live loop's three PERMANENT rows (hard cap 3 — more would stretch
+    the dashboard): each pass they flip back to "running" IN PLACE with
+    staggered starts, tick up concurrently, and complete at their own
+    moments. The demo settles with all three completed (the SSR truth). */
 // prettier-ignore
 export const liveSessions: LiveDemoSession[] = [
   { id: "wrun_01KZ7A2FQ9RC…", title: "Deploy summary email to the team", turns: 3, model: m5, tokensIn: 12_847, tokensOut: 2164, cost: 0.0034, started: "just now", durationS: 18.2, cached: 9216, tools: 5 },

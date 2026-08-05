@@ -8,8 +8,9 @@ import { useEffect, useRef } from "react";
    3D Voronoi (freq 4.8, z = t*0.35) picks one of six spinner glyphs | / \ – — ▲;
    Voronoi boundaries render a filled square, everything else keeps a base dot.
    Hovering paints a diffusing, decaying field that hard-switches cells onto a
-   growing dot→circle→dash→circle→square ramp. An exclusion ellipse keeps every
-   glyph out from under the headline, CTAs, and the 3D stack. */
+   growing dot→circle→dash→circle→square ramp. Masks measured from the real
+   content rects keep glyphs off the headline, CTAs, and slab core, with a
+   fine-dot lattice grading the field into that protected zone. */
 
 const CELL = 14; // CSS px per glyph cell
 const GLYPH_SCALE = 1.27; // eve.dev ASCII-mode glyphScale
@@ -62,6 +63,23 @@ const hash3 = (x: number, y: number, z: number) => {
   return (hashU32(mixed) & 0x00ffffff) / 16777215;
 };
 
+/* Smooth static 2D value noise — used to wobble every mask contour. A
+   smoothstep along a straight rect edge still READS as a straight line; the
+   fix is perturbing the boundary geometry itself, not softening its alpha. */
+const vnoise = (x: number, y: number) => {
+  const xi = Math.floor(x);
+  const yi = Math.floor(y);
+  const fx = x - xi;
+  const fy = y - yi;
+  const sx = fx * fx * (3 - 2 * fx);
+  const sy = fy * fy * (3 - 2 * fy);
+  const a = hash3(xi, yi, 77);
+  const b = hash3(xi + 1, yi, 77);
+  const c = hash3(xi, yi + 1, 77);
+  const d = hash3(xi + 1, yi + 1, 77);
+  return a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy;
+};
+
 /* Hard-cell 3D Voronoi: winning cell's hash picks the glyph, F2−F1 gap < 0.04
    marks boundary cells (edge squares). Writes [value, edge] into out. */
 const voronoi3 = (px: number, py: number, pz: number, out: Float32Array) => {
@@ -99,7 +117,11 @@ const voronoi3 = (px: number, py: number, pz: number, out: Float32Array) => {
     }
   }
   out[0] = hash3(wx + 211, wy + 37, wz + 173);
-  out[1] = 1 - smoothstep(0.04, 0.06, Math.sqrt(d2) - Math.sqrt(d1));
+  const gap = Math.sqrt(d2) - Math.sqrt(d1);
+  out[1] = 1 - smoothstep(0.04, 0.06, gap);
+  // feather: 0 at the cluster boundary → 1 deep inside, so island edges
+  // taper off instead of ending in a hard line of full-alpha glyphs
+  out[2] = smoothstep(0.03, 0.24, gap);
 };
 
 /* Sprite atlas: imprint glyphs 0..7 (dot | / \ – — ▲ ▪) then the hover ramp
@@ -183,10 +205,15 @@ export function HeroGlyphField() {
     let rows = 0;
     let count = 0;
     // per-cell buffers
-    let weight = new Float32Array(0); // mask × vertical fade, 0 ⇒ skip
+    let weight = new Float32Array(0); // glyph mask × vertical fade, 0 ⇒ skip
+    let lattice = new Float32Array(0); // fine-dot blend band hugging the content
+    let hoverMask = new Float32Array(0); // paint falloff toward content (no hard cut)
+    let proxG = new Float32Array(0); // ambient proximity band (drives edge dissolve)
+    let drop = new Float32Array(0); // per-cell dissolve gate — edges thin out cell by cell
     let revealStart = new Float32Array(0);
     let station = new Int8Array(0); // -1 empty band … 5 ▲
     let edge = new Float32Array(0);
+    let soft = new Float32Array(0); // cluster-boundary feather (0 edge → 1 core)
     let paintA = new Float32Array(0);
     let paintB = new Float32Array(0);
     let noiseB = new Float32Array(0); // brush-edge hash
@@ -197,7 +224,13 @@ export function HeroGlyphField() {
     let lastNoiseAt = -1e9;
     let lastNow = 0;
     let revealT = 0;
-    const vor = new Float32Array(2);
+    const vor = new Float32Array(3);
+
+    // far-plane depth cue: the whole field drifts a few px opposite the pointer
+    let parX = 0;
+    let parY = 0;
+    let tParX = 0;
+    let tParY = 0;
 
     // pointer in canvas cell space; brush follows eve.dev's capsule stamp
     let brushActive = false;
@@ -230,9 +263,14 @@ export function HeroGlyphField() {
       cellH = h / rows; // on-screen cell drifts from CELL at fractional dpr
       count = cols * rows;
       weight = new Float32Array(count);
+      lattice = new Float32Array(count);
+      hoverMask = new Float32Array(count);
+      proxG = new Float32Array(count);
+      drop = new Float32Array(count);
       revealStart = new Float32Array(count);
       station = new Int8Array(count).fill(-1);
       edge = new Float32Array(count);
+      soft = new Float32Array(count);
       paintA = new Float32Array(count);
       paintB = new Float32Array(count);
       noiseB = new Float32Array(count);
@@ -240,35 +278,9 @@ export function HeroGlyphField() {
       diffOff = new Int32Array(count * 8);
       maxPaint = 0;
 
-      // Exclusion ellipse over the copy + 3D stack (content column ≤ ~960px,
-      // stack box vertically ±~270 around a center lifted 40px). Weight ramps
-      // outside it and eve.dev's vertical fade (top 1 → bottom floor, pow 2)
-      // keeps the top clusters boldest.
-      const cx = w / 2;
-      const cyE = h / 2 - 10;
-      // narrow screens: the content column spans nearly the full width, so the
-      // ellipse tightens vertically and the field lives above/below the copy
-      const narrow = w < 640;
-      const rx = narrow ? w : Math.max(500, Math.min(620, w * 0.36));
-      const ry = narrow ? Math.min(250, h * 0.32) : Math.min(330, h * 0.42);
-      const m0 = narrow ? 1.02 : 1.04;
-      const m1 = narrow ? 1.26 : 1.42;
-      const dark = isDark();
-      const floor = dark ? 0.22 : 0.4;
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
           const i = r * cols + c;
-          const x = (c + 0.5) * cellW;
-          const y = (r + 0.5) * cellH;
-          const ed = Math.sqrt(((x - cx) / rx) ** 2 + ((y - cyE) / ry) ** 2);
-          const mask = smoothstep(m0, m1, ed);
-          // deliberately reflected from eve's vertical curve: they dim everything
-          // below their top band; our field frames the whole viewport, so it
-          // stays bold through the upper half and only dims toward the bottom
-          const vfade = 1 - (1 - floor) * (y / h) ** 2;
-          const pad = smoothstep(-2, 26, Math.min(x, w - x)); // soft viewport-side fade
-          const padTop = smoothstep(narrow ? 76 : 52, narrow ? 124 : 118, y); // clear the nav
-          weight[i] = (dark ? 0.85 : 0.9) * mask * vfade * pad * padTop;
           revealStart[i] = hash3(c, r, 9) * (1 - REVEAL_WINDOW);
           noiseB[i] = hash3(c, r, 3);
           noiseA[i] = hash3(c, r, 4);
@@ -293,7 +305,122 @@ export function HeroGlyphField() {
         }
       }
       lastNoiseAt = -1e9; // force resample
+      computeWeights();
       rebuildAtlas();
+    };
+
+    /* Masks measured from the real layout: glyphs hug the copy column and the
+       visible slab core of the 3D stage instead of an abstract ellipse, and a
+       faint fine-dot lattice grades across the remaining gap so the protected
+       zone reads as texture, not a void. The header's backdrop-blur keeps the
+       nav readable, so the field runs to the very top like eve.dev's. */
+    const distRect = (
+      x: number,
+      y: number,
+      x0: number,
+      y0: number,
+      x1: number,
+      y1: number,
+    ) => {
+      const dx = Math.max(x0 - x, 0, x - x1);
+      const dy = Math.max(y0 - y, 0, y - y1);
+      return Math.hypot(dx, dy);
+    };
+
+    const computeWeights = () => {
+      const w = host.clientWidth;
+      const h = host.clientHeight;
+      if (!w || !h || !cols) return;
+      const hostRect = host.getBoundingClientRect();
+      const section = host.closest("#hero") ?? document;
+      const toLocal = (el: Element | null, fw: number, fh: number) => {
+        if (!el) {
+          return { x0: (w - fw) / 2, y0: (h - fh) / 2, x1: (w + fw) / 2, y1: (h + fh) / 2 };
+        }
+        const r = el.getBoundingClientRect();
+        return {
+          x0: r.left - hostRect.left,
+          y0: r.top - hostRect.top,
+          x1: r.right - hostRect.left,
+          y1: r.bottom - hostRect.top,
+        };
+      };
+      // [data-hero-copy] is the full-width site container — the real content
+      // column is the union of its children (badge / h1 / sub / CTA row)
+      const unionChildren = (el: Element | null, fw: number, fh: number) => {
+        if (!el || el.children.length === 0) return toLocal(el, fw, fh);
+        let x0 = Infinity;
+        let y0 = Infinity;
+        let x1 = -Infinity;
+        let y1 = -Infinity;
+        for (const ch of el.children) {
+          const r = ch.getBoundingClientRect();
+          if (!r.width && !r.height) continue;
+          x0 = Math.min(x0, r.left);
+          y0 = Math.min(y0, r.top);
+          x1 = Math.max(x1, r.right);
+          y1 = Math.max(y1, r.bottom);
+        }
+        if (x0 === Infinity) return toLocal(el, fw, fh);
+        return {
+          x0: x0 - hostRect.left,
+          y0: y0 - hostRect.top,
+          x1: x1 - hostRect.left,
+          y1: y1 - hostRect.top,
+        };
+      };
+      const copy = unionChildren(section.querySelector("[data-hero-copy]"), 640, 440);
+      const stage = toLocal(
+        section.querySelector("[data-hero-stage]"),
+        Math.min(1112, w * 0.96),
+        460,
+      );
+      // the ▚ slabs occupy only the central ~44% of the wide stage box
+      const stageW = stage.x1 - stage.x0;
+      const slabG = { x0: stage.x0 + stageW * 0.21, x1: stage.x1 - stageW * 0.21, y0: stage.y0, y1: stage.y1 };
+      const slabD = { x0: stage.x0 + stageW * 0.27, x1: stage.x1 - stageW * 0.27, y0: stage.y0 + 8, y1: stage.y1 - 8 };
+      const dark = isDark();
+      const floorA = dark ? 0.28 : 0.4;
+      const gBase = dark ? 0.85 : 0.9;
+      const dBase = dark ? 0.34 : 0.2;
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const i = r * cols + c;
+          const x = (c + 0.5) * cellW;
+          const y = (r + 0.5) * cellH;
+          // deliberately reflected from eve's vertical curve: they dim everything
+          // below their top band; our field frames the whole viewport, so it
+          // stays bold through the upper half and only dims toward the bottom
+          const vfade = 1 - (1 - floorA) * (y / h) ** 2;
+          // Every boundary contour is wobbled by static low-frequency noise —
+          // a smooth gradient along a straight line still reads as a straight
+          // line, so the line itself must meander.
+          // Wobble amplitudes: every fade START sits beyond guard + amplitude,
+          // so even the worst-case meander can never reach the content — the
+          // organic contour has a hard protection floor underneath it.
+          const wob = (vnoise(x / 132, y / 132) - 0.5) * 64; // ±32 on content contours
+          const ewob = (vnoise(x / 88 + 51.7, y / 88 + 13.3) - 0.5) * 40; // ±20 on edges
+          const pads =
+            smoothstep(30, 108, Math.min(x, w - x) + ewob) * // sides (0 within ~10px)
+            smoothstep(38, 96, y + ewob) * // top — fades out under the blurred header
+            smoothstep(28, 88, h - y + ewob); // bottom — above the grounding gradient
+          const dCopy = distRect(x, y, copy.x0, copy.y0, copy.x1, copy.y1) + wob;
+          const dSlabD = distRect(x, y, slabD.x0, slabD.y0, slabD.x1, slabD.y1) + wob;
+          const dSlabG = distRect(x, y, slabG.x0, slabG.y0, slabG.x1, slabG.y1) + wob;
+          const gProx = Math.min(smoothstep(62, 188, dCopy), smoothstep(50, 148, dSlabG));
+          const dProx = Math.min(smoothstep(52, 98, dCopy), smoothstep(40, 96, dSlabD));
+          const prox = gProx * pads;
+          proxG[i] = prox;
+          drop[i] = hash3(c, r, 13);
+          weight[i] = gBase * vfade * prox;
+          lattice[i] =
+            dBase * vfade * pads * dProx * (1 - gProx) * (0.65 + 0.7 * hash3(c, r, 7));
+          // hover paint gets its own WIDE falloff toward the content so the
+          // painted trail dissolves instead of hitting the mask like a wall
+          hoverMask[i] =
+            pads * Math.min(smoothstep(48, 128, dCopy), smoothstep(42, 118, dSlabD));
+        }
+      }
     };
 
     const sampleNoise = () => {
@@ -311,6 +438,7 @@ export function HeroGlyphField() {
                 ? -1
                 : Math.min(5, Math.floor(((v - GATE_DOT) / (1 - GATE_DOT)) * 6));
           edge[i] = vor[1];
+          soft[i] = 0.3 + 0.7 * vor[2];
         }
       }
     };
@@ -378,9 +506,14 @@ export function HeroGlyphField() {
         for (let c = 0; c < cols; c++) {
           const i = r * cols + c;
           const w0 = weight[i];
-          if (w0 <= 0.02) continue;
+          const lat = lattice[i];
+          if (w0 <= 0.02 && lat <= 0.015 && hoverMask[i] <= 0.01) continue;
           const p = Math.min(paintA[i], 1);
           if (p > HOVER_ENTRY_START) {
+            const hm = hoverMask[i];
+            // dissolve band: near a boundary, cells drop out stochastically so
+            // the painted region thins glyph-by-glyph along a wobbled contour
+            if (hm <= 0.012 || (hm < 0.55 && drop[i] > hm / 0.55)) continue;
             // hard per-cell switch onto the hover ramp; paint bypasses the fade.
             // Alpha mirrors the shader: coverage × entry × overlay 0.5, with the
             // emissive paint boost folded into alpha (we have no bloom pass).
@@ -390,20 +523,26 @@ export function HeroGlyphField() {
             const opacity = w0 + (1 - w0) * PAINT_FADE_BYPASS * scaled;
             blit(
               8 + Math.min(4, Math.floor(t * 5)),
-              opacity * entry * HOVER_OVERLAY_SCALE * (1 + PAINT_EMISSIVE_BOOST * scaled),
+              opacity * entry * HOVER_OVERLAY_SCALE * (1 + PAINT_EMISSIVE_BOOST * scaled) * hm,
               c,
               r,
             );
             continue;
           }
-          const s = station[i];
-          if (s <= -2) continue; // empty air between clusters
           const rv = smoothstep(revealStart[i], revealStart[i] + REVEAL_WINDOW, reveal);
           if (rv <= 0.01) continue;
-          blit(s >= 0 ? 1 + s : 0, w0 * rv, c, r);
-          // boundary square union'd on top with its continuous mask — approximates
-          // the shader's max(interiorGlyph, square × edgeMask), no hard pop
-          if (edge[i] > 0.05) blit(7, w0 * rv * edge[i], c, r);
+          const s = station[i];
+          const dissolved = proxG[i] < 0.55 && drop[i] > proxG[i] / 0.55;
+          if (w0 > 0.02 && s > -2 && !dissolved) {
+            blit(s >= 0 ? 1 + s : 0, w0 * rv * soft[i], c, r);
+            // boundary square union'd on top with its continuous mask — approximates
+            // the shader's max(interiorGlyph, square × edgeMask), no hard pop
+            if (edge[i] > 0.05) blit(7, w0 * rv * edge[i], c, r);
+          } else {
+            // blend band, empty air, and dissolved boundary cells: the fine-dot
+            // lattice grades the field into the protected content zone
+            blit(0, lat * rv, c, r);
+          }
         }
       }
       ctx.globalAlpha = 1;
@@ -419,6 +558,9 @@ export function HeroGlyphField() {
       // fade the whole field out as the scroll disassembly begins
       const fade = 1 - smoothstep(0.06, 0.55, window.scrollY / window.innerHeight);
       canvas.style.opacity = String(fade);
+      parX += (tParX - parX) * Math.min(1, dt * 3.5);
+      parY += (tParY - parY) * Math.min(1, dt * 3.5);
+      canvas.style.transform = `translate3d(${(-parX * 9).toFixed(2)}px, ${(-parY * 6).toFixed(2)}px, 0)`;
       if (fade > 0) {
         if (now - lastNoiseAt >= NOISE_TICK_MS) {
           lastNoiseAt = now;
@@ -449,6 +591,7 @@ export function HeroGlyphField() {
       // stale gets baked into the frozen frame.
       revealT = REVEAL_SECONDS;
       canvas.style.opacity = "1";
+      canvas.style.transform = "";
       paintA.fill(0);
       paintB.fill(0);
       maxPaint = 0;
@@ -467,14 +610,24 @@ export function HeroGlyphField() {
         brushX = x;
         brushY = y;
       }
+      tParX = e.clientX / window.innerWidth - 0.5;
+      tParY = e.clientY / window.innerHeight - 0.5;
     };
     const onPointerLeave = () => {
       brushActive = false;
       brushX = brushY = prevBrushX = prevBrushY = -1e6;
+      tParX = tParY = 0;
     };
 
     layout();
     if (reducedMq.matches) staticFrame();
+
+    // the entrance choreography nudges the copy/stage into place — re-read the
+    // content rects once it has settled (weights only; paint state survives)
+    const remeasure = window.setTimeout(() => {
+      computeWeights();
+      if (reducedMq.matches) staticFrame();
+    }, 2600);
 
     const ro = new ResizeObserver(() => {
       layout();
@@ -534,6 +687,7 @@ export function HeroGlyphField() {
     return () => {
       disposed = true;
       stop();
+      window.clearTimeout(remeasure);
       ro.disconnect();
       io.disconnect();
       mo.disconnect();

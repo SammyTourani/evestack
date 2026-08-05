@@ -34,7 +34,8 @@ for (const scheme of ["dark", "light"]) {
     return { heroTop: hero.offsetTop, heroRange: hero.offsetHeight - window.innerHeight };
   });
 
-  const fracs = scheme === "dark" ? [0.25, 0.45, 0.7, 0.92, 1] : [0.45, 1];
+  const fracs =
+    scheme === "dark" ? [0.2, 0.42, 0.5, 0.58, 0.66, 0.75, 0.85, 1] : [0.42, 0.58, 0.75, 1];
   for (const frac of fracs) {
     await page.evaluate(
       (y) => window.scrollTo({ top: y, behavior: "instant" }),

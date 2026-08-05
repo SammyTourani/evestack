@@ -13,7 +13,10 @@ import {
 /* Faux evestack dashboard for the "one command" section. SSR renders the
    SETTLED final state of every tab (no-JS / reduced-motion truth); with
    motion allowed it becomes a self-driving product tour:
-   - Sessions: rows stream in, three live sessions arrive/complete (as before)
+   - Sessions: rows stream in once; the three live rows are PERMANENT table
+     members that convert IN PLACE — staggered flips to "running", each
+     ticking on its own clock (2–3 running at once), completions landing at
+     different moments, settle, replay. The table never changes size.
    - Chat: a real back-and-forth plays out — user asks, the agent THINKS
      (blue pulse), then streams its answer word by word. Every number in the
      script traces to lib/demo-data.ts.
@@ -50,26 +53,70 @@ const CHAT = [
 ];
 const CHAT_WORDS = CHAT.map((m) => m.text.split(" "));
 
-type LiveState = {
-  index: number;
+type LiveRow = {
+  /** DISPLAY values — a pre-flip row keeps showing its last run's totals */
   tokensIn: number;
   tokensOut: number;
   cost: number;
   status: SessionStatus;
   flash: boolean;
-  shown: boolean;
+  /** false until the row flips in the current pass: the tiles exclude it
+      so they can re-earn its numbers monotonically as it ticks back up */
+  counted: boolean;
 };
 
-const lastLive = liveSessions[liveSessions.length - 1];
-const settledLive: LiveState = {
-  index: liveSessions.length - 1,
-  tokensIn: lastLive.tokensIn,
-  tokensOut: lastLive.tokensOut,
-  cost: lastLive.cost,
-  status: "completed",
-  flash: false,
-  shown: true,
-};
+/* Schedule for one live pass, ms from pass start — one entry per
+   liveSessions row. The SAME three rows convert in place: flips stagger
+   ~0.9s apart and the count-up durations deliberately differ so the
+   ticking never looks synchronized; at peak all three are "running" at
+   once and the completions land at three different moments. */
+const LIVE_PLAN = [
+  { at: 0, count: 2600 },
+  { at: 900, count: 3800 },
+  { at: 1800, count: 4600 },
+];
+const HOLD_MS = 350; // flip beat: the numbers sit at 0 before ticking starts
+const FLASH_MS = 300; // row highlight at flip-to-running AND at completion
+const LIVE_N = Math.min(LIVE_PLAN.length, liveSessions.length);
+/* a pass is "active" until the last row's completion flash fades */
+const PASS_ACTIVE =
+  Math.max(...LIVE_PLAN.slice(0, LIVE_N).map((p) => p.at + HOLD_MS + p.count)) + FLASH_MS;
+const TOTAL_ROWS = LIVE_N + baseSessions.length;
+
+/* Settled feed = SSR / reduced-motion truth: every live row completed at
+   full values. rowsAt(PASS_ACTIVE) lands on exactly this frame, so the
+   settle never jumps — and between passes the table IS this frame. */
+const settledRows: LiveRow[] = liveSessions.slice(0, LIVE_N).map(
+  (s): LiveRow => ({
+    tokensIn: s.tokensIn,
+    tokensOut: s.tokensOut,
+    cost: s.cost,
+    status: "completed",
+    flash: false,
+    counted: true,
+  }),
+);
+
+/* The whole feed as a pure function of the pass clock — one elapsed time in,
+   every row's flip/count-up/completion out. Freezing the clock (hover, or
+   the demo scrolled off screen) therefore freezes ALL ticking at once. */
+const rowsAt = (now: number): LiveRow[] =>
+  liveSessions.slice(0, LIVE_N).map((src, i): LiveRow => {
+    const p = LIVE_PLAN[i];
+    if (now < p.at) return settledRows[i]; // still showing its last run
+    const t = Math.min(Math.max((now - p.at - HOLD_MS) / p.count, 0), 1);
+    const e = 1 - Math.pow(1 - t, 3); // cubic out, on this row's own clock
+    return {
+      tokensIn: Math.round(src.tokensIn * e),
+      tokensOut: Math.round(src.tokensOut * e),
+      cost: src.cost * e,
+      status: t >= 1 ? "completed" : "running",
+      flash:
+        now < p.at + FLASH_MS || // the flip beat: "a new run just started"
+        (t >= 1 && now < p.at + HOLD_MS + p.count + FLASH_MS),
+      counted: true,
+    };
+  });
 
 const fmtInt = (n: number) => n.toLocaleString("en-US");
 const fmtTokens = (n: number) => (n >= 10_000 ? `${Math.round(n / 1000)}K` : fmtInt(n));
@@ -206,8 +253,8 @@ export function DashboardDemo() {
   const [tab, setTab] = useState<Tab>("Sessions");
   const [indicator, setIndicator] = useState<{ x: number; w: number } | null>(null);
   const [panelH, setPanelH] = useState<number | null>(null);
-  const [revealed, setRevealed] = useState(baseSessions.length);
-  const [live, setLive] = useState<LiveState | null>(settledLive);
+  const [revealed, setRevealed] = useState(TOTAL_ROWS);
+  const [rows, setRows] = useState<LiveRow[]>(settledRows);
   const [expanded, setExpanded] = useState<string | null>(null);
   /* chat: shown = fully rendered messages; streamWords > 0 = message
      CHAT[shown] is streaming. Settled (SSR) = everything visible. */
@@ -244,22 +291,19 @@ export function DashboardDemo() {
       rafBox.id = requestAnimationFrame(step);
     };
 
-  /* ── Sessions live loop: ENDLESS passes. Each pass runs the three live
-     sessions with ticking numbers, settles briefly, then collapses and
-     replays. Time only elapses while the demo is on screen AND unhovered —
-     scroll away and it waits; scroll back and it is always moving. ── */
+  /* ── Sessions live loop: ENDLESS passes over the SAME three rows. Each
+     pass converts them in place — staggered flips to "running" (numbers
+     reset behind a flash beat), concurrent count-ups on their own clocks,
+     completions at their own moments — then settles and replays. The table
+     never grows or shrinks. Time only elapses while the demo is on screen
+     AND unhovered — scroll away and it waits; scroll back and it is always
+     moving. ── */
   useEffect(() => {
     const root = rootRef.current;
     if (!root || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     stopRef.current = false;
 
-    const FIRST_TOTAL =
-      150 +
-      (baseSessions.length - 1) * 90 +
-      700 +
-      (liveSessions.length - 1) * 5940 +
-      3200;
-    const REPEAT_TOTAL = (liveSessions.length - 1) * 5940 + 3200;
+    const FIRST_TOTAL = 150 + (TOTAL_ROWS - 1) * 90 + 700 + PASS_ACTIVE;
     const prog = { elapsed: 0, total: FIRST_TOTAL };
 
     const timer = (ms: number, onFrame: ((t: number) => void) | null, onDone: () => void) => {
@@ -283,72 +327,50 @@ export function DashboardDemo() {
       rafRef.current = requestAnimationFrame(step);
     };
 
-    const cycle = (k: number) => {
-      const target = liveSessions[k];
-      const count = () =>
-        timer(
-          2500,
-          (t) => {
-            const e = 1 - Math.pow(1 - t, 3); // cubic out
-            setLive((l) => l && {
-              ...l,
-              tokensIn: Math.round(target.tokensIn * e),
-              tokensOut: Math.round(target.tokensOut * e),
-              cost: target.cost * e,
-            });
-          },
-          () => {
-            setLive((l) => l && { ...l, status: "completed", flash: true });
-            timer(300, null, () => {
-              setLive((l) => l && { ...l, flash: false });
-              if (k + 1 >= liveSessions.length) {
-                // pass complete: settle, breathe, then replay from the top —
-                // the demo is ALWAYS alive whenever it's on screen
-                const bar = barRef.current;
-                if (bar) {
-                  bar.style.transform = "scaleX(1)";
-                  bar.style.opacity = "0";
-                }
-                timer(5000, null, () => {
-                  setLive((l) => l && { ...l, shown: false });
-                  timer(300, null, () => {
-                    prog.elapsed = 0;
-                    prog.total = REPEAT_TOTAL;
-                    if (bar) {
-                      bar.style.transform = "scaleX(0)";
-                      bar.style.opacity = "1";
-                    }
-                    cycle(0);
-                  });
-                });
-                return;
-              }
-              timer(2500, null, () => {
-                setLive((l) => l && { ...l, shown: false });
-                timer(240, null, () => cycle(k + 1));
-              });
-            });
-          },
-        );
-      setLive({ index: k, tokensIn: 0, tokensOut: 0, cost: 0, status: "running", flash: false, shown: false });
-      timer(50, null, () => {
-        setLive((l) => l && { ...l, shown: true }); // slide in at the top
-        timer(350, null, count);
-      });
+    /* ONE clock drives a whole pass: rowsAt() derives every row's state
+       from the same elapsed time, so overlapping lifecycles can never
+       drift and the progress hairline never double-counts. */
+    const pass = () => {
+      timer(
+        PASS_ACTIVE,
+        (t) => setRows(rowsAt(t * PASS_ACTIVE)),
+        () => {
+          // pass complete: the feed now equals the settled/SSR frame.
+          // Breathe, then the SAME rows flip back to running one by one —
+          // the demo is ALWAYS alive whenever it's on screen, and the
+          // table never changes size.
+          const bar = barRef.current;
+          if (bar) {
+            bar.style.transform = "scaleX(1)";
+            bar.style.opacity = "0";
+          }
+          timer(5000, null, () => {
+            prog.elapsed = 0;
+            prog.total = PASS_ACTIVE;
+            if (bar) {
+              bar.style.transform = "scaleX(0)";
+              bar.style.opacity = "1";
+            }
+            pass();
+          });
+        },
+      );
     };
 
     const play = () => {
       let n = 0;
       const next = () => {
         setRevealed(++n);
-        if (n < baseSessions.length) timer(90, null, next);
-        else timer(700, null, () => cycle(0));
+        if (n < TOTAL_ROWS) timer(90, null, next);
+        else timer(700, null, pass);
       };
       next();
     };
 
-    setRevealed(0); // reset the SSR'd settled state, then stream in
-    setLive(null);
+    // fade the rows back in top-to-bottom (live rows included — they keep
+    // their settled values until the first pass flips them); height is
+    // constant throughout, only opacity/translate move
+    setRevealed(0);
     const io = new IntersectionObserver(
       ([entry]) => {
         if (!entry.isIntersecting) return;
@@ -500,35 +522,24 @@ export function DashboardDemo() {
     return () => ro.disconnect();
   }, [tab]);
 
-  /* Tiles = base rollup + fully-folded prior cycles + the ticking live row. */
+  /* Tiles = base rollup + the permanent live rows. The session count never
+     moves — no rows are ever added. Token/spend tiles follow each row's
+     own count-up: a row's contribution resets only at the instant it flips
+     (`counted` gates the pre-flip rows), so within a pass the totals only
+     ever rise and every settle lands exactly on the SSR values. Turns fold
+     in whole at the flip (a turn count isn't a ticking meter). */
   const stats = useMemo(() => {
-    const s = { ...baseStats };
-    if (live) {
-      for (let i = 0; i < live.index; i++) {
-        const p = liveSessions[i];
-        s.turns += p.turns;
-        s.tokensIn += p.tokensIn;
-        s.tokensOut += p.tokensOut;
-        s.spend += p.cost;
-      }
-      s.sessions += live.index + 1;
-      s.turns += liveSessions[live.index].turns;
-      s.tokensIn += live.tokensIn;
-      s.tokensOut += live.tokensOut;
-      s.spend += live.cost;
-    }
+    const s = { ...baseStats, sessions: baseStats.sessions + LIVE_N };
+    rows.forEach((r, i) => {
+      if (!r.counted) return;
+      s.turns += liveSessions[i].turns;
+      s.tokensIn += r.tokensIn;
+      s.tokensOut += r.tokensOut;
+      s.spend += r.cost;
+    });
     return s;
-  }, [live]);
+  }, [rows]);
 
-  const liveRow: DemoSession | null = live
-    ? {
-        ...liveSessions[live.index],
-        status: live.status,
-        tokensIn: live.tokensIn,
-        tokensOut: live.tokensOut,
-        cost: live.cost,
-      }
-    : null;
   const toggle = (id: string) => setExpanded((cur) => (cur === id ? null : id));
   const pickTab = (t: Tab) => {
     autoOffRef.current = true; // the user is driving now
@@ -632,31 +643,34 @@ export function DashboardDemo() {
                   <span className="text-right">Cost</span>
                   <span className="text-right">Started</span>
                 </div>
-                {liveRow && live ? (
-                  /* grid-rows trick so arriving/leaving pushes the table smoothly */
-                  <div
-                    className={cn(
-                      "grid transition-[grid-template-rows] duration-300 motion-reduce:transition-none",
-                      live.shown ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
-                    )}
-                  >
-                    <div className="min-h-0 overflow-hidden">
-                      <SessionRow
-                        s={liveRow}
-                        shown={live.shown}
-                        flash={live.flash}
-                        expanded={expanded === liveRow.id}
-                        onToggle={() => toggle(liveRow.id)}
-                        panelId={`${uid}-row-live`}
-                      />
-                    </div>
-                  </div>
-                ) : null}
+                {/* the three live rows are ordinary, permanent table rows —
+                    passes only repaint their pill/numbers, never the layout */}
+                {rows.map((r, i) => {
+                  const src = liveSessions[i];
+                  const s: DemoSession = {
+                    ...src,
+                    status: r.status,
+                    tokensIn: r.tokensIn,
+                    tokensOut: r.tokensOut,
+                    cost: r.cost,
+                  };
+                  return (
+                    <SessionRow
+                      key={src.id}
+                      s={s}
+                      shown={i < revealed}
+                      flash={r.flash}
+                      expanded={expanded === src.id}
+                      onToggle={() => toggle(src.id)}
+                      panelId={`${uid}-row-live-${i}`}
+                    />
+                  );
+                })}
                 {baseSessions.map((s, i) => (
                   <SessionRow
                     key={s.id}
                     s={s}
-                    shown={i < revealed}
+                    shown={LIVE_N + i < revealed}
                     flash={false}
                     expanded={expanded === s.id}
                     onToggle={() => toggle(s.id)}
