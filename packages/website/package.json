@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Marketing site for evestack — the open replacement for Vercel Agent Runs.",
+  "description": "Marketing site for evestack \u2014 the open replacement for Vercel Agent Runs.",
   "license": "Apache-2.0",
   "scripts": {
     "dev": "next dev --port 3000",
@@ -11,7 +11,8 @@
     "preview": "npx serve@latest out -l 3000",
     "typecheck": "tsc --noEmit",
     "test": "playwright test",
-    "shots": "node scripts/capture-screenshots.mjs && node scripts/optimize-images.mjs"
+    "shots": "node scripts/capture-screenshots.mjs && node scripts/optimize-images.mjs",
+    "postinstall": "fumadocs-mdx"
   },
   "dependencies": {
     "@gsap/react": "^2.1.2",
