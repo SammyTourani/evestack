@@ -28,7 +28,7 @@
           },
           {
             "group": "Reference",
-            "pages": ["registry", "cli", "troubleshooting"]
+            "pages": ["registry", "cli", "upgrading", "troubleshooting"]
           }
         ]
       }
