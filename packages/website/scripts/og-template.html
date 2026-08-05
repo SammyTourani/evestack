@@ -33,10 +33,17 @@
   .q { width: 33px; height: 33px; border-radius: 7px; }
   .on { background: linear-gradient(135deg, #2a2d33, #0a0b0d); border: 1px solid rgba(255,255,255,0.28); box-shadow: inset 0 1px 0 rgba(255,255,255,0.35); }
   .off { background: #08090b; border: 1px solid rgba(255,255,255,0.10); }
-  h1 { font-size: 92px; font-weight: 500; letter-spacing: -5px; margin-top: 44px; }
-  p.tag { font-size: 38px; color: #a0a0a0; margin-top: 18px; letter-spacing: -0.6px; }
+  h1 { font-size: 92px; font-weight: 500; letter-spacing: -5px; margin-top: 16px; }
+  /* The tagline wraps to two lines, and .pill is absolutely positioned from the
+     bottom — so the flowed text has to be tight enough to clear it. max-width
+     forces the wrap at a predictable point instead of leaving it to the glyph
+     widths of whatever the tagline says next. */
+  p.tag {
+    font-size: 32px; color: #a0a0a0; margin-top: 14px; letter-spacing: -0.6px;
+    line-height: 1.28; max-width: 900px;
+  }
   .pill {
-    position: absolute; bottom: 72px; left: 80px; display: inline-flex; align-items: center;
+    position: absolute; bottom: 64px; left: 80px; display: inline-flex; align-items: center;
     gap: 14px; border: 1px solid rgba(255,255,255,0.2); border-radius: 999px;
     padding: 18px 30px; font-family: "SF Mono", Menlo, monospace; font-size: 26px;
   }
@@ -57,7 +64,7 @@
       <div class="row"><div class="q off"></div><div class="q on"></div></div>
     </div>
     <h1>evestack</h1>
-    <p class="tag">Everything you need to run eve agents in production.</p>
+    <p class="tag">Self-hosted eve, with a dashboard that drives your agents — not just watches them.</p>
     <span class="pill"><span class="d">$</span> npx create-evestack</span>
     <span class="badge">Open source · Apache-2.0</span>
   </div>

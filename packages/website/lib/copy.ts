@@ -11,7 +11,11 @@ export const site = {
   name: "evestack",
   mark: "▚",
   title: "evestack — the self-hosted distribution of eve",
-  tagline: "Everything you need to run eve agents in production.",
+  /* One sentence, used verbatim on the site, the README, the GitHub description
+     and npm. It was four different sentences across those four surfaces, so
+     anyone arriving via npm → GitHub → here got re-pitched three times and
+     never landed on one idea. Change it in all four or in none. */
+  tagline: "Self-hosted eve, with a dashboard that drives your agents — not just watches them.",
   subhead:
     "Self-hosted eve with durable sessions, sandboxing, 1,070 tool integrations, memory, approvals, schedules, and a dashboard that drives the agent. One command.",
   eyebrow: "Open source · Apache-2.0",

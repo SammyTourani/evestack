@@ -2,7 +2,7 @@
 
 # evestack
 
-### Run `eve` agents on infrastructure you own.
+### Self-hosted eve, with a dashboard that drives your agents — not just watches them.
 
 A self-hosted distribution of the eve agent framework — durable Postgres sessions, a Docker
 sandbox, and a dashboard that **observes *and drives*** the agent. One command.
