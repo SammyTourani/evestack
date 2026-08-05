@@ -28,10 +28,16 @@ const REPO_URL = "https://github.com/SammyTourani/evestack";
 /**
  * This contract asks "does the eve under test satisfy the ranges evestack's
  * manifests declare *today*" — a fact about our package.json files, not about
- * eve's API. It is red for every version we do not currently pin, by
- * construction, so the page has to separate it out or the matrix reads as
- * "eve 0.30.5 is broken", which is a lie. Looked up by id and tolerated if
- * absent, so renaming or deleting the contract degrades to "13 API contracts"
+ * eve's API. It cannot hold for any version we do not currently pin, so the
+ * page separates it out or the matrix reads as "eve 0.30.5 is broken", which
+ * is a lie.
+ *
+ * Since it is declared `scope: "repo"`, the runner now skips it outright on a
+ * back-certification run rather than failing it, so these cells read ⊘ instead
+ * of a warning ✗. The separation here is kept anyway: it is what makes the
+ * headline verdict count only contracts that describe eve, and it still holds
+ * if someone drops the scope declaration. Looked up by id and tolerated if
+ * absent, so renaming or deleting the contract degrades to "14 API contracts"
  * rather than crashing.
  */
 const PIN_CONTRACT_ID = "version/installed-satisfies-every-declared-range";
@@ -189,8 +195,14 @@ function cell(entry, id) {
   if (c === undefined) {
     return `<td class="s s-none" title="not run against eve ${esc(entry.eveVersion)}">·</td>`;
   }
-  const failed = c.assertions.filter((a) => !a.passed).length;
   const isPin = id === PIN_CONTRACT_ID;
+  // Must precede the `failed === 0` branch below. A skipped contract records
+  // zero assertions, so falling through would render it as a green tick over
+  // an empty run — the page claiming a check it deliberately did not perform.
+  if (c.status === "skip") {
+    return `<td class="s s-skip" title="${esc(id)} — not run against eve ${esc(entry.eveVersion)}: ${esc(c.skipReason ?? "out of scope for this version")}"><span aria-hidden="true">⊘</span><span class="sr">skipped</span></td>`;
+  }
+  const failed = c.assertions.filter((a) => !a.passed).length;
   if (failed === 0) {
     return `<td class="s s-pass" title="${esc(id)} — ${c.assertions.length} assertions held on eve ${esc(entry.eveVersion)}"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>`;
   }
@@ -388,6 +400,7 @@ td.s b{display:block;font-size:10.5px;font-weight:600;margin-top:3px;letter-spac
 .s-pass{color:var(--ok);background:var(--ok-bg)}
 .s-fail{color:var(--bad);background:var(--bad-bg)}
 .s-pin{color:var(--warn);background:var(--warn-bg)}
+.s-skip{color:var(--faint)}
 .s-none{color:var(--faint)}
 tbody tr:last-child th,tbody tr:last-child td{border-bottom:0}
 tr.overall th.ch{font-weight:600}
@@ -400,6 +413,7 @@ tr.overall td.s,tr.overall th.ch{border-bottom:1px solid var(--line-strong)}
 .key.pass{background:var(--ok-bg);color:var(--ok)}
 .key.fail{background:var(--bad-bg);color:var(--bad)}
 .key.pin{background:var(--warn-bg);color:var(--warn)}
+.key.skip{background:var(--panel);color:var(--faint);border:1px solid var(--line)}
 
 details.vfail{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:0;margin:0 0 14px}
 details.vfail > summary{cursor:pointer;padding:15px 18px;font-size:15px;list-style:none}
@@ -547,6 +561,7 @@ footer p{margin:0 0 6px}
       <span><i class="key pass">✓</i> contract holds</span>
       <span><i class="key fail">✗</i> contract broken — eve changed under us</span>
       <span><i class="key pin">✗</i> version-pin mismatch — not an eve break</span>
+      <span><i class="key skip">⊘</i> not run — describes this repo, not this eve</span>
     </p>
   </section>
 

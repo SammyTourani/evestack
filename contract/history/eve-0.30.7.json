@@ -1,16 +1,16 @@
 {
   "schemaVersion": 1,
-  "eveVersion": "0.30.5",
-  "eveReleasedAt": "2026-08-04T22:32:36.176Z",
+  "eveVersion": "0.30.7",
+  "eveReleasedAt": "2026-08-05T17:29:17.587Z",
   "eveLatestTagAtCertification": "0.30.8",
-  "certifiedAt": "2026-08-05T21:48:11.512Z",
+  "certifiedAt": "2026-08-05T21:48:15.116Z",
   "evestackCommit": "fe15fdb",
   "evestackPin": "^0.30.6",
   "source": {
     "kind": "npm-tarball",
-    "spec": "eve@0.30.5",
-    "tarball": "eve-0.30.5.tgz",
-    "integrity": "sha512-YoAZvQN+dkyIPT5nNp9bYlwhtoOZGM2/VgRXLPy2VfecumROWGYfLI6DbISbc5i4Lo+7m6gxRp+g4oyuMGm19g=="
+    "spec": "eve@0.30.7",
+    "tarball": "eve-0.30.7.tgz",
+    "integrity": "sha512-NqdQz68VwyGnC8LMqiIsEj9fx1QJqyZTEK8ArCtM5aiPH+cuFttmNqHyaCvofB7O+5MMGtW/9hS0ZbkQymXqfw=="
   },
   "ok": true,
   "counts": {
@@ -28,7 +28,7 @@
       "evestackUse": "evestack declares eve in several manifests at once: templates/default pins the version users install, @evestack/composio and @evestack/sandbox-opensandbox declare peer ranges that decide whether npm lets users install them beside their eve, and packages/create-evestack ships templates/default verbatim. A version that satisfies one and not the others produces an install that resolves in this repo and fails at `npx create-evestack` — or, worse, a published peer range that quietly promises support for an eve nothing here has ever been tested against.",
       "file": "contract/contracts/01-version.contract.mjs",
       "status": "skip",
-      "skipReason": "repo-scoped: describes this checkout's install, not eve 0.30.5",
+      "skipReason": "repo-scoped: describes this checkout's install, not eve 0.30.7",
       "assertions": [],
       "crash": null
     },

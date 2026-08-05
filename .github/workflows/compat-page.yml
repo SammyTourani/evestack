@@ -4,30 +4,23 @@ name: Compat page
 # contract/history/, proves the committed page still matches them, and hands
 # the result out as an artifact.
 #
-# ── Read this before adding a deploy step ────────────────────────────────────
+# ── This workflow does not publish, and does not need to ─────────────────────
 #
-# This workflow deliberately does not publish. The site now deploys to Vercel
-# (https://evestack.vercel.app) from packages/website on every push to main, so
-# the old constraint that made publishing hard — Pages replacing the whole site
-# on every deploy — is gone. Publishing is now a one-line choice:
+# The page is live at https://evestack.vercel.app/compat. It gets there from
+# packages/website: `prebuild` runs contract/render-compat.mjs and wraps the
+# output as a module that app/compat/route.ts serves, so the published page is
+# a function of contract/history/ on every deploy rather than a file anyone has
+# to remember to copy. packages/website/tests/smoke.spec.ts fails if /compat
+# stops returning 200 or stops carrying real recorded runs.
 #
-#   A. Preferred. Next copies packages/website/public/** verbatim into the
-#      build, so the page only has to exist there when Vercel builds. Add one
-#      step to packages/website's `prebuild`, or commit the rendered file to
-#      packages/website/public/compat/index.html and let the check below keep
-#      it honest. Either way it is live at /compat with no second deployment.
+# What is left here is the check: this job proves the committed
+# docs-site/compat/index.html still matches the reports, which keeps the
+# in-repo copy honest for anyone reading the repository rather than the site,
+# and hands out a `compat-page` artifact — one self-contained HTML file with no
+# external CSS, JS, fonts or images — for publishing anywhere else.
 #
-#   B. Download this workflow's `compat-page` artifact and publish it anywhere.
-#      It is a single self-contained HTML file with no external CSS, JS, fonts
-#      or images.
-#
-# The reason it is still unpublished is content, not plumbing: contract/history/
-# holds reports for fewer contracts than the suite currently asserts, so the
-# matrix would go public understating what is actually covered. Re-record the
-# history (see contract/history/README.md) before wiring up A.
-#
-# Whichever is chosen, the page's own links assume it is served from a directory
-# (…/compat/), not from the site root.
+# The page's own links assume it is served from a directory (…/compat/), not
+# from the site root.
 
 on:
   push:

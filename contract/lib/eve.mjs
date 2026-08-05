@@ -77,6 +77,18 @@ export const eve = {
   /** The range templates/default pins, for reporting. */
   pin: hostManifest.dependencies?.eve ?? "(unpinned)",
 
+  /**
+   * True when this eve came from EVESTACK_CONTRACT_EVE_DIR rather than from the
+   * repo's own install — i.e. the suite is interrogating some other release on
+   * purpose, which is what `contract/record.mjs` does for every row of the
+   * public compatibility matrix.
+   *
+   * Contracts that describe *this repository's* install rather than eve's
+   * behaviour are meaningless in that mode; the runner skips those. See
+   * `scope: "repo"` in contract/run.mjs.
+   */
+  isOverride: OVERRIDE_DIR !== undefined,
+
   /** Subpaths eve declares in its exports map, e.g. `eve/tools`. */
   declaredSubpaths() {
     return Object.keys(manifest.exports ?? {})

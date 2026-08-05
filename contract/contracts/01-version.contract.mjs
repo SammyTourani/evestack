@@ -11,6 +11,17 @@ import { UnsupportedRangeError, parse, satisfies } from "../lib/semver.mjs";
 export default {
   id: "version/installed-satisfies-every-declared-range",
   title: "the installed eve satisfies every eve range this repo declares",
+
+  /**
+   * The only repo-scoped contract in the suite: every other one asks "does eve
+   * still behave this way", while this one asks "is this checkout's install
+   * self-consistent". That distinction matters when certifying a release we do
+   * not pin — 0.30.2 does not satisfy `^0.30.6` and never will, so running this
+   * against it manufactures a red row that says nothing about 0.30.2. The
+   * runner skips repo-scoped contracts whenever it is pointed at an eve other
+   * than the installed one.
+   */
+  scope: "repo",
   assumption: "One eve version satisfies templates/default, both publishable packages' peer ranges, and the scaffolder.",
   evestackUse:
     "evestack declares eve in several manifests at once: templates/default pins the version users install, " +

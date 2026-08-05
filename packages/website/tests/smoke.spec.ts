@@ -1,11 +1,39 @@
 import { test, expect } from "@playwright/test";
 
+/* @vercel/analytics and @vercel/speed-insights inject <script src="/_vercel/…">
+   tags that only exist inside Vercel's runtime. Served anywhere else — which
+   now includes `pnpm preview`, since the site stopped being a static export —
+   those paths fall through to the 404 page and the browser logs both a failed
+   request and a MIME-type refusal. Four console errors that say nothing about
+   this codebase. */
+const VERCEL_RUNTIME_ONLY = "/_vercel/";
+
+/* Chromium's console text for a failed subresource is just "Failed to load
+   resource: …404…" with no URL in it, so a text filter wide enough to drop the
+   two analytics entries would also swallow a genuinely missing image or font.
+   Missing resources are therefore asserted at the response layer, where the URL
+   is available and only /_vercel/ can be excluded by name. The console
+   assertion keeps everything it can still attribute. */
+function isUnattributable(text: string) {
+  return text.startsWith("Failed to load resource");
+}
+
 test.describe("evestack landing page", () => {
   test("renders every section with no console errors", async ({ page }) => {
     const errors: string[] = [];
+    const missing: string[] = [];
     page.on("pageerror", (err) => errors.push(err.message));
     page.on("console", (msg) => {
-      if (msg.type() === "error") errors.push(msg.text());
+      const text = msg.text();
+      if (msg.type() !== "error") return;
+      if (text.includes(VERCEL_RUNTIME_ONLY) || isUnattributable(text)) return;
+      errors.push(text);
+    });
+    page.on("response", (res) => {
+      if (res.status() < 400) return;
+      const url = new URL(res.url());
+      if (url.pathname.startsWith(VERCEL_RUNTIME_ONLY)) return;
+      missing.push(`${res.status()} ${url.pathname}`);
     });
 
     await page.goto("/");
@@ -29,6 +57,7 @@ test.describe("evestack landing page", () => {
       "infrastructure you own",
     );
     expect(errors).toEqual([]);
+    expect(missing).toEqual([]);
   });
 
   test("command pill copies to clipboard", async ({ page, context }) => {
@@ -111,5 +140,24 @@ test.describe("evestack landing page", () => {
     await expect(page.locator("#compare table")).toBeVisible();
     await expect(page.locator("[data-terminal-line]").first()).toBeVisible();
     await ctx.close();
+  });
+});
+
+/* The compatibility matrix is generated into public/compat by a prebuild step
+   rather than authored as a route, so nothing in the Next build fails if it
+   stops being produced — the page would simply 404 while every other check
+   here stayed green. That is exactly the page whose absence matters most: it
+   is the artifact the whole "certified against every eve release" claim rests
+   on, and it is linked from the docs. */
+test.describe("compatibility matrix", () => {
+  test("is served at /compat and carries real recorded runs", async ({ page }) => {
+    const response = await page.goto("/compat");
+    expect(response?.status()).toBe(200);
+
+    // The version we ship must appear as a certified column, and the release
+    // with the known auth bypass must still be shown as broken. A matrix that
+    // renders but has quietly lost its red row is worse than no matrix.
+    await expect(page.locator("th.vh", { hasText: "0.30.8" }).first()).toBeVisible();
+    await expect(page.locator("td.s-fail").first()).toBeVisible();
   });
 });

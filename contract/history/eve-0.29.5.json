@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "eveVersion": "0.29.5",
   "eveReleasedAt": "2026-08-02T14:03:33.276Z",
-  "eveLatestTagAtCertification": "0.30.6",
-  "certifiedAt": "2026-08-05T06:54:31.689Z",
-  "evestackCommit": "8403aa6",
+  "eveLatestTagAtCertification": "0.30.8",
+  "certifiedAt": "2026-08-05T21:47:59.132Z",
+  "evestackCommit": "fe15fdb",
   "evestackPin": "^0.30.6",
   "source": {
     "kind": "npm-tarball",
@@ -14,10 +14,11 @@
   },
   "ok": false,
   "counts": {
-    "contracts": 13,
-    "failedContracts": 2,
-    "assertions": 169,
-    "failedAssertions": 13
+    "contracts": 15,
+    "failedContracts": 1,
+    "skippedContracts": 1,
+    "assertions": 213,
+    "failedAssertions": 6
   },
   "contracts": [
     {
@@ -26,63 +27,9 @@
       "assumption": "One eve version satisfies templates/default, both publishable packages' peer ranges, and the scaffolder.",
       "evestackUse": "evestack declares eve in several manifests at once: templates/default pins the version users install, @evestack/composio and @evestack/sandbox-opensandbox declare peer ranges that decide whether npm lets users install them beside their eve, and packages/create-evestack ships templates/default verbatim. A version that satisfies one and not the others produces an install that resolves in this repo and fails at `npx create-evestack` — or, worse, a published peer range that quietly promises support for an eve nothing here has ever been tested against.",
       "file": "contract/contracts/01-version.contract.mjs",
-      "status": "fail",
-      "assertions": [
-        {
-          "detail": "eve reports a parseable version (0.29.5)",
-          "passed": true
-        },
-        {
-          "detail": "found 7 declared eve ranges across the repo's manifests",
-          "passed": true
-        },
-        {
-          "detail": "eve 0.29.5 satisfies dependencies.eve = \"^0.30.6\" in templates/default/package.json",
-          "passed": false,
-          "expected": "^0.30.6",
-          "actual": "0.29.5"
-        },
-        {
-          "detail": "eve 0.29.5 satisfies devDependencies.eve = \"^0.30.6\" in packages/evestack-budget/package.json",
-          "passed": false,
-          "expected": "^0.30.6",
-          "actual": "0.29.5"
-        },
-        {
-          "detail": "eve 0.29.5 satisfies peerDependencies.eve = \">=0.30.0 <1.0.0\" in packages/evestack-budget/package.json",
-          "passed": false,
-          "expected": ">=0.30.0 <1.0.0",
-          "actual": "0.29.5"
-        },
-        {
-          "detail": "eve 0.29.5 satisfies devDependencies.eve = \"^0.30.6\" in packages/evestack-composio/package.json",
-          "passed": false,
-          "expected": "^0.30.6",
-          "actual": "0.29.5"
-        },
-        {
-          "detail": "eve 0.29.5 satisfies peerDependencies.eve = \">=0.30.0 <1.0.0\" in packages/evestack-composio/package.json",
-          "passed": false,
-          "expected": ">=0.30.0 <1.0.0",
-          "actual": "0.29.5"
-        },
-        {
-          "detail": "eve 0.29.5 satisfies devDependencies.eve = \"^0.30.6\" in packages/sandbox-opensandbox/package.json",
-          "passed": false,
-          "expected": "^0.30.6",
-          "actual": "0.29.5"
-        },
-        {
-          "detail": "eve 0.29.5 satisfies peerDependencies.eve = \">=0.30.0 <1.0.0\" in packages/sandbox-opensandbox/package.json",
-          "passed": false,
-          "expected": ">=0.30.0 <1.0.0",
-          "actual": "0.29.5"
-        },
-        {
-          "detail": "templates/default declares eve as a direct dependency",
-          "passed": true
-        }
-      ],
+      "status": "skip",
+      "skipReason": "repo-scoped: describes this checkout's install, not eve 0.29.5",
+      "assertions": [],
       "crash": null
     },
     {
@@ -94,7 +41,7 @@
       "status": "pass",
       "assertions": [
         {
-          "detail": "found 14 distinct eve specifiers in evestack's own source",
+          "detail": "found 15 distinct eve specifiers in evestack's own source",
           "passed": true
         },
         {
@@ -146,7 +93,7 @@
           "passed": true
         },
         {
-          "detail": "eve declares \"eve/evals\" in its exports map — imported by packages/dashboard/lib/promote-eval.ts (+4 more)",
+          "detail": "eve declares \"eve/evals\" in its exports map — imported by packages/dashboard/lib/promote-eval.ts (+5 more)",
           "passed": true
         },
         {
@@ -154,7 +101,7 @@
           "passed": true
         },
         {
-          "detail": "eve declares \"eve/evals/expect\" in its exports map — imported by packages/dashboard/lib/promote-eval.ts (+2 more)",
+          "detail": "eve declares \"eve/evals/expect\" in its exports map — imported by templates/default/evals/memory.eval.ts (+1 more)",
           "passed": true
         },
         {
@@ -191,6 +138,14 @@
         },
         {
           "detail": "\"eve/sandbox/docker\" resolves to a file on disk",
+          "passed": true
+        },
+        {
+          "detail": "eve declares \"eve/schedules\" in its exports map — imported by packages/evestack-schedules/src/index.ts (+1 more)",
+          "passed": true
+        },
+        {
+          "detail": "\"eve/schedules\" resolves to a file on disk",
           "passed": true
         },
         {
@@ -265,7 +220,7 @@
           "passed": true
         },
         {
-          "detail": "eve/evals/expect exports `includes` — used by packages/dashboard/lib/promote-eval.ts",
+          "detail": "eve/evals/expect exports `includes` — used by templates/default/evals/memory.eval.ts",
           "passed": true
         },
         {
@@ -282,6 +237,10 @@
         },
         {
           "detail": "eve/sandbox/docker exports `docker` — used by registry/r/docker-sandbox.json → agent/sandbox/sandbox.ts",
+          "passed": true
+        },
+        {
+          "detail": "eve/schedules exports `defineSchedule` — used by packages/evestack-schedules/src/index.ts",
           "passed": true
         },
         {
@@ -524,7 +483,7 @@
           "passed": true
         },
         {
-          "detail": "eve still writes `$eve.root` — read by packages/dashboard/lib/queries.ts",
+          "detail": "eve still writes `$eve.root` — read by packages/dashboard/lib/fleet.ts",
           "passed": true
         },
         {
@@ -532,7 +491,7 @@
           "passed": true
         },
         {
-          "detail": "eve still writes `$eve.title` — read by packages/dashboard/lib/queries.ts",
+          "detail": "eve still writes `$eve.title` — read by packages/dashboard/lib/fleet.ts",
           "passed": true
         },
         {
@@ -540,11 +499,11 @@
           "passed": true
         },
         {
-          "detail": "eve still writes `$eve.trigger` — read by packages/dashboard/lib/queries.ts",
+          "detail": "eve still writes `$eve.trigger` — read by packages/dashboard/lib/fleet.ts",
           "passed": true
         },
         {
-          "detail": "eve still writes `$eve.type` — read by packages/dashboard/lib/queries.ts",
+          "detail": "eve still writes `$eve.type` — read by packages/dashboard/lib/fleet.ts",
           "passed": true
         }
       ],
@@ -860,6 +819,232 @@
         },
         {
           "detail": "SandboxSession still declares `writeFile`",
+          "passed": true
+        }
+      ],
+      "crash": null
+    },
+    {
+      "id": "telemetry/dashboard-span-vocabulary",
+      "title": "every span name and attribute key the dashboard reads is still in eve's tracing code",
+      "assumption": "eve still emits spans named `agent.step` / `ai.streamText.doStream` / `ai.toolCall` carrying `agent.session.id`, `agent.root.session.id`, `agent.turn.id`, `ai.prompt.*` and `gen_ai.tool.*`.",
+      "evestackUse": "packages/dashboard/sql/traces.sql projects agent.session.id, agent.root.session.id and agent.turn.id into GENERATED ALWAYS columns — SQL string literals no compiler can check — and every index and session lookup hangs off them. packages/dashboard/lib/traces.ts filters spans by name to build the trace tree and reads prompts, tool arguments and tool results by attribute key. A rename does not raise: the generated column goes NULL for every row, `listSpansBySession` returns nothing, and the session page shows a completed session with no model calls and no tool calls. lib/promote-eval.ts then has no prompt to promote.",
+      "file": "contract/contracts/14-telemetry.contract.mjs",
+      "status": "pass",
+      "assertions": [
+        {
+          "detail": "found 32 OTel names in packages/dashboard's source",
+          "passed": true
+        },
+        {
+          "detail": "the scan still finds `agent.session.id` — the generated column in sql/traces.sql keys off it",
+          "passed": true
+        },
+        {
+          "detail": "the scan still finds `agent.root.session.id` — the generated column in sql/traces.sql keys off it",
+          "passed": true
+        },
+        {
+          "detail": "the scan still finds `agent.turn.id` — the generated column in sql/traces.sql keys off it",
+          "passed": true
+        },
+        {
+          "detail": "eve still ships dist/src/tracing/agent-otel-provider.js, the module that creates these spans",
+          "passed": true
+        },
+        {
+          "detail": "eve still vendors dist/src/compiled/@ai-sdk/otel/index.js, the exported vocabulary",
+          "passed": true
+        },
+        {
+          "detail": "eve still ships dist/src/harness/instrumentation-runtime-context.js, which names the exported ids",
+          "passed": true
+        },
+        {
+          "detail": "the AI SDK still prefixes context keys with `ai.settings.context.`",
+          "passed": true
+        },
+        {
+          "detail": "an eve span emitter still names `agent.action.call_id` — read by packages/dashboard/lib/traces.ts",
+          "passed": true
+        },
+        {
+          "detail": "an eve span emitter still names `agent.action.name` — read by packages/dashboard/lib/traces.ts",
+          "passed": true
+        },
+        {
+          "detail": "an eve span emitter still names `agent.model.id` — read by packages/dashboard/lib/traces.ts",
+          "passed": true
+        },
+        {
+          "detail": "an eve span emitter still names `agent.root.session.id` — read by packages/dashboard/sql/traces.sql",
+          "passed": true
+        },
+        {
+          "detail": "an eve span emitter still names `agent.session.id` — read by packages/dashboard/sql/traces.sql",
+          "passed": true
+        },
+        {
+          "detail": "an eve span emitter still names `agent.step.index` — read by packages/dashboard/lib/traces.ts",
+          "passed": true
+        },
+        {
+          "detail": "an eve span emitter still names `agent.turn.id` — read by packages/dashboard/sql/traces.sql",
+          "passed": true
+        },
+        {
+          "detail": "an eve span emitter still names `agent.usage.input_tokens` — read by packages/dashboard/lib/traces.ts",
+          "passed": true
+        },
+        {
+          "detail": "an eve span emitter still names `agent.usage.output_tokens` — read by packages/dashboard/lib/traces.ts",
+          "passed": true
+        },
+        {
+          "detail": "an eve span emitter still names `ai.prompt.messages` — read by packages/dashboard/lib/traces.ts",
+          "passed": true
+        },
+        {
+          "detail": "an eve span emitter still names `ai.prompt.system` — read by packages/dashboard/lib/traces.ts",
+          "passed": true
+        },
+        {
+          "detail": "an eve span emitter still names `ai.response.finish_reason` — read by packages/dashboard/lib/traces.ts",
+          "passed": true
+        },
+        {
+          "detail": "an eve span emitter still names `ai.response.text` — read by packages/dashboard/lib/traces.ts",
+          "passed": true
+        },
+        {
+          "detail": "an eve span emitter still names `ai.response.tool_calls` — read by packages/dashboard/lib/traces.ts",
+          "passed": true
+        },
+        {
+          "detail": "an eve span emitter still names `eve.session.id` — read by packages/dashboard/sql/traces.sql",
+          "passed": true
+        },
+        {
+          "detail": "an eve span emitter still names `eve.step.index` — read by packages/dashboard/lib/traces.ts",
+          "passed": true
+        },
+        {
+          "detail": "an eve span emitter still names `eve.turn.id` — read by packages/dashboard/sql/traces.sql",
+          "passed": true
+        },
+        {
+          "detail": "an eve span emitter still names `ai.streamText.doStream` — read by packages/dashboard/lib/traces.ts",
+          "passed": true
+        },
+        {
+          "detail": "an eve span emitter still names `ai.toolCall` — read by packages/dashboard/lib/traces.ts",
+          "passed": true
+        },
+        {
+          "detail": "an eve span emitter still names `gen_ai.input.messages` — read by packages/dashboard/lib/traces.ts",
+          "passed": true
+        },
+        {
+          "detail": "an eve span emitter still names `gen_ai.output.messages` — read by packages/dashboard/lib/traces.ts",
+          "passed": true
+        },
+        {
+          "detail": "an eve span emitter still names `gen_ai.provider.name` — read by packages/dashboard/lib/traces.ts",
+          "passed": true
+        },
+        {
+          "detail": "an eve span emitter still names `gen_ai.request.model` — read by packages/dashboard/lib/traces.ts",
+          "passed": true
+        },
+        {
+          "detail": "an eve span emitter still names `gen_ai.response.finish_reasons` — read by packages/dashboard/lib/traces.ts",
+          "passed": true
+        },
+        {
+          "detail": "an eve span emitter still names `gen_ai.system_instructions` — read by packages/dashboard/lib/traces.ts",
+          "passed": true
+        },
+        {
+          "detail": "an eve span emitter still names `gen_ai.tool.call.arguments` — read by packages/dashboard/lib/traces.ts",
+          "passed": true
+        },
+        {
+          "detail": "an eve span emitter still names `gen_ai.tool.call.id` — read by packages/dashboard/lib/traces.ts",
+          "passed": true
+        },
+        {
+          "detail": "an eve span emitter still names `gen_ai.tool.call.result` — read by packages/dashboard/lib/traces.ts",
+          "passed": true
+        },
+        {
+          "detail": "an eve span emitter still names `gen_ai.tool.name` — read by packages/dashboard/lib/traces.ts",
+          "passed": true
+        },
+        {
+          "detail": "an eve span emitter still names `gen_ai.usage.cache_read.input_tokens` — read by packages/dashboard/lib/traces.ts",
+          "passed": true
+        },
+        {
+          "detail": "an eve span emitter still names `gen_ai.usage.input_tokens` — read by packages/dashboard/lib/traces.ts",
+          "passed": true
+        },
+        {
+          "detail": "an eve span emitter still names `gen_ai.usage.output_tokens` — read by packages/dashboard/lib/traces.ts",
+          "passed": true
+        }
+      ],
+      "crash": null
+    },
+    {
+      "id": "telemetry/agent-spans-reachable-only-from-local-runtime",
+      "title": "eve's agent OTel instrumentation is still installable only by the local trace-spool runtime",
+      "assumption": "`createAgentOtelInstrumentation()` is called only by `installLocalInstrumentationRuntime()`, which is installed only when the app has no `agent/instrumentation.ts` — so authored instrumentation cannot emit the `eve.agent` span family, and eve exposes no public way to install it.",
+      "evestackUse": "A FAILURE HERE IS PROBABLY GOOD NEWS. templates/default/agent/instrumentation.ts exports OTLP to the dashboard, which by this coupling means the dashboard never receives agent.session / agent.turn / agent.step / agent.action spans at all — only workflow plumbing, `ai.eve.turn`, and the AI SDK's gen_ai.* spans, none of which carry agent.session.id. That is why sql/traces.sql's three generated columns are NULL on every live-exported row, why root-session lineage for subagents is unavailable, and why lib/traces.ts reattaches ids by walking parents instead of filtering on them. If eve makes the agent instrumentation reachable from authored instrumentation, adopt it and delete that workaround. If eve instead moves these files, re-derive the coupling before trusting anything the dashboard shows.",
+      "file": "contract/contracts/14-telemetry.contract.mjs",
+      "status": "pass",
+      "assertions": [
+        {
+          "detail": "eve still ships tracing/agent-otel-provider.js",
+          "passed": true
+        },
+        {
+          "detail": "eve still declares createAgentOtelInstrumentation()",
+          "passed": true
+        },
+        {
+          "detail": "createAgentOtelInstrumentation() is still referenced only by its own module and the local runtime",
+          "passed": true
+        },
+        {
+          "detail": "the `eve.agent` tracer is still created only inside the local runtime",
+          "passed": true
+        },
+        {
+          "detail": "the process instrumentation runtime is still published only by the local runtime",
+          "passed": true
+        },
+        {
+          "detail": "installLocalInstrumentationRuntime() is still imported only by the local tracing Nitro plugin",
+          "passed": true
+        },
+        {
+          "detail": "the dev host still knows about the local tracing plugin",
+          "passed": true
+        },
+        {
+          "detail": "the local runtime is still installed only when the app authors no instrumentation",
+          "passed": true
+        },
+        {
+          "detail": "the local tracing plugin is still installed from exactly one place (dev only, never a production build)",
+          "passed": true
+        },
+        {
+          "detail": "eve/instrumentation still exports nothing that installs the agent instrumentation",
+          "passed": true
+        },
+        {
+          "detail": "no public eve specifier resolves into dist/src/tracing",
           "passed": true
         }
       ],

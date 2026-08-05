@@ -47,6 +47,19 @@ template's dependency, and a `devDependencies` plus `peerDependencies` pair on e
 three publishable packages. A bump that updates one manifest and forgets another resolves fine
 here and fails at `npx create-evestack`; this contract fails first instead.
 
+## Every release, not just this one
+
+The table below is the suite against the pinned version. The full matrix — **every published
+eve release** run through the same contracts, with the failing assertions named and each
+tarball's integrity hash recorded — is at **[/compat](/compat)**.
+
+It is generated from `contract/history/*.json`, and those files are written only by
+`contract/record.mjs` running the real suite against a real tarball. Nobody hand-edits a green
+cell into existence. The one red column is `0.29.5`, which fails
+`auth/local-dev-must-not-trust-the-request` — the `Host`-header auth bypass described in
+[Self-hosting](/docs/self-hosting). A compatibility page with nothing red on it is a page
+nobody should believe.
+
 ## What is verified
 
 The suite in `contract/` is deterministic, offline and free: it reads the installed eve

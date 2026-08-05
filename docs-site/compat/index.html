@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>eve compatibility — evestack</title>
-<meta name="description" content="Every published eve release, run through evestack's 13-contract, 169-assertion suite. Green, red, and the exact assertions that failed.">
+<meta name="description" content="Every published eve release, run through evestack's 15-contract, 213-assertion suite. Green, red, and the exact assertions that failed.">
 <meta name="color-scheme" content="light dark">
 <style>
 :root{
@@ -105,6 +105,7 @@ td.s b{display:block;font-size:10.5px;font-weight:600;margin-top:3px;letter-spac
 .s-pass{color:var(--ok);background:var(--ok-bg)}
 .s-fail{color:var(--bad);background:var(--bad-bg)}
 .s-pin{color:var(--warn);background:var(--warn-bg)}
+.s-skip{color:var(--faint)}
 .s-none{color:var(--faint)}
 tbody tr:last-child th,tbody tr:last-child td{border-bottom:0}
 tr.overall th.ch{font-weight:600}
@@ -117,6 +118,7 @@ tr.overall td.s,tr.overall th.ch{border-bottom:1px solid var(--line-strong)}
 .key.pass{background:var(--ok-bg);color:var(--ok)}
 .key.fail{background:var(--bad-bg);color:var(--bad)}
 .key.pin{background:var(--warn-bg);color:var(--warn)}
+.key.skip{background:var(--panel);color:var(--faint);border:1px solid var(--line)}
 
 details.vfail{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:0;margin:0 0 14px}
 details.vfail > summary{cursor:pointer;padding:15px 18px;font-size:15px;list-style:none}
@@ -175,15 +177,15 @@ footer p{margin:0 0 6px}
 <div class="wrap">
 
   <div class="verdict">
-    <h2><span class="dot">●</span> Certified against eve 0.30.6 — npm <code>latest</code></h2>
-    <p>eve published <b>0.30.6</b> on 4 Aug 2026, 23:01 UTC. evestack certified it <b>8h 8m later</b> — 12 API contracts, 159 assertions, <b>all green</b>. templates/default pins <code>^0.30.6</code>.</p>
+    <h2><span class="dot">●</span> Certified against eve 0.30.8 — npm <code>latest</code></h2>
+    <p>eve published <b>0.30.8</b> on 5 Aug 2026, 20:15 UTC. evestack certified it <b>1h 33m later</b> — 14 API contracts, 213 assertions, <b>all green</b>. templates/default pins <code>^0.30.6</code>.</p>
   </div>
 
   <div class="stats">
-    <div class="stat"><span class="n">8</span><span class="l">eve releases tested</span></div>
-    <div class="stat"><span class="n">7</span><span class="l">hold every API contract</span></div>
-    <div class="stat"><span class="n">12</span><span class="l">API contracts</span></div>
-    <div class="stat"><span class="n">169</span><span class="l">assertions per run</span></div>
+    <div class="stat"><span class="n">10</span><span class="l">eve releases tested</span></div>
+    <div class="stat"><span class="n">9</span><span class="l">hold every API contract</span></div>
+    <div class="stat"><span class="n">14</span><span class="l">API contracts</span></div>
+    <div class="stat"><span class="n">213</span><span class="l">assertions per run</span></div>
     <div class="stat"><span class="n">7</span><span class="l">eve releases on 4 Aug 2026 alone</span></div>
   </div>
 
@@ -195,7 +197,7 @@ footer p{margin:0 0 6px}
       either holds or does not. <code>auth/local-dev-must-not-trust-the-request</code>, for instance, hands eve's
       <code>localDev()</code> a request whose <code>Host</code> header claims to be <code>127.evil.com</code> and asserts
       that no principal comes back.</p>
-    <p>There are <b>13</b> of them and <b>169</b> assertions.
+    <p>There are <b>15</b> of them and <b>213</b> assertions.
       The whole suite runs in well under a second: no mocks, no model calls, no network, no database, no Docker. That is
       what makes it affordable to run against every single eve release rather than the one we happen to ship.</p>
 
@@ -215,7 +217,7 @@ footer p{margin:0 0 6px}
     <p>The row marked <em>bookkeeping, not eve</em> asks whether the eve under test satisfies the version ranges
       evestack's own manifests declare <em>today</em>. Every release older than the current pin fails it by
       construction — that is a fact about our <code>package.json</code> files, not about eve. Only the
-      <b>12 API contracts</b> above it describe eve itself, and the headline verdict counts
+      <b>14 API contracts</b> above it describe eve itself, and the headline verdict counts
       those alone.</p>
   </section>
 
@@ -229,8 +231,18 @@ footer p{margin:0 0 6px}
           <tr>
             <th class="corner" scope="col">contract</th>
             <th scope="col" class="vh">
-        <span class="v">0.30.6</span>
+        <span class="v">0.30.8</span>
         <em class="badge badge-now">certified</em><em class="badge">npm latest</em>
+        <span class="vd">certified<br>5 Aug 2026</span>
+      </th>
+            <th scope="col" class="vh">
+        <span class="v">0.30.7</span>
+        
+        <span class="vd">certified<br>5 Aug 2026</span>
+      </th>
+            <th scope="col" class="vh">
+        <span class="v">0.30.6</span>
+        
         <span class="vd">certified<br>5 Aug 2026</span>
       </th>
             <th scope="col" class="vh">
@@ -272,49 +284,57 @@ footer p{margin:0 0 6px}
         </thead>
         <tbody>
           <tr class="overall">
-            <th scope="row" class="ch"><code>API contracts overall</code><span class="ct">all 12 contracts that describe eve</span></th>
-            <td class="s s-pass" title="eve 0.30.6: 159 assertions held"><span aria-hidden="true">✓</span><span class="sr">pass</span><b>159/159</b></td>
-            <td class="s s-pass" title="eve 0.30.5: 159 assertions held"><span aria-hidden="true">✓</span><span class="sr">pass</span><b>159/159</b></td>
-            <td class="s s-pass" title="eve 0.30.4: 159 assertions held"><span aria-hidden="true">✓</span><span class="sr">pass</span><b>159/159</b></td>
-            <td class="s s-pass" title="eve 0.30.3: 159 assertions held"><span aria-hidden="true">✓</span><span class="sr">pass</span><b>159/159</b></td>
-            <td class="s s-pass" title="eve 0.30.2: 159 assertions held"><span aria-hidden="true">✓</span><span class="sr">pass</span><b>159/159</b></td>
-            <td class="s s-pass" title="eve 0.30.1: 159 assertions held"><span aria-hidden="true">✓</span><span class="sr">pass</span><b>159/159</b></td>
-            <td class="s s-pass" title="eve 0.30.0: 159 assertions held"><span aria-hidden="true">✓</span><span class="sr">pass</span><b>159/159</b></td>
-            <td class="s s-fail" title="eve 0.29.5: 1 contracts broken"><span aria-hidden="true">✗</span><span class="sr">fail</span><b>153/159</b></td>
+            <th scope="row" class="ch"><code>API contracts overall</code><span class="ct">all 14 contracts that describe eve</span></th>
+            <td class="s s-pass" title="eve 0.30.8: 213 assertions held"><span aria-hidden="true">✓</span><span class="sr">pass</span><b>213/213</b></td>
+            <td class="s s-pass" title="eve 0.30.7: 213 assertions held"><span aria-hidden="true">✓</span><span class="sr">pass</span><b>213/213</b></td>
+            <td class="s s-pass" title="eve 0.30.6: 213 assertions held"><span aria-hidden="true">✓</span><span class="sr">pass</span><b>213/213</b></td>
+            <td class="s s-pass" title="eve 0.30.5: 213 assertions held"><span aria-hidden="true">✓</span><span class="sr">pass</span><b>213/213</b></td>
+            <td class="s s-pass" title="eve 0.30.4: 213 assertions held"><span aria-hidden="true">✓</span><span class="sr">pass</span><b>213/213</b></td>
+            <td class="s s-pass" title="eve 0.30.3: 213 assertions held"><span aria-hidden="true">✓</span><span class="sr">pass</span><b>213/213</b></td>
+            <td class="s s-pass" title="eve 0.30.2: 213 assertions held"><span aria-hidden="true">✓</span><span class="sr">pass</span><b>213/213</b></td>
+            <td class="s s-pass" title="eve 0.30.1: 213 assertions held"><span aria-hidden="true">✓</span><span class="sr">pass</span><b>213/213</b></td>
+            <td class="s s-pass" title="eve 0.30.0: 213 assertions held"><span aria-hidden="true">✓</span><span class="sr">pass</span><b>213/213</b></td>
+            <td class="s s-fail" title="eve 0.29.5: 1 contracts broken"><span aria-hidden="true">✗</span><span class="sr">fail</span><b>207/213</b></td>
           </tr>
           <tr>
       <th scope="row" class="ch">
         <code>modules/imported-subpaths-resolve</code>
         <span class="ct">every eve subpath evestack imports still exists</span>
       </th>
-      <td class="s s-pass" title="modules/imported-subpaths-resolve — 29 assertions held on eve 0.30.6"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
-      <td class="s s-pass" title="modules/imported-subpaths-resolve — 29 assertions held on eve 0.30.5"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
-      <td class="s s-pass" title="modules/imported-subpaths-resolve — 29 assertions held on eve 0.30.4"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
-      <td class="s s-pass" title="modules/imported-subpaths-resolve — 29 assertions held on eve 0.30.3"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
-      <td class="s s-pass" title="modules/imported-subpaths-resolve — 29 assertions held on eve 0.30.2"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
-      <td class="s s-pass" title="modules/imported-subpaths-resolve — 29 assertions held on eve 0.30.1"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
-      <td class="s s-pass" title="modules/imported-subpaths-resolve — 29 assertions held on eve 0.30.0"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
-      <td class="s s-pass" title="modules/imported-subpaths-resolve — 29 assertions held on eve 0.29.5"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="modules/imported-subpaths-resolve — 31 assertions held on eve 0.30.8"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="modules/imported-subpaths-resolve — 31 assertions held on eve 0.30.7"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="modules/imported-subpaths-resolve — 31 assertions held on eve 0.30.6"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="modules/imported-subpaths-resolve — 31 assertions held on eve 0.30.5"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="modules/imported-subpaths-resolve — 31 assertions held on eve 0.30.4"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="modules/imported-subpaths-resolve — 31 assertions held on eve 0.30.3"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="modules/imported-subpaths-resolve — 31 assertions held on eve 0.30.2"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="modules/imported-subpaths-resolve — 31 assertions held on eve 0.30.1"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="modules/imported-subpaths-resolve — 31 assertions held on eve 0.30.0"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="modules/imported-subpaths-resolve — 31 assertions held on eve 0.29.5"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
     </tr>
           <tr>
       <th scope="row" class="ch">
         <code>modules/imported-values-are-exported</code>
         <span class="ct">every value evestack imports from eve is still exported at runtime</span>
       </th>
-      <td class="s s-pass" title="modules/imported-values-are-exported — 19 assertions held on eve 0.30.6"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
-      <td class="s s-pass" title="modules/imported-values-are-exported — 19 assertions held on eve 0.30.5"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
-      <td class="s s-pass" title="modules/imported-values-are-exported — 19 assertions held on eve 0.30.4"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
-      <td class="s s-pass" title="modules/imported-values-are-exported — 19 assertions held on eve 0.30.3"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
-      <td class="s s-pass" title="modules/imported-values-are-exported — 19 assertions held on eve 0.30.2"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
-      <td class="s s-pass" title="modules/imported-values-are-exported — 19 assertions held on eve 0.30.1"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
-      <td class="s s-pass" title="modules/imported-values-are-exported — 19 assertions held on eve 0.30.0"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
-      <td class="s s-pass" title="modules/imported-values-are-exported — 19 assertions held on eve 0.29.5"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="modules/imported-values-are-exported — 20 assertions held on eve 0.30.8"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="modules/imported-values-are-exported — 20 assertions held on eve 0.30.7"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="modules/imported-values-are-exported — 20 assertions held on eve 0.30.6"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="modules/imported-values-are-exported — 20 assertions held on eve 0.30.5"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="modules/imported-values-are-exported — 20 assertions held on eve 0.30.4"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="modules/imported-values-are-exported — 20 assertions held on eve 0.30.3"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="modules/imported-values-are-exported — 20 assertions held on eve 0.30.2"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="modules/imported-values-are-exported — 20 assertions held on eve 0.30.1"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="modules/imported-values-are-exported — 20 assertions held on eve 0.30.0"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="modules/imported-values-are-exported — 20 assertions held on eve 0.29.5"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
     </tr>
           <tr>
       <th scope="row" class="ch">
         <code>tools/approval-is-the-gating-field</code>
         <span class="ct">`approval` gates tool calls, and its helpers still return the statuses that park a turn</span>
       </th>
+      <td class="s s-pass" title="tools/approval-is-the-gating-field — 12 assertions held on eve 0.30.8"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="tools/approval-is-the-gating-field — 12 assertions held on eve 0.30.7"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
       <td class="s s-pass" title="tools/approval-is-the-gating-field — 12 assertions held on eve 0.30.6"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
       <td class="s s-pass" title="tools/approval-is-the-gating-field — 12 assertions held on eve 0.30.5"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
       <td class="s s-pass" title="tools/approval-is-the-gating-field — 12 assertions held on eve 0.30.4"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
@@ -329,6 +349,8 @@ footer p{margin:0 0 6px}
         <code>tools/approval-survives-defineTool</code>
         <span class="ct">defineTool preserves the approval policy and brands the entry</span>
       </th>
+      <td class="s s-pass" title="tools/approval-survives-defineTool — 2 assertions held on eve 0.30.8"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="tools/approval-survives-defineTool — 2 assertions held on eve 0.30.7"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
       <td class="s s-pass" title="tools/approval-survives-defineTool — 2 assertions held on eve 0.30.6"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
       <td class="s s-pass" title="tools/approval-survives-defineTool — 2 assertions held on eve 0.30.5"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
       <td class="s s-pass" title="tools/approval-survives-defineTool — 2 assertions held on eve 0.30.4"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
@@ -343,6 +365,8 @@ footer p{margin:0 0 6px}
         <code>tools/dynamic-sentinel-and-events</code>
         <span class="ct">defineDynamic still produces the `eve:dynamic` sentinel and still dispatches `step.started`</span>
       </th>
+      <td class="s s-pass" title="tools/dynamic-sentinel-and-events — 10 assertions held on eve 0.30.8"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="tools/dynamic-sentinel-and-events — 10 assertions held on eve 0.30.7"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
       <td class="s s-pass" title="tools/dynamic-sentinel-and-events — 10 assertions held on eve 0.30.6"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
       <td class="s s-pass" title="tools/dynamic-sentinel-and-events — 10 assertions held on eve 0.30.5"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
       <td class="s s-pass" title="tools/dynamic-sentinel-and-events — 10 assertions held on eve 0.30.4"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
@@ -357,6 +381,8 @@ footer p{margin:0 0 6px}
         <code>protocol/http-surface-the-dashboard-drives</code>
         <span class="ct">eve's session routes, stream headers and cancel statuses are unchanged</span>
       </th>
+      <td class="s s-pass" title="protocol/http-surface-the-dashboard-drives — 12 assertions held on eve 0.30.8"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="protocol/http-surface-the-dashboard-drives — 12 assertions held on eve 0.30.7"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
       <td class="s s-pass" title="protocol/http-surface-the-dashboard-drives — 12 assertions held on eve 0.30.6"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
       <td class="s s-pass" title="protocol/http-surface-the-dashboard-drives — 12 assertions held on eve 0.30.5"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
       <td class="s s-pass" title="protocol/http-surface-the-dashboard-drives — 12 assertions held on eve 0.30.4"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
@@ -371,6 +397,8 @@ footer p{margin:0 0 6px}
         <code>attributes/queried-names-still-emitted</code>
         <span class="ct">every $eve.* attribute evestack queries is still produced by eve</span>
       </th>
+      <td class="s s-pass" title="attributes/queried-names-still-emitted — 13 assertions held on eve 0.30.8"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="attributes/queried-names-still-emitted — 13 assertions held on eve 0.30.7"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
       <td class="s s-pass" title="attributes/queried-names-still-emitted — 13 assertions held on eve 0.30.6"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
       <td class="s s-pass" title="attributes/queried-names-still-emitted — 13 assertions held on eve 0.30.5"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
       <td class="s s-pass" title="attributes/queried-names-still-emitted — 13 assertions held on eve 0.30.4"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
@@ -385,6 +413,8 @@ footer p{margin:0 0 6px}
         <code>attributes/run-type-discriminator</code>
         <span class="ct">$eve.type still distinguishes session, turn and subagent runs</span>
       </th>
+      <td class="s s-pass" title="attributes/run-type-discriminator — 12 assertions held on eve 0.30.8"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="attributes/run-type-discriminator — 12 assertions held on eve 0.30.7"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
       <td class="s s-pass" title="attributes/run-type-discriminator — 12 assertions held on eve 0.30.6"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
       <td class="s s-pass" title="attributes/run-type-discriminator — 12 assertions held on eve 0.30.5"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
       <td class="s s-pass" title="attributes/run-type-discriminator — 12 assertions held on eve 0.30.4"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
@@ -399,6 +429,8 @@ footer p{margin:0 0 6px}
         <code>auth/local-dev-must-not-trust-the-request</code>
         <span class="ct">localDev() grants on process state, never on anything the caller controls</span>
       </th>
+      <td class="s s-pass" title="auth/local-dev-must-not-trust-the-request — 9 assertions held on eve 0.30.8"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="auth/local-dev-must-not-trust-the-request — 9 assertions held on eve 0.30.7"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
       <td class="s s-pass" title="auth/local-dev-must-not-trust-the-request — 9 assertions held on eve 0.30.6"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
       <td class="s s-pass" title="auth/local-dev-must-not-trust-the-request — 9 assertions held on eve 0.30.5"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
       <td class="s s-pass" title="auth/local-dev-must-not-trust-the-request — 9 assertions held on eve 0.30.4"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
@@ -413,6 +445,8 @@ footer p{margin:0 0 6px}
         <code>auth/http-basic-fails-closed</code>
         <span class="ct">httpBasic() rejects missing and wrong credentials</span>
       </th>
+      <td class="s s-pass" title="auth/http-basic-fails-closed — 5 assertions held on eve 0.30.8"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="auth/http-basic-fails-closed — 5 assertions held on eve 0.30.7"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
       <td class="s s-pass" title="auth/http-basic-fails-closed — 5 assertions held on eve 0.30.6"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
       <td class="s s-pass" title="auth/http-basic-fails-closed — 5 assertions held on eve 0.30.5"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
       <td class="s s-pass" title="auth/http-basic-fails-closed — 5 assertions held on eve 0.30.4"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
@@ -427,6 +461,8 @@ footer p{margin:0 0 6px}
         <code>hooks/observe-only-and-event-names</code>
         <span class="ct">hook handlers stay side-effect-only, and the events evestack watches still exist</span>
       </th>
+      <td class="s s-pass" title="hooks/observe-only-and-event-names — 11 assertions held on eve 0.30.8"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="hooks/observe-only-and-event-names — 11 assertions held on eve 0.30.7"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
       <td class="s s-pass" title="hooks/observe-only-and-event-names — 11 assertions held on eve 0.30.6"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
       <td class="s s-pass" title="hooks/observe-only-and-event-names — 11 assertions held on eve 0.30.5"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
       <td class="s s-pass" title="hooks/observe-only-and-event-names — 11 assertions held on eve 0.30.4"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
@@ -441,6 +477,8 @@ footer p{margin:0 0 6px}
         <code>sandbox/backend-interface-is-structurally-stable</code>
         <span class="ct">eve's SandboxBackend still has the shape @evestack/sandbox-opensandbox duck-types</span>
       </th>
+      <td class="s s-pass" title="sandbox/backend-interface-is-structurally-stable — 25 assertions held on eve 0.30.8"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="sandbox/backend-interface-is-structurally-stable — 25 assertions held on eve 0.30.7"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
       <td class="s s-pass" title="sandbox/backend-interface-is-structurally-stable — 25 assertions held on eve 0.30.6"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
       <td class="s s-pass" title="sandbox/backend-interface-is-structurally-stable — 25 assertions held on eve 0.30.5"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
       <td class="s s-pass" title="sandbox/backend-interface-is-structurally-stable — 25 assertions held on eve 0.30.4"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
@@ -450,19 +488,53 @@ footer p{margin:0 0 6px}
       <td class="s s-pass" title="sandbox/backend-interface-is-structurally-stable — 25 assertions held on eve 0.30.0"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
       <td class="s s-pass" title="sandbox/backend-interface-is-structurally-stable — 25 assertions held on eve 0.29.5"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
     </tr>
+          <tr>
+      <th scope="row" class="ch">
+        <code>telemetry/dashboard-span-vocabulary</code>
+        <span class="ct">every span name and attribute key the dashboard reads is still in eve's tracing code</span>
+      </th>
+      <td class="s s-pass" title="telemetry/dashboard-span-vocabulary — 40 assertions held on eve 0.30.8"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="telemetry/dashboard-span-vocabulary — 40 assertions held on eve 0.30.7"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="telemetry/dashboard-span-vocabulary — 40 assertions held on eve 0.30.6"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="telemetry/dashboard-span-vocabulary — 40 assertions held on eve 0.30.5"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="telemetry/dashboard-span-vocabulary — 40 assertions held on eve 0.30.4"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="telemetry/dashboard-span-vocabulary — 40 assertions held on eve 0.30.3"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="telemetry/dashboard-span-vocabulary — 40 assertions held on eve 0.30.2"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="telemetry/dashboard-span-vocabulary — 40 assertions held on eve 0.30.1"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="telemetry/dashboard-span-vocabulary — 40 assertions held on eve 0.30.0"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="telemetry/dashboard-span-vocabulary — 40 assertions held on eve 0.29.5"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+    </tr>
+          <tr>
+      <th scope="row" class="ch">
+        <code>telemetry/agent-spans-reachable-only-from-local-runtime</code>
+        <span class="ct">eve's agent OTel instrumentation is still installable only by the local trace-spool runtime</span>
+      </th>
+      <td class="s s-pass" title="telemetry/agent-spans-reachable-only-from-local-runtime — 11 assertions held on eve 0.30.8"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="telemetry/agent-spans-reachable-only-from-local-runtime — 11 assertions held on eve 0.30.7"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="telemetry/agent-spans-reachable-only-from-local-runtime — 11 assertions held on eve 0.30.6"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="telemetry/agent-spans-reachable-only-from-local-runtime — 11 assertions held on eve 0.30.5"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="telemetry/agent-spans-reachable-only-from-local-runtime — 11 assertions held on eve 0.30.4"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="telemetry/agent-spans-reachable-only-from-local-runtime — 11 assertions held on eve 0.30.3"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="telemetry/agent-spans-reachable-only-from-local-runtime — 11 assertions held on eve 0.30.2"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="telemetry/agent-spans-reachable-only-from-local-runtime — 11 assertions held on eve 0.30.1"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="telemetry/agent-spans-reachable-only-from-local-runtime — 11 assertions held on eve 0.30.0"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+      <td class="s s-pass" title="telemetry/agent-spans-reachable-only-from-local-runtime — 11 assertions held on eve 0.29.5"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
+    </tr>
           <tr class="row-pin">
       <th scope="row" class="ch">
         <code>version/installed-satisfies-every-declared-range</code><em class="badge badge-pin">bookkeeping, not eve</em>
         <span class="ct">the installed eve satisfies every eve range this repo declares</span>
       </th>
-      <td class="s s-pass" title="version/installed-satisfies-every-declared-range — 10 assertions held on eve 0.30.6"><span aria-hidden="true">✓</span><span class="sr">pass</span></td>
-      <td class="s s-pin" title="version/installed-satisfies-every-declared-range — 4 of 10 assertions failed on eve 0.30.5"><span aria-hidden="true">✗</span><span class="sr">pin mismatch</span><b>4/10</b></td>
-      <td class="s s-pin" title="version/installed-satisfies-every-declared-range — 4 of 10 assertions failed on eve 0.30.4"><span aria-hidden="true">✗</span><span class="sr">pin mismatch</span><b>4/10</b></td>
-      <td class="s s-pin" title="version/installed-satisfies-every-declared-range — 4 of 10 assertions failed on eve 0.30.3"><span aria-hidden="true">✗</span><span class="sr">pin mismatch</span><b>4/10</b></td>
-      <td class="s s-pin" title="version/installed-satisfies-every-declared-range — 4 of 10 assertions failed on eve 0.30.2"><span aria-hidden="true">✗</span><span class="sr">pin mismatch</span><b>4/10</b></td>
-      <td class="s s-pin" title="version/installed-satisfies-every-declared-range — 4 of 10 assertions failed on eve 0.30.1"><span aria-hidden="true">✗</span><span class="sr">pin mismatch</span><b>4/10</b></td>
-      <td class="s s-pin" title="version/installed-satisfies-every-declared-range — 4 of 10 assertions failed on eve 0.30.0"><span aria-hidden="true">✗</span><span class="sr">pin mismatch</span><b>4/10</b></td>
-      <td class="s s-pin" title="version/installed-satisfies-every-declared-range — 7 of 10 assertions failed on eve 0.29.5"><span aria-hidden="true">✗</span><span class="sr">pin mismatch</span><b>7/10</b></td>
+      <td class="s s-skip" title="version/installed-satisfies-every-declared-range — not run against eve 0.30.8: repo-scoped: describes this checkout's install, not eve 0.30.8"><span aria-hidden="true">⊘</span><span class="sr">skipped</span></td>
+      <td class="s s-skip" title="version/installed-satisfies-every-declared-range — not run against eve 0.30.7: repo-scoped: describes this checkout's install, not eve 0.30.7"><span aria-hidden="true">⊘</span><span class="sr">skipped</span></td>
+      <td class="s s-skip" title="version/installed-satisfies-every-declared-range — not run against eve 0.30.6: repo-scoped: describes this checkout's install, not eve 0.30.6"><span aria-hidden="true">⊘</span><span class="sr">skipped</span></td>
+      <td class="s s-skip" title="version/installed-satisfies-every-declared-range — not run against eve 0.30.5: repo-scoped: describes this checkout's install, not eve 0.30.5"><span aria-hidden="true">⊘</span><span class="sr">skipped</span></td>
+      <td class="s s-skip" title="version/installed-satisfies-every-declared-range — not run against eve 0.30.4: repo-scoped: describes this checkout's install, not eve 0.30.4"><span aria-hidden="true">⊘</span><span class="sr">skipped</span></td>
+      <td class="s s-skip" title="version/installed-satisfies-every-declared-range — not run against eve 0.30.3: repo-scoped: describes this checkout's install, not eve 0.30.3"><span aria-hidden="true">⊘</span><span class="sr">skipped</span></td>
+      <td class="s s-skip" title="version/installed-satisfies-every-declared-range — not run against eve 0.30.2: repo-scoped: describes this checkout's install, not eve 0.30.2"><span aria-hidden="true">⊘</span><span class="sr">skipped</span></td>
+      <td class="s s-skip" title="version/installed-satisfies-every-declared-range — not run against eve 0.30.1: repo-scoped: describes this checkout's install, not eve 0.30.1"><span aria-hidden="true">⊘</span><span class="sr">skipped</span></td>
+      <td class="s s-skip" title="version/installed-satisfies-every-declared-range — not run against eve 0.30.0: repo-scoped: describes this checkout's install, not eve 0.30.0"><span aria-hidden="true">⊘</span><span class="sr">skipped</span></td>
+      <td class="s s-skip" title="version/installed-satisfies-every-declared-range — not run against eve 0.29.5: repo-scoped: describes this checkout's install, not eve 0.29.5"><span aria-hidden="true">⊘</span><span class="sr">skipped</span></td>
     </tr>
         </tbody>
       </table>
@@ -471,6 +543,7 @@ footer p{margin:0 0 6px}
       <span><i class="key pass">✓</i> contract holds</span>
       <span><i class="key fail">✗</i> contract broken — eve changed under us</span>
       <span><i class="key pin">✗</i> version-pin mismatch — not an eve break</span>
+      <span><i class="key skip">⊘</i> not run — describes this repo, not this eve</span>
     </p>
   </section>
 
@@ -493,111 +566,6 @@ footer p{margin:0 0 6px}
           </ul>
           <p class="blast"><b>What this breaks in evestack:</b> templates/default/agent/channels/eve.ts puts `localDev()` first in the auth chain of every scaffolded agent, so that `eve dev` needs no credentials on your own machine, with HTTP Basic underneath it for everything else. Every evestack agent is therefore exactly as exposed as localDev() is permissive. If eve reintroduces a request-derived grant, anyone who can reach the agent's port gets an unauthenticated local-dev principal — full session creation, full tool execution — by sending a Host header. That is a remote authentication bypass in the default template, and it is what eve 0.29.5 actually shipped. See the long comment in that file for the history.</p>
           <p class="where">Defined in <code>contract/contracts/07-auth.contract.mjs</code>.</p>
-        </article>
-        <article class="broken broken-pin">
-          <h4><code>version/installed-satisfies-every-declared-range</code> <span class="tally">7 of 10 assertions failed</span></h4>
-          <p class="assume"><b>What evestack assumed:</b> One eve version satisfies templates/default, both publishable packages' peer ranges, and the scaffolder.</p>
-          <ul class="failed">
-            <li><span class="x" aria-hidden="true">✗</span> eve 0.29.5 satisfies dependencies.eve = &quot;^0.30.6&quot; in templates/default/package.json<span class="diff"><span class="exp">expected</span> <code>^0.30.6</code><span class="act">actual</span> <code>0.29.5</code></span></li>
-            <li><span class="x" aria-hidden="true">✗</span> eve 0.29.5 satisfies devDependencies.eve = &quot;^0.30.6&quot; in packages/evestack-budget/package.json<span class="diff"><span class="exp">expected</span> <code>^0.30.6</code><span class="act">actual</span> <code>0.29.5</code></span></li>
-            <li><span class="x" aria-hidden="true">✗</span> eve 0.29.5 satisfies peerDependencies.eve = &quot;&gt;=0.30.0 &lt;1.0.0&quot; in packages/evestack-budget/package.json<span class="diff"><span class="exp">expected</span> <code>&gt;=0.30.0 &lt;1.0.0</code><span class="act">actual</span> <code>0.29.5</code></span></li>
-            <li><span class="x" aria-hidden="true">✗</span> eve 0.29.5 satisfies devDependencies.eve = &quot;^0.30.6&quot; in packages/evestack-composio/package.json<span class="diff"><span class="exp">expected</span> <code>^0.30.6</code><span class="act">actual</span> <code>0.29.5</code></span></li>
-            <li><span class="x" aria-hidden="true">✗</span> eve 0.29.5 satisfies peerDependencies.eve = &quot;&gt;=0.30.0 &lt;1.0.0&quot; in packages/evestack-composio/package.json<span class="diff"><span class="exp">expected</span> <code>&gt;=0.30.0 &lt;1.0.0</code><span class="act">actual</span> <code>0.29.5</code></span></li>
-            <li><span class="x" aria-hidden="true">✗</span> eve 0.29.5 satisfies devDependencies.eve = &quot;^0.30.6&quot; in packages/sandbox-opensandbox/package.json<span class="diff"><span class="exp">expected</span> <code>^0.30.6</code><span class="act">actual</span> <code>0.29.5</code></span></li>
-            <li><span class="x" aria-hidden="true">✗</span> eve 0.29.5 satisfies peerDependencies.eve = &quot;&gt;=0.30.0 &lt;1.0.0&quot; in packages/sandbox-opensandbox/package.json<span class="diff"><span class="exp">expected</span> <code>&gt;=0.30.0 &lt;1.0.0</code><span class="act">actual</span> <code>0.29.5</code></span></li>
-          </ul>
-          <p class="blast"><b>Why this is not an eve break:</b> this contract compares the eve under test against the ranges evestack's own manifests declare right now (<code>^0.30.6</code>). Every older release fails it the moment we bump the pin. It is on this page for completeness, not as a verdict on eve 0.29.5.</p>
-          <p class="where">Defined in <code>contract/contracts/01-version.contract.mjs</code>.</p>
-        </article>
-      </details>
-    <details class="vfail">
-        <summary><b>eve 0.30.5</b> <span class="pill pill-pin">pin only</span> every API contract held — this is simply not the version evestack pins today</summary>
-        <article class="broken broken-pin">
-          <h4><code>version/installed-satisfies-every-declared-range</code> <span class="tally">4 of 10 assertions failed</span></h4>
-          <p class="assume"><b>What evestack assumed:</b> One eve version satisfies templates/default, both publishable packages' peer ranges, and the scaffolder.</p>
-          <ul class="failed">
-            <li><span class="x" aria-hidden="true">✗</span> eve 0.30.5 satisfies dependencies.eve = &quot;^0.30.6&quot; in templates/default/package.json<span class="diff"><span class="exp">expected</span> <code>^0.30.6</code><span class="act">actual</span> <code>0.30.5</code></span></li>
-            <li><span class="x" aria-hidden="true">✗</span> eve 0.30.5 satisfies devDependencies.eve = &quot;^0.30.6&quot; in packages/evestack-budget/package.json<span class="diff"><span class="exp">expected</span> <code>^0.30.6</code><span class="act">actual</span> <code>0.30.5</code></span></li>
-            <li><span class="x" aria-hidden="true">✗</span> eve 0.30.5 satisfies devDependencies.eve = &quot;^0.30.6&quot; in packages/evestack-composio/package.json<span class="diff"><span class="exp">expected</span> <code>^0.30.6</code><span class="act">actual</span> <code>0.30.5</code></span></li>
-            <li><span class="x" aria-hidden="true">✗</span> eve 0.30.5 satisfies devDependencies.eve = &quot;^0.30.6&quot; in packages/sandbox-opensandbox/package.json<span class="diff"><span class="exp">expected</span> <code>^0.30.6</code><span class="act">actual</span> <code>0.30.5</code></span></li>
-          </ul>
-          <p class="blast"><b>Why this is not an eve break:</b> this contract compares the eve under test against the ranges evestack's own manifests declare right now (<code>^0.30.6</code>). Every older release fails it the moment we bump the pin. It is on this page for completeness, not as a verdict on eve 0.30.5.</p>
-          <p class="where">Defined in <code>contract/contracts/01-version.contract.mjs</code>.</p>
-        </article>
-      </details>
-    <details class="vfail">
-        <summary><b>eve 0.30.4</b> <span class="pill pill-pin">pin only</span> every API contract held — this is simply not the version evestack pins today</summary>
-        <article class="broken broken-pin">
-          <h4><code>version/installed-satisfies-every-declared-range</code> <span class="tally">4 of 10 assertions failed</span></h4>
-          <p class="assume"><b>What evestack assumed:</b> One eve version satisfies templates/default, both publishable packages' peer ranges, and the scaffolder.</p>
-          <ul class="failed">
-            <li><span class="x" aria-hidden="true">✗</span> eve 0.30.4 satisfies dependencies.eve = &quot;^0.30.6&quot; in templates/default/package.json<span class="diff"><span class="exp">expected</span> <code>^0.30.6</code><span class="act">actual</span> <code>0.30.4</code></span></li>
-            <li><span class="x" aria-hidden="true">✗</span> eve 0.30.4 satisfies devDependencies.eve = &quot;^0.30.6&quot; in packages/evestack-budget/package.json<span class="diff"><span class="exp">expected</span> <code>^0.30.6</code><span class="act">actual</span> <code>0.30.4</code></span></li>
-            <li><span class="x" aria-hidden="true">✗</span> eve 0.30.4 satisfies devDependencies.eve = &quot;^0.30.6&quot; in packages/evestack-composio/package.json<span class="diff"><span class="exp">expected</span> <code>^0.30.6</code><span class="act">actual</span> <code>0.30.4</code></span></li>
-            <li><span class="x" aria-hidden="true">✗</span> eve 0.30.4 satisfies devDependencies.eve = &quot;^0.30.6&quot; in packages/sandbox-opensandbox/package.json<span class="diff"><span class="exp">expected</span> <code>^0.30.6</code><span class="act">actual</span> <code>0.30.4</code></span></li>
-          </ul>
-          <p class="blast"><b>Why this is not an eve break:</b> this contract compares the eve under test against the ranges evestack's own manifests declare right now (<code>^0.30.6</code>). Every older release fails it the moment we bump the pin. It is on this page for completeness, not as a verdict on eve 0.30.4.</p>
-          <p class="where">Defined in <code>contract/contracts/01-version.contract.mjs</code>.</p>
-        </article>
-      </details>
-    <details class="vfail">
-        <summary><b>eve 0.30.3</b> <span class="pill pill-pin">pin only</span> every API contract held — this is simply not the version evestack pins today</summary>
-        <article class="broken broken-pin">
-          <h4><code>version/installed-satisfies-every-declared-range</code> <span class="tally">4 of 10 assertions failed</span></h4>
-          <p class="assume"><b>What evestack assumed:</b> One eve version satisfies templates/default, both publishable packages' peer ranges, and the scaffolder.</p>
-          <ul class="failed">
-            <li><span class="x" aria-hidden="true">✗</span> eve 0.30.3 satisfies dependencies.eve = &quot;^0.30.6&quot; in templates/default/package.json<span class="diff"><span class="exp">expected</span> <code>^0.30.6</code><span class="act">actual</span> <code>0.30.3</code></span></li>
-            <li><span class="x" aria-hidden="true">✗</span> eve 0.30.3 satisfies devDependencies.eve = &quot;^0.30.6&quot; in packages/evestack-budget/package.json<span class="diff"><span class="exp">expected</span> <code>^0.30.6</code><span class="act">actual</span> <code>0.30.3</code></span></li>
-            <li><span class="x" aria-hidden="true">✗</span> eve 0.30.3 satisfies devDependencies.eve = &quot;^0.30.6&quot; in packages/evestack-composio/package.json<span class="diff"><span class="exp">expected</span> <code>^0.30.6</code><span class="act">actual</span> <code>0.30.3</code></span></li>
-            <li><span class="x" aria-hidden="true">✗</span> eve 0.30.3 satisfies devDependencies.eve = &quot;^0.30.6&quot; in packages/sandbox-opensandbox/package.json<span class="diff"><span class="exp">expected</span> <code>^0.30.6</code><span class="act">actual</span> <code>0.30.3</code></span></li>
-          </ul>
-          <p class="blast"><b>Why this is not an eve break:</b> this contract compares the eve under test against the ranges evestack's own manifests declare right now (<code>^0.30.6</code>). Every older release fails it the moment we bump the pin. It is on this page for completeness, not as a verdict on eve 0.30.3.</p>
-          <p class="where">Defined in <code>contract/contracts/01-version.contract.mjs</code>.</p>
-        </article>
-      </details>
-    <details class="vfail">
-        <summary><b>eve 0.30.2</b> <span class="pill pill-pin">pin only</span> every API contract held — this is simply not the version evestack pins today</summary>
-        <article class="broken broken-pin">
-          <h4><code>version/installed-satisfies-every-declared-range</code> <span class="tally">4 of 10 assertions failed</span></h4>
-          <p class="assume"><b>What evestack assumed:</b> One eve version satisfies templates/default, both publishable packages' peer ranges, and the scaffolder.</p>
-          <ul class="failed">
-            <li><span class="x" aria-hidden="true">✗</span> eve 0.30.2 satisfies dependencies.eve = &quot;^0.30.6&quot; in templates/default/package.json<span class="diff"><span class="exp">expected</span> <code>^0.30.6</code><span class="act">actual</span> <code>0.30.2</code></span></li>
-            <li><span class="x" aria-hidden="true">✗</span> eve 0.30.2 satisfies devDependencies.eve = &quot;^0.30.6&quot; in packages/evestack-budget/package.json<span class="diff"><span class="exp">expected</span> <code>^0.30.6</code><span class="act">actual</span> <code>0.30.2</code></span></li>
-            <li><span class="x" aria-hidden="true">✗</span> eve 0.30.2 satisfies devDependencies.eve = &quot;^0.30.6&quot; in packages/evestack-composio/package.json<span class="diff"><span class="exp">expected</span> <code>^0.30.6</code><span class="act">actual</span> <code>0.30.2</code></span></li>
-            <li><span class="x" aria-hidden="true">✗</span> eve 0.30.2 satisfies devDependencies.eve = &quot;^0.30.6&quot; in packages/sandbox-opensandbox/package.json<span class="diff"><span class="exp">expected</span> <code>^0.30.6</code><span class="act">actual</span> <code>0.30.2</code></span></li>
-          </ul>
-          <p class="blast"><b>Why this is not an eve break:</b> this contract compares the eve under test against the ranges evestack's own manifests declare right now (<code>^0.30.6</code>). Every older release fails it the moment we bump the pin. It is on this page for completeness, not as a verdict on eve 0.30.2.</p>
-          <p class="where">Defined in <code>contract/contracts/01-version.contract.mjs</code>.</p>
-        </article>
-      </details>
-    <details class="vfail">
-        <summary><b>eve 0.30.1</b> <span class="pill pill-pin">pin only</span> every API contract held — this is simply not the version evestack pins today</summary>
-        <article class="broken broken-pin">
-          <h4><code>version/installed-satisfies-every-declared-range</code> <span class="tally">4 of 10 assertions failed</span></h4>
-          <p class="assume"><b>What evestack assumed:</b> One eve version satisfies templates/default, both publishable packages' peer ranges, and the scaffolder.</p>
-          <ul class="failed">
-            <li><span class="x" aria-hidden="true">✗</span> eve 0.30.1 satisfies dependencies.eve = &quot;^0.30.6&quot; in templates/default/package.json<span class="diff"><span class="exp">expected</span> <code>^0.30.6</code><span class="act">actual</span> <code>0.30.1</code></span></li>
-            <li><span class="x" aria-hidden="true">✗</span> eve 0.30.1 satisfies devDependencies.eve = &quot;^0.30.6&quot; in packages/evestack-budget/package.json<span class="diff"><span class="exp">expected</span> <code>^0.30.6</code><span class="act">actual</span> <code>0.30.1</code></span></li>
-            <li><span class="x" aria-hidden="true">✗</span> eve 0.30.1 satisfies devDependencies.eve = &quot;^0.30.6&quot; in packages/evestack-composio/package.json<span class="diff"><span class="exp">expected</span> <code>^0.30.6</code><span class="act">actual</span> <code>0.30.1</code></span></li>
-            <li><span class="x" aria-hidden="true">✗</span> eve 0.30.1 satisfies devDependencies.eve = &quot;^0.30.6&quot; in packages/sandbox-opensandbox/package.json<span class="diff"><span class="exp">expected</span> <code>^0.30.6</code><span class="act">actual</span> <code>0.30.1</code></span></li>
-          </ul>
-          <p class="blast"><b>Why this is not an eve break:</b> this contract compares the eve under test against the ranges evestack's own manifests declare right now (<code>^0.30.6</code>). Every older release fails it the moment we bump the pin. It is on this page for completeness, not as a verdict on eve 0.30.1.</p>
-          <p class="where">Defined in <code>contract/contracts/01-version.contract.mjs</code>.</p>
-        </article>
-      </details>
-    <details class="vfail">
-        <summary><b>eve 0.30.0</b> <span class="pill pill-pin">pin only</span> every API contract held — this is simply not the version evestack pins today</summary>
-        <article class="broken broken-pin">
-          <h4><code>version/installed-satisfies-every-declared-range</code> <span class="tally">4 of 10 assertions failed</span></h4>
-          <p class="assume"><b>What evestack assumed:</b> One eve version satisfies templates/default, both publishable packages' peer ranges, and the scaffolder.</p>
-          <ul class="failed">
-            <li><span class="x" aria-hidden="true">✗</span> eve 0.30.0 satisfies dependencies.eve = &quot;^0.30.6&quot; in templates/default/package.json<span class="diff"><span class="exp">expected</span> <code>^0.30.6</code><span class="act">actual</span> <code>0.30.0</code></span></li>
-            <li><span class="x" aria-hidden="true">✗</span> eve 0.30.0 satisfies devDependencies.eve = &quot;^0.30.6&quot; in packages/evestack-budget/package.json<span class="diff"><span class="exp">expected</span> <code>^0.30.6</code><span class="act">actual</span> <code>0.30.0</code></span></li>
-            <li><span class="x" aria-hidden="true">✗</span> eve 0.30.0 satisfies devDependencies.eve = &quot;^0.30.6&quot; in packages/evestack-composio/package.json<span class="diff"><span class="exp">expected</span> <code>^0.30.6</code><span class="act">actual</span> <code>0.30.0</code></span></li>
-            <li><span class="x" aria-hidden="true">✗</span> eve 0.30.0 satisfies devDependencies.eve = &quot;^0.30.6&quot; in packages/sandbox-opensandbox/package.json<span class="diff"><span class="exp">expected</span> <code>^0.30.6</code><span class="act">actual</span> <code>0.30.0</code></span></li>
-          </ul>
-          <p class="blast"><b>Why this is not an eve break:</b> this contract compares the eve under test against the ranges evestack's own manifests declare right now (<code>^0.30.6</code>). Every older release fails it the moment we bump the pin. It is on this page for completeness, not as a verdict on eve 0.30.0.</p>
-          <p class="where">Defined in <code>contract/contracts/01-version.contract.mjs</code>.</p>
         </article>
       </details>
   </section>
@@ -626,59 +594,73 @@ node contract/render-compat.mjs</code></pre>
       </thead>
       <tbody>
         <tr>
+          <td class="ver">0.30.8</td>
+          <td>5 Aug 2026, 20:15 UTC</td>
+          <td>5 Aug 2026, 21:48 UTC</td>
+          <td class="mono">fe15fdb</td>
+          <td class="mono">sha512-ATF9CHJQBNce7+3leWH87w6Cc7TlsNlfpGAENzmkD4d7oBpSI+P7KB3cvtGM75t+9gT+nJ0R+u7u8hF8BJdBiw==</td>
+        </tr>
+        <tr>
+          <td class="ver">0.30.7</td>
+          <td>5 Aug 2026, 17:29 UTC</td>
+          <td>5 Aug 2026, 21:48 UTC</td>
+          <td class="mono">fe15fdb</td>
+          <td class="mono">sha512-NqdQz68VwyGnC8LMqiIsEj9fx1QJqyZTEK8ArCtM5aiPH+cuFttmNqHyaCvofB7O+5MMGtW/9hS0ZbkQymXqfw==</td>
+        </tr>
+        <tr>
           <td class="ver">0.30.6</td>
           <td>4 Aug 2026, 23:01 UTC</td>
-          <td>5 Aug 2026, 07:09 UTC</td>
-          <td class="mono">dcd6e1e</td>
+          <td>5 Aug 2026, 21:48 UTC</td>
+          <td class="mono">fe15fdb</td>
           <td class="mono">sha512-sSO04d1vcPtI/Nf3nQfUAfIG7BrZNLih1Kr70Fab87llaIjGQOwXs0C5LYSfTnrdcZwD+wEWjZ8EDhFIQcp6Ig==</td>
         </tr>
         <tr>
           <td class="ver">0.30.5</td>
           <td>4 Aug 2026, 22:32 UTC</td>
-          <td>5 Aug 2026, 06:54 UTC</td>
-          <td class="mono">8403aa6</td>
+          <td>5 Aug 2026, 21:48 UTC</td>
+          <td class="mono">fe15fdb</td>
           <td class="mono">sha512-YoAZvQN+dkyIPT5nNp9bYlwhtoOZGM2/VgRXLPy2VfecumROWGYfLI6DbISbc5i4Lo+7m6gxRp+g4oyuMGm19g==</td>
         </tr>
         <tr>
           <td class="ver">0.30.4</td>
           <td>4 Aug 2026, 21:00 UTC</td>
-          <td>5 Aug 2026, 06:54 UTC</td>
-          <td class="mono">8403aa6</td>
+          <td>5 Aug 2026, 21:48 UTC</td>
+          <td class="mono">fe15fdb</td>
           <td class="mono">sha512-jiNXZw/JgPZnduO3vM/pqff5vi5VXNQ1nMl5iClo8D+ky13WUf4oghay425b+8qB62PqnOSYS4hc1TK4E6NmTA==</td>
         </tr>
         <tr>
           <td class="ver">0.30.3</td>
           <td>4 Aug 2026, 20:44 UTC</td>
-          <td>5 Aug 2026, 06:54 UTC</td>
-          <td class="mono">8403aa6</td>
+          <td>5 Aug 2026, 21:48 UTC</td>
+          <td class="mono">fe15fdb</td>
           <td class="mono">sha512-T2dcu/OuoEQZ/QqE1IaTu4XgAuQjPcEvpR7jqpL4ljlr7fPWa1nclEac7x/Qsu/zCT/hxK2kbWxZkhf4bXk9LA==</td>
         </tr>
         <tr>
           <td class="ver">0.30.2</td>
           <td>4 Aug 2026, 16:46 UTC</td>
-          <td>5 Aug 2026, 06:54 UTC</td>
-          <td class="mono">8403aa6</td>
+          <td>5 Aug 2026, 21:48 UTC</td>
+          <td class="mono">fe15fdb</td>
           <td class="mono">sha512-yfKDXSiYr7TB7YBo1gfcYa3XNk7tyr834L22nZToAWkB0/c++EMbV0IN6wRwPhR5pa3PJMgm28V8vgn75I6iUg==</td>
         </tr>
         <tr>
           <td class="ver">0.30.1</td>
           <td>4 Aug 2026, 15:43 UTC</td>
-          <td>5 Aug 2026, 06:54 UTC</td>
-          <td class="mono">8403aa6</td>
+          <td>5 Aug 2026, 21:48 UTC</td>
+          <td class="mono">fe15fdb</td>
           <td class="mono">sha512-3NMNbFvQgqd0N88Jyu5J3A45lCeB8/PxLqUwAq0RQjFb4wuBE//XqLhTczlj2HzsEJbcObqWwdpDfIL2K+bjnw==</td>
         </tr>
         <tr>
           <td class="ver">0.30.0</td>
           <td>4 Aug 2026, 14:26 UTC</td>
-          <td>5 Aug 2026, 06:54 UTC</td>
-          <td class="mono">8403aa6</td>
+          <td>5 Aug 2026, 21:48 UTC</td>
+          <td class="mono">fe15fdb</td>
           <td class="mono">sha512-5h1P20QeGuwosqa4oq8wEpYxn5AQcO3NiSNvdZTgC+L9tXTB/QfChN7W1OVxywQG2GK8jm7AEmclqfeB1OVnfA==</td>
         </tr>
         <tr>
           <td class="ver">0.29.5</td>
           <td>2 Aug 2026, 14:03 UTC</td>
-          <td>5 Aug 2026, 06:54 UTC</td>
-          <td class="mono">8403aa6</td>
+          <td>5 Aug 2026, 21:47 UTC</td>
+          <td class="mono">fe15fdb</td>
           <td class="mono">sha512-XiIJHANIgT7LQAZ3e2MyQG4N+B9dPYwdFk0rAzSGYSBjgavCbCtX/tXDlqasjIfEH726uxFdYrLGnlGvIZ38vg==</td>
         </tr>
       </tbody>
@@ -689,9 +671,9 @@ node contract/render-compat.mjs</code></pre>
 
 <footer>
   <div class="wrap">
-    <p>Generated by <code>contract/render-compat.mjs</code> from 8 committed reports in
-      <code>contract/history/</code>. Most recent certification 5 Aug 2026, 07:09 UTC.</p>
-    <p>Tested range: eve 0.29.5 → 0.30.6 ·
+    <p>Generated by <code>contract/render-compat.mjs</code> from 10 committed reports in
+      <code>contract/history/</code>. Most recent certification 5 Aug 2026, 21:48 UTC.</p>
+    <p>Tested range: eve 0.29.5 → 0.30.8 ·
       <a href="https://github.com/SammyTourani/evestack/tree/main/contract">contract suite source</a> ·
       <a href="https://github.com/SammyTourani/evestack/tree/main/contract/history">raw reports</a></p>
   </div>

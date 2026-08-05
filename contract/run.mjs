@@ -128,6 +128,27 @@ async function main() {
 
   const results = [];
   for (const contract of selected) {
+    // A repo-scoped contract asserts something about this checkout, not about
+    // eve. Certifying an arbitrary release (record.mjs, via
+    // EVESTACK_CONTRACT_EVE_DIR) would fail it for a tautology — eve 0.30.2
+    // cannot satisfy a `^0.30.6` pin — and stamp a red cell on the public
+    // matrix for a version that is in fact fine. Skipped, not passed: a silent
+    // pass would be a claim we did not check.
+    if (contract.scope === "repo" && eve.isOverride) {
+      results.push({
+        id: contract.id,
+        title: contract.title,
+        assumption: contract.assumption,
+        evestackUse: contract.evestackUse,
+        file: contract.file,
+        status: "skip",
+        skipReason: `repo-scoped: describes this checkout's install, not eve ${eve.version}`,
+        assertions: [],
+        crash: null,
+      });
+      continue;
+    }
+
     const recorder = createRecorder();
     let crash = null;
     try {
@@ -155,11 +176,15 @@ async function main() {
   }
 
   const report = {
-    ok: results.every((r) => r.status === "pass"),
+    // `!== "fail"` rather than `=== "pass"`: a skipped contract must not turn
+    // the run red, or every certification run would fail on the one contract it
+    // deliberately did not run.
+    ok: results.every((r) => r.status !== "fail"),
     eve: { version: eve.version, pin: eve.pin, path: eve.root },
     counts: {
       contracts: results.length,
       failedContracts: results.filter((r) => r.status === "fail").length,
+      skippedContracts: results.filter((r) => r.status === "skip").length,
       assertions: results.reduce((n, r) => n + r.assertions.length, 0),
       failedAssertions: results.reduce((n, r) => n + r.assertions.filter((a) => !a.passed).length, 0),
     },
@@ -203,14 +228,16 @@ function renderHuman(report, showPasses) {
 
   for (const contract of report.contracts) {
     const failures = contract.assertions.filter((a) => !a.passed);
-    const mark = contract.status === "pass" ? "PASS" : "FAIL";
+    const mark = contract.status === "pass" ? "PASS" : contract.status === "skip" ? "SKIP" : "FAIL";
     const tally =
-      contract.status === "pass"
-        ? `${contract.assertions.length} assertions`
-        : `${failures.length} of ${contract.assertions.length} assertions failed`;
+      contract.status === "skip"
+        ? contract.skipReason
+        : contract.status === "pass"
+          ? `${contract.assertions.length} assertions`
+          : `${failures.length} of ${contract.assertions.length} assertions failed`;
     out.push(`  ${mark}  ${contract.id.padEnd(42)} ${tally}`);
 
-    if (contract.status === "pass" && !showPasses) continue;
+    if (contract.status !== "fail" && !showPasses) continue;
 
     out.push(wrap(`assumption: ${contract.assumption}`, 92, "        "));
     for (const assertion of contract.assertions) {
@@ -226,11 +253,13 @@ function renderHuman(report, showPasses) {
     out.push("");
   }
 
-  const { contracts, failedContracts, assertions, failedAssertions } = report.counts;
+  const { contracts, failedContracts, skippedContracts, assertions, failedAssertions } = report.counts;
+  const ran = contracts - (skippedContracts ?? 0);
+  const skipNote = skippedContracts > 0 ? `, ${skippedContracts} skipped` : "";
   out.push(
     report.ok
-      ? `  ${contracts} contracts, ${assertions} assertions — all green against eve ${report.eve.version}`
-      : `  ${failedContracts} of ${contracts} contracts broken (${failedAssertions} of ${assertions} assertions) against eve ${report.eve.version}`,
+      ? `  ${ran} contracts, ${assertions} assertions — all green against eve ${report.eve.version}${skipNote}`
+      : `  ${failedContracts} of ${ran} contracts broken (${failedAssertions} of ${assertions} assertions) against eve ${report.eve.version}${skipNote}`,
   );
   if (!report.ok) out.push("  See docs/upgrading.mdx for what to do next.");
   out.push("");
@@ -241,10 +270,11 @@ function renderMarkdown(report) {
   const out = [];
   out.push(`### Contract suite vs eve \`${report.eve.version}\``);
   out.push("");
+  const ranCount = report.counts.contracts - (report.counts.skippedContracts ?? 0);
   out.push(
     report.ok
-      ? `All ${report.counts.contracts} contracts hold (${report.counts.assertions} assertions).`
-      : `**${report.counts.failedContracts} of ${report.counts.contracts} contracts broken** ` +
+      ? `All ${ranCount} contracts hold (${report.counts.assertions} assertions).`
+      : `**${report.counts.failedContracts} of ${ranCount} contracts broken** ` +
           `(${report.counts.failedAssertions} of ${report.counts.assertions} assertions).`,
   );
   out.push("");
@@ -252,11 +282,14 @@ function renderMarkdown(report) {
   out.push("|---|---|---|---|");
   for (const c of report.contracts) {
     const failures = c.assertions.filter((a) => !a.passed).length;
-    out.push(
-      `| ${c.status === "pass" ? "✅" : "❌"} | \`${c.id}\` | ${
-        failures === 0 ? `${c.assertions.length} ok` : `${failures}/${c.assertions.length} failed`
-      } | ${c.assumption.replace(/\|/g, "\\|")} |`,
-    );
+    const mark = c.status === "pass" ? "✅" : c.status === "skip" ? "⊘" : "❌";
+    const tally =
+      c.status === "skip"
+        ? "skipped"
+        : failures === 0
+          ? `${c.assertions.length} ok`
+          : `${failures}/${c.assertions.length} failed`;
+    out.push(`| ${mark} | \`${c.id}\` | ${tally} | ${c.assumption.replace(/\|/g, "\\|")} |`);
   }
   out.push("");
 
