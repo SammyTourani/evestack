@@ -1,0 +1,121 @@
+---
+title: Proactive agents
+description: An agent that wakes up on its own and messages you first — with budgets, approvals and an audit trail.
+---
+
+An agent that only answers when spoken to is a chatbot. An agent that wakes up, checks on things,
+and messages you when something needs you is a different product — and it is the one that made
+personal AI assistants the most-installed category of 2026.
+
+It is also the one that made them the most notorious. That category shipped with agents holding
+shell access and long-lived credentials, no spend limit, no record of what was approved, and in
+one widely-reported case a skills marketplace where the most-downloaded package was an
+infostealer. The capability was never the problem. The absence of everything around it was.
+
+evestack ships the same capability with the governance attached. This page is the recipe.
+
+## The five pieces
+
+Everything here already exists in the default template. Turning the heartbeat on is the only
+step that is off by default.
+
+| | What it does | Where |
+| --- | --- | --- |
+| **Heartbeat** | wakes the agent on a cron, and stays quiet unless there is news | `agent/schedules/heartbeat.ts` |
+| **A channel** | where it reaches you — Telegram is the fastest to finish | `agent/channels/` |
+| **Memory** | so it remembers what it noticed last time | `@evestack/memory` |
+| **Budget caps** | a hard ceiling on what unattended work can cost | `@evestack/budget` |
+| **A gated tool** | anything destructive parks for a human, and the decision is recorded | `approval: always()` |
+
+## Turn it on
+
+```bash
+# 1. a channel it can reach you on (Telegram is a two-minute setup — see /channels/telegram)
+TELEGRAM_BOT_TOKEN=123456789:AAH...
+TELEGRAM_WEBHOOK_SECRET_TOKEN=...
+
+# 2. the heartbeat itself
+EVESTACK_HEARTBEAT_CHANNEL=telegram
+EVESTACK_HEARTBEAT_TARGET={"chatId":123456789}
+EVESTACK_HEARTBEAT_CRON=0 * * * *
+```
+
+Then write what it should check. `HEARTBEAT.md` sits at the root of the project and is read at
+every fire, so editing it takes effect on the next wake-up — no restart, no redeploy.
+
+```md
+## Checks
+
+- Look through my recent memories with `recall`. If any two contradict each other, tell me
+  which and ask which one is right.
+- If any session in the last 24 hours ended in an error, summarise what failed.
+- Anything I asked you to follow up on that has gone quiet for more than two days.
+```
+
+## Why it does not become spam
+
+This is the part that decides whether the feature survives contact with real use.
+
+The agent is told to reply with exactly `HEARTBEAT_OK` when nothing needs you, and the wrapper
+drops any reply that is only that token. An hourly heartbeat that always sends something is an
+hourly notification, and you will mute it within a day — at which point you have a worse product
+than one that never spoke.
+
+Each wake-up also runs in an isolated session with a light context, which is the difference
+between a heartbeat costing a few thousand tokens and costing the whole context window every
+hour.
+
+## What keeps it safe
+
+**It cannot quietly spend your money.** `@evestack/budget` caps at $2 per session and $10 per
+principal per day by default, and unattended work is exactly where an uncapped agent hurts —
+nobody is watching the turn that loops.
+
+**It cannot quietly do damage.** Anything behind `approval: always()` parks and waits. The
+template ships `forget` that way as the worked example. A heartbeat that hits an approval will
+sit there until a human answers, which is why `HEARTBEAT.md` tells the agent to describe what it
+would do rather than request approval it cannot get at 3am.
+
+**Every decision is attributable.** The [Approvals](/docs/dashboard) page records who approved
+what, when, and how their identity was established. Set `EVESTACK_REQUIRE_APPROVER=1` to refuse
+decisions that cannot be attributed to a person at all.
+
+**Every fire is on the record.** The Schedules page shows each wake-up, what it cost, what failed,
+and lets you pause one without a redeploy. Self-hosted eve runs schedules in-process and keeps no
+history, so without this a 3am job that has been failing for a week looks identical to one that
+has been fine.
+
+**Skills are scanned before they load.** eve advertises every skill in `agent/skills/` to the
+model and hands it a `load_skill` tool, so a skill can put instructions into a live turn before
+you see them. The [Skills](/docs/dashboard) page scans each one for injection, credential and
+exfiltration patterns — and says plainly that a clean verdict is not proof of safety.
+
+## Catch-up, and when you do not want it
+
+If the machine was asleep at 09:00, should the 09:00 heartbeat run at 09:40?
+
+For a digest, yes — you still want it. For anything that acts on the world, no. So catch-up is
+opt-in per schedule, capped, and bounded by a window: the heartbeat replays at most 3 missed
+fires from the last 6 hours, so a laptop shut for a week does not wake up and replay a week.
+
+```ts
+tracked("heartbeat", CRON, handler, {
+  catchUp: true,
+  catchUpLimit: 3,
+  catchUpWindowMs: 6 * 60 * 60 * 1000,
+});
+```
+
+Replayed fires are labelled as replays in the history, because a replay is not the same event as
+a live fire.
+
+## Honest limits
+
+- **The heartbeat needs the agent running.** It is a cron inside your process, not a hosted
+  scheduler. If the box is off, nothing fires — catch-up is what softens that, not a fix for it.
+- **Channels need a public HTTPS URL.** None of Slack, Discord or Telegram has a polling mode in
+  eve, so a laptop needs a tunnel. See [Channels](/docs/channels).
+- **A denied approval used to kill the session.** That was a real eve bug, [reported
+  upstream](https://github.com/vercel/eve/issues/1658) and worked around in the template's model
+  middleware. It matters more here than anywhere: an unattended agent hitting a denial at 3am
+  should still be alive in the morning.

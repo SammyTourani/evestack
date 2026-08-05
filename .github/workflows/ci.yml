@@ -28,12 +28,16 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # templates/default imports @evestack/budget and @evestack/composio,
-      # whose types resolve to their dist/ — which is gitignored, so a clean
-      # checkout has no dist and a bare `pnpm -r typecheck` dies on TS2307
-      # before checking a single line of template code. Local trees never see
-      # this because dist/ is warm there; only CI starts cold.
-      - run: pnpm --filter @evestack/budget --filter @evestack/composio run build
+      # Workspace packages publish their types from dist/, which is gitignored —
+      # so a clean checkout has no dist and a bare `pnpm -r typecheck` dies on
+      # TS2307 before checking a line of real code. Local trees never see this
+      # because dist/ is warm there; only CI starts cold.
+      #
+      # `--if-present` across every package rather than naming them: this broke
+      # twice, both times because a new package was added and nobody remembered
+      # to extend a hardcoded list. A list that must be maintained by memory is
+      # a list that will be wrong.
+      - run: pnpm -r --if-present run build
       - run: pnpm -r typecheck
       # The contract table in docs/compatibility.mdx is generated from the
       # suite, so it can go stale the moment a contract is added — which is

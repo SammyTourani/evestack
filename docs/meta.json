@@ -11,6 +11,7 @@
     "observability",
     "composio-auth",
     "memory",
+    "proactive",
     "channels",
     "---Run it in production---",
     "self-hosting",

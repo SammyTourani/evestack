@@ -132,7 +132,7 @@ jobs:
           # file never written, and the PR would report a red typecheck with
           # nothing to show for it.
           {
-            pnpm --filter @evestack/budget --filter @evestack/composio run build &&
+            pnpm -r --if-present run build &&
             pnpm -r typecheck
           } 2>&1 | tee /tmp/typecheck.txt
 
