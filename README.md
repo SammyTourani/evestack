@@ -2,10 +2,10 @@
 
 # evestack
 
-### The open replacement for Vercel Agent Runs.
+### Run `eve` agents on infrastructure you own.
 
-`eve` on your own machine — durable Postgres sessions, a Docker sandbox, and a dashboard that
-**observes *and drives*** the agent. $0 infrastructure. Nothing phones home.
+A self-hosted distribution of the eve agent framework — durable Postgres sessions, a Docker
+sandbox, and a dashboard that **observes *and drives*** the agent. One command.
 
 [![CI](https://github.com/SammyTourani/evestack/actions/workflows/ci.yml/badge.svg)](https://github.com/SammyTourani/evestack/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/create-evestack?color=2563eb&label=create-evestack)](https://www.npmjs.com/package/create-evestack)
@@ -34,32 +34,36 @@ npm run dev
 ## Why this exists
 
 [Vercel's eve](https://github.com/vercel/eve) is a genuinely good agent framework, it's
-Apache-2.0, and Vercel supports self-hosting it. What you give up off-platform is the Agent
-Runs dashboard — their own guidance is to export OpenTelemetry to a collector you operate.
+Apache-2.0, and Vercel documents self-hosting it — the adapters are there, on purpose. What
+the docs don't ship is the rest of the machine. Off-platform, the guidance for observability
+is to export OpenTelemetry to a collector you operate.
 
 So you get Jaeger for spans and a terminal TUI for one session at a time. What no one ships
 is a single place that speaks *sessions, turns, tokens, cost and approvals* — that more than
-one person can open, that keeps your history longer than three days, and that can act on the
-agent instead of only watching it.
+one person can open, that keeps history for as long as you keep the rows, and that can act on
+the agent instead of only watching it.
 
-## What you get
+evestack is that path, packaged end to end and certified against each eve release.
 
-| | evestack | eve on Vercel |
+## Same framework, your infrastructure
+
+| | Managed | Self-hosted with evestack |
 | --- | --- | --- |
-| Compute, workflows, sandbox | your machine — **$0** | metered |
-| Durable sessions | your Postgres | Vercel Workflows |
-| Dashboard | **yes, anywhere** | Vercel only |
-| Dashboard can *drive* the agent | **yes** | read-only |
-| One-click tool sign-in | **1,070 apps** (Composio) | 4 managed connectors |
-| Long-term memory | **included** (pgvector) | not included |
-| Your data leaves the machine | **never** | — |
+| Runs on | Vercel's infrastructure | your machine, VPS, or cluster |
+| Session state | Vercel Workflows | your Postgres on `:5433` |
+| Run history | retained by the platform | as long as you keep the rows |
+| Dashboard | Agent Runs, hosted | included — observes *and drives* |
+| Tool approvals | Vercel Passport | in the dashboard, with an audit trail |
+| One-click tool sign-in | 4 managed connectors | 1,070 apps via Composio |
+| Long-term memory | bring your own | included, on the same Postgres |
+| Where your data sits | Vercel's platform | inside your network |
 
-The only thing that costs money is model tokens. Ollama takes even that to zero, with a real
-caveat — see [Local models](#local-models).
+Off-platform the only thing that costs money is model tokens. Ollama takes even that to zero,
+with a real caveat — see [Local models](#local-models).
 
 ## The dashboard
 
-The open replacement for Agent Runs — and it does more than watch.
+Everything Agent Runs shows you, plus the ability to act on it.
 
 - **Sessions, turns, subagent trees** with duration, tokens, cached reads, and tool counts
 - **Computed cost per turn.** eve only emits `gen_ai.usage.cost` for AI-Gateway calls, and a

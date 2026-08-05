@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Self-hosted observability and control plane for eve agents. The open replacement for Vercel Agent Runs.",
+  "description": "Self-hosted observability and control plane for eve agents: sessions, cost, approvals with audit, memory, schedules and evals, read from your own Postgres.",
   "license": "Apache-2.0",
   "scripts": {
     "dev": "next dev --port 4000",

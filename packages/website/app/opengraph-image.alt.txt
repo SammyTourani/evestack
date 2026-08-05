@@ -1,1 +1,1 @@
-evestack — the open replacement for Vercel Agent Runs. Self-hosted eve agent stack: durable sessions, sandbox, dashboard. One command, $0.
+evestack — run eve agents on infrastructure you own. A self-hosted distribution of the eve agent framework: durable Postgres sessions, a Docker sandbox, and a dashboard that drives the agent. One command.

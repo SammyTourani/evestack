@@ -10,16 +10,16 @@
 export const site = {
   name: "evestack",
   mark: "▚",
-  title: "evestack — the open replacement for Vercel Agent Runs",
-  tagline: "The open replacement for Vercel Agent Runs.",
+  title: "evestack — the self-hosted distribution of eve",
+  tagline: "Run eve agents on infrastructure you own.",
   subhead:
-    "A fully free, self-hosted distribution of the eve agent framework. Durable sessions, sandbox, dashboard — one command. No Vercel account. No metered compute.",
+    "A self-hosted distribution of the eve agent framework. Durable Postgres sessions, a Docker sandbox, and a dashboard that drives the agent — not just watches it. One command.",
   eyebrow: "Open source · Apache-2.0",
   command: "npx create-evestack",
   github: "https://github.com/SammyTourani/evestack",
   attribution:
-    "evestack is built on vercel/eve (Apache-2.0). Not affiliated with Vercel.",
-  motto: "Nothing here phones home.",
+    "evestack is built on vercel/eve (Apache-2.0) and certified against every release. Not affiliated with Vercel.",
+  motto: "Everything runs on your network.",
 } as const;
 
 export const nav = [
@@ -57,24 +57,26 @@ export const terminal = {
     { text: "eve dev ready on http://localhost:2000", kind: "ok" as const },
     { text: "[world-postgres] Re-enqueued 2 active run(s) on startup", kind: "ok" as const },
   ],
-  caption: "One command scaffolds it. $0 runs it.",
+  caption: "One command scaffolds it. Your machine runs it.",
 } as const;
 
-/* §4 comparison — answers eve.dev's own managed-vs-self-hosted table.
-   Their docs name the self-host path; evestack ships it. */
+/* §4 comparison — the axis is WHERE IT RUNS, not what anything costs.
+   eve.dev's own docs frame managed and self-hosted as two deployment targets
+   for the same framework; this table mirrors that framing and stays on it.
+   Deliberately absent: prices, retention tiers, and any empty cell in the
+   managed column — every row states a fact about both, or it doesn't ship. */
 export const comparison = {
-  heading: "Everything Vercel hosts. Nothing Vercel holds.",
-  sub: "eve is Apache-2.0 and runs entirely without a Vercel account. evestack packages the self-hosted column their docs describe — and adds the dashboard they kept.",
-  columns: ["", "Vercel hosted", "evestack"],
+  heading: "Same framework. Your infrastructure.",
+  sub: "eve is Apache-2.0 and Vercel documents self-hosting it. evestack ships that path end to end — the durable store, the sandbox, and the dashboard, wired together and certified against each eve release.",
+  columns: ["", "Managed", "Self-hosted with evestack"],
   rows: [
-    ["Account required", "Vercel account", "None"],
-    ["Compute", "Metered", "Your machine — $0.00"],
-    ["Agent state", "Managed workflow store", "Your Postgres on :5433"],
-    ["Run history kept", "12h free · 1d Pro · 3d Enterprise", "Forever — it's your database"],
-    ["Agent Runs dashboard", "Read-only, hosted", "Observe and control, self-hosted"],
-    ["Approve gated tools", "—", "From your browser"],
-    ["Telemetry", "Platform", "Nothing here phones home"],
-    ["License", "Proprietary dashboard", "Apache-2.0, all of it"],
+    ["Runs on", "Vercel's infrastructure", "Your machine, VPS, or cluster"],
+    ["Session state", "Vercel Workflows", "Your Postgres on :5433"],
+    ["Run history", "Retained by the platform", "As long as you keep the rows"],
+    ["Dashboard", "Agent Runs, hosted", "Included — observes and drives"],
+    ["Tool approvals", "Vercel Passport", "In the dashboard, with an audit trail"],
+    ["Where your data sits", "Vercel's platform", "Inside your network, always"],
+    ["Setup", "Deploy to Vercel", "npx create-evestack"],
   ],
 } as const;
 
@@ -118,7 +120,7 @@ export const features = {
 
 /* §7 architecture nodes + beams. */
 export const architecture = {
-  heading: "One compose file. Zero services you rent.",
+  heading: "One compose file. Everything on localhost.",
   sub: "Postgres runs in Docker; the agent is a process on your machine that spawns per-session sandbox containers. The dashboard reads run state straight from the workflow tables and receives spans over OTLP. Everything speaks localhost.",
   nodes: [
     { id: "agent", title: "agent runtime", detail: "eve dev · :2000" },
@@ -138,8 +140,8 @@ export const architecture = {
 
 /* §8 observability — the span tree verbatim from a live run (FINDINGS.md). */
 export const observability = {
-  heading: "The dashboard Vercel kept. Yours now.",
-  sub: "Session list, full span trees, token rollups, computed cost — read straight from your own Postgres. This is the Agent Runs tab, without the account.",
+  heading: "Every session, read straight from your own Postgres.",
+  sub: "Session list, full span trees, token rollups, computed cost — the same $eve.* data your agent already writes, queried from the database you own. No ingest pipeline to keep in sync.",
   spanTree: [
     { depth: 0, name: "agent.session", note: "ROOT" },
     { depth: 1, name: "agent.turn", note: "" },
@@ -153,7 +155,7 @@ export const observability = {
 /* §10 control plane. */
 export const control = {
   heading: "Observability you can act on",
-  sub: "Agent Runs shows you what happened. evestack lets you decide what happens next — approve or deny gated tool calls, start sessions, and chat, from the browser.",
+  sub: "Approve or deny gated tool calls, start sessions, cancel runs, and chat with the agent — from the browser, with every decision recorded.",
   demo: {
     tool: "send_email",
     args: '{ "to": "team@…", "subject": "Deploy done" }',
@@ -244,14 +246,14 @@ export const quickstart = {
       title: "Run your agent",
       code: "pnpm dev",
       lang: "bash",
-      body: "eve dev on :2000. Nothing here bills you — no Vercel account, no metered compute.",
+      body: "eve dev on :2000. The agent, the database, and the dashboard are all on your machine.",
     },
   ],
 } as const;
 
 export const closing = {
-  heading: "Own your agent stack today.",
-  sub: "One command. Your servers. $0.",
+  heading: "Your agents, on your infrastructure.",
+  sub: "One command, and it's running on your machine.",
 } as const;
 
 export const footerColumns = [

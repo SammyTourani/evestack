@@ -26,7 +26,7 @@ test.describe("evestack landing page", () => {
       await expect(page.locator(`#${id}`)).toBeAttached();
     }
     await expect(page.getByRole("heading", { level: 1 })).toContainText(
-      "The open replacement",
+      "infrastructure you own",
     );
     expect(errors).toEqual([]);
   });
