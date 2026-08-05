@@ -1,0 +1,59 @@
+name: Deploy website
+
+# The landing page (packages/website) ships as a static export to GitHub
+# Pages at https://sammytourani.github.io/evestack/. Path-filtered so agent
+# or docs work doesn't redeploy the site — but docker-compose.yml and the
+# agent template DO retrigger it, because lib/code-samples.ts reads those
+# files at build time and the code cards must never go stale.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/website/**"
+      - "docker-compose.yml"
+      - "templates/default/agent/**"
+      - ".github/workflows/deploy-website.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # No `version:` here — the action reads packageManager from
+      # package.json; specifying both makes it refuse to install (see ci.yml).
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Pages serves under /evestack — basePath and metadataBase both come
+      # from these two vars (next.config.ts + app/layout.tsx). Dev stays
+      # rootless because neither is set locally.
+      - run: pnpm --filter @evestack/website build
+        env:
+          NEXT_PUBLIC_BASE_PATH: /evestack
+          NEXT_PUBLIC_SITE_URL: https://sammytourani.github.io/evestack
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: packages/website/out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

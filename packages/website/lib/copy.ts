@@ -3,8 +3,9 @@
    to /FINDINGS.md (verified by running the stack) or to shipped code.
    Do not add marketing claims that cannot be reproduced on a clean machine.
 
-   NOTE: the site must not be deployed publicly until `create-evestack` and the
-   GitHub repo are published — the hero command and GitHub links assume both. */
+   Launch gates (2026-08-05): `create-evestack` is live on npm and the repo is
+   public at github.com/SammyTourani/evestack — the hero command and every
+   GitHub link below resolve for real visitors. */
 
 export const site = {
   name: "evestack",
@@ -15,7 +16,7 @@ export const site = {
     "A fully free, self-hosted distribution of the eve agent framework. Durable sessions, sandbox, dashboard — one command. No Vercel account. No metered compute.",
   eyebrow: "Open source · Apache-2.0",
   command: "npx create-evestack",
-  github: "https://github.com/evestack/evestack",
+  github: "https://github.com/SammyTourani/evestack",
   attribution:
     "evestack is built on vercel/eve (Apache-2.0). Not affiliated with Vercel.",
   motto: "Nothing here phones home.",
@@ -268,7 +269,7 @@ export const footerColumns = [
     title: "Open source",
     links: [
       { label: "GitHub", href: site.github },
-      { label: "License — Apache-2.0", href: `${site.github}/blob/main/LICENSE.txt` },
+      { label: "License — Apache-2.0", href: `${site.github}/blob/main/LICENSE` },
       { label: "eve (upstream)", href: "https://eve.dev" },
     ],
   },
