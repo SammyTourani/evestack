@@ -124,6 +124,15 @@ function Choreography() {
         gsap.utils.toArray<HTMLElement>("[data-reveal='lines']").forEach((el) => {
           // skip elements inside the hero (choreographed above)
           if (el.closest("#hero")) return;
+          /* NEVER line-split text painted through background-clip:text.
+             SplitText re-wraps each line in a new element; the gradient lives
+             on the original box, so the clones inherit `color: transparent`
+             with nothing painting them and the heading renders as a hollow
+             -webkit-text-stroke outline until the split reverts. This bit the
+             closing CTA. Guarding here means adding data-reveal to a
+             gradient-clipped heading can never resurrect it. */
+          const clip = getComputedStyle(el);
+          if (clip.webkitBackgroundClip === "text" || clip.backgroundClip === "text") return;
           const split = SplitText.create(el, { type: "lines", mask: "lines" });
           gsap.fromTo(
             split.lines,
@@ -214,7 +223,6 @@ function Choreography() {
           const prompt = terminal.querySelector<HTMLElement>("[data-terminal-prompt]");
           const cursor = terminal.querySelector<HTMLElement>(".terminal-cursor");
           const lines = gsap.utils.toArray<HTMLElement>("[data-terminal-line]", terminal);
-          const result = document.querySelector<HTMLElement>("[data-terminal-result]");
           /* Same policy as the hero entrance: if this chunk initializes with
              the terminal already at/past its trigger line (mid-page reload,
              anchor link below it), the settled SSR content has been visible —
@@ -239,7 +247,6 @@ function Choreography() {
                animation while hidden (cleared again on reveal). */
             if (chars && cursor) gsap.set(cursor, { autoAlpha: 0, animation: "none" });
             gsap.set(lines, { autoAlpha: 0 });
-            if (result) gsap.set(result, { autoAlpha: 0, y: 24, scale: 0.985 });
 
             /* the timeline only ANIMATES the reveal — no hides inside it */
             const termTl = gsap.timeline({
@@ -277,16 +284,32 @@ function Choreography() {
               },
               ">+0.45",
             );
-            if (result) {
-              // the payoff: the dashboard surfaces as the FIRST ✓ lands — it
-              // overlaps the cascade tail instead of waiting out the whole
-              // typing rhythm (which would leave ~5s of dead space below).
-              termTl.to(
-                result,
-                { autoAlpha: 1, y: 0, scale: 1, duration: 0.6, ease: "power2.inOut" },
-                "<+1.0",
-              );
-            }
+          }
+        }
+
+        /* ── The dashboard under the terminal (§3) ──────────────────────
+           This reveals on ITS OWN position in the viewport, never on the
+           terminal's typing timeline. It used to be the last beat of termTl,
+           roughly 2.4s after the terminal hit its trigger, so anyone who
+           scrolled down at a normal pace arrived to a blank box and waited
+           out a timer they could not see. It is the payoff of the section —
+           it should be there when its space is. */
+        const result = document.querySelector<HTMLElement>("[data-terminal-result]");
+        if (result) {
+          /* Same late-arrival policy as everything else: if this chunk loads
+             with the dashboard already on screen, leave the settled SSR
+             content alone rather than hiding and replaying it. */
+          const START = 0.92; // fraction of viewport height, matches the trigger below
+          if (result.getBoundingClientRect().top >= window.innerHeight * START) {
+            gsap.set(result, { autoAlpha: 0, y: 16 });
+            gsap.to(result, {
+              autoAlpha: 1,
+              y: 0,
+              duration: 0.5,
+              ease: "power2.out",
+              scrollTrigger: { trigger: result, start: `top ${START * 100}%`, once: true },
+              onComplete: () => gsap.set(result, { clearProps: "all" }),
+            });
           }
         }
 
