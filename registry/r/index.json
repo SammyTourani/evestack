@@ -21,6 +21,21 @@
       "name": "basic-auth",
       "title": "HTTP Basic route auth",
       "description": "Replace vercelOidc()/placeholderAuth() with HTTP Basic, for agents that run off Vercel."
+    },
+    {
+      "name": "channel-slack",
+      "title": "Slack channel",
+      "description": "Answer @mentions and DMs in Slack from a self-hosted eve agent. Bot token plus signing secret — no Vercel account and no Connect connector."
+    },
+    {
+      "name": "channel-discord",
+      "title": "Discord channel",
+      "description": "Answer Discord slash commands from a self-hosted eve agent. Application public key plus bot token — no Vercel Connect client."
+    },
+    {
+      "name": "channel-telegram",
+      "title": "Telegram channel",
+      "description": "Text your self-hosted eve agent from Telegram. One BotFather token, no app review and no workspace admin — the fastest channel to actually finish."
     }
   ]
 }

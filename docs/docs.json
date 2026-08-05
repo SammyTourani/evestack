@@ -23,6 +23,10 @@
             "pages": ["architecture", "dashboard", "composio-auth", "memory"]
           },
           {
+            "group": "Channels",
+            "pages": ["channels/telegram", "channels/slack", "channels/discord"]
+          },
+          {
             "group": "Reference",
             "pages": ["registry", "cli", "troubleshooting"]
           }

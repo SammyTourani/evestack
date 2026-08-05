@@ -1,0 +1,198 @@
+---
+title: Discord
+description: Slash commands into a self-hosted eve agent — signature-verified, no Vercel Connect client.
+---
+
+Vercel's guided setup (`eve add channel/discord`) creates a **Vercel Connect** client, stores
+your bot token in Vercel, and configures the endpoint for you. None of that works without a
+Vercel account. This page is the same result done by hand, on your own machine, for $0.
+
+The whole channel is one file:
+
+```ts title="agent/channels/discord.ts"
+import { defaultDiscordAuth, discordChannel } from "eve/channels/discord";
+
+export default discordChannel({ /* … */ });
+```
+
+It serves `POST /eve/v1/discord`, which handles slash commands, human-in-the-loop button
+clicks, and modal submissions on one route.
+
+## Who authenticates this route
+
+Read this before you expose anything.
+
+Discord signs every interaction with **Ed25519** over `X-Signature-Timestamp` + the exact raw
+request body, and sends the signature in `X-Signature-Ed25519`. An interactions endpoint that
+does not check that signature is not "unauthenticated" in the mild sense — it is a public
+endpoint where anyone can forge a message from any Discord user in any server.
+
+**eve verifies it for you.** `verifyDiscordRequest` runs before the body is even parsed: it
+rebuilds the signed payload, checks it against `DISCORD_PUBLIC_KEY`, rejects a timestamp more
+than five minutes from now, and returns a bare `401` on any failure. You write no crypto, and
+you should not try to — there is no hook that asks you to.
+
+What *is* your responsibility is the one env var:
+
+<Warning>
+With `DISCORD_PUBLIC_KEY` unset, eve has no key to compare against, so **every** interaction
+fails verification — including Discord's own endpoint-verification PING. The channel is
+registered, the route answers 401, and nothing reaches the model. That is the intended
+fail-closed state, not a bug, and the agent logs one line at boot saying so.
+</Warning>
+
+Note also what does *not* guard this route: the HTTP Basic policy in `agent/channels/eve.ts`
+covers `/eve/v1/session*` only. Discord cannot send an `Authorization` header, so do not put
+your tunnel or reverse proxy behind Basic auth — Discord will simply fail to reach you. The
+signature is the auth here, and it is a stronger one.
+
+## The ordering trap
+
+Discord will not save an Interactions Endpoint URL until that URL answers its PING challenge
+correctly. During validation Discord sends both a properly signed request (which must return
+`{"type":1}`) and a deliberately **mis**-signed one (which must be rejected). So the sequence
+is not "configure Discord, then run the agent" — it is the reverse:
+
+1. Create the application and copy its **Public Key**.
+2. Put `DISCORD_PUBLIC_KEY` in `.env.local` and restart the agent.
+3. Get the agent on a **public HTTPS** URL.
+4. *Then* paste the Interactions Endpoint URL into the Portal and save.
+
+Do it in the other order and the Portal rejects the URL with an unhelpful error, and people
+spend an hour assuming their key is wrong.
+
+## Click-path through the Developer Portal
+
+### 1. Create the application
+
+1. Go to <https://discord.com/developers/applications> and sign in.
+2. **New Application** → give it a name → accept the developer ToS → **Create**.
+3. You land on **General Information**. Two values live here:
+   - **Application ID** → `DISCORD_APPLICATION_ID`
+   - **Public Key** → `DISCORD_PUBLIC_KEY`
+
+   Leave the **Interactions Endpoint URL** field alone for now. That is step 5.
+
+### 2. Get the bot token
+
+1. Left sidebar → **Bot**.
+2. **Reset Token** → confirm → copy it. Discord shows a bot token exactly once; if you lose it
+   you reset it again and the old one dies.
+3. Turn **Public Bot** off unless you want strangers installing your agent.
+4. **Privileged Gateway Intents — leave all three off.** Presence, Server Members, and Message
+   Content are gateway features. This channel is HTTP Interactions only: eve never opens a
+   gateway socket, so enabling them adds risk and buys nothing. If a guide tells you to switch
+   on Message Content, that guide is about a gateway bot, not this one.
+
+`DISCORD_BOT_TOKEN` is **not** required for slash commands to work. Replies ride the
+interaction token, and eve reads the application id off the inbound payload. The token buys
+three things: the typing indicator (failures are swallowed silently), proactive sessions
+started from a schedule, and the fallback to a normal channel message after the interaction
+token expires 15 minutes into a long session. Skip it and commands still answer.
+
+### 3. Install the bot into a server
+
+Left sidebar → **Installation** (or **OAuth2 → URL Generator** on older Portal builds).
+
+- **Scopes**: `applications.commands` is the only one slash commands need. Add `bot` as well
+  if you set a bot token and want the channel-message fallback or proactive posts.
+- **Bot permissions**: with the `bot` scope, **Send Messages** (and **Read Message History**
+  if you want it to see thread context). Nothing else.
+
+Copy the generated install URL, open it, pick a server, authorize.
+
+### 4. Register the command
+
+The Portal has no UI for creating slash commands — it is an API call. eve extracts the prompt
+from a string option literally named `message`, so use that name:
+
+```bash
+# Guild-scoped: appears instantly. Best for testing.
+curl -X PUT "https://discord.com/api/v10/applications/$DISCORD_APPLICATION_ID/guilds/$GUILD_ID/commands" \
+  -H "Authorization: Bot $DISCORD_BOT_TOKEN" -H "Content-Type: application/json" \
+  -d '[{"name":"ask","description":"Ask the eve agent","type":1,
+    "options":[{"name":"message","description":"What should the agent do?","type":3,"required":true}]}]'
+```
+
+Drop `/guilds/$GUILD_ID` for a global command, which works everywhere but can take up to an
+hour to propagate. This is the one step that genuinely needs the bot token.
+
+### 5. Go public, then save the endpoint URL
+
+Discord only calls public HTTPS, so `localhost:2000` is not reachable. Tunnel it:
+
+```bash
+cloudflared tunnel --url http://localhost:2000
+```
+
+Put the credentials in `templates/default/.env.local` (gitignored — never commit them):
+
+```bash
+DISCORD_PUBLIC_KEY=...        # required; without it every interaction 401s
+DISCORD_APPLICATION_ID=...    # needed for step 4; optional at runtime
+DISCORD_BOT_TOKEN=...         # optional; typing, proactive posts, expired-token fallback
+DISCORD_ALLOWED_GUILD_IDS=... # optional; see below
+```
+
+Restart the agent so it picks them up. **Now** go back to **General Information**, set
+**Interactions Endpoint URL** to:
+
+```
+https://<your-tunnel-host>/eve/v1/discord
+```
+
+and **Save Changes**. Discord runs its PING check against a live agent and the save succeeds.
+
+### 6. Use it
+
+Type `/ask` in a channel where the bot is installed. Discord enforces a three-second
+acknowledgement deadline; eve defers immediately and edits the deferred reply when the turn
+finishes, so a two-minute agent run is fine.
+
+## Locking down who can spend your budget
+
+An interactions endpoint is world-reachable by design, and every accepted command runs on
+*your* API key. eve's default is to dispatch for any user in any server the bot is in.
+
+```bash
+DISCORD_ALLOWED_GUILD_IDS=123456789012345678,987654321098765432
+```
+
+Commands from anywhere else get an ephemeral "Command ignored." and never start a turn. Unset
+means "any guild", which is exactly eve's stock behavior. Direct messages to the bot have no
+guild id, so they are rejected once the list is non-empty.
+
+This is a complement to, not a replacement for, `@evestack/budget` — the allow-list caps *who*
+can start a turn, the budget caps *how much* a turn costs. Discord principals arrive as
+`discord:<guild>:<user>`, which is what the per-principal daily cap meters on.
+
+## What this channel gives the agent
+
+- **Slash commands** with the `message` option as the prompt.
+- **Human-in-the-loop**: eve renders approval requests as Discord components. Confirmations
+  and option lists become buttons, `display: "select"` becomes a string select, and freeform
+  input becomes a button that opens a modal. Answering resumes the parked session — which
+  means `forget`'s approval gate works from Discord with no extra wiring.
+- **Long replies** split at Discord's 2000-character limit, with `allowed_mentions` cleared so
+  a generated message can never mass-ping a server.
+
+Inbound file attachments are not supported by eve's Discord channel today.
+
+## Verified without a bot
+
+Everything below was checked with no Discord account, by generating a throwaway Ed25519
+keypair, pointing `DISCORD_PUBLIC_KEY` at it, and driving the route handler directly:
+
+| Request                                | Result                                    |
+| -------------------------------------- | ----------------------------------------- |
+| PING with no signature headers          | `401 unauthorized`                        |
+| PING with a body altered after signing  | `401 unauthorized`                        |
+| Correctly signed PING                   | `200 {"type":1}` — the PONG Discord wants |
+| Correctly signed `/ask`                 | `200 {"type":5}`, one turn dispatched     |
+
+The dispatched turn carried the option text as the message, `principalId`
+`discord:<guild>:<user>`, and authenticator `discord-interaction`.
+
+What still needs a real bot: that Discord's own endpoint validation accepts the URL end to
+end, that command registration returns 201, that deferred-reply edits and followups land in
+the channel, and that HITL buttons round-trip.

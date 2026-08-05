@@ -116,6 +116,74 @@ const ITEMS = [
       "implicitly, so every request including loopback needs the Basic credentials; eve " +
       "fails closed and a 401 there is the intended behavior, not a bug.",
   },
+  {
+    name: "channel-slack",
+    title: "Slack channel",
+    description:
+      "Answer @mentions and DMs in Slack from a self-hosted eve agent. Bot token plus signing " +
+      "secret — no Vercel account and no Connect connector.",
+    files: [{ source: "agent/channels/slack.ts", target: "agent/channels/slack.ts" }],
+    docs:
+      "Set SLACK_BOT_TOKEN and SLACK_SIGNING_SECRET, then point both the Event Subscriptions " +
+      "request URL and the Interactivity request URL at https://<public-host>/eve/v1/slack — " +
+      "eve serves events and HITL button clicks on that one route. Slack signs the " +
+      "url_verification challenge too, so the signing secret must be in the environment before " +
+      "you save the URL or eve answers 401 and Slack reports the challenge as failed. Minimum " +
+      "bot scopes: app_mentions:read, chat:write, im:history, im:write; add channels:history " +
+      "plus the message.channels event to let threads continue without re-mentioning the bot. " +
+      "Localhost needs a tunnel (cloudflared, ngrok) because Slack only calls public HTTPS.",
+  },
+  {
+    name: "channel-discord",
+    title: "Discord channel",
+    description:
+      "Answer Discord slash commands from a self-hosted eve agent. Application public key plus " +
+      "bot token — no Vercel Connect client.",
+    files: [{ source: "agent/channels/discord.ts", target: "agent/channels/discord.ts" }],
+    docs:
+      "Set DISCORD_PUBLIC_KEY (Developer Portal > General Information) and point the " +
+      "application's Interactions Endpoint URL at https://<public-host>/eve/v1/discord. eve " +
+      "verifies Discord's Ed25519 signature over timestamp + raw body itself, with a five-minute " +
+      "skew window — you implement no signature code, but without the public key eve has nothing " +
+      "to check against and answers 401 to everything, so set it and have the agent reachable " +
+      "BEFORE you save the endpoint URL or Discord's PING challenge fails and the Portal refuses " +
+      "the URL. Register a command with a required string option named `message`; that name is " +
+      "what eve extracts as the prompt. DISCORD_BOT_TOKEN is optional for slash commands — " +
+      "replies ride the interaction token and the application id comes off the inbound payload — " +
+      "and buys typing indicators, proactive sessions, and the channel-message fallback after the " +
+      "15-minute interaction token expires. Set DISCORD_ALLOWED_GUILD_IDS (comma-separated) to " +
+      "stop anyone who can see the command from spending your model budget; unset means any " +
+      "guild, matching eve's default. Localhost needs a tunnel (cloudflared, ngrok) because " +
+      "Discord only calls public HTTPS, and the tunnel must not sit behind HTTP Basic — the " +
+      "signature is this route's auth, and eve's Basic policy only covers /eve/v1/session*.",
+  },
+  {
+    name: "channel-telegram",
+    title: "Telegram channel",
+    description:
+      "Text your self-hosted eve agent from Telegram. One BotFather token, no app review and " +
+      "no workspace admin — the fastest channel to actually finish.",
+    files: [{ source: "agent/channels/telegram.ts", target: "agent/channels/telegram.ts" }],
+    docs:
+      "Set TELEGRAM_BOT_TOKEN (BotFather /newbot) and TELEGRAM_WEBHOOK_SECRET_TOKEN (invent it: " +
+      "`openssl rand -hex 32`), then register the webhook yourself — eve never calls setWebhook: " +
+      "POST https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook with " +
+      '{"url":"https://<public-host>/eve/v1/telegram","secret_token":"<same secret>",' +
+      '"allowed_updates":["message","callback_query"]}. Include callback_query or ' +
+      "human-in-the-loop buttons render but never resolve. IMPORTANT: eve 0.30 has NO polling " +
+      "mode — getUpdates appears nowhere in the package and TelegramChannelConfig has no polling " +
+      "option — so a laptop needs a tunnel (cloudflared, ngrok) on port 443/80/88/8443, and free " +
+      "tunnels change hostname on restart, which means re-running setWebhook. The secret token is " +
+      "this route's ONLY auth: eve compares the X-Telegram-Bot-Api-Secret-Token header in " +
+      "constant time and answers 401 when it is unset or mismatched, and evestack's HTTP Basic " +
+      "policy does not cover this route because Telegram's servers cannot send Basic " +
+      "credentials. TELEGRAM_BOT_USERNAME is optional but required for @mention dispatch in " +
+      "groups; without it only /commands and replies to the bot wake it there — and note that " +
+      "ANY unscoped /command in a group wakes it. With no token at all the agent still boots: " +
+      "the channel logs one line and stays idle. Replies are plain text with no parse_mode, so " +
+      "model Markdown renders literally; the upload policy allows images and PDFs to 20 MB, the " +
+      "Bot API's own getFile ceiling.",
+  },
 ];
 
 mkdirSync(outDir, { recursive: true });

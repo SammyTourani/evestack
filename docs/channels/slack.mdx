@@ -1,0 +1,280 @@
+---
+title: Slack
+description: Put your self-hosted agent in a Slack workspace with a bot token and a signing secret. No Vercel account, no Connect connector.
+---
+
+## The Vercel Connect question, answered
+
+eve's own Slack documentation is written entirely around Vercel Connect and states that
+credentials "run through Vercel Connect... so there's no `SLACK_BOT_TOKEN` or
+`SLACK_SIGNING_SECRET` for you to manage." Read quickly, that sounds like a requirement.
+
+It is not. In eve 0.30.2 the whole `credentials` object is optional and every field falls back
+to the environment:
+
+| What Connect supplies | What eve falls back to | Where |
+| --- | --- | --- |
+| `credentials.botToken` | `process.env.SLACK_BOT_TOKEN` | `resolveSlackBotToken` |
+| `credentials.webhookVerifier` | `process.env.SLACK_SIGNING_SECRET`, HMAC-verified in-process | `verifyInbound` |
+
+Connect is one implementation of the `webhookVerifier` hook — the escape hatch, not the
+contract. `agent/channels/slack.ts` passes no `credentials` at all and works on two ordinary
+environment variables.
+
+So the comparison table stands: Vercel Connect ships four managed connectors and wants a Vercel
+account for the managed OAuth path. A self-hosted agent needs a bot token.
+
+We proved the handshake without ever registering a Slack app, by signing a real
+`url_verification` payload with a throwaway secret and calling eve's own route handler:
+
+```
+200  "3eZbrw1aB2rC6hjIsCLNL1lLbyTYs9SC3mHtNjnpNyGqDMWDb5"  ← signed url_verification
+401  "unauthorized"                                        ← tampered signature
+401  "unauthorized"                                        ← replay outside 300s skew
+401  "unauthorized"                                        ← no signature headers
+```
+
+`VERCEL_USE_EXPERIMENTAL_FRAMEWORKS`, `vercel connect create`, and `@vercel/connect` appear
+nowhere in this path.
+
+## Before you start
+
+Slack only calls **public HTTPS** URLs. There is no polling mode for the Events API. A laptop
+therefore needs a tunnel:
+
+```bash
+cloudflared tunnel --url http://localhost:2000
+# or: ngrok http 2000
+```
+
+Everything below uses `https://YOUR-HOST` for whatever that prints. The one route you need is:
+
+```
+POST https://YOUR-HOST/eve/v1/slack
+```
+
+Both Events **and** interactive button clicks go to that single path — eve branches on the
+content type internally.
+
+<Note>
+This route is **not** behind the HTTP Basic policy in `agent/channels/eve.ts`. Route auth there
+guards the three eve session routes; a channel's routes carry their own verification, which for
+Slack is the request signature. Do not put Basic auth in front of `/eve/v1/slack` in a reverse
+proxy — Slack cannot answer a challenge, and you would be trading a signature check for a 401.
+</Note>
+
+## 1. Create the app
+
+Go to **[api.slack.com/apps](https://api.slack.com/apps) → Create New App → From an app
+manifest**, pick your workspace, and paste this:
+
+```yaml
+display_information:
+  name: evestack
+features:
+  bot_user:
+    display_name: evestack
+    always_online: false
+  app_home:
+    home_tab_enabled: false
+    # Required for DMs. Without it, users cannot type to the bot at all.
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
+oauth_config:
+  scopes:
+    bot:
+      - app_mentions:read
+      - chat:write
+      - im:history
+      - im:write
+      - channels:history
+      - groups:history
+      - files:read
+settings:
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false
+```
+
+The manifest deliberately omits the request URLs. Slack verifies a request URL the moment it
+appears in a manifest, and you do not have the signing secret to verify it with until the app
+exists. Scopes first, URLs in step 4.
+
+Prefer clicking? **From scratch** works too — you then add each scope by hand under **OAuth &
+Permissions → Scopes → Bot Token Scopes**, and flip **App Home → Show Tabs → Messages Tab** on
+along with *Allow users to send Slash commands and messages from the messages tab*.
+
+### What each scope buys
+
+| Scope | Why |
+| --- | --- |
+| `app_mentions:read` | Receive `app_mention`. Without it the bot never hears you. |
+| `chat:write` | Post replies. Everything the agent says goes through this. |
+| `im:history` | Read DM content. Required for `message.im` to carry text. |
+| `im:write` | Open a DM conversation — used by `postDirectMessage`, and by the default HITL flow to deliver a sign-in challenge privately instead of in-channel. |
+| `channels:history` | Public-channel thread continuation and `threadContext`. Optional. |
+| `groups:history` | The same in private channels. Optional. |
+| `files:read` | Download inbound attachments from authenticated Slack URLs so the model can see them. Optional. |
+| `files:write` | Only if the agent should upload files back. |
+
+Not needed: `users:read` (eve attributes speakers by stable user id and never does profile
+lookups), and `commands` (slash commands do not reach eve's handlers).
+
+`assistant:write` is worth knowing about. eve shows progress with
+`assistant.threads.setStatus` — `Thinking…`, then `Working…`, then a live action label. That
+method belongs to Slack's assistant surface: it needs `assistant:write` and applies to
+assistant threads. In an ordinary channel thread the call fails, eve logs and swallows it, and
+you lose the indicator and nothing else. Replies are unaffected either way.
+
+## 2. Install to the workspace, get the token
+
+**OAuth & Permissions → Install to Workspace → Allow.** Copy the **Bot User OAuth Token**
+(`xoxb-...`).
+
+Re-installing is required every time you add a scope. Slack will show a yellow banner; take it
+seriously, because the old grant keeps working and the new scope silently does not.
+
+## 3. Get the signing secret
+
+**Basic Information → App Credentials → Signing Secret → Show.** This is not the App-Level
+Token (`xapp-`) and not the deprecated Verification Token. Copy the wrong one and every request
+gets a 401.
+
+Put both into `templates/default/.env.local`:
+
+```bash
+SLACK_BOT_TOKEN=xoxb-...
+SLACK_SIGNING_SECRET=...
+```
+
+Restart the agent so the process actually has them:
+
+```bash
+pnpm dev
+```
+
+An unconfigured channel is not a broken one — the route still registers and the agent logs a
+single line at boot:
+
+```
+[evestack:slack] SLACK_BOT_TOKEN and SLACK_SIGNING_SECRET not set, so the Slack channel is
+registered but idle: unsigned inbound requests get a 401 and outbound Web API calls throw.
+```
+
+## 4. Event Subscriptions and the challenge
+
+**Event Subscriptions → Enable Events → On.** Set **Request URL** to:
+
+```
+https://YOUR-HOST/eve/v1/slack
+```
+
+Slack immediately POSTs a `url_verification` body containing a random `challenge` string, and
+expects it echoed back. eve does this for you and answers `200 text/plain` with the challenge
+verbatim. The field turns green and says **Verified**.
+
+**Order matters.** Slack signs the challenge request like every other request, so
+`SLACK_SIGNING_SECRET` must already be in the running process. If it is not, eve answers 401,
+Slack reports *"Your request URL didn't respond with the value of the challenge parameter"*, and
+your agent log carries the real reason:
+
+```
+[eve:slack.channel] slack inbound verification failed
+  Error: slackChannel: missing signing secret. Pass credentials.signingSecret, set
+  SLACK_SIGNING_SECRET, or supply credentials.webhookVerifier.
+```
+
+Then, under **Subscribe to bot events**, add:
+
+| Event | Effect |
+| --- | --- |
+| `app_mention` | `@evestack ...` in any channel the bot is in. The baseline. |
+| `message.im` | Direct messages. |
+| `message.channels` | Lets a thread continue without re-mentioning the bot. Optional. |
+| `message.groups` | The same in private channels. Optional. |
+
+**Save Changes**, and reinstall if prompted.
+
+## 5. Interactivity (needed for approvals)
+
+**Interactivity & Shortcuts → Interactivity → On**, and set **Request URL** to the *same*
+`https://YOUR-HOST/eve/v1/slack`.
+
+Skip this and human-in-the-loop breaks in a way that looks like nothing at all: the agent posts
+its Approve/Deny buttons, you click one, and the turn stays parked forever. Slack delivers
+`block_actions` as `application/x-www-form-urlencoded` to the interactivity URL, and eve routes
+that content type to its interaction handler on the same path.
+
+## 6. Invite the bot
+
+In each channel it should work in:
+
+```
+/invite @evestack
+```
+
+`app_mentions:read` grants nothing in a channel the bot has not joined.
+
+## What you get
+
+| You do | The agent does |
+| --- | --- |
+| `@evestack summarize this thread` | Replies in-thread with a live status indicator. |
+| DM the bot | Same, in your IM conversation. |
+| Reply in a thread it is already in | Continues without a mention — needs `message.channels` + `channels:history`. |
+| Click an approval button | Resumes the parked turn. |
+| Upload a file with your mention | Staged and passed to the model — needs `files:read`. |
+
+Signature verification is HMAC-SHA256 over `v0:{timestamp}:{raw body}`, compared in constant
+time, with a 300-second skew window. Retries whose `x-slack-retry-reason` is `http_timeout` are
+dropped, so a slow first turn does not get delivered twice.
+
+## Installing this into an existing eve project
+
+```bash
+eve registry add @evestack=https://registry.evestack.dev/r/{name}.json
+eve add @evestack/channel-slack
+```
+
+Use that rather than `eve add channel/slack`, which is eve's own scaffold and walks you into the
+Vercel Connect flow.
+
+## When it does not work
+
+| Symptom | Cause |
+| --- | --- |
+| "Request URL didn't respond with the value of the challenge parameter" | `SLACK_SIGNING_SECRET` missing from the *running* process, tunnel down, or the agent was not restarted after editing `.env.local`. |
+| Every event 401s, no log about the secret | Wrong secret. The App-Level Token (`xapp-`) and the legacy Verification Token both look plausible and are both wrong. |
+| `inbound request timestamp outside allowed skew` | Host clock drift over five minutes. Fix NTP. |
+| `inbound request signature mismatch` in production only | Something between Slack and eve is rewriting the body. The HMAC covers raw bytes — a proxy that re-serializes JSON, strips whitespace, or decompresses will break it. |
+| Bot ignores mentions in one channel | Not invited there (`/invite @evestack`). |
+| Scope added, still unauthorized | Slack requires a reinstall to widen a grant. |
+| DMs do nothing | App Home messages tab off, or `message.im` / `im:history` missing. |
+| Approval buttons do nothing | Interactivity request URL not set (step 5). |
+| `Error: SLACK_BOT_TOKEN is required.` | Inbound verification passed, so events arrive — but the reply cannot be posted. Outbound needs the token; inbound needs the secret. They fail independently. |
+
+## Customizing
+
+`templates/default/agent/channels/slack.ts` ships two hooks: `onAppMention`, which answers
+`@evestack ...`, and `onMessage`, which handles DMs and continues threads the agent already has
+a session in. Three details are worth reading before you edit it:
+
+- **`onAppMention` is not optional here, even though it only reproduces eve's default.** eve
+  resolves an inbound event with `(kind === "app_mention" ? onAppMention : onDirectMessage) ??
+  onMessage`, so defining `onMessage` alone captures app mentions as well. They then hit the
+  `isSubscribed()` gate — false for a first mention, because no session exists yet — and the
+  turn is dropped. The symptom is a bot that ignores you until it has already answered you once,
+  which it never does. If you delete `onAppMention`, you reintroduce that.
+- Defining `onMessage` takes DMs away from eve's built-in DM default, because eve resolves
+  `onDirectMessage ?? onMessage`. That is why the file has an explicit DM branch reproducing
+  the default's auth derivation and typing indicator.
+- eve drops channel messages containing `<@botUserId>` before `onMessage` runs, because the same
+  message already arrived as a separate `app_mention` delivery with its own event id — and the
+  duplicate cache is keyed on event id, so it would not catch it. A consequence: inside
+  `onMessage`, `ctx.isBotMentioned()` is always false for channel messages. eve's own docs show
+  a snippet that gates on it; on the `onMessage` path that branch is unreachable.
+
+`ctx.reset()` for a `/new` command, `ctx.cancel()` for debouncing, `threadContext` for injecting
+earlier thread replies, and `onEvent` for things like `team_join` are all documented in eve's
+bundled `node_modules/eve/docs/channels/slack.mdx` — and every example there that reads
+`credentials: connectSlackCredentials(...)` can simply have that line deleted.

@@ -1,0 +1,257 @@
+---
+title: Telegram
+description: The fastest non-HTTP way to talk to your self-hosted agent — a BotFather token and one tunnel.
+---
+
+Slack wants an app manifest and a workspace admin. Discord wants an application, a public key
+and registered commands. Telegram wants a chat with [@BotFather](https://t.me/BotFather) and
+about sixty seconds. No review, no OAuth, no org to belong to.
+
+That makes Telegram the channel most self-hosters will actually finish, so it ships in the
+default template as `agent/channels/telegram.ts`.
+
+<Warning>
+**There is no polling mode.** eve's Telegram adapter is webhook-only, so Telegram has to be
+able to reach your machine over public HTTPS. On a laptop that means a tunnel. See
+[Why you need a tunnel](#why-you-need-a-tunnel) — it is the only genuinely annoying step, and
+you cannot skip it.
+</Warning>
+
+## Why you need a tunnel
+
+The Telegram Bot API offers two ways to receive updates: `getUpdates` (long polling, your
+process calls out) and `setWebhook` (Telegram calls in). Polling needs no public URL at all,
+which would make this channel trivial to self-host.
+
+eve 0.30.2 implements only the second one. We checked the shipped adapter rather than guessing:
+
+- `getUpdates` does not appear anywhere in the `eve` package.
+- The adapter calls exactly these Bot API methods: `sendMessage`, `sendChatAction`,
+  `answerCallbackQuery`, `editMessageReplyMarkup`, `getFile`, plus the raw file download.
+- `TelegramChannelConfig` exposes `api`, `botUsername`, `credentials`, `events`,
+  `onCallbackQuery`, `onMessage`, `route` and `uploadPolicy`. There is no polling option.
+- The channel is a route — `POST /eve/v1/telegram` — and nothing in eve ever initiates a call
+  to Telegram to fetch updates.
+
+eve also never calls `setWebhook` for you. Registering the URL is a one-time curl you run by
+hand, [below](#5-point-telegram-at-your-tunnel).
+
+If you want polling, it has to be built: a `defineChannel` sidecar that drives `getUpdates`
+itself and hands each update to `receive()`. That is real work, not a config flag. Until then,
+a tunnel is the answer, and the free ones take one command.
+
+## 1. Get a token from BotFather
+
+1. Open Telegram and message [@BotFather](https://t.me/BotFather).
+2. Send `/newbot`.
+3. Give it a display name (anything) and a username that must end in `bot`
+   — e.g. `my_evestack_bot`.
+4. BotFather replies with a token shaped like `123456789:AAH...`. That token **is** the bot.
+   Anyone holding it can read and send everything the bot can, so treat it like a password.
+
+Optional, but do it now if you ever want the bot in a group: send `/setprivacy`, pick your bot,
+choose **Disable**. With privacy mode enabled (the default) Telegram only forwards commands and
+replies to the bot; disabling it lets `@mentions` through too.
+
+## 2. Set the environment
+
+Add these to `templates/default/.env.local` (gitignored, never committed):
+
+```bash
+TELEGRAM_BOT_TOKEN=123456789:AAH...        # from BotFather
+TELEGRAM_WEBHOOK_SECRET_TOKEN=...          # you invent this; see below
+TELEGRAM_BOT_USERNAME=my_evestack_bot      # optional, no @ — needed for group @mentions
+```
+
+Generate the secret token yourself. Telegram accepts 1–256 characters from `A-Z a-z 0-9 _ -`:
+
+```bash
+openssl rand -hex 32
+```
+
+This secret is the **only** thing standing between your agent and anyone on the internet who
+finds the webhook URL. Telegram echoes it back in the `X-Telegram-Bot-Api-Secret-Token` header
+on every delivery, and eve compares it in constant time before parsing a single byte of body.
+
+<Note>
+The Telegram route is **not** behind evestack's HTTP Basic auth. `agent/channels/eve.ts` guards
+the eve HTTP channel; `POST /eve/v1/telegram` is guarded by the secret token alone. That is
+correct — Telegram's servers cannot send Basic credentials — but it means a weak or missing
+secret is a wide-open door. eve fails closed if `TELEGRAM_WEBHOOK_SECRET_TOKEN` is unset: every
+inbound request gets `401 unauthorized`.
+</Note>
+
+With no `TELEGRAM_BOT_TOKEN` at all, the agent still boots. The channel logs one line and sits
+idle, exactly like `agent/tools/composio.ts` without its key:
+
+```
+[evestack:telegram] TELEGRAM_BOT_TOKEN is not set, so the Telegram channel is idle.
+```
+
+## 3. Add the channel
+
+It is already in the default template. To add it to an existing eve project:
+
+```bash
+eve registry add @evestack=https://registry.evestack.dev/r/{name}.json
+eve add @evestack/channel-telegram
+```
+
+Or write the file yourself — the filename is the channel id:
+
+```ts title="agent/channels/telegram.ts"
+import { telegramChannel } from "eve/channels/telegram";
+
+export default telegramChannel({
+  botUsername: process.env.TELEGRAM_BOT_USERNAME,
+  uploadPolicy: {
+    allowedMediaTypes: ["image/*", "application/pdf"],
+    maxBytes: 20 * 1024 * 1024,
+  },
+});
+```
+
+Confirm eve sees it:
+
+```bash
+eve channels list
+# eve
+# telegram
+```
+
+## 4. Expose your laptop
+
+Pick one. Both give you HTTPS on port 443, which Telegram requires (it only accepts webhook
+URLs on 443, 80, 88 or 8443).
+
+**cloudflared** — no account, no signup, one command:
+
+```bash
+brew install cloudflared
+cloudflared tunnel --url http://localhost:2000
+# ...
+# https://random-words-here.trycloudflare.com
+```
+
+**ngrok** — free account required:
+
+```bash
+ngrok http 2000
+# Forwarding  https://random.ngrok-free.app -> http://localhost:2000
+```
+
+<Warning>
+Both free tiers hand you a **new random hostname every restart**. When the tunnel restarts you
+must re-run `setWebhook` with the new URL, or Telegram keeps posting into the void. If the bot
+goes quiet after a reboot, this is why. A named cloudflared tunnel on a domain you own fixes it
+permanently and still costs nothing.
+</Warning>
+
+## 5. Point Telegram at your tunnel
+
+```bash
+curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://random-words-here.trycloudflare.com/eve/v1/telegram",
+       "secret_token":"'"$TELEGRAM_WEBHOOK_SECRET_TOKEN"'",
+       "allowed_updates":["message","callback_query"]}'
+```
+
+`allowed_updates` matters: `message` is the conversation and `callback_query` is how
+human-in-the-loop buttons report back. Leave `callback_query` out and approval buttons will
+appear but never resolve.
+
+Check that it took, and keep checking it — this endpoint is the single best debugging tool for
+this channel:
+
+```bash
+curl -s "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/getWebhookInfo"
+```
+
+A healthy response has your URL, `"pending_update_count": 0` and no `last_error_message`. If
+`last_error_message` says `Wrong response from the webhook: 401 Unauthorized`, your secret
+token does not match what the agent has. If it says connection refused or timed out, the tunnel
+is down or `eve dev` is not running.
+
+## 6. Talk to it
+
+Make sure the agent is up (`pnpm dev` in `templates/default`, serving `:2000`), then DM your bot
+in Telegram. It should start typing and answer.
+
+## What actually reaches the agent
+
+Group chats are deliberately stricter than DMs. eve's default dispatch rule, read straight out
+of the adapter:
+
+| Where | Wakes the bot |
+| --- | --- |
+| Private chat | Any message with text, a caption, or a supported attachment |
+| Group / supergroup | A `/command`, an `@yourbot` mention, or a reply to a message from *any* bot |
+| Broadcast channel | Nothing — always ignored |
+| Any chat, sender is a bot | Nothing — always ignored |
+
+Two sharp edges worth knowing:
+
+- **`@mentions` need `TELEGRAM_BOT_USERNAME`.** Without it eve has no idea what its own handle
+  is, so in a group only `/commands` and replies work.
+- **Any slash command wakes it.** `/anything` with no `@target` counts, so an unrelated bot's
+  `/roll` in a shared group will start a turn. Scope it with `/roll@otherbot` or keep the bot
+  out of busy groups. Override `onMessage` if you need stricter rules.
+- **The reply rule checks "is a bot", not "is *this* bot".** eve gates on
+  `replyToMessage.from.isBot`, so replying to *any* bot in the group also wakes yours. Same
+  mitigation as above.
+
+Forum topics carry `message_thread_id` through the continuation token, so each topic keeps its
+own session.
+
+## Identity, and why it matters for budgets
+
+eve derives a principal from every inbound message:
+
+- Private chat: `telegram:<userId>`
+- Group or supergroup: `telegram:<chatId>:<userId>` — the same person in two groups is two
+  principals
+
+That is exactly the key [`@evestack/budget`](/registry) caps spend against, so a per-principal
+daily limit is a per-Telegram-user daily limit with no extra wiring.
+
+## Attachments
+
+The template allows images and PDFs up to 20 MB. eve does not download anything until the
+policy says yes, then fetches it on demand with `getFile`.
+
+The 20 MB is not arbitrary: the Bot API refuses to serve files larger than that through
+`getFile`, so eve's own 25 MB default only converts a clean policy rejection into a failed
+download. Widen the types if you need to, but do it knowingly — `allowedMediaTypes: "*"` hands
+your model whatever a stranger in a group chat decides to attach.
+
+## Formatting
+
+The default `message.completed` handler sends plain text with no `parse_mode`, so Markdown from
+the model shows up literally — `**bold**` renders as `**bold**`. Replies over Telegram's
+4096-character limit are split across several messages.
+
+If you want real formatting, override the handler and set `parse_mode`. Be careful: Telegram's
+MarkdownV2 requires escaping a long list of characters, and an unescaped one makes the whole
+`sendMessage` call fail, which looks like the bot ignoring you.
+
+## Teardown and rotation
+
+```bash
+# stop delivery without touching the bot
+curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/deleteWebhook"
+```
+
+If a token ever leaks, send `/revoke` to BotFather, take the new token, update `.env.local`, and
+re-run `setWebhook`. The old token dies immediately.
+
+## Troubleshooting
+
+| Symptom | Cause |
+| --- | --- |
+| `401 unauthorized` from `/eve/v1/telegram` | `TELEGRAM_WEBHOOK_SECRET_TOKEN` unset, or it does not match the value you passed to `setWebhook` |
+| `getWebhookInfo` shows a rising `pending_update_count` | Telegram cannot reach you: tunnel down, agent down, or a stale hostname after a tunnel restart |
+| Bot answers in DMs but is silent in a group | Privacy mode is on (`/setprivacy` → Disable) and/or `TELEGRAM_BOT_USERNAME` is unset |
+| Buttons appear but nothing happens when tapped | `callback_query` missing from `allowed_updates` — re-run `setWebhook` |
+| Agent boots but the channel does nothing | `TELEGRAM_BOT_TOKEN` unset; look for the `[evestack:telegram]` line at startup |
+| Replies contain literal `**asterisks**` | Expected — the default handler sends plain text |
