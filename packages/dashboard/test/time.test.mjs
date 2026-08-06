@@ -146,7 +146,8 @@ test("duration is a span, so it has no zone and no negative", () => {
   assert.equal(duration(0), "0ms");
   assert.equal(duration(999.6), "1000ms");
   assert.equal(duration(65_000), "1m 05s");
-  assert.equal(duration(3_600_000), "60m 00s");
+  // One hour crosses into the hour tier; see "a duration longer than an hour".
+  assert.equal(duration(3_600_000), "1h 00m");
 });
 
 test("duration holds three significant figures through the 1–10s decade", () => {
@@ -161,4 +162,29 @@ test("duration holds three significant figures through the 1–10s decade", () =
   // Ten seconds is where a hundredth stops being a significant figure.
   assert.equal(duration(10_000), "10.0s");
   assert.equal(duration(23_268.7), "23.3s");
+});
+
+/**
+ * Durations above an hour.
+ *
+ * Not an edge case on this product. eve never closes a session — lib/queries.ts
+ * and lib/monitors.ts both write that down — so an open session's age is the
+ * ordinary value the detail page prints, and it is routinely days. Before these
+ * tiers existed the page rendered a three-day-old session as "5277m 07s", and a
+ * month-old one as "43200m 00s".
+ */
+test("a duration longer than an hour is readable", () => {
+  assert.equal(duration(90_000), "1m 30s");
+  assert.equal(duration(59 * 60_000), "59m 00s");
+  assert.equal(duration(3_600_000), "1h 00m");
+  assert.equal(duration(9 * 3_600_000), "9h 00m");
+  assert.equal(duration(23.5 * 3_600_000), "23h 30m");
+  assert.equal(duration(86_400_000), "1d 0h");
+  assert.equal(duration(88 * 3_600_000), "3d 16h");
+  assert.equal(duration(30 * 86_400_000), "30d 0h");
+
+  // No tier may print a bare minute count above an hour.
+  for (const ms of [3_600_000, 5 * 3_600_000, 88 * 3_600_000, 30 * 86_400_000]) {
+    assert.doesNotMatch(duration(ms), /^\d{3,}m/, `${ms}ms rendered as a raw minute count`);
+  }
 });

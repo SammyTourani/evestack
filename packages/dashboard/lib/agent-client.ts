@@ -547,7 +547,12 @@ export interface SessionSnapshot {
  */
 export async function getSessionSnapshot(
   sessionId: string,
-  options: { lookback?: number; signal?: AbortSignal } = {},
+  // `timeoutMs` is forwarded to `readRecentEvents`. A caller using this as a
+  // liveness probe needs a much shorter bound than the 30s default for fetching
+  // data: an agent that is up but has never heard of the session opens its
+  // durable stream rather than 404ing, so the slow case is a HEALTHY agent.
+  // lib/fleet.ts explains what that cost when it was unbounded.
+  options: { lookback?: number; timeoutMs?: number; signal?: AbortSignal } = {},
 ): Promise<SessionSnapshot> {
   const { events, tailIndex } = await readRecentEvents(sessionId, options);
 

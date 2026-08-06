@@ -148,6 +148,26 @@ const IDLE_BEFORE_SUSPECT_MS = 30 * 60 * 1000;
 const MAX_PROBES = 25;
 
 /**
+ * A liveness probe gets a liveness timeout, not `agentFetch`'s 30-second
+ * default for fetching data.
+ *
+ * Measured on 2026-08-06, and it is not the failure anyone expects. A different
+ * project's eve agent was listening on the default port, so the probes reached
+ * a healthy server that had simply never heard of these sessions — and eve
+ * answers an unknown session by opening its durable stream, which is designed
+ * not to end. Every probe therefore ran to the full timeout, in parallel, and
+ * `/sessions` took **15.2 seconds** to render while every other page took under
+ * 320ms. The agent being DOWN is the fast case; the agent being up and unaware
+ * of the session is the slow one, and that is the ordinary state of any session
+ * older than the agent process.
+ *
+ * Two seconds is generous for "does this local agent recognise this id". A
+ * probe that has not answered by then is not going to change the banner, and
+ * the fallback is already "unknown", which is the honest answer.
+ */
+const PROBE_TIMEOUT_MS = 2_000;
+
+/**
  * How long a turn may be in flight before it is presumed dead.
  *
  * Generous on purpose: a turn doing real work through a sandbox can legitimately
@@ -355,6 +375,7 @@ export async function inspectFleet(
 
       try {
         const snapshot = await getSessionSnapshot(sessionId, {
+          timeoutMs: PROBE_TIMEOUT_MS,
           ...(options.signal ? { signal: options.signal } : {}),
         });
 

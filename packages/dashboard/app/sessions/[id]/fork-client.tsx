@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { CONTROL, FIELD } from "@/components/ui/style";
 import styles from "./session.module.css";
 
 /**
@@ -116,7 +117,7 @@ export function ForkPanel({ sessionId }: { sessionId: string }) {
 
   if (!open) {
     return (
-      <button type="button" className={styles.promote} onClick={() => setOpen(true)}>
+      <button type="button" className={CONTROL} onClick={() => setOpen(true)}>
         Replay into a new session
       </button>
     );
@@ -152,7 +153,7 @@ export function ForkPanel({ sessionId }: { sessionId: string }) {
             <label htmlFor="fork-from">Replay turns 1 –</label>
             <input
               id="fork-from"
-              className={styles.forkNum}
+              className={`${FIELD} w-[68px]`}
               type="number"
               min={1}
               max={plan.length}
@@ -200,7 +201,7 @@ export function ForkPanel({ sessionId }: { sessionId: string }) {
           </ol>
 
           <textarea
-            className={styles.forkText}
+            className={`${FIELD} mt-2.5 w-full resize-y`}
             rows={3}
             placeholder={`Rewrite turn ${fromTurn}… (leave empty to replay it verbatim)`}
             value={message}
@@ -242,7 +243,7 @@ export function ForkPanel({ sessionId }: { sessionId: string }) {
             {result === null && (
               <button
                 type="button"
-                className={styles.promote}
+                className={CONTROL}
                 disabled={busy || !acknowledged}
                 onClick={run}
               >
@@ -251,7 +252,7 @@ export function ForkPanel({ sessionId }: { sessionId: string }) {
             )}
             <button
               type="button"
-              className={styles.cancelBtn}
+              className={CONTROL}
               disabled={busy}
               onClick={() => setOpen(false)}
             >

@@ -132,7 +132,19 @@ export function duration(ms: number | null): string {
   if (ms === null || !Number.isFinite(ms) || ms < 0) return EM_DASH;
   if (ms < 1000) return `${Math.round(ms)}ms`;
   if (ms < 60_000) return `${(ms / 1000).toFixed(ms < 10_000 ? 2 : 1)}s`;
-  const minutes = Math.floor(ms / 60_000);
-  const seconds = Math.round((ms % 60_000) / 1000);
-  return `${minutes}m ${pad(seconds)}s`;
+  if (ms < 3_600_000) {
+    const minutes = Math.floor(ms / 60_000);
+    return `${minutes}m ${pad(Math.round((ms % 60_000) / 1000))}s`;
+  }
+  // Above an hour the seconds stop carrying information and the minute count
+  // stops being readable. This tier is not an edge case on this product: eve
+  // never closes a session, so an open one's age is the ordinary value here,
+  // and without these two branches the session page rendered a three-day-old
+  // session as "5277m 07s".
+  if (ms < 86_400_000) {
+    const hours = Math.floor(ms / 3_600_000);
+    return `${hours}h ${pad(Math.round((ms % 3_600_000) / 60_000))}m`;
+  }
+  const days = Math.floor(ms / 86_400_000);
+  return `${days}d ${Math.round((ms % 86_400_000) / 3_600_000)}h`;
 }
