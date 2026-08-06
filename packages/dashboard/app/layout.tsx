@@ -33,6 +33,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           <nav className="topnav">
             {/* `/` still redirects here; the nav points at the real route so a
                 middle-click, a copied link and the address bar all agree. */}
+            <a href="/">Overview</a>
             <a href="/sessions">Sessions</a>
             <a href="/traces">Traces</a>
             <a href="/monitors">Monitors</a>

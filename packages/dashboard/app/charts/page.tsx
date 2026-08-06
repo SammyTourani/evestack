@@ -138,7 +138,7 @@ export default function ChartGallery() {
           value={412}
           previous={508}
           better="lower"
-          coverage={{ observed: 41, total: 1_203, noun: "turns" }}
+          coverage={{ rows: 41, of: 1_203, noun: "turns" }}
         />
       </QueryValueRow>
 

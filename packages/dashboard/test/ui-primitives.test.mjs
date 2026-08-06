@@ -429,3 +429,43 @@ test("the badge knows exactly the outcomes the database can store", async () => 
     `badge.tsx and facts.sql disagree.\n  badge: ${fromBadge.join(", ")}\n  sql:   ${fromSql.join(", ")}`,
   );
 });
+
+/**
+ * One coverage shape, for the same reason there is one `Unit`.
+ *
+ * `lib/metrics.ts` stamps `{rows, of}` on every measure it returns.
+ * `components/ui/format.ts` consumes that. `components/charts/lib/series.ts`
+ * declared `{observed, total}` for the identical two numbers, so a coverage
+ * object straight from the query API could not be handed to a chart without
+ * being rewritten field by field at the call site — which is how the overview
+ * page first tried to build it, and why this test exists.
+ *
+ * That is the THIRD time the two halves of Wave 2 named one concept twice,
+ * after the unit vocabulary and the control styles. This pins the last one.
+ */
+test("charts and the query API describe coverage with the same field names", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { fileURLToPath } = await import("node:url");
+  const { dirname, join } = await import("node:path");
+  const here = dirname(fileURLToPath(import.meta.url));
+
+  const fields = (file, iface) => {
+    const src = readFileSync(join(here, "..", file), "utf8");
+    const m = src.match(new RegExp(`interface ${iface} \\{([\\s\\S]*?)\\n\\}`));
+    assert.ok(m, `could not find ${iface} in ${file}`);
+    return [...m[1].matchAll(/readonly (\w+):/g)].map((x) => x[1]).sort();
+  };
+
+  const api = fields("lib/metrics.ts", "MeasureCoverage");
+  const ui = fields("components/ui/format.ts", "Coverage");
+  const charts = fields("components/charts/lib/series.ts", "Coverage");
+
+  assert.deepEqual(ui, api, "components/ui and lib/metrics disagree");
+  // Charts additionally carry `noun`, which is a sentence choice rather than
+  // part of the measurement. Everything else must match.
+  assert.deepEqual(
+    charts.filter((f) => f !== "noun"),
+    api,
+    `components/charts and lib/metrics disagree.\n  charts: ${charts.join(", ")}\n  api:    ${api.join(", ")}`,
+  );
+});

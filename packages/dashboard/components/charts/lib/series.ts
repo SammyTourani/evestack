@@ -56,11 +56,24 @@ export interface Point {
  * result "the fleet" is the exact failure `fact_turn.span_coverage` was added
  * to prevent, and a chart is where a reader would believe it.
  */
+/*
+ * `{rows, of}` because that is what `lib/metrics.ts` returns on every measure
+ * and what `components/ui/format.ts` already consumes. This interface used to
+ * say `{observed, total}` for the same two numbers, which meant a coverage
+ * object from the query API could not be handed to a chart without being
+ * rewritten field by field at the call site — the third time the two halves of
+ * Wave 2 turned out to have named one concept twice, after `Unit`
+ * (ms/usd/ratio vs duration/cost/percent) and the button styles.
+ *
+ * `noun` stays here rather than moving to the canonical type: it is a
+ * presentation choice about the sentence, not part of the measurement, which is
+ * why `components/ui/feedback.tsx` also carries it as a separate prop.
+ */
 export interface Coverage {
   /** Rows that contributed a value. */
-  readonly observed: number;
-  /** Rows in scope, whether they contributed or not. */
-  readonly total: number;
+  readonly rows: number;
+  /** Rows that matched the query, whether they contributed or not. */
+  readonly of: number;
   /** What is being counted: "turns", "spans", "runs". */
   readonly noun: string;
 }
@@ -296,9 +309,14 @@ export function coverageNote(chart: PreparedChart): string | null {
  */
 export function describeCoverage(coverage: Coverage | null | undefined): string | null {
   if (coverage === null || coverage === undefined) return null;
-  if (coverage.total <= 0 || coverage.observed >= coverage.total) return null;
-  const pct = Math.round((coverage.observed / coverage.total) * 100);
-  return `covers ${coverage.observed.toLocaleString("en-US")} of ${coverage.total.toLocaleString("en-US")} ${coverage.noun} (${pct}%)`;
+  if (coverage.of <= 0 || coverage.rows >= coverage.of) return null;
+  // FLOOR, not round. This branch only runs when rows < of, so the sentence is
+  // already committed to saying the data is partial — and 1,879 of 1,887 rounds
+  // to "covers ... (100%)", a partial-data warning that contradicts itself in
+  // its own last word. Flooring makes the worst case read 99%, which is both
+  // true and consistent with the note being shown at all.
+  const pct = Math.floor((coverage.rows / coverage.of) * 100);
+  return `covers ${coverage.rows.toLocaleString("en-US")} of ${coverage.of.toLocaleString("en-US")} ${coverage.noun} (${pct}%)`;
 }
 
 /** The visible sentence for series the palette could not fit. */

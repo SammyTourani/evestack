@@ -301,7 +301,7 @@ test("partial coverage produces a sentence, full coverage produces silence", () 
         id: "ttft",
         label: "TTFT",
         points: [{ x: 1, y: 400 }],
-        coverage: { observed: 41, total: 1203, noun: "turns" },
+        coverage: { rows: 41, of: 1203, noun: "turns" },
       },
     ],
     { unit: "duration" },
@@ -314,14 +314,14 @@ test("partial coverage produces a sentence, full coverage produces silence", () 
         id: "ttft",
         label: "TTFT",
         points: [{ x: 1, y: 400 }],
-        coverage: { observed: 1203, total: 1203, noun: "turns" },
+        coverage: { rows: 1203, of: 1203, noun: "turns" },
       },
     ],
     { unit: "duration" },
   );
   assert.equal(coverageNote(full), null, "a chart with nothing to disclose says nothing");
   assert.equal(describeCoverage(null), null);
-  assert.equal(describeCoverage({ observed: 0, total: 0, noun: "turns" }), null);
+  assert.equal(describeCoverage({ rows: 0, of: 0, noun: "turns" }), null);
 });
 
 test("bar charts name the categories that reported nothing", () => {
@@ -747,7 +747,7 @@ test("the spoken summary leads with the caveat, not the number", () => {
         id: "a",
         label: "TTFT",
         points: [{ x: 1, y: 400 }, { x: 2, y: 500 }],
-        coverage: { observed: 41, total: 1203, noun: "turns" },
+        coverage: { rows: 41, of: 1203, noun: "turns" },
       },
     ],
     { unit: "duration" },
@@ -767,4 +767,31 @@ test("both empties describe themselves differently", () => {
     { ...TABLE_OPTIONS, kind: "Line chart" },
   );
   assert.equal(silent, "Line chart: Turns. 1 time buckets, none of which reported a value.");
+});
+
+/**
+ * A partial-data warning may never round to 100%.
+ *
+ * `describeCoverage` only runs when rows < of, so the sentence has already
+ * committed to saying the data is incomplete. Rounding made 1,879 of 1,887 read
+ * "covers 1,879 of 1,887 turns (100%)" on the overview — a caveat that
+ * contradicts itself in its own last word, which is worse than no caveat
+ * because a reader who sees 100% stops reading the numerator.
+ */
+test("a partial-coverage note never claims 100%", () => {
+  const note = describeCoverage({ rows: 1879, of: 1887, noun: "turns" });
+  assert.ok(note, "1879 of 1887 is partial and must produce a note");
+  assert.match(note, /99%/);
+  assert.doesNotMatch(note, /100%/);
+
+  // Full coverage stays silent rather than saying 100%.
+  assert.equal(describeCoverage({ rows: 1887, of: 1887, noun: "turns" }), null);
+
+  // And nothing in the partial range may ever reach 100.
+  for (let of = 2; of <= 4000; of *= 3) {
+    for (const rows of [1, of - 1, Math.floor(of / 2)]) {
+      const n = describeCoverage({ rows, of, noun: "turns" });
+      if (n !== null) assert.doesNotMatch(n, /100%/, `${rows} of ${of}`);
+    }
+  }
 });

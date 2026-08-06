@@ -1,20 +1,200 @@
-import { redirect } from "next/navigation";
+import { Suspense } from "react";
+
+import { DatabaseError } from "@/app/db-error";
+import { FleetBanner } from "@/app/fleet-banner";
+import {
+  loadOverview,
+  makeWindow,
+  OVERVIEW_WINDOWS,
+  windowLabel,
+  type Headline,
+} from "@/app/overview";
+import { QueryValue, QueryValueRow } from "@/components/charts/query-value";
+import { TimeSeriesChart } from "@/components/charts/time-series";
+import { TopList } from "@/components/charts/top-list";
+import { CONTROL, FOCUS_RING } from "@/components/ui/style";
+
+export const dynamic = "force-dynamic";
 
 /**
- * `/` is the sessions list, until it is the overview.
+ * The front door: a monitor, not a list.
  *
- * The list moved to `/sessions` so that the front door can become the monitor
- * W6 describes — big numbers, runs over time, anything wedged — without two
- * agents editing the same file, and so that `/sessions` and `/sessions/[id]`
- * are one route family rather than a list at the root with its detail pages
- * somewhere else.
+ * `/` used to be the sessions table, which answered "what has run" and left
+ * "is anything wrong right now" to be worked out by reading it. The list moved
+ * to /sessions in the same wave that built this; there is one list, and it is
+ * there.
  *
- * Temporary on purpose. `redirect()` answers 307; `permanentRedirect()` answers
- * 308, which browsers cache indefinitely — so the wave that gives `/` its own
- * page would find that visitors who came here once never reach it again. The
- * cost of 307 is one extra request per visit to the root, and it is the right
- * trade for a redirect whose whole point is that it is going away.
+ * ── Every number carries its coverage ────────────────────────────────────────
+ *
+ * The tiles are not decoration over a single query — each is a measure, the
+ * same measure over the preceding window, and a bucketed trend, and each one
+ * says what it was computed over. That last part is the difference between a
+ * dashboard and a wall of confident numbers. On the seeded month p95 TTFT comes
+ * from 359 of 1,922 turns because spans are opt-in, and spend from 1,651
+ * because 209 turns ran an unpriced model and 62 never called one. A reader who
+ * cannot see those denominators is being told something false about all three.
+ *
+ * ── Why `better` differs per tile ────────────────────────────────────────────
+ *
+ * A delta is meaningless without a direction. More runs is usually good, more
+ * spend usually is not, and higher latency never is. `QueryValue` colours the
+ * arrow from `better`, and a tile that omitted it would render "+38%" in the
+ * same green whether that was throughput or a bill.
+ *
+ * ── The one thing that is not from Postgres ──────────────────────────────────
+ *
+ * `FleetBanner` talks to the live agent, and it is behind a Suspense boundary
+ * for the reason app/sessions/page.tsx spells out: before that boundary existed
+ * the sessions page took 15.2 seconds because each probe ran to its timeout
+ * against an agent that had never heard of the session. Everything else here is
+ * SQL and paints immediately.
  */
-export default function HomePage() {
-  redirect("/sessions");
+
+const DEFAULT_WINDOW = 24;
+
+function readWindow(raw: string | undefined): number {
+  const asked = Number(raw);
+  return (OVERVIEW_WINDOWS as readonly number[]).includes(asked) ? asked : DEFAULT_WINDOW;
+}
+
+function first(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+/**
+ * `Headline` is shaped for this; keeping the spread in one place.
+ *
+ * `noun` is per tile rather than global because the denominator is not always
+ * turns — "359 of 1,922 turns" and "838 of 838 tool calls" are different
+ * sentences, and a shared noun would make one of them wrong.
+ */
+function tile(h: Headline, previousLabel: string, noun = "turns") {
+  return {
+    value: h.value,
+    previous: h.previous,
+    previousLabel,
+    spark: h.spark,
+    coverage: { ...h.coverage, noun },
+  };
+}
+
+export default async function OverviewPage(props: PageProps<"/">) {
+  const params = await props.searchParams;
+  const hours = readWindow(first(params.window));
+  const label = windowLabel(hours);
+  const window = makeWindow(hours);
+
+  let data: Awaited<ReturnType<typeof loadOverview>>;
+  try {
+    data = await loadOverview(window);
+  } catch (error) {
+    return <DatabaseError error={error} />;
+  }
+
+  const previousLabel = `previous ${label}`;
+
+  return (
+    <>
+      <h1>Overview</h1>
+      <p className="page-sub">
+        Every agent run on this machine over the last {label}, read straight from your own Postgres.
+        Each number says how much of the window it could actually be computed from.
+      </p>
+
+      <nav aria-label="Time range" className="mb-4 flex flex-wrap gap-1.5">
+        {OVERVIEW_WINDOWS.map((w) => (
+          <a
+            key={w}
+            href={w === DEFAULT_WINDOW ? "/" : `/?window=${w}`}
+            aria-current={w === hours ? "page" : undefined}
+            className={`${CONTROL} aria-[current=page]:border-accent aria-[current=page]:text-text`}
+          >
+            {windowLabel(w)}
+          </a>
+        ))}
+      </nav>
+
+      {/* Renders nothing when nothing is wrong. Streamed — see the header. */}
+      <Suspense fallback={null}>
+        <FleetBanner />
+      </Suspense>
+
+      <QueryValueRow>
+        <QueryValue label="Turns" unit="count" better="higher" {...tile(data.runs, previousLabel)} />
+        <QueryValue
+          label="Failure rate"
+          unit="percent"
+          better="lower"
+          {...tile(data.failureRate, previousLabel)}
+        />
+        <QueryValue
+          label="p95 turn latency"
+          unit="duration"
+          better="lower"
+          {...tile(data.latency, previousLabel)}
+        />
+        <QueryValue label="Spend" unit="cost" better="lower" {...tile(data.spend, previousLabel)} />
+        <QueryValue
+          label="Tokens out"
+          unit="tokens"
+          better="higher"
+          {...tile(data.tokens, previousLabel)}
+        />
+        <QueryValue
+          label="p95 time to first token"
+          unit="duration"
+          better="lower"
+          {...tile(data.ttft, previousLabel)}
+        />
+      </QueryValueRow>
+
+      <div className="mt-6 grid gap-4 lg:grid-cols-2">
+        <TimeSeriesChart
+          title="Turns over time"
+          subtitle={`By trigger, ${label} window.`}
+          series={data.runsByTrigger.series}
+          unit="count"
+          variant="stacked-area"
+          xLabel="time"
+          xPrecision={hours <= 24 ? "time" : "date"}
+        />
+        <TimeSeriesChart
+          title="Spend over time"
+          subtitle="By model. A model with no catalog price contributes nothing here and is listed as unpriced below."
+          series={data.spendByModel.series}
+          unit="cost"
+          variant="stacked-area"
+          xLabel="time"
+          xPrecision={hours <= 24 ? "time" : "date"}
+        />
+      </div>
+
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <TopList
+          title="Models"
+          subtitle="Ranked by spend. Sort by error rate or latency to find the one that is expensive for the wrong reason."
+          rows={data.topModels}
+          unit="cost"
+          valueLabel="spend"
+          durationLabel="p95"
+        />
+        <TopList
+          title="Tools"
+          subtitle="Ranked by calls. A tool that is slow and frequent costs more than one that is slow and rare."
+          rows={data.topTools}
+          unit="count"
+          valueLabel="calls"
+          durationLabel="p95"
+        />
+      </div>
+
+      <p className="mt-6 text-small text-text-dim">
+        Looking for a specific run?{" "}
+        <a className={`text-accent hover:underline ${FOCUS_RING}`} href="/sessions">
+          Every session
+        </a>{" "}
+        is searchable and filterable.
+      </p>
+    </>
+  );
 }

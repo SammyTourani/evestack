@@ -159,7 +159,7 @@ test("the summary a screen reader hears is wired to the figure", () => {
         id: "a",
         label: "TTFT",
         points: [{ x: 1, y: 400 }],
-        coverage: { observed: 41, total: 1203, noun: "turns" },
+        coverage: { rows: 41, of: 1203, noun: "turns" },
       },
     ],
   });
@@ -178,7 +178,7 @@ test("partial coverage is on the face of the chart, not only in the summary", ()
         id: "a",
         label: "TTFT",
         points: [{ x: 1, y: 400 }],
-        coverage: { observed: 41, total: 1203, noun: "turns" },
+        coverage: { rows: 41, of: 1203, noun: "turns" },
       },
     ],
   });
@@ -392,7 +392,7 @@ test("a tile over partial data says so on the tile", () => {
     label: "TTFT p50",
     unit: "duration",
     value: 410,
-    coverage: { observed: 41, total: 1203, noun: "turns" },
+    coverage: { rows: 41, of: 1203, noun: "turns" },
   });
   assert.match(html, /Partial data: covers 41 of 1,203 turns \(3%\)\./);
 });

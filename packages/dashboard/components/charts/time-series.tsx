@@ -71,10 +71,26 @@ export interface TimeSeriesProps {
   readonly height?: number;
   /** Heading for the x column of the data table. */
   readonly xLabel?: string;
-  /** Full rendering, for the tooltip and the table. */
+  /**
+   * Full rendering, for the tooltip and the table.
+   *
+   * FUNCTION PROPS ONLY WORK FROM A CLIENT COMPONENT. React cannot send a
+   * function across the server boundary, so a server page passing this gets
+   * "Functions cannot be passed directly to Client Components" at request time,
+   * not at build time — which is how the overview page found it. Server callers
+   * use `xPrecision` / `xTickPrecision` below.
+   */
   readonly formatX?: (x: number) => string;
-  /** Short rendering, for an axis tick. */
+  /** Short rendering, for an axis tick. See the note on `formatX`. */
   readonly formatXTick?: (x: number) => string;
+  /**
+   * Serialisable equivalents, for server components. `time` reads HH:MM and
+   * suits a window of hours; `date` reads "Aug 6" and suits one of days, where
+   * every tick would otherwise carry the same clock time. Ignored when the
+   * function form is supplied.
+   */
+  readonly xPrecision?: "time" | "date";
+  readonly xTickPrecision?: "time" | "date";
   /** Required only when more than six series are passed; see `palette.ts`. */
   readonly overflow?: Overflow;
   readonly overflowNoun?: string;
@@ -88,6 +104,15 @@ export interface TimeSeriesProps {
 
 const defaultFormatX = (x: number) => stamp(new Date(x).toISOString(), "second");
 const defaultFormatXTick = (x: number) => clock(new Date(x).toISOString(), "minute");
+
+/** The serialisable `xPrecision` values, resolved to the formatters above. */
+const BY_PRECISION: Record<"time" | "date", { full: (x: number) => string; tick: (x: number) => string }> = {
+  time: { full: defaultFormatX, tick: defaultFormatXTick },
+  date: {
+    full: (x) => stamp(new Date(x).toISOString(), "minute"),
+    tick: (x) => stamp(new Date(x).toISOString(), "day"),
+  },
+};
 
 /**
  * A value whose neighbours are both absent cannot be drawn as a line, and a
@@ -165,8 +190,8 @@ export function TimeSeriesChart(props: TimeSeriesProps) {
   const hatch = useHatch();
   const variant = props.variant ?? "line";
   const stacked = variant === "stacked-area";
-  const formatX = props.formatX ?? defaultFormatX;
-  const formatXTick = props.formatXTick ?? defaultFormatXTick;
+  const formatX = props.formatX ?? BY_PRECISION[props.xPrecision ?? "time"].full;
+  const formatXTick = props.formatXTick ?? BY_PRECISION[props.xTickPrecision ?? props.xPrecision ?? "time"].tick;
   const xLabel = props.xLabel ?? "time";
 
   const chart = useMemo(
