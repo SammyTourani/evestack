@@ -5,11 +5,21 @@
   "type": "module",
   "description": "Self-hosted observability and control plane for eve agents: sessions, cost, approvals with audit, memory, schedules and evals, read from your own Postgres.",
   "license": "Apache-2.0",
+  "homepage": "https://github.com/SammyTourani/evestack/tree/main/packages/dashboard#readme",
+  "bugs": {
+    "url": "https://github.com/SammyTourani/evestack/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SammyTourani/evestack.git",
+    "directory": "packages/dashboard"
+  },
   "scripts": {
     "dev": "next dev --port 4000",
     "build": "next build",
     "start": "next start --port 4000",
-    "typecheck": "next typegen && tsc --noEmit"
+    "typecheck": "next typegen && tsc --noEmit",
+    "test": "node --import ./test/register-ts-resolve.mjs --test test/*.test.mjs"
   },
   "dependencies": {
     "@evestack/schedules": "workspace:*",

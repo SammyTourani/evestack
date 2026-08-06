@@ -18,11 +18,13 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           </a>
           <nav className="topnav">
             <a href="/">Sessions</a>
+            <a href="/traces">Traces</a>
             <a href="/chat">Chat</a>
             <a href="/schedules">Schedules</a>
             <a href="/memory">Memory</a>
             <a href="/skills">Skills</a>
             <a href="/approvals">Approvals</a>
+            <a href="/evals">Evals</a>
             <a href="/integrations">Integrations</a>
           </nav>
           <span className="badge-selfhosted" title="No Vercel account. No metered compute.">
