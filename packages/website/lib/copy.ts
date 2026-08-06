@@ -208,11 +208,21 @@ export const architecture = {
    This section used to render a fabricated "Observability / Monitors" screen:
    p50/p75/p95/p99 chips, error and timeout rates, a runs-over-time chart,
    session search and pagination, inside a tilted <figure> captioned "read
-   straight from your own postgres". None of it exists.
-   `grep -rniE "p95|percentile|Monitors" packages/dashboard/{app,lib,components}`
-   returns nothing, and the real nav (packages/dashboard/app/layout.tsx:19-27) is
-   Sessions, Chat, Schedules, Memory, Skills, Approvals, Integrations — no
-   Monitors route, no Traces route, no percentile code anywhere.
+   straight from your own postgres". When this note was first written, none of it
+   existed.
+
+   UPDATE 2026-08-06 — most of it does now, and leaving this note as it stood was
+   its own honesty defect. `cfbff14` built packages/dashboard/app/monitors/page.tsx
+   and lib/monitors.ts to make the picture true: real percentile_cont p50/p75/p95/p99,
+   a real error rate (error_code plus finished-turns-with-no-$eve.model, counted
+   separately), a width_bucket runs-over-time series, and a 1h/6h/12h/24h/7d window
+   picker. Monitors and Traces are both in the nav. The grep this note tells you to
+   run now returns 49 matches across two files — run it rather than trusting this
+   sentence, which is exactly the mistake that made a later audit wrong.
+
+   What the mock still advertises and the product still lacks is narrow: a TIMEOUT
+   rate (zero occurrences of "timeout" anywhere in the monitors code) and per-row
+   activity sparklines on the sessions table. Search and pagination both exist.
 
    It is replaced by packages/website/public/screenshots/*, captured from the
    dashboard in this repo. Every claim below names a file that renders it. */
