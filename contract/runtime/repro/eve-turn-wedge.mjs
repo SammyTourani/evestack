@@ -3,7 +3,25 @@
  * Tier 2 of the vercel/eve#535 repro: show the wedge on the REAL stack.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ STATUS: STILL NOT EXECUTED — attempted 2026-08-05, blocked twice.        │
+ * STATUS: EXECUTED 2026-08-06 on a 48 GB machine (eve 0.30.8, world-postgres
+ * 5.0.0-beta.31, scratch Postgres). Outcome: INCONCLUSIVE, and the reason is
+ * the finding.
+ * 
+ * Across 9 full restarts the run never once reached cycle 3. Cycle 1 held and
+ * killed the job at attempts=1 nine times; cycle 2 did the same at attempts=2
+ * eight times; and then, 7 of those 8 times, the job COMPLETED on its third
+ * execution before SIGKILL could land. That is not a timing race — a race
+ * would scatter across cycles, and this lands on cycle 2 almost every time.
+ * 
+ * Read plainly: a job killed twice recovers and finishes on the third attempt,
+ * so it never reaches max_attempts and the wedge condition is never created.
+ * That is evidence AGAINST tier 2 transferring to 0.30.8, but it is not the
+ * disproof this file was written to make, because the experiment it defines
+ * was never completed. Both statements are true and only one is a result.
+ * 
+ * Do not publish a disproof of vercel/eve#535 on the strength of this. The
+ * next step is a design question, not a bug: the premise that a turn can be
+ * driven to the retry ceiling by killing eve may simply be false on 0.30.8.
  * │                                                                          │
  * │ `graphile-crash-wedge.mjs` — tier 1, in this directory — HAS been run    │
  * │ and reproduces the mechanism end to end. This file has NOT been run.     │
@@ -169,6 +187,17 @@ const TURN_TIMEOUT_MS = 90_000;
 
 /** Matches @workflow/world-postgres addGraphileJob. */
 const MAX_ATTEMPTS = 3;
+
+/**
+ * How many times a cycle may lose the kill race before the run gives up.
+ *
+ * EVE_MOCK_AUTHORED_MODELS makes a turn finish in milliseconds, so the window
+ * between "the job is held" and "the job is done" is tiny and the SIGKILL can
+ * arrive after it. That is a miss by this harness, not a fact about tier 1 —
+ * measured on the first real execution of this file, where it happened on the
+ * very first cycle and was reported as DID NOT REPRODUCE.
+ */
+const MAX_RACE_RETRIES = 8;
 /** graphile-worker default schema, which world-postgres does not override. */
 const GW_SCHEMA = process.env.GRAPHILE_WORKER_SCHEMA ?? "graphile_worker";
 
@@ -519,6 +548,7 @@ async function main() {
   // The job cycle 1 wedges. Cycles 2 and 3 must land on this same row for
   // attempts to reach max_attempts. See waitForAHeldJob.
   let targetJobId = null;
+  let raceLosses = 0;
 
   try {
     for (let cycle = 1; cycle <= MAX_ATTEMPTS; cycle++) {
@@ -635,7 +665,36 @@ async function main() {
         // turn finished before the kill landed. Nothing wedged — and reading
         // last_error off undefined, which is what this used to do, would have
         // crashed rather than said so.
-        ok(false, `cycle ${cycle}: job ${held.id} is gone — it completed before the kill landed`);
+        // NOT ok(false). A job that finished before the SIGKILL arrived was
+        // never wedged-or-not-wedged; the scenario this file exists to create
+        // did not happen. Counting it as a failed check is how the first real
+        // run of this file printed "DID NOT REPRODUCE. Tier 1 may NOT transfer"
+        // about an experiment it had not performed — precisely the false
+        // disproof the rest of this harness was hardened against.
+        raceLosses += 1;
+        if (raceLosses <= MAX_RACE_RETRIES) {
+          // Restart the WHOLE experiment, not just this cycle. The wedge needs
+          // all MAX_ATTEMPTS cycles to land on ONE job so its attempts reach
+          // max_attempts; a job that completed is gone, so every attempt
+          // accumulated on it is gone with it. Retrying only the current cycle
+          // silently continues against a fresh 1-attempt job and lets the final
+          // assertion run on a row that was never wedged three times — which is
+          // how the first run of this fix produced a DID NOT REPRODUCE from an
+          // experiment that had not actually been performed.
+          note(
+            `job ${held.id} completed before the kill landed ` +
+              `(race loss ${raceLosses}/${MAX_RACE_RETRIES}) — restarting from cycle 1, ` +
+              "because the attempts accumulated on the old job died with it",
+          );
+          targetJobId = null;
+          cycle = 0;
+          continue;
+        }
+        abort(
+          `lost the kill race ${raceLosses} times in a row: every turn completed ` +
+            `before SIGKILL landed, so a job was never killed mid-flight.\n` +
+            "The wedge scenario was never created, so this run says NOTHING about tier 1.",
+        );
         break;
       }
 
@@ -665,6 +724,21 @@ async function main() {
         );
       } else {
         table([after]);
+        // A job that never reached max_attempts was never put through the
+        // experiment, so its availability says nothing. Without this guard the
+        // assertion below reads "not wedged" and the run prints DID NOT
+        // REPRODUCE about a premise that was never established — the same false
+        // disproof, arriving one step later.
+        if (after.attempts !== after.max_attempts) {
+          abort(
+            `the job behind the turn reached ${after.attempts} of ` +
+              `${after.max_attempts} attempts, so it was never driven to the ` +
+              "retry ceiling this tier is about.\n" +
+              "The wedge condition was never created, so this run says NOTHING about tier 1.",
+          );
+          break;
+        }
+
         const wedged = after.is_available === false && after.attempts === after.max_attempts;
         ok(
           wedged,
