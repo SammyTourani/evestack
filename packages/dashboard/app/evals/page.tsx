@@ -2,6 +2,8 @@ import { listApprovals, type ApprovalRow } from "@/lib/approvals";
 import { describeDbError } from "@/lib/db";
 import { suggestFilename } from "@/lib/promote-eval";
 import { listSessions, type SessionRow } from "@/lib/queries";
+// Minute precision: this is a ranked list, and the rows are minutes apart.
+import { stamp } from "@/lib/time";
 import styles from "./evals.module.css";
 import { DatabaseError } from "@/app/db-error";
 
@@ -75,21 +77,6 @@ function explain(grade: Grade): { label: string; cls: string; line: string } {
           "generated file would have an empty test body.",
       };
   }
-}
-
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const pad = (n: number) => String(n).padStart(2, "0");
-
-/**
- * Same wall-clock formatting as the session drill-down, for the same reason:
- * workflow_runs stores UTC in `timestamp without time zone`, so `new Date()`
- * reads it as host-local and every relative "3h ago" comes out negative.
- * Printing the local components prints exactly what the database holds.
- */
-function stamp(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  return `${MONTHS[d.getMonth()]} ${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 export default async function EvalsPage() {

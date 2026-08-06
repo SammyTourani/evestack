@@ -39,14 +39,12 @@ export interface ModelPrice {
   /** USD per 1M cached input tokens; defaults to 10% of input when omitted. */
   cacheRead?: number;
   /**
-   * USD per 1M tokens written to the prompt cache.
+   * USD per 1M tokens written to the prompt cache; defaults to the plain input
+   * rate when omitted, never to zero. See `costUsd` for why that floor and not
+   * the 1.25x premium most of the stated rates carry.
    *
-   * Recorded by the generator, not yet charged: `costUsd` takes no cache-write
-   * token count, so those tokens are billed at the plain input rate today. That
-   * is measurably too cheap — anthropic/claude-opus-4.8 charges 6.25/M to write
-   * a cache entry against 5/M for ordinary input — and the count needed to fix
-   * it already exists upstream, since lib/queries.ts reads
-   * `$eve.cache_write_tokens` and the session page renders it.
+   * 33 of the 206 priced models state one, and every one of those also states a
+   * cache-read rate.
    */
   cacheWrite?: number;
 }
@@ -338,27 +336,81 @@ export function isPriced(model: string | null): boolean {
   return findPrice(model) !== null;
 }
 
+/**
+ * The rate a cached read is billed at.
+ *
+ * The fallback is only reached by models the catalog states no cache read price
+ * for — 66 of the 206 it prices. Among the 140 that do state one, the ratio to
+ * input runs from 0.008 to 0.52 and 59 sit at exactly 0.10, so this is the
+ * plurality rather than a rule, and it is never used to shadow a rate we were
+ * told.
+ *
+ * Shared with `cacheSavingsUsd` on purpose: a saving measured against a rate
+ * other than the one we charged is not a saving.
+ */
+function cacheReadRateOf(price: ModelPrice): number {
+  return price.cacheRead ?? price.input * 0.1;
+}
+
+/**
+ * Every token class at its own rate, the way Datadog's `ml_obs` model splits a
+ * span into `input.non_cached`, `input.cache_read` and `input.cache_write`.
+ *
+ * Cache reads and cache writes both arrive INSIDE the input total, so neither
+ * may also be charged at the full input rate. That is not an assumption about
+ * eve: `$eve.input_tokens` is the AI SDK's `usage.inputTokens`, and the SDK
+ * flattens it from `inputTokens.total`, which @ai-sdk/anthropic builds as
+ * `noCache + cacheRead + cacheWrite` (convert-anthropic-usage.ts). Subtracting
+ * both is what leaves the non-cached remainder.
+ */
 export function costUsd(
   model: string | null,
   inputTokens: number,
   outputTokens: number,
   cacheReadTokens = 0,
+  cacheWriteTokens = 0,
 ): number {
   const price = findPrice(model);
   if (!price) return 0;
-  // Only reached by models the catalog states no cache read price for — 66 of
-  // the 206 it prices. Among the 140 that do state one, the ratio to input runs
-  // from 0.008 to 0.52 and 59 sit at exactly 0.10, so this is the plurality
-  // rather than a rule, and it is never used to shadow a rate we were told.
-  const cacheRate = price.cacheRead ?? price.input * 0.1;
-  // Cached reads are billed at the cache rate, so they must not also be billed
-  // at the full input rate. eve reports them inside the input total.
-  const billableInput = Math.max(0, inputTokens - cacheReadTokens);
+  // A model the catalog states no cache-write price for is charged the plain
+  // input rate. Zero is not an option — these are prompt tokens the provider
+  // read and billed, and a class quietly worth nothing is the same lie as an
+  // unpriced model rendering $0.00. Neither is assuming the premium: 29 of the
+  // 33 stated rates are exactly 1.25x input, but those 33 are precisely the
+  // providers who charge extra, and the catalog contradicts the pattern anyway
+  // — minimax/minimax-m2.5-highspeed writes at 0.625x input. The input rate is
+  // also the number these tokens already produced before this function took a
+  // write count, so the 173 silent models do not move.
+  const cacheWriteRate = price.cacheWrite ?? price.input;
+  const nonCachedTokens = Math.max(0, inputTokens - cacheReadTokens - cacheWriteTokens);
   return (
-    (billableInput / 1_000_000) * price.input +
+    (nonCachedTokens / 1_000_000) * price.input +
     (outputTokens / 1_000_000) * price.output +
-    (cacheReadTokens / 1_000_000) * cacheRate
+    (cacheReadTokens / 1_000_000) * cacheReadRateOf(price) +
+    (cacheWriteTokens / 1_000_000) * cacheWriteRate
   );
+}
+
+/**
+ * What the prompt cache saved: the cached tokens billed at the read rate rather
+ * than at the input rate they would have cost uncached.
+ *
+ * Null, not zero, for a model we cannot price, and the return type is the
+ * enforcement. `costUsd` can return 0 for an unpriced model because every
+ * caller of it already gates on `isPriced()`; this figure has no such
+ * convention around it yet, and "saved $0.00" must not read the same as "we
+ * have no idea what this cache was worth".
+ *
+ * Zero IS the right answer for `ollama/*`: nothing was spent, so nothing was
+ * saved. That case is priced, so it returns a number, which is the whole
+ * distinction null exists to keep.
+ */
+export function cacheSavingsUsd(model: string | null, cacheReadTokens: number): number | null {
+  const price = findPrice(model);
+  if (!price) return null;
+  // Never negative: no catalog entry prices a cached read above its own input
+  // rate (checked: 0 of 140), and the 0.1 fallback cannot either.
+  return (Math.max(0, cacheReadTokens) / 1_000_000) * (price.input - cacheReadRateOf(price));
 }
 
 export function formatUsd(value: number): string {

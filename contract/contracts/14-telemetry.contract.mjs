@@ -145,6 +145,22 @@ const SDK_EMITTER = "dist/src/compiled/@ai-sdk/otel/index.js";
 const CONTEXT_SOURCE = "dist/src/harness/instrumentation-runtime-context.js";
 
 /**
+ * The FOURTH file: eve's own harness, which opens the root span of every turn.
+ *
+ * `ai.eve.turn` is created here, not in either tracer —
+ * `p.startSpan(\`ai.eve.turn\`, { attributes: { "eve.version", "eve.environment",
+ * "eve.session.id" } })` — so it is the one root name in the exported trace that
+ * belongs to eve rather than to the AI SDK. It was missing from this list, which
+ * made every reader of that name fail this contract while eve was still emitting
+ * it perfectly well: a false negative, and the kind that teaches people to ignore
+ * a red suite.
+ *
+ * Note this file is also where the exported `eve.session.id` originates for the
+ * root span, distinct from CONTEXT_SOURCE's copy that the AI SDK later prefixes.
+ */
+const HARNESS_EMITTER = "dist/src/harness/tool-loop.js";
+
+/**
  * Both quote styles, because eve ships minified output and its bundler
  * rewrites some double-quoted literals as template strings — `"agent.session.id"`
  * and `` `agent.session.id` `` both occur inside this one file.
@@ -190,6 +206,7 @@ const vocabulary = {
     if (!t.ok(eve.fileExists(EMITTER), `eve still ships ${EMITTER}, the module that creates these spans`)) return;
     if (!t.ok(eve.fileExists(SDK_EMITTER), `eve still vendors ${SDK_EMITTER}, the exported vocabulary`)) return;
     if (!t.ok(eve.fileExists(CONTEXT_SOURCE), `eve still ships ${CONTEXT_SOURCE}, which names the exported ids`)) return;
+    if (!t.ok(eve.fileExists(HARNESS_EMITTER), `eve still ships ${HARNESS_EMITTER}, which opens the turn root span`)) return;
 
     // A name is satisfied by EITHER emitter. Requiring both would fail on every
     // name by construction — the two vocabularies are disjoint, which is the
@@ -198,6 +215,7 @@ const vocabulary = {
       { path: EMITTER, text: eve.readFile(EMITTER) },
       { path: SDK_EMITTER, text: eve.readFile(SDK_EMITTER) },
       { path: CONTEXT_SOURCE, text: eve.readFile(CONTEXT_SOURCE) },
+      { path: HARNESS_EMITTER, text: eve.readFile(HARNESS_EMITTER) },
     ];
 
     // `ai.settings.context.*` keys exist as a literal nowhere, because they are

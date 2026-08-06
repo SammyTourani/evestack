@@ -6,6 +6,7 @@ import {
   type ScanResult,
   type Severity,
 } from "@/lib/skill-scan";
+import { stamp } from "@/lib/time";
 import { listSkills, readFixtureSkill, SKILLS_DIR_ENV, type Skill } from "@/lib/skills";
 import styles from "./skills.module.css";
 
@@ -17,15 +18,6 @@ function bytes(count: number): string {
   if (count < 1024) return `${count} B`;
   if (count < 1024 * 1024) return `${Math.round(count / 1024)} KB`;
   return `${(count / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function stamp(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-US", {
-    timeZone: "UTC",
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
 }
 
 const SEVERITY_CLASS: Record<Severity, string> = {
@@ -88,7 +80,7 @@ function SkillCard({ skill, scan }: { skill: Skill; scan: ScanResult }) {
         <VerdictPill scan={scan} />
         <span className={styles.headMeta}>
           {skill.files.length} file{skill.files.length === 1 ? "" : "s"} · {bytes(skill.totalBytes)} ·{" "}
-          {stamp(skill.modifiedAt)}
+          {stamp(skill.modifiedAt, "day")}
         </span>
       </div>
 
