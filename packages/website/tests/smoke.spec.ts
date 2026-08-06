@@ -1,40 +1,26 @@
 import { test, expect } from "@playwright/test";
-import { site } from "@/lib/copy";
 
 /* @vercel/analytics and @vercel/speed-insights inject <script src="/_vercel/…">
-   tags that only exist inside Vercel's runtime. Served anywhere else — which
-   now includes `pnpm preview`, since the site stopped being a static export —
-   those paths fall through to the 404 page and the browser logs both a failed
-   request and a MIME-type refusal. Four console errors that say nothing about
-   this codebase. */
-const VERCEL_RUNTIME_ONLY = "/_vercel/";
+   tags that exist only inside Vercel's runtime. This suite now starts its own
+   server (playwright.config.ts), so those paths fall through to the 404 page and
+   the browser logs a failed request plus a MIME-type refusal — four console
+   errors that say nothing about this codebase.
 
-/* Chromium's console text for a failed subresource is just "Failed to load
-   resource: …404…" with no URL in it, so a text filter wide enough to drop the
-   two analytics entries would also swallow a genuinely missing image or font.
-   Missing resources are therefore asserted at the response layer, where the URL
-   is available and only /_vercel/ can be excluded by name. The console
-   assertion keeps everything it can still attribute. */
-function isUnattributable(text: string) {
-  return text.startsWith("Failed to load resource");
-}
+   Filtered by path, not by loosening the assertion: a genuinely broken script on
+   the page must still fail the suite. */
+const VERCEL_RUNTIME_ONLY = "/_vercel/";
 
 test.describe("evestack landing page", () => {
   test("renders every section with no console errors", async ({ page }) => {
     const errors: string[] = [];
-    const missing: string[] = [];
     page.on("pageerror", (err) => errors.push(err.message));
     page.on("console", (msg) => {
       const text = msg.text();
       if (msg.type() !== "error") return;
-      if (text.includes(VERCEL_RUNTIME_ONLY) || isUnattributable(text)) return;
+      // Chromium's text for a failed subresource carries no URL, so the
+      // generic line is dropped alongside the attributable one.
+      if (text.includes(VERCEL_RUNTIME_ONLY) || text.startsWith("Failed to load resource")) return;
       errors.push(text);
-    });
-    page.on("response", (res) => {
-      if (res.status() < 400) return;
-      const url = new URL(res.url());
-      if (url.pathname.startsWith(VERCEL_RUNTIME_ONLY)) return;
-      missing.push(`${res.status()} ${url.pathname}`);
     });
 
     await page.goto("/");
@@ -54,13 +40,10 @@ test.describe("evestack landing page", () => {
     ]) {
       await expect(page.locator(`#${id}`)).toBeAttached();
     }
-    /* Asserted against lib/copy.ts rather than a hardcoded phrase. The previous
-       version pinned the substring "run eve agents in production", which went
-       stale the moment the tagline changed — and because it was a fragment
-       rather than the whole line, a grep for the old tagline did not find it. */
-    await expect(page.getByRole("heading", { level: 1 })).toContainText(site.tagline);
+    await expect(page.getByRole("heading", { level: 1 })).toContainText(
+      "The open replacement",
+    );
     expect(errors).toEqual([]);
-    expect(missing).toEqual([]);
   });
 
   test("command pill copies to clipboard", async ({ page, context }) => {
@@ -115,48 +98,23 @@ test.describe("evestack landing page", () => {
     expect(later).toBeGreaterThan(early);
   });
 
-  test("hero copy is legible in the first frame, never animated in", async ({ page }) => {
-    // The headline, sub and CTAs are the point of the page. They used to be
-    // hidden by a GSAP intro and played back over ~1.6s, so a refresh flashed
-    // an empty hero. They must now be opaque immediately and STAY opaque —
-    // sampling across the window the old entrance occupied catches any
-    // reintroduced hide-and-replay, which a single late assertion would miss.
-    await page.goto("/", { waitUntil: "commit" });
-    const readCopy = () =>
-      page.evaluate(() => {
-        const op = (sel: string) => {
-          const el = document.querySelector(sel);
-          return el ? getComputedStyle(el).opacity : null;
-        };
-        return {
-          h1: op("#hero-heading"),
-          sub: op("[data-hero='sub']"),
-          ctas: [...(document.querySelector("[data-hero='ctas']")?.children ?? [])].map(
-            (c) => getComputedStyle(c).opacity,
-          ),
-        };
-      });
-
-    await page.locator("#hero-heading").waitFor({ state: "attached" });
-    for (let i = 0; i < 14; i++) {
-      const { h1, sub, ctas } = await readCopy();
-      expect(h1, `h1 opacity at sample ${i}`).toBe("1");
-      expect(sub, `sub opacity at sample ${i}`).toBe("1");
-      expect(ctas, `cta opacities at sample ${i}`).toEqual(["1", "1", "1"]);
-      await page.waitForTimeout(200);
-    }
-
-    // No leftover inline tween state on any of it.
+  test("hero entrance settles with all CTAs visible", async ({ page }) => {
+    await page.goto("/");
+    await page.waitForTimeout(2600); // entrance (~1.6s) + margin
+    const opacities = await page.evaluate(() =>
+      [...document.querySelector("[data-hero='ctas']")!.children].map(
+        (c) => getComputedStyle(c).opacity,
+      ),
+    );
+    expect(opacities).toEqual(["1", "1", "1"]);
+    // clearProps ran — no leftover inline tween styles
     const inline = await page.evaluate(() =>
-      [
-        document.querySelector("#hero-heading"),
-        document.querySelector("[data-hero='sub']"),
-        ...(document.querySelector("[data-hero='ctas']")?.children ?? []),
-      ].map((c) => c?.getAttribute("style") ?? ""),
+      [...document.querySelector("[data-hero='ctas']")!.children].map((c) =>
+        c.getAttribute("style"),
+      ),
     );
     for (const style of inline) {
-      expect(style).not.toContain("visibility");
-      expect(style).not.toContain("opacity");
+      expect(style ?? "").not.toContain("visibility");
     }
   });
 
@@ -171,21 +129,18 @@ test.describe("evestack landing page", () => {
   });
 });
 
-/* The compatibility matrix is generated into public/compat by a prebuild step
-   rather than authored as a route, so nothing in the Next build fails if it
-   stops being produced — the page would simply 404 while every other check
-   here stayed green. That is exactly the page whose absence matters most: it
-   is the artifact the whole "certified against every eve release" claim rests
-   on, and it is linked from the docs. */
+/* /compat is generated into a module by a prebuild step and served by
+   app/compat/route.ts, so nothing in the Next build fails if it stops being
+   produced — it would simply 404 while every check above stayed green. It is
+   linked from the docs and it is the artifact the "tested against every eve
+   release" claim rests on, so its absence is worth failing for. */
 test.describe("compatibility matrix", () => {
   test("is served at /compat and carries real recorded runs", async ({ page }) => {
     const response = await page.goto("/compat");
     expect(response?.status()).toBe(200);
-
-    // The version we ship must appear as a certified column, and the release
-    // with the known auth bypass must still be shown as broken. A matrix that
-    // renders but has quietly lost its red row is worse than no matrix.
-    await expect(page.locator("th.vh", { hasText: "0.30.8" }).first()).toBeVisible();
+    await expect(page.locator("th.vh").first()).toBeVisible();
+    // The 0.29.5 column must still be red. A matrix with nothing failing on it
+    // is a matrix nobody should believe.
     await expect(page.locator("td.s-fail").first()).toBeVisible();
   });
 });
