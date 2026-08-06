@@ -193,6 +193,18 @@ export async function create(argv) {
   // place and cannot drift. That is what lets the whole dashboard step be
   // `docker compose --profile dashboard up -d` with nothing to copy across.
   const ingestToken = randomBytes(32).toString("hex");
+  // The database password, generated for exactly the reason stated above and
+  // previously the one credential that was not.
+  //
+  // The compose file this writes used to carry `POSTGRES_PASSWORD: evestack`
+  // and publish `"5433:5432"` — no interface prefix, so 0.0.0.0 — while pinning
+  // the dashboard beside it to 127.0.0.1. Verified exploitable from another
+  // machine on the same network: connecting to the LAN address on 5433 with
+  // evestack/evestack returned rows. That database holds every prompt, tool
+  // result and memory the agent has ever produced.
+  //
+  // base64url so it is safe both unquoted in a URL and inside the compose file.
+  const dbPassword = randomBytes(18).toString("base64url");
   writeFileSync(
     join(target, ".env.local"),
     [
@@ -203,7 +215,7 @@ export async function create(argv) {
       modelLine,
       "",
       "# Durable sessions (docker compose provides this Postgres)",
-      "WORKFLOW_POSTGRES_URL=postgres://evestack:evestack@localhost:5433/evestack",
+      `WORKFLOW_POSTGRES_URL=postgres://evestack:${dbPassword}@localhost:5433/evestack`,
       "WORKFLOW_POSTGRES_MAX_POOL_SIZE=20",
       "WORKFLOW_POSTGRES_WORKER_CONCURRENCY=20",
       "",
@@ -232,7 +244,7 @@ export async function create(argv) {
   const composeProject =
     basename(target).toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^[^a-z0-9]+/, "") ||
     "evestack";
-  writeFileSync(join(target, "docker-compose.yml"), composeFile(composeProject));
+  writeFileSync(join(target, "docker-compose.yml"), composeFile(composeProject, dbPassword));
   ok("Wrote docker-compose.yml — Postgres, and the dashboard behind a profile");
 
   // ---- install --------------------------------------------------------------
@@ -369,7 +381,7 @@ function readdirSafe(p) {
   }
 }
 
-export function composeFile(projectName) {
+export function composeFile(projectName, dbPassword) {
   // The compose project name has to be per-directory, not the literal string
   // "evestack". Compose treats `name:` as the project identity, so two scaffolds
   // — or one scaffold plus a cloned evestack repo — become the SAME project. The
@@ -412,10 +424,20 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: evestack
-      POSTGRES_PASSWORD: evestack
+      POSTGRES_PASSWORD: "${dbPassword}"
       POSTGRES_DB: evestack
     ports:
-      - "5433:5432"
+      # 127.0.0.1 on purpose, and this line is the whole reason the password
+      # above is generated rather than shipped. Publishing "5433:5432" binds
+      # 0.0.0.0, and a machine on the same network could reach this database and
+      # authenticate — verified, on a real LAN, against the old default
+      # credentials. It holds every prompt, tool result and memory the agent has
+      # produced, which makes it a more valuable target than the dashboard that
+      # was already pinned to loopback two services down.
+      #
+      # Reaching it from another host is a deliberate act: publish it yourself,
+      # or put it behind something that terminates TLS and authenticates.
+      - "127.0.0.1:5433:5432"
     volumes:
       - evestack-pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -458,7 +480,7 @@ services:
       # .env.local says localhost:5433 because the AGENT runs on your host.
       # Inside a container "localhost" is the container, so the same database is
       # reached over the compose network instead.
-      WORKFLOW_POSTGRES_URL: postgres://evestack:evestack@postgres:5432/evestack
+      WORKFLOW_POSTGRES_URL: postgres://evestack:${dbPassword}@postgres:5432/evestack
       # \`npm run dev\` also runs on the host, not in compose.
       EVESTACK_AGENT_URL: \${EVESTACK_AGENT_URL:-http://host.docker.internal:2000}
     ports:

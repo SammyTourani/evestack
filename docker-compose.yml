@@ -35,8 +35,20 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-evestack}
       POSTGRES_DB: ${POSTGRES_DB:-evestack}
     ports:
-      # 5433 on the host so we never collide with a local Postgres on 5432.
-      - "${POSTGRES_PORT:-5433}:5432"
+      # 5433 so we never collide with a local Postgres on 5432, and 127.0.0.1
+      # because this database holds every prompt, tool result and memory the
+      # agent has produced.
+      #
+      # This published "${POSTGRES_PORT:-5433}:5432" with no interface prefix,
+      # which binds 0.0.0.0 — verified from another machine on the same network,
+      # which connected on the LAN address and authenticated with the defaults
+      # below. The dashboard forty lines down was already pinned to loopback with
+      # a comment about control planes; Postgres is the more valuable target of
+      # the two and was the one left open.
+      #
+      # Contributors who need it reachable can override POSTGRES_BIND, which
+      # makes exposure a deliberate act rather than the default.
+      - "${POSTGRES_BIND:-127.0.0.1}:${POSTGRES_PORT:-5433}:5432"
     volumes:
       - evestack-pgdata:/var/lib/postgresql/data
     healthcheck:
