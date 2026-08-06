@@ -14,7 +14,8 @@
     "build": "pnpm -r --if-present build",
     "contract": "node contract/run.mjs",
     "runtime": "node contract/runtime/run.mjs",
-    "test": "node contract/run.mjs && pnpm -r --if-present test"
+    "test": "node contract/run.mjs && npm run contract:test && pnpm -r --if-present test",
+    "contract:test": "node --test contract/test/*.test.mjs"
   },
   "devDependencies": {
     "pg": "^8.22.0",
