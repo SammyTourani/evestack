@@ -525,7 +525,16 @@ function parseEventLine(line: string): EveStreamEvent | undefined {
 
 export interface SessionSnapshot {
   sessionId: string;
-  /** Rotates every turn; only the one from the latest `session.waiting` works. */
+  /**
+   * The token published on the latest `session.waiting`.
+   *
+   * Do NOT use a change in this value to detect a new turn boundary. On eve
+   * 0.30.8 over @workflow/world-postgres it is the session's command-hook
+   * token and it is CONSTANT for the life of the session: measured across a
+   * two-turn session, all three `session.waiting` events carried one value,
+   * equal to the one `POST /eve/v1/session` returned at creation.
+   * `parkedSince` below is the boundary test that survives that.
+   */
   continuationToken?: string;
   /** True when the last boundary event was `session.waiting`. */
   waiting: boolean;
@@ -538,12 +547,36 @@ export interface SessionSnapshot {
 }
 
 /**
+ * "Has this session parked at a boundary NEWER than the one I already spent?"
+ *
+ * The question any caller that drives several turns in a row has to answer,
+ * and the one a continuation-token comparison answers wrongly — see the note
+ * on `SessionSnapshot.continuationToken`. Two conditions, both load-bearing:
+ *
+ *  - `waiting` — the session is parked. `turn.started` clears it and
+ *    `session.waiting` sets it, so on its own this says "parked", not
+ *    "parked again".
+ *  - `tailIndex > sinceTailIndex` — the park is a new one. eve answers a
+ *    follow-up POST before `turn.started` reaches the durable stream, so for a
+ *    moment after sending, `waiting` still describes the PREVIOUS park. The
+ *    tail index comes off eve's own `x-eve-stream-tail-index` header rather
+ *    than from the events in the lookback window, so it stays monotonic even
+ *    when that window slides past the events that produced it.
+ */
+export function parkedSince(snapshot: SessionSnapshot, sinceTailIndex: number): boolean {
+  return (
+    snapshot.waiting &&
+    snapshot.continuationToken !== undefined &&
+    snapshot.tailIndex > sinceTailIndex
+  );
+}
+
+/**
  * Recovers everything a control caller needs but should not have to carry.
  *
- * Continuation tokens rotate on every turn boundary, which makes them awful for
- * a dashboard: the operator clicking "approve" three hours later has no idea
- * what the current token is. eve publishes it on `session.waiting`, so read it
- * back off the durable stream instead of demanding it from the browser.
+ * The continuation token is published on `session.waiting`, so read it back
+ * off the durable stream rather than making the browser carry it: an operator
+ * clicking "approve" three hours later has no idea what it is.
  */
 export async function getSessionSnapshot(
   sessionId: string,
