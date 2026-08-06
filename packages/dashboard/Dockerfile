@@ -66,21 +66,6 @@ RUN corepack enable
 WORKDIR /repo
 
 # ---------------------------------------------------------------------------
-# deps — production node_modules, and nothing else
-# ---------------------------------------------------------------------------
-# A separate stage rather than a `pnpm prune` of the build stage: a fresh
-# `--prod` install is an ordinary pnpm operation, whereas pruning a tree that
-# has already been built through is the kind of step that works until it
-# doesn't. The store is a cache mount, so this second resolve costs almost
-# nothing after the first.
-FROM base AS deps
-COPY . .
-RUN --mount=type=cache,id=evestack-pnpm-store,target=/pnpm/store \
-    pnpm install --frozen-lockfile --prod \
-      --filter "@evestack/dashboard..." \
-      --store-dir /pnpm/store
-
-# ---------------------------------------------------------------------------
 # build
 # ---------------------------------------------------------------------------
 FROM base AS build
