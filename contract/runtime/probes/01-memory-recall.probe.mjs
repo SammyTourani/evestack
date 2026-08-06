@@ -37,7 +37,15 @@
  */
 import { randomUUID } from "node:crypto";
 
-/** Must match DIMENSIONS in templates/default/lib/memory.ts. */
+/**
+ * The OpenAI default width, from EMBED_DEFAULTS in templates/default/lib/memory.ts.
+ *
+ * Any width would exercise the plan-independence this probe is about, since the
+ * table below is its own. It tracks the shipped default so the schema stays a
+ * faithful copy of the one users get. The constant it used to name — `DIMENSIONS`
+ * — no longer exists: embeddings became provider-aware (openai 1536, ollama 768)
+ * and the width moved into EMBED_DEFAULTS, keyed by provider.
+ */
 const DIMENSIONS = 1536;
 
 /** Rows enough that the planner has a real choice to make. */
