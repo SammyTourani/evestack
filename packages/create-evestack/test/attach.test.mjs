@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+import { portAnswers } from "../shared.mjs";
 
 const BIN = fileURLToPath(new URL("../index.mjs", import.meta.url));
 const ANSI = /\x1b\[[0-9;]*m/g;
@@ -104,18 +105,24 @@ test("the dashboard port is probed, and all three printed copies of it agree", a
 test("a free 4000 is still the port everything uses", async () => {
   // Moving off 4000 is a fallback, not a preference: the README, the scaffolder
   // and every doc say 4000, so a machine with nothing on it must still get 4000.
-  const probe = await occupy(4000);
-  if (probe) await new Promise((r) => probe.close(r));
+  // `portAnswers`, not a bind. attach decides "is this port taken" by
+  // CONNECTING, and a bind is a different question with a different answer:
+  // measured on this machine, an IPv6 wildcard listener on :4000 let a bind to
+  // 127.0.0.1:4000 succeed while a connect to the same address was answered.
+  // The test believed 4000 was free, attach correctly moved to 4001, and the
+  // assertion failed on a disagreement between two oracles rather than on
+  // anything being wrong. A test must ask the question the code asks.
+  const free = !(await portAnswers(4000));
 
   const dir = eveProject();
   try {
     const text = runAttach(dir);
-    if (probe) {
+    if (free) {
       assert.match(text, /-p 127\.0\.0\.1:4000:4000/);
       assert.match(text, /Sign in at http:\/\/localhost:4000/);
     } else {
-      // Something else on this machine owns 4000. Not a reason to skip: the
-      // port is busy, so nothing printed may claim it.
+      // Something else on this machine answers on 4000. Not a reason to skip:
+      // the port is busy, so nothing printed may claim it.
       assert.doesNotMatch(text, /-p 127\.0\.0\.1:4000:4000/);
     }
   } finally {
