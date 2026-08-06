@@ -1,0 +1,179 @@
+name: Provider bisect
+
+# Answers one question: when a bug evestack carries a fix for stops reproducing,
+# WHO fixed it — eve, or the AI SDK provider underneath it?
+#
+# ── The question this was built for ──────────────────────────────────────────
+#
+# The deny-path bug (upstream vercel/eve#1658) ended a durable session whenever a
+# human denied a gated tool call. evestack works around it with the
+# `surviveDeniedToolResults` middleware. On 2026-08-06 the nightly negative
+# control showed that removing the middleware no longer breaks anything: the deny
+# eval passed 4 gates of 4 without it, with `calledTool("forget", { status:
+# "rejected" })` among them, so the denial really was exercised.
+#
+# That leaves two explanations, and they lead to opposite things to say upstream:
+#
+#   - @ai-sdk/openai v4 maps eve's `execution-denied` output where v2 could not.
+#     Then eve is still affected, #1658 is still real, and the useful comment on
+#     their draft PR is "reproduces on v2, fixed by upgrading the provider".
+#   - eve stopped emitting the unmappable shape. Then #1658 is fixed and saying
+#     otherwise would be wrong.
+#
+# Guessing between those is how you post something incorrect on a maintainer's
+# PR. This runs the experiment instead: same eve, same eval, same middleware
+# removed, provider version as the only variable.
+#
+# Dispatch-only. It spends model tokens and answers a question that is only asked
+# when a major provider version lands.
+
+on:
+  workflow_dispatch:
+    inputs:
+      old:
+        description: "provider range expected to still show the bug"
+        required: false
+        default: "^2.0.0"
+        type: string
+      new:
+        description: "provider range expected to have fixed it"
+        required: false
+        default: "^4.0.0"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: provider-bisect
+  cancel-in-progress: false
+
+jobs:
+  bisect:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: evestack
+          POSTGRES_PASSWORD: evestack
+          POSTGRES_DB: evestack
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U evestack -d evestack"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      WORKFLOW_POSTGRES_URL: postgres://evestack:evestack@localhost:5433/evestack
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      TZ: America/New_York
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: a provider key is required
+        run: |
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "::error::this workflow drives a real model and cannot run without OPENAI_API_KEY"
+            exit 1
+          fi
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r --if-present run build
+      - name: bootstrap the workflow schema
+        run: cd templates/default && npm run db:bootstrap
+
+      - name: run the deny eval under each provider version
+        id: bisect
+        run: |
+          # Both arms remove the middleware. That is the point: with the fix
+          # absent, the eval reports whether the underlying bug is present.
+          run_arm() {
+            local label="$1" range="$2" port="$3"
+            local dir="/tmp/arm-$label"
+
+            node contract/runtime/negative-control.mjs "$dir" \
+              --sabotage=middleware --pin-openai="$range" > /dev/null
+
+            # --no-frozen-lockfile: the manifest was just rewritten on purpose.
+            if ! (cd "$dir" && pnpm install --no-frozen-lockfile > "/tmp/$label-install.log" 2>&1); then
+              echo "install-failed"
+              return
+            fi
+
+            (cd "$dir" && npx eve dev --port "$port" > "/tmp/$label-agent.log" 2>&1 &)
+            for i in $(seq 1 90); do
+              curl -sf -o /dev/null "http://localhost:$port/" 2>/dev/null && break
+              sleep 1
+            done
+
+            set +e
+            (cd "$dir" && npx eve eval deny-survives --url "http://127.0.0.1:$port/" > "/tmp/$label-eval.log" 2>&1)
+            local result=$?
+            set -e
+
+            # By PORT, not by name. `pkill -f` on a name is how a stale server
+            # survived a kill and then served a day-old build to every run for an
+            # hour — the process reports as something other than what launched
+            # it. The second arm binds a different port, but a survivor from the
+            # first would still be holding a database connection.
+            lsof -ti:"$port" 2>/dev/null | xargs -r kill -9 2>/dev/null || true
+
+            if [ $result -eq 0 ]; then echo "survived"; else echo "died"; fi
+          }
+
+          OLD_RESULT="$(run_arm old '${{ inputs.old }}' 2996)"
+          NEW_RESULT="$(run_arm new '${{ inputs.new }}' 2995)"
+
+          echo "old=$OLD_RESULT" >> "$GITHUB_OUTPUT"
+          echo "new=$NEW_RESULT" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## Provider bisect"
+            echo
+            echo "Same eve, same eval, middleware removed in both arms. Only the provider moved."
+            echo
+            echo "| @ai-sdk/openai | deny eval |"
+            echo "|---|---|"
+            echo "| \`${{ inputs.old }}\` | $OLD_RESULT |"
+            echo "| \`${{ inputs.new }}\` | $NEW_RESULT |"
+            echo
+            if [ "$OLD_RESULT" = "died" ] && [ "$NEW_RESULT" = "survived" ]; then
+              echo "**The provider fixed it.** eve still emits the shape that broke"
+              echo "\`${{ inputs.old }}\`; upgrading the provider is what makes the session survive."
+              echo "vercel/eve#1658 is still a real bug for anyone on the older provider."
+            elif [ "$OLD_RESULT" = "survived" ] && [ "$NEW_RESULT" = "survived" ]; then
+              echo "**Not the provider.** The bug does not reproduce on either version, so"
+              echo "something in eve changed. Check what eve now records for a denied tool"
+              echo "call before claiming anything on #1658."
+            elif [ "$OLD_RESULT" = "died" ] && [ "$NEW_RESULT" = "died" ]; then
+              echo "**Still broken on both.** The middleware is still load-bearing; the"
+              echo "nightly's earlier result needs re-examining."
+            else
+              echo "**Inconclusive** — see the logs below. An \`install-failed\` arm proves"
+              echo "nothing about the bug."
+            fi
+            echo
+            echo "<details><summary>old arm</summary>"
+            echo; echo '```'; tail -c 6000 "/tmp/old-eval.log" 2>/dev/null || tail -c 3000 /tmp/old-install.log; echo '```'
+            echo; echo "</details>"
+            echo "<details><summary>new arm</summary>"
+            echo; echo '```'; tail -c 6000 "/tmp/new-eval.log" 2>/dev/null || tail -c 3000 /tmp/new-install.log; echo '```'
+            echo; echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "old=$OLD_RESULT  new=$NEW_RESULT"
+
+      - name: logs
+        if: always()
+        run: |
+          for arm in old new; do
+            echo "── $arm agent ─────────────────────────────────────────────"
+            tail -c 8000 "/tmp/$arm-agent.log" 2>/dev/null || echo "(none)"
+          done

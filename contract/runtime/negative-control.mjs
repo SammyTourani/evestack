@@ -56,6 +56,15 @@
  *
  * Usage:
  *   node contract/runtime/negative-control.mjs <destination>
+ *   node contract/runtime/negative-control.mjs <dest> --sabotage=middleware
+ *   node contract/runtime/negative-control.mjs <dest> --pin-openai=^2.0.0
+ *
+ * `--sabotage=middleware` restores the original edit — removing
+ * `wrapLanguageModel(...)` — which no longer fails on its own but is exactly
+ * what is needed to answer "WHO fixed the deny-path bug, the provider or eve?".
+ * Pair it with `--pin-openai` to hold everything else still and move one
+ * variable: if the eval goes red on v2 and green on v4 with the same eve, the
+ * provider fixed it.
  *
  * Prints the destination on success. Exits non-zero if the line it expects to
  * remove is not there — which is itself worth failing on, because it means the
@@ -67,17 +76,52 @@ import { REPO_ROOT } from "../lib/repo.mjs";
 
 const TEMPLATE = join(REPO_ROOT, "templates", "default");
 
-/** Relative to the copied project. */
-const TARGET_FILE = join("agent", "tools", "forget.ts");
-
-const FIXED = "  approval: always(),";
-const SABOTAGED = `  // NEGATIVE CONTROL: the approval gate is deliberately removed, so this tool
+/**
+ * The two sabotages, each a single edit so a failure can never be blamed on the
+ * control having broken something unrelated.
+ *
+ * `approval` is the default and the one the nightly uses: it proves the eval
+ * reaches the human-in-the-loop path.
+ *
+ * `middleware` is the original. It no longer fails by itself on the current
+ * stack, which is what makes it the right instrument for the provider
+ * experiment rather than a broken control.
+ */
+const SABOTAGES = {
+  approval: {
+    file: join("agent", "tools", "forget.ts"),
+    find: "  approval: always(),",
+    replace: `  // NEGATIVE CONTROL: the approval gate is deliberately removed, so this tool
   // never parks for a human. The deny eval's first assertion is \`parked()\`, so
   // it MUST fail against this build. If it passes, the eval is not exercising
   // the human-in-the-loop path and nothing it reports about denial means
-  // anything.`;
+  // anything.`,
+  },
+  middleware: {
+    file: join("agent", "agent.ts"),
+    find: "const model = wrapLanguageModel({ model: baseModel, middleware: surviveDeniedToolResults });",
+    replace: `// NEGATIVE CONTROL: the middleware is deliberately bypassed, so a denied tool
+// result reaches the provider in the shape eve records it.
+const model = baseModel;`,
+  },
+};
 
-const destination = process.argv[2];
+const args = process.argv.slice(2);
+const flag = (name) => args.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3) ?? null;
+
+const sabotageName = flag("sabotage") ?? "approval";
+const sabotage = SABOTAGES[sabotageName];
+if (sabotage === undefined) {
+  process.stderr.write(`unknown --sabotage=${sabotageName}. Use one of: ${Object.keys(SABOTAGES).join(", ")}\n`);
+  process.exit(2);
+}
+const pinOpenai = flag("pin-openai");
+
+const TARGET_FILE = sabotage.file;
+const FIXED = sabotage.find;
+const SABOTAGED = sabotage.replace;
+
+const destination = args.find((a) => !a.startsWith("--"));
 if (!destination) {
   process.stderr.write("usage: node contract/runtime/negative-control.mjs <destination>\n");
   process.exit(2);
@@ -132,9 +176,15 @@ for (const field of ["dependencies", "devDependencies"]) {
     linked.push(name);
   }
 }
-if (linked.length > 0) {
+// Optional provider pin, for holding eve still and moving one variable.
+if (pinOpenai !== null) {
+  manifest.dependencies["@ai-sdk/openai"] = pinOpenai;
+  process.stderr.write(`negative-control: pinned @ai-sdk/openai to ${pinOpenai}\n`);
+}
+
+if (linked.length > 0 || pinOpenai !== null) {
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-  process.stderr.write(`negative-control: linked ${linked.join(", ")} out of the workspace\n`);
+  if (linked.length > 0) process.stderr.write(`negative-control: linked ${linked.join(", ")} out of the workspace\n`);
 }
 
 const targetPath = join(destination, TARGET_FILE);
