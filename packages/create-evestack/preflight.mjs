@@ -244,7 +244,7 @@ export const MAC_RUNTIMES = [
   },
 ];
 
-const COLIMA_RUNTIME = {
+export const COLIMA_RUNTIME = {
   id: "colima",
   label: "Colima",
   app: null,

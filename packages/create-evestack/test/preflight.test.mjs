@@ -4,11 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import {
+  COLIMA_RUNTIME,
   DOCKER_DENIED,
   DOCKER_MISSING,
   DOCKER_RUNNING,
   DOCKER_STOPPED,
   DOCKER_UNRESPONSIVE,
+  MAC_RUNTIMES,
   OFFER_TIMEOUT_MS,
   applyOffer,
   checkNode,
@@ -179,12 +181,32 @@ test("a running Docker produces no remedy at all", () => {
   assert.equal(dockerRemedy(classifyDocker(result({ stdout: "1|1" })), { platform: "darwin" }), null);
 });
 
+/**
+ * The argv, rendered the way a shell would have to be given it.
+ *
+ * `display` is prose in a `This would run:` block and argv is what spawns, so
+ * the two are only the same command if the prose parses back to the argv. A
+ * plain join says they do when they do not: `open -a Rancher Desktop` reads as
+ * three arguments, and running it opens an application called Rancher.
+ */
+function asShellLine(argv) {
+  return argv
+    .map((word) => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(word) ? word : `'${word.replace(/'/g, String.raw`'\''`)}'`))
+    .join(" ");
+}
+
 test("NOTHING this offers to run contains sudo", () => {
   // The rule the whole module is organised around. Every reachable combination
   // is walked rather than the two that happen to have offers today, so adding a
   // remedy with a privileged command in it fails here rather than on a
   // stranger's machine.
-  const runtimes = [[], [DESKTOP]];
+  //
+  // The runtime lists are the SHIPPED table, not a fixture. This walked a
+  // hand-written DESKTOP object, which is the one macOS runtime whose display
+  // string happens to need no quoting — so the invariant it exists to enforce
+  // was never applied to Rancher Desktop or to Colima at all.
+  const runtimes = [[], ...MAC_RUNTIMES.map((r) => [r]), [COLIMA_RUNTIME], [...MAC_RUNTIMES, COLIMA_RUNTIME]];
+  let offers = 0;
   for (const platform of ["darwin", "linux", "win32"]) {
     for (const wsl of [true, false]) {
       for (const hasBrew of [true, false]) {
@@ -192,13 +214,30 @@ test("NOTHING this offers to run contains sudo", () => {
           for (const state of [MISSING, STOPPED, DENIED]) {
             const remedy = dockerRemedy(state, { platform, wsl, hasBrew, macRuntimes });
             if (!remedy?.offer) continue;
-            const line = [remedy.offer.command, ...remedy.offer.args].join(" ");
+            offers += 1;
+            const argv = [remedy.offer.command, ...remedy.offer.args];
+            const line = argv.join(" ");
             assert.ok(!/\bsudo\b/.test(line), `${platform} ${state.state} would run: ${line}`);
-            assert.equal(line, remedy.offer.display, "the displayed command is not the one that runs");
+            assert.equal(
+              remedy.offer.display,
+              asShellLine(argv),
+              "the command shown is not the command that runs",
+            );
           }
         }
       }
     }
+  }
+  // A silent zero here would make every assertion above vacuous.
+  assert.ok(offers >= 8, `only ${offers} offers were reached`);
+});
+
+test("every runtime in the shipped table can be started by what it displays", () => {
+  // MAC_RUNTIMES and COLIMA_RUNTIME are data, and data is where a display
+  // string drifts from its argv without any code changing.
+  for (const runtime of [...MAC_RUNTIMES, COLIMA_RUNTIME]) {
+    assert.equal(runtime.start, asShellLine([runtime.spawn.command, ...runtime.spawn.args]), runtime.id);
+    assert.ok(!/\bsudo\b/.test(runtime.start), runtime.id);
   }
 });
 
