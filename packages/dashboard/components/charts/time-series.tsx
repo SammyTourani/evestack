@@ -370,7 +370,7 @@ export function TimeSeriesChart(props: TimeSeriesProps) {
  * directory because it is the only button the charts draw and a second file
  * for it would be a file nothing else imports.
  */
-export function ChartButton(props: {
+function ChartButton(props: {
   readonly onClick: () => void;
   readonly disabled?: boolean;
   readonly pressed?: boolean;

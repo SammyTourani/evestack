@@ -200,7 +200,7 @@ export function ChartFrame(props: ChartFrameProps) {
  * reaches it either way, and a sighted reader gets numbers they can select and
  * paste instead of a picture they have to squint at. It costs no JavaScript.
  */
-export function DataTableDisclosure({ table }: { table: DataTable }) {
+function DataTableDisclosure({ table }: { table: DataTable }) {
   return (
     <details className="text-small text-text-dim">
       <summary className="cursor-pointer rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus">

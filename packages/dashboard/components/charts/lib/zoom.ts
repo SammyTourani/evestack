@@ -61,7 +61,6 @@ export type ZoomAction =
   | { readonly type: "clear" }
   | { readonly type: "zoom-in" }
   | { readonly type: "zoom-out" }
-  | { readonly type: "reset" }
   | {
       readonly type: "key";
       readonly key: "ArrowLeft" | "ArrowRight" | "Home" | "End";
@@ -176,8 +175,6 @@ export function createZoomReducer(
         const previous = history.pop() ?? null;
         return { ...state, view: previous, history, selection: null, anchor: null };
       }
-      case "reset":
-        return INITIAL_ZOOM;
     }
   };
 }

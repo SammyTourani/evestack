@@ -39,7 +39,7 @@ export interface SparklineProps {
 }
 
 /** The label a screen reader gets in place of the picture. */
-export function sparklineLabel(
+function sparklineLabel(
   values: readonly Value[],
   unit: Unit,
   label: string,
