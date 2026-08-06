@@ -4,10 +4,16 @@ What the agent should check when it wakes up on its own. Edit this file freely â
 it is read at every fire, so a change takes effect on the next wake-up with no
 restart and no redeploy.
 
-The rule that makes this liveable: **the agent only messages you when something
-here produces news.** If every check comes back boring it replies with the
-acknowledgement token and you hear nothing. An hourly heartbeat that always
-sends something is an hourly notification, and you will mute it within a day.
+The rule that is meant to make this liveable: **the agent only messages you when
+something here produces news.** If every check comes back boring it replies with an
+acknowledgement token.
+
+> **That token is currently delivered to you.** Nothing filters it â€” the filter
+> exists in `agent/schedules/heartbeat.ts` but has nowhere to run, because eve posts
+> the reply itself. So an hourly heartbeat with nothing to report sends you
+> `HEARTBEAT_OK` every hour. Read the note at the top of that file before turning
+> this on; an hourly heartbeat that always sends something is an hourly
+> notification, and you will mute it within a day.
 
 Delete the examples below and write your own.
 

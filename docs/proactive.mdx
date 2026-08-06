@@ -78,14 +78,25 @@ records a scheduled one, so the Schedules page fills in either way.
 
 This is the part that decides whether the feature survives contact with real use.
 
-The agent is told to reply with exactly `HEARTBEAT_OK` when nothing needs you, and the wrapper
-drops any reply that is only that token. An hourly heartbeat that always sends something is an
-hourly notification, and you will mute it within a day — at which point you have a worse product
-than one that never spoke.
+The agent is told to reply with exactly `HEARTBEAT_OK` when nothing needs you. An hourly heartbeat
+that always sends something is an hourly notification, and you will mute it within a day — at which
+point you have a worse product than one that never spoke.
 
-Each wake-up also runs in an isolated session with a light context, which is the difference
-between a heartbeat costing a few thousand tokens and costing the whole context window every
-hour.
+<Warning>
+  **Two things this page used to promise that the code does not do.** Both were found by auditing
+  the feature rather than reading it, and both are written up in the note at the top of
+  `agent/schedules/heartbeat.ts`.
+
+  **The token is not dropped.** `isWorthDelivering` is the filter that would drop it, and it is
+  called from nowhere — it has nowhere to be called from. The handler hands the turn to eve with
+  `receive()`, and eve posts the reply itself, so evestack never sees the text. A quiet hour
+  therefore delivers the literal string `HEARTBEAT_OK` to your channel.
+
+  **Wake-ups are not isolated sessions.** This page said each one "runs in an isolated session with
+  a light context". The `isolatedSession` that was credited for it does not exist anywhere in
+  evestack or in eve — so a wake-up costs whatever the session it lands in costs, and the
+  few-thousand-tokens figure describes an intended design, not this code.
+</Warning>
 
 ## What keeps it safe
 
