@@ -20,12 +20,15 @@
  */
 import { randomBytes } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { createConnection } from "node:net";
 import { isAbsolute, join, resolve } from "node:path";
 import {
   basename, C, DASHBOARD_IMAGE, DASHBOARD_IMAGE_PUBLISHED, detectPm, dim, makePrompter,
   ok, REPO, say, step, templateDir, warn,
 } from "./shared.mjs";
+// One implementation of the port probe, in preflight.mjs, because `create` grew
+// the same need and a second copy is a second place for the off-by-one that
+// hands two projects the same "free" port.
+import { DOCKER_RUNNING, dockerStatusLines, freePort, inspectDocker } from "./preflight.mjs";
 
 /**
  * The eve release this evestack is tested against.
@@ -95,6 +98,18 @@ export async function attach(argv) {
   const project = detectEveProject(target);
   step(`Attaching ${C.bold}${target}${C.reset}`);
   reportEveVersion(project);
+
+  // Reported, never acted on. Everything this command ends by telling you to
+  // run is `docker compose up -d postgres` and a `docker run` for the
+  // dashboard, and until now it printed both without ever checking whether
+  // there was a daemon to receive them. No install is offered here: attach is
+  // for a project that already exists and already works, so the right place for
+  // that conversation is `create`, not in the middle of someone's repository.
+  const machine = inspectDocker();
+  if (machine.docker.state !== DOCKER_RUNNING) {
+    say();
+    for (const line of dockerStatusLines(machine)) say(line);
+  }
 
   const pm = detectPm(target);
   const env = readEnvFiles(target);
@@ -924,34 +939,4 @@ export function compareVersions(a, b) {
   if (left.prerelease === null) return 1;
   if (right.prerelease === null) return -1;
   return left.prerelease < right.prerelease ? -1 : 1;
-}
-
-/**
- * The first port from `start` that nothing answers on.
- *
- * Docker's own error for a taken port is `Bind for 0.0.0.0:5433 failed`, which
- * arrives minutes later at `docker compose up`. Worse is the case where it does
- * NOT fail: a second attached project pointed at the first project's database,
- * reading someone else's sessions. Probing loopback misses a port bound only to
- * another interface — that case still gets docker's error, just not ours.
- */
-async function freePort(start) {
-  for (let port = start; port < start + 20; port += 1) {
-    if (!(await portAnswers(port))) return port;
-  }
-  return start;
-}
-
-function portAnswers(port) {
-  return new Promise((res) => {
-    const socket = createConnection({ host: "127.0.0.1", port });
-    const done = (answered) => {
-      socket.destroy();
-      res(answered);
-    };
-    socket.setTimeout(400);
-    socket.once("connect", () => done(true));
-    socket.once("timeout", () => done(false));
-    socket.once("error", () => done(false));
-  });
 }

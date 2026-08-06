@@ -142,5 +142,15 @@ export async function makePrompter(nonInteractive) {
     return a === "" ? def : a.startsWith("y");
   };
 
-  return { ask, confirm, close: () => rl?.close() };
+  // pause/resume are handed out so a caller that spawns a child with
+  // `stdio: "inherit"` can stop readline reading the same stdin the child is
+  // about to read. Without it the interface and the child race for keystrokes
+  // and each gets some of them, which looks like a hung installer.
+  return {
+    ask,
+    confirm,
+    pause: () => rl?.pause(),
+    resume: () => rl?.resume(),
+    close: () => rl?.close(),
+  };
 }

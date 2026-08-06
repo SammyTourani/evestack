@@ -105,6 +105,13 @@ you have to ask for it.
 
 Node 24+, Docker, and a model API key (or Ollama).
 
+`npx evestack create` checks for Docker before it asks you anything, and tells apart "not
+installed", "installed but not running", and "running but you cannot reach the socket" —
+three problems the old check reported as one. On macOS with Homebrew it offers to install a
+runtime, printing the command first and defaulting to no. It never installs anything under
+`--yes` or in CI. It also moves the Postgres and dashboard ports if something already holds
+them. See [docs/local-setup.mdx](docs/local-setup.mdx#docker).
+
 ## Repository layout
 
 ```

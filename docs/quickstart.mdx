@@ -10,6 +10,12 @@ description: One command to a running, durable, dashboard-observed agent.
 - An `OPENAI_API_KEY` or an `ANTHROPIC_API_KEY` — or skip straight to
   [Ollama](/docs/local-setup#ollama) for $0 total
 
+You do not have to check any of this yourself. The scaffolder looks first, before it asks you
+anything, and says what it found — including which of *not installed*, *installed but the daemon
+is not running*, and *running but this user cannot reach the socket* your machine is in, since
+those have three different fixes. See [Docker](/docs/local-setup#docker) for what it will
+suggest on each platform.
+
 ## Create the project
 
 ```bash

@@ -30,11 +30,10 @@ import {
   basename, C, DASHBOARD_IMAGE, DASHBOARD_IMAGE_PUBLISHED, detectPm, dim, makePrompter,
   ok, REPO, say, step, templateDir, warn,
 } from "./shared.mjs";
-
-function hasDocker() {
-  const r = spawnSync("docker", ["info"], { stdio: "ignore" });
-  return r.status === 0;
-}
+import {
+  DOCKER_DENIED, DOCKER_MISSING, DOCKER_RUNNING, DOCKER_UNRESPONSIVE, applyOffer, hasFindings,
+  offerLines, preflight, preflightLines, probeDocker,
+} from "./preflight.mjs";
 
 function hasOllama() {
   return spawnSync("ollama", ["--version"], { stdio: "ignore" }).status === 0;
@@ -55,7 +54,7 @@ export async function create(argv) {
     argv.includes("--yes") || argv.includes("-y") || !process.stdin.isTTY;
   const positional = argv.filter((a) => !a.startsWith("-"));
 
-  const { ask, confirm, close } = await makePrompter(nonInteractive);
+  const { ask, confirm, pause, resume, close } = await makePrompter(nonInteractive);
 
   say();
   say(`${C.cyan}${C.bold}  evestack${C.reset} ${C.dim}— eve on your own machine, $0 infrastructure${C.reset}`);
@@ -69,6 +68,31 @@ export async function create(argv) {
     console.error(`\n${C.red}${target} already exists and is not empty.${C.reset}`);
     return 1;
   }
+
+  // ---- preflight ------------------------------------------------------------
+  // After the directory is known to be usable, before anything else.
+  //
+  // After, because a mistyped project name must not cost someone a prompt to
+  // install Docker and the download that follows it, only to be told the
+  // directory was occupied all along.
+  //
+  // Before everything else, for two different reasons. Two of these findings
+  // change what this wizard WRITES: a taken 5433 or 4000 has to be settled
+  // before docker-compose.yml and .env.local exist, because those two files,
+  // the trace-ingest URL and the printed sign-in line all have to agree about
+  // one number. The rest is about when somebody learns. The check this replaces
+  // ran after `npm install`, so a machine with no Docker spent two minutes
+  // downloading a project before being told, in one sentence that was wrong for
+  // it, to start an application it had never installed.
+  const machine = await preflight({ dir: target });
+  let docker = machine.docker;
+  if (hasFindings(machine)) {
+    step("Checking your machine");
+    for (const line of preflightLines(machine)) say(line);
+    docker = await considerOffer(machine, { confirm, pause, resume, nonInteractive });
+  }
+  const pgPort = machine.ports.pg.chosen;
+  const dashboardPort = machine.ports.dashboard.chosen;
 
   // ---- model ----------------------------------------------------------------
   say();
@@ -215,7 +239,7 @@ export async function create(argv) {
       modelLine,
       "",
       "# Durable sessions (docker compose provides this Postgres)",
-      `WORKFLOW_POSTGRES_URL=postgres://evestack:${dbPassword}@localhost:5433/evestack`,
+      `WORKFLOW_POSTGRES_URL=postgres://evestack:${dbPassword}@localhost:${pgPort}/evestack`,
       "WORKFLOW_POSTGRES_MAX_POOL_SIZE=20",
       "WORKFLOW_POSTGRES_WORKER_CONCURRENCY=20",
       "",
@@ -224,7 +248,7 @@ export async function create(argv) {
       `EVESTACK_AUTH_PASSWORD=${password}`,
       "",
       "# Dashboard trace export",
-      "EVESTACK_DASHBOARD_URL=http://localhost:4000/api/ingest/v1/traces",
+      `EVESTACK_DASHBOARD_URL=http://localhost:${dashboardPort}/api/ingest/v1/traces`,
       "# Read by BOTH halves: the agent sends it as the x-evestack-ingest-token",
       "# header, and the dashboard container gets it from this same file via",
       "# `env_file:` in docker-compose.yml. Change it in one place or neither —",
@@ -244,7 +268,10 @@ export async function create(argv) {
   const composeProject =
     basename(target).toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^[^a-z0-9]+/, "") ||
     "evestack";
-  writeFileSync(join(target, "docker-compose.yml"), composeFile(composeProject, dbPassword));
+  writeFileSync(
+    join(target, "docker-compose.yml"),
+    composeFile(composeProject, dbPassword, { pgPort, dashboardPort }),
+  );
   ok("Wrote docker-compose.yml — Postgres, and the dashboard behind a profile");
 
   // ---- install --------------------------------------------------------------
@@ -261,7 +288,10 @@ export async function create(argv) {
   }
 
   // ---- next steps -----------------------------------------------------------
-  const dockerUp = hasDocker();
+  // Re-probed rather than reused. Minutes of `npm install` have gone by since
+  // the preflight, and the most likely thing to have happened in them is the
+  // reader going and starting the Docker they were just told about.
+  const finalDocker = docker.state === DOCKER_RUNNING ? docker : probeDocker();
   say();
   if (!installed) {
     say(`${C.yellow}${C.bold}  Created, but dependencies are not installed.${C.reset}`);
@@ -278,8 +308,19 @@ export async function create(argv) {
   }
   say(`${C.green}${C.bold}  Done.${C.reset}`);
   say();
-  if (!dockerUp) {
-    warn("Docker isn't running. Start Docker Desktop first — Postgres and the sandbox need it.");
+  // Not "start Docker Desktop" any more. That sentence was printed for every
+  // non-zero exit of `docker info`, including on machines with no Docker and on
+  // Linux, where Docker Desktop is not what anybody is running. The preflight
+  // above already said the true thing at length; this is the one-line reminder
+  // that the next command will not work yet, and it names the state.
+  if (finalDocker.state !== DOCKER_RUNNING) {
+    warn(`${dockerBlocker(finalDocker)} Postgres and the agent sandbox both need it.`);
+    // Only point upwards when there is something up there. Docker can also have
+    // gone away DURING the install, in which case the preflight said nothing
+    // about it and "scroll up" sends the reader looking for advice that was
+    // never printed.
+    if (machine.remedy) dim("Scroll up for the fix for this machine.");
+    else dim("Run `docker version` to see what it says.");
     say();
   }
   // Five lines, one of them the dashboard. This used to be five lines plus a
@@ -295,13 +336,13 @@ export async function create(argv) {
   // on ECONNREFUSED. The script wires the generated .env.local in explicitly.
   say(`    ${pm} run db:bootstrap                       ${C.dim}# create the workflow schema${C.reset}`);
   say(`    ${pm} run dev                                ${C.dim}# chat with your agent on :2000${C.reset}`);
-  say(`    docker compose --profile dashboard up -d   ${C.dim}# the dashboard on :4000${C.reset}`);
+  say(`    docker compose --profile dashboard up -d   ${C.dim}# the dashboard on :${dashboardPort}${C.reset}`);
   say();
   // The dashboard is the reason to pick evestack over plain eve, so the sign-in
   // is printed rather than left to be dug out of .env.local. It is a freshly
   // generated per-project secret on the user's own terminal; the alternative is
   // a user who brings the container up and cannot get past the sign-in page.
-  say(`  ${C.dim}Sign in at${C.reset} http://localhost:4000 ${C.dim}with${C.reset} evestack ${C.dim}/${C.reset} ${password}`);
+  say(`  ${C.dim}Sign in at${C.reset} http://localhost:${dashboardPort} ${C.dim}with${C.reset} evestack ${C.dim}/${C.reset} ${password}`);
   dim("(it is in .env.local, which the dashboard container reads too — nothing to copy)");
   say();
   if (!DASHBOARD_IMAGE_PUBLISHED) {
@@ -381,7 +422,7 @@ function readdirSafe(p) {
   }
 }
 
-export function composeFile(projectName, dbPassword) {
+export function composeFile(projectName, dbPassword, { pgPort = 5433, dashboardPort = 4000 } = {}) {
   // The compose project name has to be per-directory, not the literal string
   // "evestack". Compose treats `name:` as the project identity, so two scaffolds
   // — or one scaffold plus a cloned evestack repo — become the SAME project. The
@@ -411,7 +452,7 @@ export function composeFile(projectName, dbPassword) {
   return `# evestack — your whole stack, on your machine, for $0.
 #
 #   docker compose up -d postgres              durable sessions
-#   docker compose --profile dashboard up -d   + the dashboard on :4000
+#   docker compose --profile dashboard up -d   + the dashboard on :${dashboardPort}
 #
 # The dashboard is a pull, not a build. To run your own image instead — a local
 # build, a fork, a private registry — set EVESTACK_DASHBOARD_IMAGE in a .env
@@ -437,7 +478,7 @@ services:
       #
       # Reaching it from another host is a deliberate act: publish it yourself,
       # or put it behind something that terminates TLS and authenticates.
-      - "127.0.0.1:5433:5432"
+      - "127.0.0.1:${pgPort}:5432"
     volumes:
       - evestack-pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -487,11 +528,87 @@ services:
       # 127.0.0.1 on purpose. The process inside binds 0.0.0.0 because nothing
       # could reach it otherwise; the published mapping is where exposure is
       # actually decided, and this one keeps the control plane on loopback.
-      - "127.0.0.1:\${DASHBOARD_PORT:-4000}:4000"
+      - "127.0.0.1:\${DASHBOARD_PORT:-${dashboardPort}}:4000"
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
 volumes:
   evestack-pgdata:
 `;
+}
+
+/**
+ * Offer to fix what was found, and never do it without being told to.
+ *
+ * Three rules, and they are the whole of the consent policy:
+ *
+ *   1. Nobody is asked unless there is a human at the keyboard. Under `--yes`
+ *      or a pipe the command is printed and that is all — a non-interactive
+ *      run must never install system software on the strength of a default.
+ *   2. The literal command is printed immediately above the question, along
+ *      with what it downloads. Consent to "install Docker" is not consent; it
+ *      is a shrug. Consent to `brew install colima docker docker-compose` is.
+ *   3. Declining costs nothing. The instructions stay on screen, the scaffold
+ *      continues, and the same advice is repeated at the end.
+ *
+ * Returns the Docker state to use from here on: re-probed after an install that
+ * succeeded, unchanged otherwise, so the closing lines describe the machine as
+ * it is rather than as it was when the wizard started.
+ */
+async function considerOffer(machine, { confirm, pause, resume, nonInteractive }) {
+  const offer = machine.remedy?.offer;
+  if (!offer) return machine.docker;
+
+  // --yes means "stop asking me", and a pipe means there is nobody to ask.
+  // Neither is consent to install system software, so both print and move on.
+  if (nonInteractive) {
+    dim("Not asking, because this run is non-interactive. Run it yourself when you can.");
+    return machine.docker;
+  }
+
+  for (const line of offerLines(offer)) say(line);
+  say();
+  if (!(await confirm(offer.label, offer.defaultYes))) {
+    dim("Nothing installed. The commands above are still there when you want them.");
+    return machine.docker;
+  }
+
+  say();
+  step(offer.display);
+  // readline holds this stdin, and the child is about to want it. Without the
+  // pause they split the keystrokes between them.
+  pause();
+  const { ok: succeeded } = applyOffer(offer);
+  resume();
+
+  if (!succeeded) {
+    warn(`\`${offer.display}\` did not finish successfully.`);
+    dim("Whatever it printed above is the real reason. Run it yourself once that");
+    dim("is sorted; nothing else in this scaffold depends on it right now.");
+    return machine.docker;
+  }
+
+  ok(`${offer.display} finished`);
+  if (offer.note) dim(offer.note);
+  // Only re-probed after an install. A `start` offer has launched something
+  // that takes tens of seconds, and probing it immediately would report a
+  // failure for a runtime that is coming up perfectly well.
+  if (offer.kind !== "install") return machine.docker;
+  const after = probeDocker();
+  if (after.state === DOCKER_RUNNING) ok("Docker is running");
+  return after;
+}
+
+/**
+ * The one-line version of why the next command will not work.
+ *
+ * Separate from the preflight text on purpose: this is the reminder at the
+ * bottom of a long, successful scaffold, and it has to be one sentence that is
+ * true in every state rather than a second copy of the advice.
+ */
+function dockerBlocker({ state }) {
+  if (state === DOCKER_MISSING) return "Docker still is not installed.";
+  if (state === DOCKER_DENIED) return "Docker runs, but this user cannot reach its socket.";
+  if (state === DOCKER_UNRESPONSIVE) return "Docker is not answering yet.";
+  return "Docker's daemon is not running yet.";
 }
