@@ -2,7 +2,13 @@ import { FleetBanner } from "./fleet-banner";
 import { agentUrlForHumans } from "@/lib/agent-client";
 import { isPriced } from "@/lib/pricing";
 import { formatUsd } from "@/lib/pricing";
-import { getTotals, listSessions } from "@/lib/queries";
+import {
+  SESSION_MAX_LIMIT,
+  SESSION_PAGE_SIZE,
+  getTotals,
+  listSessions,
+  sessionLimit,
+} from "@/lib/queries";
 import { DatabaseError } from "@/app/db-error";
 
 export const dynamic = "force-dynamic";
@@ -18,11 +24,18 @@ function ago(iso: string): string {
 
 const fmt = (n: number) => n.toLocaleString("en-US");
 
-export default async function SessionsPage() {
+export default async function SessionsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ limit?: string }>;
+}) {
+  const { limit: rawLimit } = await searchParams;
+  const limit = sessionLimit(rawLimit);
+
   let sessions;
   let totals;
   try {
-    [sessions, totals] = await Promise.all([listSessions(100), getTotals()]);
+    [sessions, totals] = await Promise.all([listSessions(limit), getTotals()]);
   } catch (error) {
     return (
       <DatabaseError error={error} />
@@ -140,6 +153,22 @@ export default async function SessionsPage() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {totals.sessions > sessions.length && (
+        // The list has always been capped — listSessions defaults to 100 — and
+        // the cap was invisible: the stat above reads the true total while the
+        // table quietly shows the newest slice, so a machine with 500 sessions
+        // looked like a machine with 100 and nothing said otherwise. Measured
+        // at 57 sessions, where the two happened to agree and hid this.
+        <p className="faint" style={{ marginTop: 14, fontSize: 12 }}>
+          Showing the {fmt(sessions.length)} most recent of {fmt(totals.sessions)} sessions.{" "}
+          {sessions.length < SESSION_MAX_LIMIT && (
+            <a href={`/?limit=${Math.min(sessions.length + SESSION_PAGE_SIZE, SESSION_MAX_LIMIT)}`}>
+              Show {fmt(Math.min(SESSION_PAGE_SIZE, totals.sessions - sessions.length))} more
+            </a>
+          )}
+        </p>
       )}
 
       {anyUnpriced && (

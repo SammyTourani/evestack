@@ -259,3 +259,22 @@ function sumCostParts(parts: string[]): number {
   }
   return total;
 }
+
+/** Rows the session list shows before you ask for more. */
+export const SESSION_PAGE_SIZE = 100;
+/** Ceiling on `?limit=`, so a hand-typed URL cannot ask Postgres for every row
+ *  and render a page nobody can scroll. */
+export const SESSION_MAX_LIMIT = 1000;
+
+/**
+ * `?limit=` to a row count.
+ *
+ * Anything absent, negative, zero or unparseable falls back to the page size
+ * rather than to "no limit" — the list was capped at 100 with nothing on screen
+ * saying so, and the fix for an invisible cap must not be an unbounded query.
+ */
+export function sessionLimit(raw: string | undefined): number {
+  const requested = Number(raw);
+  if (!Number.isFinite(requested) || requested <= 0) return SESSION_PAGE_SIZE;
+  return Math.min(Math.floor(requested), SESSION_MAX_LIMIT);
+}
