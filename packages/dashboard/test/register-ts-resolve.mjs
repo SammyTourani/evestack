@@ -22,10 +22,27 @@
  */
 import { existsSync } from "node:fs";
 import { registerHooks } from "node:module";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { dirname, join } from "node:path";
+
+/**
+ * tsconfig maps the package root to an alias, and every route handler uses it
+ * to reach lib/. Node does not know that mapping, so importing a handler fails
+ * with "Cannot find package" before a single line of it runs -- which is why
+ * the control routes had no tests and only their helpers were ever covered.
+ * Resolved here rather than by rewriting app imports, for the same reason the
+ * extension is: the runner adapts to the app, not the other way round.
+ */
+const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 registerHooks({
   resolve(specifier, context, nextResolve) {
+    if (specifier.startsWith("@/")) {
+      const base = join(PACKAGE_ROOT, specifier.slice(2));
+      for (const candidate of [base + ".ts", base + ".tsx", join(base, "index.ts"), base]) {
+        if (existsSync(candidate)) return { url: pathToFileURL(candidate).href, shortCircuit: true };
+      }
+    }
     // A specifier with any extension, or a bare/absolute one, is left alone.
     if (specifier.startsWith(".") && !/\.[cm]?[jt]sx?$/i.test(specifier) && context.parentURL) {
       const candidate = new URL(`${specifier}.ts`, context.parentURL);
