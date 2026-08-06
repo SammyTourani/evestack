@@ -150,18 +150,24 @@ export default {
       for (const [key, want] of Object.entries(EXPECTED)) {
         const actual = Number(got[key]);
         const tolerance = key === "count" ? 0 : 50;
-        t.assert(
-          Math.abs(actual - want) <= tolerance,
+        const matches = Math.abs(actual - want) <= tolerance;
+        t.ok(
+          matches,
           `${key} is ${want}${key === "count" ? "" : "ms"}`,
-          `expected ${want} (±${tolerance}), got ${actual}`,
+          matches ? {} : { expected: `${want} (±${tolerance})`, actual },
         );
       }
 
-      t.assert(
-        Math.abs(Number(got.p50) - P50_IF_NULLS_COUNTED_AS_ZERO) > 1000,
+      const excluded = Math.abs(Number(got.p50) - P50_IF_NULLS_COUNTED_AS_ZERO) > 1000;
+      t.ok(
+        excluded,
         "unfinished turns are excluded from the distribution, not counted as 0ms",
-        `p50 is ${Number(got.p50)}ms; counting the ${UNFINISHED} running turns as zero would give ` +
-          `${P50_IF_NULLS_COUNTED_AS_ZERO}ms and make a busier agent look faster`,
+        excluded
+          ? {}
+          : {
+              expected: `a p50 far from ${P50_IF_NULLS_COUNTED_AS_ZERO}ms`,
+              actual: `${Number(got.p50)}ms — the ${UNFINISHED} running turns are being counted as zero, which makes a busier agent look faster`,
+            },
       );
 
       // Now the failure counting. One turn errors outright; one finishes
@@ -191,17 +197,35 @@ export default {
       `);
       const c = counted[0];
 
-      t.assert(Number(c.errored) === 1, "a turn carrying error_code is counted", `got ${c.errored}`);
-      t.assert(
-        Number(c.no_model_call) === 1,
+      const errored = Number(c.errored);
+      const noModelCall = Number(c.no_model_call);
+      const statusFailed = Number(c.status_failed);
+
+      t.ok(errored === 1, "a turn carrying error_code is counted", errored === 1 ? {} : {
+        expected: 1,
+        actual: errored,
+      });
+      t.ok(
+        noModelCall === 1,
         "a finished turn with no $eve.model is counted as a failure",
-        `got ${c.no_model_call} — this is the rate-limited turn the workflow calls 'completed'`,
+        noModelCall === 1
+          ? {}
+          : {
+              expected: "1 — the rate-limited turn the workflow calls 'completed'",
+              actual: noModelCall,
+            },
       );
-      t.assert(
-        Number(c.errored) + Number(c.no_model_call) > Number(c.status_failed),
+
+      const undercounts = errored + noModelCall > statusFailed;
+      t.ok(
+        undercounts,
         "status alone undercounts failures, so the page must not use it",
-        `status='failed' finds ${c.status_failed}; the real failure count is ` +
-          `${Number(c.errored) + Number(c.no_model_call)}`,
+        undercounts
+          ? {}
+          : {
+              expected: `more real failures than the ${statusFailed} status='failed' finds`,
+              actual: `${errored + noModelCall} real vs ${statusFailed} by status — if these agree, the cheaper query could be substituted unnoticed`,
+            },
       );
     } finally {
       await client.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(() => {});

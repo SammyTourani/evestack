@@ -124,10 +124,13 @@ export default {
         );
         const actual = measured.rows[0].duration_ms;
 
-        t.assert(
-          Math.abs(actual - testCase.expectedMs) <= TOLERANCE_MS,
+        const correct = Math.abs(actual - testCase.expectedMs) <= TOLERANCE_MS;
+        t.ok(
+          correct,
           `${testCase.label}: duration_ms is the whole interval`,
-          `expected ~${testCase.expectedMs}ms (±${TOLERANCE_MS}), got ${actual}ms`,
+          correct
+            ? {}
+            : { expected: `~${testCase.expectedMs}ms (±${TOLERANCE_MS})`, actual: `${actual}ms` },
         );
 
         // Negative control. The old expression must still be wrong on this same
@@ -144,11 +147,16 @@ export default {
         );
         const before = legacy.rows[0].value;
 
-        t.assert(
-          Math.abs(before - testCase.expectedMs) > TOLERANCE_MS,
+        const stillWrong = Math.abs(before - testCase.expectedMs) > TOLERANCE_MS;
+        t.ok(
+          stillWrong,
           `${testCase.label}: the previous expression is reproducibly wrong`,
-          `old form reported ${before}ms for a ${testCase.expectedMs}ms run` +
-            ` — if this ever matches, the bug is gone and this probe is measuring nothing`,
+          stillWrong
+            ? {}
+            : {
+                expected: `the old form to disagree with ${testCase.expectedMs}ms`,
+                actual: `${before}ms — it agrees, so this case is measuring nothing`,
+              },
         );
       }
     } finally {
