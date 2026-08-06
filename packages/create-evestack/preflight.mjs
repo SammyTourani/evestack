@@ -110,15 +110,24 @@ export function runCommand(command, args, { timeoutMs = 6_000, stdio } = {}) {
  * Is this binary on PATH?
  *
  * Through `/bin/sh -c command -v`, because `command` is a shell builtin and
- * cannot be spawned. The argument is JSON-quoted rather than interpolated: it
- * is only ever called with literals today, and a helper that would execute
- * whatever it is handed is a helper waiting for its first dynamic caller.
+ * cannot be spawned. It is only ever called with literals today, and a helper
+ * that would execute whatever it is handed is a helper waiting for its first
+ * dynamic caller.
+ *
+ * So the name is passed as a POSITIONAL ARGUMENT, never interpolated into the
+ * script. JSON.stringify is not a shell quoter and this used it as one: it
+ * escapes `"` and `\`, and leaves `$` and backticks alone, and both expand
+ * inside the double quotes it produces. Verified on this branch —
+ * onPath("$(touch /tmp/proof)") created /tmp/proof. `command -v "$1"` has
+ * nothing left to expand, which is the same reason create.mjs stopped shelling
+ * out to `ls -A ${JSON.stringify(dir)}`.
  */
 export function onPath(command, run = runCommand) {
   const result =
     process.platform === "win32"
       ? run("where", [command], { timeoutMs: 3_000 })
-      : run("/bin/sh", ["-c", `command -v ${JSON.stringify(command)}`], { timeoutMs: 3_000 });
+      : // "sh" is $0; the name lands in $1 and is never parsed as script text.
+        run("/bin/sh", ["-c", 'command -v "$1"', "sh", command], { timeoutMs: 3_000 });
   return result.status === 0 && result.stdout.trim() !== "";
 }
 

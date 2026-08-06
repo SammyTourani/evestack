@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { existsSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import {
   DOCKER_DENIED,
@@ -18,6 +21,7 @@ import {
   hasFindings,
   isWsl,
   nearestExisting,
+  onPath,
   probeDisk,
   preflightLines,
   probeCompose,
@@ -108,6 +112,27 @@ test("exit 0 with an empty server field is still a stopped daemon", () => {
   // Some CLI and daemon combinations do not treat an unreachable daemon as an
   // error. Same situation, same fix, so the same classification.
   assert.equal(classifyDocker(result({ stdout: "29.5.1|\n" })).state, DOCKER_STOPPED);
+});
+
+test("onPath hands the shell a name, not a script", () => {
+  // The real shell, on purpose. JSON.stringify was being used as a shell quoter
+  // here: it escapes `"` and `\` and leaves `$` and backticks alone, so
+  // `command -v "$(...)"` ran the substitution. Verified before the fix — this
+  // marker file appeared. A stub for `run` could not have caught it, because
+  // the argv it records looks harmless right up until /bin/sh parses it.
+  const marker = join(tmpdir(), `evestack-onpath-${process.pid}-${Date.now()}`);
+  rmSync(marker, { force: true });
+  try {
+    assert.equal(onPath(`$(touch ${marker})`), false);
+    assert.equal(existsSync(marker), false, "onPath executed its argument as shell");
+    // The same thing where the substitution would have produced a real answer:
+    // `command -v "$(echo sh)"` used to resolve /bin/sh and report true.
+    assert.equal(onPath("$(echo sh)"), false, "onPath let the shell rewrite the name");
+    // And it still answers the question it is actually for.
+    assert.equal(onPath("sh"), true);
+  } finally {
+    rmSync(marker, { force: true });
+  }
 });
 
 test("the timeout is a wall-clock bound, not a suggestion", () => {
