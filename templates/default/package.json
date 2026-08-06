@@ -12,7 +12,7 @@
   "scripts": {
     "dev": "node --env-file-if-exists=.env.local scripts/dev.mjs",
     "build": "eve build",
-    "start": "eve start",
+    "start": "node --env-file-if-exists=.env.local scripts/start.mjs",
     "typecheck": "tsc",
     "db:bootstrap": "node scripts/bootstrap.mjs",
     "verify": "node --env-file-if-exists=.env.local scripts/verify.mjs"
