@@ -1,4 +1,5 @@
 import type { Config } from "./config.js";
+import { VERSION } from "./version.js";
 import { DashboardClient, DashboardError, DashboardUnreachableError } from "./dashboard.js";
 import {
   INTERNAL_ERROR,
@@ -36,7 +37,7 @@ const SUPPORTED_PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "
 const SERVER_INFO = {
   name: "evestack",
   title: "evestack control plane",
-  version: "0.1.0",
+  version: VERSION,
 } as const;
 
 const INSTRUCTIONS = [

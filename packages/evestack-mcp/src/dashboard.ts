@@ -1,4 +1,5 @@
 import type { Config } from "./config.js";
+import { VERSION } from "./version.js";
 
 /**
  * A thin client over the dashboard's HTTP routes. Nothing here knows SQL.
@@ -83,7 +84,7 @@ export class DashboardClient {
       // *which* MCP client drove a decision is the one piece of provenance this
       // server can always supply honestly, even when nobody configured an
       // approver identity — see the README on identity vs. provenance.
-      "user-agent": `evestack-mcp/0.1.0 (${this.#clientLabel})`,
+      "user-agent": `evestack-mcp/${VERSION} (${this.#clientLabel})`,
     });
     if (body !== undefined) headers.set("content-type", "application/json");
     if (this.#config.authorization) headers.set("authorization", this.#config.authorization);

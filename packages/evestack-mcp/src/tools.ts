@@ -89,12 +89,20 @@ const listSessions: ToolDefinition = {
     "READ-ONLY. Lists the most recent eve agent sessions on this evestack deployment, with per-session " +
     "turn counts, token totals, computed USD cost and the models used, plus lifetime totals across every " +
     "session ever recorded.\n\n" +
-    "LIMIT: the dashboard's /api/health route returns a fixed five most-recent sessions, so this tool " +
-    "cannot page or filter. `totals.sessions` tells you how many exist; `listed` tells you how many came " +
-    "back. If you need an older session you must already know its id — pass it straight to get_session.",
+    "LIMIT: the dashboard's /api/health/detail route returns a fixed five most-recent sessions, so this " +
+    "tool cannot page or filter. `totals.sessions` tells you how many exist; `listed` tells you how many " +
+    "came back. If you need an older session you must already know its id — pass it straight to " +
+    "get_session.",
   inputSchema: { type: "object", additionalProperties: false, properties: {} },
   async handle(_args, client) {
-    const health = record(await client.get("/api/health"));
+    // /api/health/detail, not /api/health. The rollup used to live on
+    // /api/health, which is the one unauthenticated route in the dashboard —
+    // session ids, turn counts, token counts, cost and model names to anyone
+    // who could reach the port. It was cut back to `{ ok, database }` and the
+    // detail moved behind the session gate. This kept reading the old shape, so
+    // `health.recentSessions` and `health.totals` were both undefined and three
+    // tools returned confidently empty results instead of failing.
+    const health = record(await client.get("/api/health/detail"));
     const sessions = arr(health.recentSessions);
     return {
       totals: health.totals,
@@ -116,7 +124,7 @@ const getSession: ToolDefinition = {
     "names), its token/cost usage, and — the useful part when a run ended badly — any budget stop that " +
     "killed it, with the reason string verbatim.\n\n" +
     "Use this to answer 'what happened to this run'. Three routes are merged here " +
-    "(/api/control/sessions/:id/approve, /api/budget, /api/health) and each part is reported " +
+    "(/api/control/sessions/:id/approve, /api/budget, /api/health/detail) and each part is reported " +
     "independently: a section comes back null with a `reason` rather than failing the whole call, because " +
     "a session whose event stream has aged out can still have cost data and vice versa.",
   inputSchema: {
@@ -131,7 +139,7 @@ const getSession: ToolDefinition = {
     const [liveResult, budgetResult, healthResult] = await Promise.allSettled([
       client.get(path(sessionId, "/approve")),
       client.get("/api/budget", { sessionId }),
-      client.get("/api/health"),
+      client.get("/api/health/detail"),
     ]);
 
     const live =
@@ -175,7 +183,7 @@ const getSession: ToolDefinition = {
       sessionId,
       live,
       ...(liveReason ? { liveUnavailableReason: liveReason } : {}),
-      // Present only when the session is among the five /api/health returns.
+      // Present only when the session is among the five /api/health/detail returns.
       rollup,
       usage: budget?.session ?? null,
       ...(budgetReason ? { usageUnavailableReason: budgetReason } : {}),
@@ -194,12 +202,13 @@ const listApprovals: ToolDefinition = {
   description:
     "READ-ONLY. Who approved or denied what, and when — the evestack.approvals audit log. Each row names " +
     "the session, the tool that was gated, the decision, the recorded approver and `approverVia`, which " +
-    "says HOW that identity was established ('header' / 'forwarded-user' / 'basic' / 'unidentified'). " +
-    "Treat `unidentified` rows as attributable to nobody.\n\n" +
-    "REQUIRES a dashboard build that serves GET /api/approvals. As of dashboard 0.1.0 that route does " +
-    "not exist — the data and the queries do (lib/approvals.ts) but only the /approvals HTML page reads " +
-    "them. If this tool reports the route is missing, that is the reason, and the fix is one route file " +
-    "in the dashboard, not a change here.",
+    "says HOW that identity was established: 'session' (signed in to the dashboard) and 'basic' both " +
+    "prove possession of the one shared deployment credential, so they name an installation rather than " +
+    "a person; 'header', 'forwarded-user' and 'forwarded-email' name a person, but only as well as the " +
+    "proxy in front of the dashboard does. Treat 'unidentified' rows as attributable to nobody.\n\n" +
+    "REQUIRES a dashboard build that serves GET /api/approvals. If this tool reports the route is " +
+    "missing, the deployment is older than that route and the fix is upgrading the dashboard, not a " +
+    "change here.",
   inputSchema: {
     type: "object",
     additionalProperties: false,
@@ -273,7 +282,7 @@ const getCosts: ToolDefinition = {
     const sessionId = optionalStr(args, "sessionId");
     const [budgetResult, healthResult] = await Promise.allSettled([
       client.get("/api/budget", { sessionId }),
-      client.get("/api/health"),
+      client.get("/api/health/detail"),
     ]);
 
     if (budgetResult.status === "rejected") {
