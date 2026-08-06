@@ -1,0 +1,318 @@
+/* Trace viewer. Beside the pages rather than in globals.css because nothing
+   else in the app renders a waterfall or a payload block, and globals.css is
+   shared ground. Same variables, so it still matches everything else. */
+
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.crumbs a { color: var(--text-dim); }
+.crumbs a:hover { color: var(--text); }
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  margin: 8px 0 24px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.dot { color: var(--border); }
+.runId {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-faint);
+  word-break: break-all;
+}
+.metaLink { color: var(--accent); }
+
+.sectionHead {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 30px 0 12px;
+}
+.sectionHead h2 { margin: 0; font-size: 14px; }
+.sectionNote { font-size: 12px; color: var(--text-faint); }
+
+/* ---- notices ----
+   Three of these can be true at once (content off, no lineage, one vocabulary),
+   so they stack as a list rather than competing for one banner slot. */
+.notice {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.notice strong { color: var(--text); font-weight: 600; }
+.notice code {
+  font-family: var(--mono);
+  font-size: 11px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.noticeInfo { border-left-color: var(--accent); }
+.notices { margin-bottom: 20px; }
+
+/* ---- waterfall ---- */
+.waterfall {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  overflow: hidden;
+}
+
+.row {
+  display: grid;
+  /* name | bar | duration. The bar takes the slack so the timeline stays
+     comparable across rows however long the names get. */
+  grid-template-columns: minmax(220px, 42%) 1fr 66px;
+  align-items: center;
+  gap: 12px;
+  padding: 5px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.row:last-child { border-bottom: none; }
+.row:hover { background: var(--bg-hover); }
+.row:target { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+.rowName {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.rowLabel {
+  font-family: var(--mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rowLink { color: var(--accent); }
+.rowLink:hover { text-decoration: underline; }
+
+.kind {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 5px;
+  white-space: nowrap;
+}
+.kindTool { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.kindModel { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, var(--border)); }
+.kindFailed { color: var(--err); border-color: color-mix(in srgb, var(--err) 50%, var(--border)); }
+
+.track {
+  position: relative;
+  height: 8px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--border) 55%, transparent);
+  min-width: 60px;
+}
+.bar {
+  position: absolute;
+  top: 0;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--accent);
+  opacity: 0.75;
+  /* A span that ended in under a millisecond still has to be visible, hence a
+     floor on the width rather than a 0%-wide rectangle. */
+  min-width: 2px;
+}
+.barTool { background: var(--warn); }
+.barFailed { background: var(--err); opacity: 0.9; }
+/* No end_time: the span never closed, so there is nothing honest to draw a
+   width from. A tick at the start point, not a bar guessing at a duration. */
+.barOpen { background: var(--text-faint); width: 2px; }
+
+.rowDuration {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.truncNote,
+.footnote {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.footnote code {
+  font-family: var(--mono);
+  font-size: 11px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+/* ---- call cards ---- */
+.cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.card {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+.card:target { border-color: var(--accent); }
+.cardFailed { border-color: color-mix(in srgb, var(--err) 45%, var(--border)); }
+
+.cardHead {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+.cardTitle { font-family: var(--mono); font-size: 13px; }
+.cardSpanId {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 20px;
+  margin-top: 9px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.factLabel { color: var(--text-faint); }
+.fact { font-variant-numeric: tabular-nums; }
+
+/* ---- payload blocks ---- */
+.block { margin-top: 10px; }
+.block > summary {
+  cursor: pointer;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.block > summary::-webkit-details-marker { display: none; }
+.block > summary::before {
+  content: "▸";
+  font-size: 9px;
+  color: var(--text-faint);
+}
+.block[open] > summary::before { content: "▾"; }
+.block > summary:hover { color: var(--text-dim); }
+.blockCount { color: var(--text-faint); text-transform: none; letter-spacing: 0; }
+
+.pre {
+  margin: 7px 0 0;
+  padding: 10px 12px;
+  /* Long results scroll inside their own box. Without this a single 24 KB
+     bash result pushes every other tool call off the screen. */
+  max-height: 340px;
+  overflow: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  tab-size: 2;
+}
+.preClamped { border-color: color-mix(in srgb, var(--warn) 40%, var(--border)); }
+.clampNote {
+  margin: 5px 0 0;
+  font-size: 11px;
+  color: var(--warn);
+}
+
+.messages {
+  list-style: none;
+  margin: 7px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.message {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.messageRole {
+  padding: 4px 10px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-dim);
+}
+.messageBody {
+  margin: 0;
+  padding: 9px 11px;
+  max-height: 300px;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.absent { font-size: 12px; color: var(--text-faint); margin: 9px 0 0; }
+
+/* ---- index page ---- */
+.setup {
+  margin: 0 auto;
+  max-width: 620px;
+  text-align: left;
+}
+.setup pre {
+  margin: 12px 0;
+  padding: 12px 14px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.7;
+  overflow-x: auto;
+  color: var(--text);
+}
+.setup p { margin: 10px 0; }
+.setup ul { margin: 10px 0; padding-left: 18px; }
+.setup li { margin: 6px 0; }

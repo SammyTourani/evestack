@@ -675,6 +675,131 @@ export async function listTracedSessionIds(limit = 500): Promise<string[]> {
   return rows.map((row) => row.session_id);
 }
 
+/**
+ * The two span families a reader came for, named in both vocabularies.
+ *
+ * These predicates run in Postgres rather than in JS because their callers
+ * count across the whole table; pulling every row into Node to measure the
+ * length of two arrays is not a query plan. `starts_with` rather than LIKE:
+ * `_` is a LIKE wildcard, so `'execute_tool %'` would also match
+ * `'executeXtool '`.
+ *
+ * These have to stay in step with the JS filters in listModelCalls and
+ * listToolCalls. A span name recognised in one place and not the other shows up
+ * as a page that says "3 tool calls" above a list of two.
+ */
+const MODEL_CALL_PREDICATE = `(name = 'ai.streamText.doStream' OR starts_with(name, 'chat '))`;
+const TOOL_CALL_PREDICATE = `(name = 'ai.toolCall' OR starts_with(name, 'execute_tool '))`;
+
+/** One row per session that has spans, for the trace index. */
+export interface TracedSession {
+  sessionId: string;
+  /** Distinct traces the session's spans belong to. */
+  traces: number;
+  spans: number;
+  modelCalls: number;
+  toolCalls: number;
+  /** `service.name` off the OTLP resource — which agent exported these. */
+  service: string | null;
+  firstStart: string;
+  lastStart: string;
+}
+
+/**
+ * Sessions that have spans, newest activity first.
+ *
+ * The CTE mirrors listSpansBySession: resolve the session to its trace ids
+ * first, then count over those traces entire. Counting only the spans that
+ * carry a session id would report zero tool calls for a local-tracer trace,
+ * where the `ai.toolCall` span holding the payload carries none of eve's ids —
+ * which is the exact failure the id columns in sql/traces.sql document.
+ */
+export async function listTracedSessions(limit = 200): Promise<TracedSession[]> {
+  await ensureTraceSchema();
+  const rows = await query<Record<string, unknown>>(
+    `WITH owned AS (
+       SELECT DISTINCT session_id, trace_id
+       FROM evestack.spans
+       WHERE session_id IS NOT NULL
+     )
+     SELECT owned.session_id,
+            COUNT(DISTINCT s.trace_id)                          AS traces,
+            COUNT(*)                                            AS spans,
+            COUNT(*) FILTER (WHERE ${MODEL_CALL_PREDICATE})     AS model_calls,
+            COUNT(*) FILTER (WHERE ${TOOL_CALL_PREDICATE})      AS tool_calls,
+            MAX(s.resource ->> 'service.name')                  AS service,
+            MIN(s.start_time)                                   AS first_start,
+            MAX(s.start_time)                                   AS last_start
+     FROM owned
+     JOIN evestack.spans s ON s.trace_id = owned.trace_id
+     GROUP BY owned.session_id
+     ORDER BY MAX(s.start_unix_nano) DESC
+     LIMIT $1`,
+    [limit],
+  );
+  return rows.map((row) => ({
+    sessionId: String(row.session_id),
+    traces: Number(row.traces ?? 0),
+    spans: Number(row.spans ?? 0),
+    modelCalls: Number(row.model_calls ?? 0),
+    toolCalls: Number(row.tool_calls ?? 0),
+    service: (row.service as string) ?? null,
+    firstStart: new Date(row.first_start as string).toISOString(),
+    lastStart: new Date(row.last_start as string).toISOString(),
+  }));
+}
+
+export interface TraceOverview {
+  spans: number;
+  traces: number;
+  sessions: number;
+  modelCalls: number;
+  toolCalls: number;
+  /**
+   * Spans with no session id. Never zero in practice — workflow plumbing and
+   * fetch spans carry no agent identity — but *every* span landing here while
+   * `sessions` stays 0 is the signature of ids the schema does not recognise,
+   * which looks identical to "nothing was ingested" unless the number is shown.
+   */
+  unattributedSpans: number;
+  lastReceivedAt: string | null;
+}
+
+/**
+ * Table-wide counts for the trace index.
+ *
+ * Deliberately not getTraceStats(): that one counts `name = 'ai.toolCall'` and
+ * `name = 'ai.streamText.doStream'` exactly, which are the *local tracer's*
+ * names. A deployment that exports — the only kind that can reach this
+ * dashboard at all — sends `execute_tool <name>` and `chat <model>` instead, so
+ * those two fields read 0 on a table full of tool calls. The predicates above
+ * cover both. See the note in docs/observability.mdx on the two vocabularies.
+ */
+export async function getTraceOverview(): Promise<TraceOverview> {
+  await ensureTraceSchema();
+  const [row] = await query<Record<string, unknown>>(
+    `SELECT COUNT(*)                                          AS spans,
+            COUNT(DISTINCT trace_id)                          AS traces,
+            COUNT(DISTINCT session_id)                        AS sessions,
+            COUNT(*) FILTER (WHERE ${MODEL_CALL_PREDICATE})   AS model_calls,
+            COUNT(*) FILTER (WHERE ${TOOL_CALL_PREDICATE})    AS tool_calls,
+            COUNT(*) FILTER (WHERE session_id IS NULL)        AS unattributed_spans,
+            MAX(received_at)                                  AS last_received_at
+     FROM evestack.spans`,
+  );
+  return {
+    spans: Number(row?.spans ?? 0),
+    traces: Number(row?.traces ?? 0),
+    sessions: Number(row?.sessions ?? 0),
+    modelCalls: Number(row?.model_calls ?? 0),
+    toolCalls: Number(row?.tool_calls ?? 0),
+    unattributedSpans: Number(row?.unattributed_spans ?? 0),
+    lastReceivedAt: row?.last_received_at
+      ? new Date(row.last_received_at as string).toISOString()
+      : null,
+  };
+}
+
 export interface TraceStats {
   spans: number;
   traces: number;
