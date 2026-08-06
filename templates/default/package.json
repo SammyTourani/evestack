@@ -10,7 +10,7 @@
     "#evals/*": "./evals/*"
   },
   "scripts": {
-    "dev": "eve dev",
+    "dev": "node --env-file-if-exists=.env.local scripts/dev.mjs",
     "build": "eve build",
     "start": "eve start",
     "typecheck": "tsc",

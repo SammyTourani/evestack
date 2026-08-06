@@ -349,6 +349,16 @@ export async function create(argv) {
   // command later as a raw ECONNREFUSED out of a migration library.
   const pgPort = await freePort(5433);
   const dashboardPort = await freePort(4000);
+  // The agent's port is PINNED, not discovered.
+  //
+  // `eve dev` takes 2000 and silently auto-increments when it is busy, and
+  // nothing recorded where it landed — so the compose file below pointed the
+  // dashboard at a hardcoded :2000 and `verify` probed 2000..2004 and believed
+  // the first answer. With two projects up, the second project's dashboard
+  // drove the FIRST project's agent: real runs, started in the wrong place,
+  // with nothing anywhere saying so. Recording the port turns three guesses
+  // into one fact.
+  const agentPort = await freePort(2000);
   writeFileSync(
     join(target, ".env.local"),
     [
@@ -357,6 +367,11 @@ export async function create(argv) {
       "# Model provider",
       apiKeyLine,
       modelLine,
+      "",
+      "# The port the agent listens on. `npm run dev` passes it to eve, the",
+      "# dashboard container is pointed at it, and `evestack verify` reads it —",
+      "# so a second project on this machine cannot be mistaken for this one.",
+      `EVESTACK_AGENT_PORT=${agentPort}`,
       "",
       "# Durable sessions (docker compose provides this Postgres)",
       `WORKFLOW_POSTGRES_URL=postgres://evestack:${dbPassword}@127.0.0.1:${pgPort}/evestack`,
@@ -388,7 +403,7 @@ export async function create(argv) {
   const composeProject =
     basename(target).toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^[^a-z0-9]+/, "") ||
     "evestack";
-  writeFileSync(join(target, "docker-compose.yml"), composeFile(composeProject, dbPassword, { pgPort, dashboardPort }));
+  writeFileSync(join(target, "docker-compose.yml"), composeFile(composeProject, dbPassword, { pgPort, dashboardPort, agentPort }));
   ok("Wrote docker-compose.yml — Postgres, and the dashboard behind a profile");
 
   // ---- install --------------------------------------------------------------
@@ -557,7 +572,7 @@ function readdirSafe(p) {
   }
 }
 
-export function composeFile(projectName, dbPassword, { pgPort = 5433, dashboardPort = 4000 } = {}) {
+export function composeFile(projectName, dbPassword, { pgPort = 5433, dashboardPort = 4000, agentPort = 2000 } = {}) {
   // The compose project name has to be per-directory, not the literal string
   // "evestack". Compose treats `name:` as the project identity, so two scaffolds
   // — or one scaffold plus a cloned evestack repo — become the SAME project. The
@@ -658,7 +673,7 @@ services:
       # reached over the compose network instead.
       WORKFLOW_POSTGRES_URL: postgres://evestack:${dbPassword}@postgres:5432/evestack
       # \`npm run dev\` also runs on the host, not in compose.
-      EVESTACK_AGENT_URL: \${EVESTACK_AGENT_URL:-http://host.docker.internal:2000}
+      EVESTACK_AGENT_URL: \${EVESTACK_AGENT_URL:-http://host.docker.internal:${agentPort}}
     ports:
       # 127.0.0.1 on purpose. The process inside binds 0.0.0.0 because nothing
       # could reach it otherwise; the published mapping is where exposure is

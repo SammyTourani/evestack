@@ -191,11 +191,25 @@ if (provider === "ollama") {
 /* the agent                                                                   */
 /* -------------------------------------------------------------------------- */
 
-const agent = await findAgent(env("EVESTACK_AGENT_URL"));
+const agent = await findAgent(env("EVESTACK_AGENT_URL"), env("EVESTACK_AGENT_PORT"));
 if (agent.health?.ok) {
-  pass("agent", `answering at ${agent.url}`);
+  // "guessed" means there was no recorded port and the scan landed somewhere
+  // other than the default — which on a machine running two projects may not be
+  // this project's agent at all. Say so rather than quietly reporting it.
+  pass(
+    "agent",
+    agent.guessed
+      ? `answering at ${agent.url} (found by scanning — add EVESTACK_AGENT_PORT to be sure it is yours)`
+      : `answering at ${agent.url}`,
+  );
 } else {
-  fail("agent", `nothing is answering /eve/v1/health near ${agent.url}`, "npm run dev");
+  fail(
+    "agent",
+    agent.pinned
+      ? `nothing is answering at ${agent.url}, the port this project records`
+      : `nothing is answering /eve/v1/health near ${agent.url}`,
+    "npm run dev",
+  );
 }
 
 /* -------------------------------------------------------------------------- */

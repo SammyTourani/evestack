@@ -196,15 +196,31 @@ export async function probeJson(url, init = {}, timeoutMs = 4000) {
  * is wrong exactly when a second project is running — which is also when
  * someone is most likely to be confused about which agent they are talking to.
  */
-export async function findAgent(explicitUrl, startPort = 2000, span = 5) {
+export async function findAgent(explicitUrl, pinnedPort, startPort = 2000, span = 5) {
+  const check = async (url) => {
+    const probe = await probeJson(new URL("/eve/v1/health", url), {}, 2000);
+    return probe.ok ? { url, health: probe.body } : null;
+  };
+
   if (explicitUrl) {
-    const probe = await probeJson(new URL("/eve/v1/health", explicitUrl));
-    return probe.ok ? { url: explicitUrl, health: probe.body } : { url: explicitUrl, health: null };
+    return (await check(explicitUrl)) ?? { url: explicitUrl, health: null };
   }
+
+  // The recorded port, and ONLY the recorded port. Falling through to a scan
+  // here would reintroduce the bug this exists to remove: a second project's
+  // agent answering on 2000 and being reported as this project's, with a
+  // copy-pasteable curl command aimed at someone else's agent. "Your agent is
+  // not running" is the correct answer when this project's agent is not.
+  if (pinnedPort) {
+    const url = `http://127.0.0.1:${pinnedPort}`;
+    return (await check(url)) ?? { url, health: null, pinned: true };
+  }
+
+  // No recorded port: an older scaffold, or a project made by `attach`. Scan,
+  // and say so, because the answer is a guess.
   for (let port = startPort; port < startPort + span; port += 1) {
-    const url = `http://127.0.0.1:${port}`;
-    const probe = await probeJson(new URL("/eve/v1/health", url), {}, 1500);
-    if (probe.ok) return { url, health: probe.body };
+    const found = await check(`http://127.0.0.1:${port}`);
+    if (found) return { ...found, guessed: port !== startPort };
   }
   return { url: `http://127.0.0.1:${startPort}`, health: null };
 }

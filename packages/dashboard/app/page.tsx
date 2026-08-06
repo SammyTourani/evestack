@@ -1,4 +1,5 @@
 import { FleetBanner } from "./fleet-banner";
+import { agentBaseUrl } from "@/lib/agent-client";
 import { isPriced } from "@/lib/pricing";
 import { formatUsd } from "@/lib/pricing";
 import { getTotals, listSessions } from "@/lib/queries";
@@ -70,9 +71,22 @@ export default async function SessionsPage() {
       {sessions.length === 0 ? (
         <div className="empty">
           <h2>No sessions yet</h2>
-          <p>Send your agent a message and it will show up here.</p>
+          {/*
+            This used to offer a curl command and nothing else — to the one
+            reader who has, by definition, just arrived and has never used this.
+            The Chat page is one click away and does the same thing with a text
+            box, so it goes first and the curl goes second, for the people who
+            want it. The URL is read from EVESTACK_AGENT_URL rather than
+            hardcoded to :2000, because `eve dev` auto-increments when that port
+            is taken and a copy-pasteable command that quietly points at someone
+            else&apos;s agent is worse than no command.
+          */}
+          <p>
+            <a href="/chat">Open Chat</a> and send your agent a message — it will show up here.
+          </p>
+          <p className="faint">Or from a terminal:</p>
           <p className="faint mono">
-            curl -X POST localhost:2000/eve/v1/session -H &apos;content-type:
+            curl -X POST {agentBaseUrl()}/eve/v1/session -H &apos;content-type:
             application/json&apos; -d &apos;{"{"}&quot;message&quot;:&quot;hello&quot;{"}"}&apos;
           </p>
         </div>
