@@ -171,10 +171,26 @@ async function ensureSchema(): Promise<void> {
     // only `ivfflat.probes` of them per query (default 1). Build it on an empty
     // table, as any bootstrap-time migration must, and the centroids are
     // meaningless: the planner switches to the index once a query looks
-    // selective enough, probes one near-empty list, and returns ZERO rows for a
-    // query that plainly should match. Observed exactly that — the same query
-    // returned 2 rows at LIMIT 3 and 0 rows at LIMIT 20, purely because the
-    // plan flipped.
+    // selective enough, probes one near-empty list, and answers out of whatever
+    // is in it. Measured on PostgreSQL 17.10 / pgvector 0.8.6, vector(1536),
+    // index built before the first insert, planner left alone:
+    //
+    //   200 rows, LIMIT 1   IVFFlat index scan   0 rows
+    //   200 rows, LIMIT 3   seq scan + sort      3 rows, correct
+    //   800 rows, LIMIT 1   IVFFlat index scan   1 row, the WRONG one (0.0125,
+    //                                            true nearest scores 0.0801)
+    //   800 rows, LIMIT 3   IVFFlat index scan   2 rows
+    //   800 rows, LIMIT 20  seq scan + sort      20 rows, correct
+    //
+    // An earlier version of this comment said the same query returned 2 rows at
+    // LIMIT 3 and 0 rows at LIMIT 20. The 2-at-LIMIT-3 half is real; the
+    // 0-at-LIMIT-20 half is backwards and does not reproduce — 1,440 measured
+    // queries (60 query vectors, four table sizes, six limits) produced no case
+    // where a larger LIMIT returned fewer rows. It cannot: one IVFFlat scan
+    // returns min(limit, rows in the probed list), and Postgres charges an
+    // ordered index path linearly in the limit against a top-N sort that grows
+    // logarithmically, so raising the limit can only move the planner OFF this
+    // index. The bad answers land on SMALL limits — recall() defaults to 5.
     //
     // HNSW builds a navigable graph incrementally, needs no training data, and
     // is correct from the first row. That matters more than IVFFlat's faster
@@ -287,8 +303,13 @@ export async function recall(
   // silently returns 40, and asking for 45 silently returns 40. No error, no
   // warning, just a short answer that looks complete.
   //
-  // That is the same shape as the IVFFlat bug documented above — ask for more,
-  // get less — so the fix is to make the search width follow the request rather
+  // Verified on the same 17.10/0.8.6 setup, 5,000 rows, planner left alone:
+  // with the default ef_search, LIMIT 40 returns 40, LIMIT 45 returns 40 and
+  // LIMIT 50 returns 40; with the SET LOCAL below they return 40, 45 and 50.
+  //
+  // Unlike the IVFFlat bug above, this one really is ask-for-more-get-less —
+  // there the truncation lands on SMALL limits, here it lands on limits past
+  // ef_search. The fix is to make the search width follow the request rather
   // than to quietly lower the cap. pgvector's guidance is ef_search >= limit;
   // doubling it costs a little recall work and buys the ordering back at the
   // boundary.
