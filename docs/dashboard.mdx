@@ -11,6 +11,33 @@ description: The open replacement for Agent Runs — and it drives the agent, no
 - **Computed cost** — see [Architecture](/docs/architecture#computed-cost-not-reported-cost) for why
   it's computed rather than read from a span
 - **Integrations** — the live Composio catalog, connected accounts, one-click connect
+- **Monitors** — latency percentiles and failure rates over a rolling window, see below
+
+## Monitors
+
+`/monitors` reports p50/p75/p95/p99 over a window you pick (1h, 6h, 12h, 24h, 7d), computed by
+Postgres with `percentile_cont` over the same `workflow.workflow_runs` the session list reads.
+Nothing is sampled and nothing is estimated.
+
+Two things it does deliberately, because the obvious version of each is wrong:
+
+**Turn latency leads, session duration is reported separately.** A `$eve.type = 'session'` row
+stays `running` for as long as the conversation is open, so a session someone left open overnight
+is a nine-hour "duration" that measures the human. Turns start and finish around one model
+exchange, so turn latency is the number worth alerting on. Session duration is still shown, over
+sessions that actually ended, and the two are never averaged together.
+
+**A failure is not just `status = 'failed'`.** A turn killed by a provider rate limit emits
+`turn.failed` on the stream while its workflow row still reads `status = 'completed'` — the
+workflow handled the error, so nothing failed as far as it is concerned. eve writes `$eve.model`
+only once a model call reports usage, so a finished turn without it never reached the provider.
+Monitors counts those as failures under **no model call** and shows them separately from
+`error_code` failures, because counting only the latter is the direction that flatters us.
+
+Unfinished turns are excluded from the distribution rather than counted as zero. That one is
+verified against a real server by `contract/runtime/probes/05-monitor-percentiles.probe.mjs`,
+with fixtures chosen so the wrong answer is numerically obvious — otherwise a busier agent would
+report as a faster one.
 
 ## Control
 
