@@ -379,8 +379,8 @@ function buildPlan({
     } else {
       plan.manual.push([
         "Add Postgres yourself",
-        `Both compose files exist. The service block evestack would have written is printed below;\n` +
-          `    add it, then put WORKFLOW_POSTGRES_URL in ${envFileName}.`,
+        `Both compose files exist. The service block evestack would have written, and the\n` +
+          `    ${envFileName} lines that reach it, are printed below — password and port included.`,
       ]);
     }
   }
@@ -651,6 +651,20 @@ function printSummary(plan) {
       // failed for user "evestack"` against a Postgres that is up and healthy.
       say(composeService({ password: plan.dbPassword, port: plan.port })
         .split("\n").map((l) => `      ${C.dim}${l}${C.reset}`).join("\n"));
+      say();
+      // The half this branch used to leave out. It said "put
+      // WORKFLOW_POSTGRES_URL in .env.local" and then printed every credential it
+      // had generated except that one, so the only connection string on screen was
+      // the `docker run` copy — rewritten to host.docker.internal for the container
+      // and unreachable from the host. The reader either invented a URL or pasted
+      // the one URL that cannot work.
+      dim(`And the ${plan.envFileName} lines that reach it:`);
+      say(manualEnvLines(plan).split("\n").map((l) => `      ${C.dim}${l}${C.reset}`).join("\n"));
+      say();
+      dim("Printed rather than written, on purpose: the world selection in agent.ts turns");
+      dim(`on the moment WORKFLOW_POSTGRES_URL exists, so writing it into ${plan.envFileName}`);
+      dim("before that Postgres is up would only buy an agent that boots into a database");
+      dim("it cannot reach.");
     }
     say();
   }
@@ -765,6 +779,24 @@ function composeService({ password, port }) {
 
 volumes:
   evestack-pgdata:`;
+}
+
+/**
+ * The env lines the manual branch has to carry across by hand.
+ *
+ * The automatic branch appends exactly these to the env file. This one appends
+ * nothing, because the Postgres they point at does not exist until the reader
+ * pastes the service block above — so they are printed instead, with the same
+ * password and the same port as that block, and both halves move in one go.
+ */
+function manualEnvLines(plan) {
+  return [
+    `WORKFLOW_POSTGRES_URL=${plan.dbUrl}`,
+    "# world-postgres defaults to concurrency 50 against a pool of 10 and warns",
+    "# about it on every boot. Matching them silences it.",
+    "WORKFLOW_POSTGRES_MAX_POOL_SIZE=20",
+    "WORKFLOW_POSTGRES_WORKER_CONCURRENCY=20",
+  ].join("\n");
 }
 
 function composeFragment({ projectName, password, port, file }) {
