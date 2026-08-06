@@ -9,18 +9,31 @@ up off-platform is the **Agent Runs dashboard**; their own answer is to export O
 to a collector you run.
 
 That leaves you with real tools and a real gap. Jaeger will show you spans, the Workflow
-DevKit inspector will show you runs, and eve's dev TUI can even attach to a deployment and
-approve a tool call from your terminal. What none of them give you is one place that
-understands *sessions, turns, tokens, cost and approvals* — and lets more than one person
-use it.
+DevKit inspector will show you runs, and eve's own dev TUI is better than it gets credit for:
+since `0.29.3` its `/traces` command is a full-screen live viewer over the local trace spool
+that replays a session as expandable conversation cards, and `0.30.7` added token/cost/tool
+chips plus `--verbose` and `--json` to `eve traces`.
+
+What none of them give you is one place that understands *sessions, turns, tokens, cost and
+approvals*, that keeps history for as long as you keep the rows rather than until a spool
+sweep, that more than one person can open, and that can **act** on the agent rather than only
+read it.
 
 evestack is to `eve` what Ubuntu is to the Linux kernel — not a fork, a distribution. It
-packages `eve` to run on your own hardware with one command, and builds the dashboard Vercel
-kept for itself.
+packages `eve` to run on your own hardware and fills in the operational layer that
+self-hosting still needs.
+
+<Note>
+  evestack is not the first self-hosted eve distribution, and this page used to imply it was.
+  [vercel-labs/steve](https://github.com/vercel-labs/steve) — "Self-hosted eve poc" — was
+  published by a Vercel employee on 2026-06-24, weeks before this project. Nothing here was
+  "kept" by anyone.
+</Note>
 
 <CardGroup cols={2}>
   <Card title="Quickstart" icon="rocket" href="/docs/quickstart">
-    `npx create-evestack my-agent` to a running agent in one command.
+    `npx create-evestack my-agent` scaffolds it; four more commands bring the agent up, and the
+    dashboard is a separate clone.
   </Card>
   <Card title="Architecture" icon="diagram-project" href="/docs/architecture">
     How the dashboard reads eve's own Postgres tables directly — no ingest pipeline.
@@ -33,12 +46,25 @@ kept for itself.
 | --- | --- | --- |
 | Compute, workflows, sandbox | your machine — **$0** | metered |
 | Durable sessions | your Postgres | Vercel Workflows |
+| Run-state retention | as long as you keep the rows | purged 1 day (Hobby) / 7 (Pro) / 30 (Enterprise) after a run completes ([docs](https://vercel.com/docs/workflows/pricing)) |
 | Dashboard | yes, anywhere | Vercel only |
 | Dashboard can *drive* the agent | yes | read-only |
-| One-click tool sign-in | 1,070 apps (Composio) | 4 managed connectors |
-| Long-term memory | included (pgvector) | not included |
+| One-click tool sign-in | 1,070 toolkits (Composio, hosted) | 4 Vercel-managed connectors, plus Custom OAuth and API-key connectors you register ([docs](https://vercel.com/docs/connect)) |
+| Long-term memory | included (pgvector, your database) | no first-party store; the gallery's memory options are third-party SaaS |
+
+<Note>
+  The memory row used to read "not included," which is wrong. eve's own
+  `patterns/multi-tenant-memory.md` opens: "You can add long-term memory from the integration
+  gallery using the Memory filter, or build tenant-aware memory from your own application
+  store." The narrower claim is the true one and still the interesting one — eve ships no
+  first-party memory *store*, deliberately ("The storage implementation is deliberately outside
+  eve"), and the packaged options in the gallery (Mem0, Upstash AgentKit) are other people's
+  hosted services. evestack's is a table in the Postgres you already run.
+</Note>
 
 The only real cost is model tokens — and [Ollama](/docs/local-setup#ollama) takes that to zero too.
+Composio is the exception to "everything on your machine": it is hosted, it holds the OAuth
+tokens for accounts you connect, and it is off until you set `COMPOSIO_API_KEY`.
 
 ## The honest tradeoffs
 

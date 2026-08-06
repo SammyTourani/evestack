@@ -118,6 +118,14 @@ function apiCounts(entry) {
 const certifiedWhileLatest = history.filter((e) => e.eveVersion === e.eveLatestTagAtCertification);
 const current = certifiedWhileLatest[0] ?? history.find((e) => e.ok) ?? history[0];
 
+/**
+ * Runs where at least one contract was skipped rather than run. A skip is
+ * neither a pass nor a failure, and until now the page rendered it as a ⊘ cell
+ * with nothing tallying them — so a reader counting ticks could not tell that a
+ * contract had not executed. Newest first, matching `history`.
+ */
+const skippedRuns = history.filter((e) => (e.counts?.skippedContracts ?? 0) > 0);
+
 function lagMs(entry) {
   if (!entry?.eveReleasedAt || !entry?.certifiedAt) return null;
   return Date.parse(entry.certifiedAt) - Date.parse(entry.eveReleasedAt);
@@ -472,10 +480,10 @@ footer p{margin:0 0 6px}
 <div class="wrap">
 
   <div class="verdict${apiHolds(current) ? "" : " red"}">
-    <h2><span class="dot">${apiHolds(current) ? "●" : "▲"}</span> Certified against eve ${esc(current.eveVersion)}${
+    <h2><span class="dot">${apiHolds(current) ? "●" : "▲"}</span> Tested against eve ${esc(current.eveVersion)}${
       current.eveVersion === current.eveLatestTagAtCertification ? " — npm <code>latest</code>" : ""
     }</h2>
-    <p>eve published <b>${esc(current.eveVersion)}</b> on ${esc(minute(current.eveReleasedAt))}. evestack certified it${
+    <p>eve published <b>${esc(current.eveVersion)}</b> on ${esc(minute(current.eveReleasedAt))}. evestack tested it${
       currentLag === null ? "" : ` <b>${esc(currentLag)} later</b>`
     } — ${esc(apiContractIds.length)} API contracts, ${esc(currentApi.assertions)} assertions, ${
       currentApi.failed === 0 ? "<b>all green</b>" : `<b>${esc(currentApi.failed)} failing</b>`
@@ -505,6 +513,20 @@ footer p{margin:0 0 6px}
     <p>There are <b>${esc(contractIds.length)}</b> of them and <b>${esc(current.counts.assertions)}</b> assertions.
       The whole suite runs in well under a second: no mocks, no model calls, no network, no database, no Docker. That is
       what makes it affordable to run against every single eve release rather than the one we happen to ship.</p>
+    <p><b>Two numbers, one suite.</b> The verdict above counts
+      <b>${esc(apiContractIds.length)} contracts and ${esc(currentApi.assertions)} assertions</b>; this paragraph and
+      <a href="${esc(REPO_URL)}/blob/main/docs/compatibility.mdx">docs/compatibility.mdx</a> count
+      <b>${esc(contractIds.length)} and ${esc(current.counts.assertions)}</b>. The difference is exactly
+      <code>${esc(PIN_CONTRACT_ID)}</code>, whose ${esc(current.counts.assertions - currentApi.assertions)} assertions
+      describe evestack's own manifests rather than eve — see <a href="#what-a-contract-is">below</a>. Both figures are
+      computed from the same reports in <code>contract/history/</code>; neither is typed by hand.</p>
+    <p>A skip is the third outcome and is not a pass:
+      <b>${esc(skippedRuns.length)}</b> of the ${esc(history.length)} recorded runs skipped at least one contract
+      ${
+        skippedRuns.length === 0
+          ? ""
+          : `(${esc(skippedRuns[skippedRuns.length - 1].eveVersion)}–${esc(skippedRuns[0].eveVersion)})`
+      }, which is what the ⊘ cells in the matrix mean. They are excluded from both counts above, not counted green.</p>
 
     <h3>Why this page exists</h3>
     <p>eve moves fast — <b>${

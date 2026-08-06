@@ -136,7 +136,7 @@ passed to `bash` and what came back exist only on spans.
 | | Tier 1 — `workflow.workflow_runs` | Tier 2 — `evestack.spans` |
 | --- | --- | --- |
 | Written by | `@workflow/world-postgres` | your agent's OTLP exporter |
-| Configuration | none — always on | `EVESTACK_DASHBOARD_URL` |
+| Configuration | none — always on | `EVESTACK_DASHBOARD_URL` + `EVESTACK_INGEST_TOKEN` |
 | Session / turn / subagent tree | yes | partial (see below) |
 | Model id and token counts | yes | yes |
 | Tools available to the turn | yes | **no** |
@@ -152,13 +152,19 @@ these tables, and `DROP SCHEMA evestack CASCADE` costs telemetry and never a dur
 The exporter is one file, and the template ships it:
 
 ```ts title="agent/instrumentation.ts"
+const INGEST_TOKEN_HEADER = "x-evestack-ingest-token";
+
 export default defineInstrumentation({
   setup: ({ agentName }) => {
     if (!endpoint) return;
     registerOTel({
       serviceName: agentName,
-      traceExporter: new OTLPHttpJsonTraceExporter({ url: endpoint }),
+      traceExporter: new OTLPHttpJsonTraceExporter({
+        url: endpoint,
+        ...(ingestToken ? { headers: { [INGEST_TOKEN_HEADER]: ingestToken } } : {}),
+      }),
     });
+    void reportIngestCredential(endpoint, ingestToken);
   },
   recordInputs: process.env.EVESTACK_TRACE_CONTENT !== "off",
   recordOutputs: process.env.EVESTACK_TRACE_CONTENT !== "off",
@@ -169,6 +175,29 @@ With `EVESTACK_DASHBOARD_URL` unset it registers nothing, so an agent running wi
 dashboard pays no exporter cost and fails no exports. Set it to the **full path** —
 `http://localhost:4000/api/ingest/v1/traces`. `@vercel/otel` uses the `url` verbatim and appends
 nothing, so a bare origin or the conventional `:4318/v1/traces` never arrives.
+
+### The credential, and why a 401 here is invisible
+
+The ingest route is the one route a human is not the caller for, so it has its own shared secret:
+`EVESTACK_INGEST_TOKEN`, sent as `x-evestack-ingest-token` and compared in constant time by
+`ingestAuthorized()` in `packages/dashboard/lib/auth.ts`. The agent and the dashboard must hold
+the **same** value. `create-evestack` generates it into `.env.local`, which the dashboard
+container also reads through `env_file:`, so a scaffolded project needs no extra step.
+
+<Warning>
+  Leaving `EVESTACK_INGEST_TOKEN` unset on **both** sides does not give you an open endpoint — it
+  gives you a broken one. With no token configured the route falls back to the dashboard's
+  ordinary session auth, and an OTLP exporter has no cookie and no password, so every span is
+  refused with `401`.
+</Warning>
+
+That refusal is silent unless something goes looking for it, which is why the template probes the
+endpoint once at boot. `@vercel/otel`'s exporter is a `fetch` whose `.then` branch calls the
+success callback and whose `.catch` branch handles errors — and an HTTP 401 *resolves* a fetch.
+So a rejected batch is reported to the batch processor as `ExportResultCode.SUCCESS`, the spans
+are dropped, and nothing retries. The status reaches `diag.debug`, and `@vercel/otel` installs a
+diag logger at all only when `OTEL_LOG_LEVEL` is set. Without the probe, a wrong token and an
+idle agent produce exactly the same empty Traces tab.
 
 <Warning>
   Use `OTLPHttpJsonTraceExporter`, not `OTLPHttpProtoTraceExporter`. eve's own

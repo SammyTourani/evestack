@@ -13,6 +13,14 @@ export function SiteHeader() {
       id="site-header"
       className="sticky top-0 z-50 border-b border-transparent bg-background-100/70 backdrop-blur-md transition-colors duration-300 data-scrolled:border-border-subtle"
     >
+      {/* Trademark notice sits HERE, above the fold, not in the footer. This
+          site is named after and built on someone else's trademark; a visitor
+          should learn that in the first viewport, not after scrolling past
+          every claim we make. */}
+      <p className="border-b border-border-subtle bg-background-200/60 py-1.5 text-center text-label-12 text-gray-700">
+        {site.trademark}
+      </p>
+
       <div className="site-container flex h-16 items-center justify-between gap-4">
         <a href="#hero" className="flex items-center gap-2 text-copy-16 font-medium">
           <span aria-hidden className="text-blue-700">
@@ -44,6 +52,16 @@ export function SiteHeader() {
             className="text-copy-14 text-gray-900 transition-colors hover:text-gray-1000"
           >
             Docs
+          </a>
+          {/* /compat is the most falsifiable thing on this site — every
+              published eve release run through the contract suite, reds
+              included — and until now nothing on the landing page pointed at
+              it. */}
+          <a
+            href={site.compat}
+            className="text-copy-14 text-gray-900 transition-colors hover:text-gray-1000"
+          >
+            Compatibility
           </a>
           <a
             href={site.github}
@@ -91,6 +109,14 @@ export function SiteHeader() {
                   className="block rounded-lg px-3 py-2 text-copy-14 text-gray-900 hover:bg-gray-100 hover:text-gray-1000"
                 >
                   Docs
+                </a>
+              </li>
+              <li>
+                <a
+                  href={site.compat}
+                  className="block rounded-lg px-3 py-2 text-copy-14 text-gray-900 hover:bg-gray-100 hover:text-gray-1000"
+                >
+                  Compatibility
                 </a>
               </li>
               <li>

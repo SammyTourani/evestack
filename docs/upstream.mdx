@@ -125,24 +125,51 @@ for the machine you actually have. eve's
 spans; [Architecture](/docs/architecture) explains why evestack's dashboard reads Postgres
 instead.
 
-## The one genuine gap: memory
+## Memory: eve ships no first-party store, on purpose
 
 `https://eve.dev/docs/memory` returns 404, and no file under `node_modules/eve/docs/` has
 "memory" in its name except `patterns/multi-tenant-memory.md`. That page is a composition
 pattern — route auth, dynamic instructions, and ordinary tools — and it states plainly that the
-storage implementation sits outside eve, naming Postgres, a durable KV store, or a vector
+storage implementation sits outside eve, naming PostgreSQL, a durable KV store, or a vector
 database as equally valid.
 
-So there is nothing upstream to link to for *storage*, which is exactly the part a self-hosted
-operator has to decide. [/docs/memory](/docs/memory) fills it: `remember` and `recall` on the
-Postgres already running your sessions, indexed with HNSW rather than IVFFlat, with the
-measured reason that choice is a correctness fix and not a preference.
+<Warning>
+  An earlier version of this page, and the comparison table on
+  [Introduction](/docs/index), reached **"not included"** from that — by quoting the page's
+  second paragraph and cutting its first. Restored in full, the page opens:
+
+  > You can add long-term memory from the integration gallery using the Memory filter, or build
+  > tenant-aware memory from your own application store by composing three existing eve
+  > primitives.
+
+  So memory *is* available upstream, via the gallery. Reading only the sentence that suited us
+  is exactly the failure mode these docs exist to avoid, and it is corrected here.
+</Warning>
+
+The accurate claim is narrower and still worth making. eve ships **no first-party memory
+store** — "The storage implementation is deliberately outside eve" — and the gallery's packaged
+options are **third-party hosted services**: [Mem0](https://eve.dev/integrations/mem0)
+("persistent memory for AI agents and assistants") and
+[Upstash AgentKit](https://eve.dev/integrations/upstash-agentkit) ("long-term memory, Redis
+Search, and durable chat history"). Both are somebody else's SaaS holding your agent's
+recollections.
+
+That is the part a self-hosted operator has to decide, and there is nothing upstream to link
+for it. [/docs/memory](/docs/memory) fills it: `remember` and `recall` on the Postgres already
+running your sessions, indexed with HNSW rather than IVFFlat, with the measured reason that
+choice is a correctness fix and not a preference. Same data ownership as the rest of the
+stack — no third party, no extra container.
 
 ## Attribution
 
 evestack is built on [vercel/eve](https://github.com/vercel/eve) and is licensed Apache-2.0,
 same as eve. eve is a trademark of Vercel; evestack is an independent project and is not
 affiliated with or endorsed by Vercel.
+
+It is also not the first self-hosted eve distribution.
+[vercel-labs/steve](https://github.com/vercel-labs/steve) — "Self-hosted eve poc" — was
+published on 2026-06-24 by a Vercel employee, weeks before this project started. Any claim that
+self-hosting is a thing Vercel withheld is refuted by their own repo.
 
 <CardGroup cols={2}>
   <Card title="Compatibility" icon="check" href="/docs/compatibility">

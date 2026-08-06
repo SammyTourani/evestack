@@ -41,7 +41,11 @@ export function SiteFooter() {
         </div>
 
         <div className="flex flex-col items-start justify-between gap-6 border-t border-border-subtle pt-8 md:flex-row md:items-center">
-          <p className="text-copy-14 text-gray-700">{site.attribution}</p>
+          {/* The trademark line also runs in the site header — this is the
+              second placement, not the only one. */}
+          <p className="max-w-2xl text-copy-14 text-gray-700">
+            {site.attribution} {site.trademark}
+          </p>
           <ThemeSwitcher />
         </div>
       </div>

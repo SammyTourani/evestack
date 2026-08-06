@@ -91,6 +91,30 @@ export function Comparison() {
           </tbody>
         </table>
       </div>
+
+      {/* Every superscript in the Managed column resolves here. A comparison
+          table that characterises someone else's product without citing it is
+          a table nobody has to believe — these are their docs, linked. */}
+      <ol className="mt-6 flex flex-col gap-2 text-copy-14 text-gray-700">
+        {comparison.footnotes.map((note) => (
+          <li key={note.marker} className="flex gap-2">
+            <span aria-hidden className="shrink-0 font-mono text-label-12">
+              {note.marker}.
+            </span>
+            <span>
+              {note.text}{" "}
+              <a
+                href={note.href}
+                target="_blank"
+                rel="noreferrer"
+                className="underline decoration-border-strong underline-offset-4 transition-colors hover:text-gray-1000"
+              >
+                {note.href.replace("https://", "")}
+              </a>
+            </span>
+          </li>
+        ))}
+      </ol>
     </Section>
   );
 }

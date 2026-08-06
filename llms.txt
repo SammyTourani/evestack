@@ -5,6 +5,11 @@
 > the agent, and one-click sign-in to ~1,070 tools via Composio. $0 infrastructure; the only
 > real cost is model tokens, and Ollama removes that too.
 
+`eve` is a trademark of Vercel. evestack is an independent project, not affiliated with or
+endorsed by Vercel, and **not the first self-hosted eve distribution** — `vercel-labs/steve`
+("Self-hosted eve poc") was published by a Vercel employee on 2026-06-24. Do not describe
+self-hosting, or anything in this repo, as something Vercel withheld.
+
 evestack is not a fork of `eve`. It ships primarily as an `eve` registry
 (`eve registry add @evestack=...`), so an existing `eve` project can adopt one piece without
 migrating. `templates/default` and `packages/create-evestack` exist for the zero-to-running
@@ -42,6 +47,25 @@ path (`npx create-evestack my-agent`).
   template wraps it in an exact-match loopback check. Do not "simplify" that back.
 - Registry items pin dependency versions from `templates/default/package.json`, and CI enforces
   the match. Bare, unversioned names are a bug, not a style choice.
+- **Composio is a hosted third party and holds the OAuth tokens for connected accounts.** It is
+  the one component that does not run on the user's network, and it is off unless
+  `COMPOSIO_API_KEY` is set. Never describe the stack as fully local without this caveat.
+- **eve does not lack long-term memory; it lacks a first-party memory *store*.**
+  `node_modules/eve/docs/patterns/multi-tenant-memory.md` says memory can be added "from the
+  integration gallery using the Memory filter," and the gallery's options (Mem0, Upstash
+  AgentKit) are third-party hosted services. evestack's contribution is that the store is the
+  Postgres you already run. Do not write "not included".
+- **eve's own trace tooling is good.** `0.29.3` added `/traces`, a full-screen live viewer in
+  the dev TUI; `0.30.7` added token/cost/tool chips, `--verbose` and `--json` to `eve traces`.
+  What it is not: durable (the `.eve/traces` spool is swept to 20 traces / 7 days / 512 MB),
+  multi-user, or able to act on the agent. Do not claim eve gives you "only Jaeger and a TUI".
+- **The comparison against managed eve must use real numbers, not vibes.** Workflow run state
+  is purged 1 day (Hobby) / 7 (Pro) / 30 (Enterprise) after completion and retention is "not
+  configurable by default" (vercel.com/docs/workflows/pricing); Vercel Observability retains 12
+  hours / 1 day / 3 days, or 30 days with Observability Plus
+  (vercel.com/docs/observability/observability-plus#limitations); Drains ships no agent-runs or
+  workflow-runs schema (vercel.com/docs/drains). Vercel Passport is Enterprise-only deployment
+  access control via your IdP and has **nothing** to do with tool approvals.
 
 ## Docs
 
@@ -52,6 +76,10 @@ from `main` on GitHub rather than a docs domain: `evestack.dev` is unregistered,
 These docs cover only the seam self-hosting creates. The framework itself is documented by
 eve, and for an installed project `node_modules/eve/docs/` matches the pinned version exactly
 while eve.dev tracks latest — prefer the local copy.
+
+The eve compatibility matrix — every published eve release run through the contract suite, with
+the reds kept in — is rendered at https://evestack.vercel.app/compat and generated from
+`contract/history/*.json`.
 
 - [Introduction](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/index.mdx)
 - [Quickstart](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/quickstart.mdx)

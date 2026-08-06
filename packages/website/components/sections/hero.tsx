@@ -51,6 +51,36 @@ export function Hero() {
               Star on GitHub
             </Button>
           </div>
+
+          {/* Two things that belong above the fold and were nowhere on this
+              page: the compatibility matrix (every published eve release run
+              through the contract suite, reds and all), and the one upstream
+              bug this project found. The byline is scoped to exactly what is
+              verifiable — the issue is open, and the triage comment and draft
+              PR on it are both from Vercel bot accounts, so neither is claimed
+              as a Vercel engineer's endorsement. */}
+          <p
+            data-hero="proof"
+            className="flex max-w-2xl flex-col items-center gap-x-3 gap-y-1.5 text-balance text-center text-label-12 text-gray-700 sm:flex-row"
+          >
+            <a
+              href={site.compat}
+              className="underline decoration-border-strong underline-offset-4 transition-colors hover:text-gray-1000"
+            >
+              Every eve release, run through the contract suite →
+            </a>
+            <span aria-hidden className="hidden text-gray-500 sm:inline">
+              ·
+            </span>
+            <a
+              href={site.byline.href}
+              target="_blank"
+              rel="noreferrer"
+              className="underline decoration-border-strong underline-offset-4 transition-colors hover:text-gray-1000"
+            >
+              {site.byline.text}
+            </a>
+          </p>
         </HeroClient>
 
         {/* ground the hero into the page */}

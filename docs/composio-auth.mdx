@@ -1,16 +1,39 @@
 ---
 title: Composio auth
-description: One browser flow, ~1,070 apps — versus Vercel Connect's four managed connectors.
+description: One browser flow, ~1,070 apps — and the third party that holds your OAuth tokens.
 ---
 
 ## What you get
 
-Vercel Connect ships four Vercel-managed connectors: Slack, GitHub, Snowflake, Salesforce.
-Everything else needs you to register your own OAuth client by hand.
+[Vercel Connect](https://vercel.com/docs/connect) ships four **Vercel Managed Connectors** —
+Slack, GitHub, Snowflake, Salesforce — where Vercel registers the OAuth client and you just
+authorize it. It also ships two **Customer Managed Connector** types that cover everything
+else: **Custom OAuth** ("OAuth 2.0 / OIDC against any service URL you provide", both the
+authorization-code and client-credentials flows) and **API key**. Those need you to register
+the OAuth client or generate the key yourself and hand Vercel the credentials. eve separately
+connects to arbitrary [MCP servers](https://eve.dev/docs).
+
+<Note>
+  This page used to say "four managed connectors" and stop, which understated Connect
+  considerably — the coverage limit is not the four apps, it is who does the OAuth-client
+  registration.
+</Note>
 
 evestack wires in [Composio](https://composio.dev) instead. We verified the live catalog
 against `GET /api/v3/toolkits`: **1,070 toolkits**, including Gmail (61 tools) and GitHub
 (871 tools), each one click to connect.
+
+<Warning>
+  **Composio is a hosted third party, and this is the one place evestack's "everything runs on
+  your network" stops being true.** Composio performs the OAuth flow and holds the resulting
+  access and refresh tokens for every account you connect — your Gmail, your GitHub, your
+  Slack. That data lives on Composio's infrastructure, not yours, and is subject to their
+  terms rather than your Postgres backup policy.
+
+  It is genuinely opt-in: with `COMPOSIO_API_KEY` unset the agent still boots with its sandbox,
+  memory and durable sessions, and simply has no connectors. If token custody is the thing you
+  are self-hosting to avoid, leave it unset.
+</Warning>
 
 ## How it reaches the model
 
