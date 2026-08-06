@@ -518,7 +518,7 @@ services:
     env_file:
       - .env.local
     environment:
-      # .env.local says localhost:5433 because the AGENT runs on your host.
+      # .env.local says localhost:${pgPort} because the AGENT runs on your host.
       # Inside a container "localhost" is the container, so the same database is
       # reached over the compose network instead.
       WORKFLOW_POSTGRES_URL: postgres://evestack:${dbPassword}@postgres:5432/evestack

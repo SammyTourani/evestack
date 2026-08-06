@@ -117,3 +117,15 @@ test("omitting the ports keeps the documented defaults", () => {
   assert.ok(ports.includes("127.0.0.1:5433:5432"));
   assert.match(compose(), /\$\{DASHBOARD_PORT:-4000\}:4000/);
 });
+
+test("a moved port leaves no trace of the port it moved off", () => {
+  // Every number in this file is generated from one variable except the one
+  // in the dashboard comment, which was typed. Read while debugging exactly
+  // the case that moved the port, it names a port nothing is listening on.
+  const text = composeFile("my-agent", PASSWORD, { pgPort: 5434, dashboardPort: 4001 });
+  assert.ok(
+    !/5433/.test(text.replace(/Publishing "5433:5432"/, "")),
+    "the compose file still refers to 5433 after Postgres moved to 5434",
+  );
+  assert.match(text, /\.env\.local says localhost:5434/);
+});
