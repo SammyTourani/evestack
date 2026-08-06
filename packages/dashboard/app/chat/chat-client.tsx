@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { readCancelOutcome } from "@/lib/cancel-outcome";
 import styles from "./chat.module.css";
 
 /**
@@ -52,6 +53,10 @@ export function ChatClient({ initialSessionId }: { initialSessionId?: string }) 
   // rather than reordering the file around a hook dependency.
   const consumeRef = useRef<((id: string, signal: AbortSignal) => Promise<void>) | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  // What to put back if a cancel is refused. Held in a ref because `cancel`
+  // must not re-create itself on every status change.
+  const statusRef = useRef<Status>(status);
+  statusRef.current = status;
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -330,17 +335,46 @@ export function ChatClient({ initialSessionId }: { initialSessionId?: string }) 
     [sessionId],
   );
 
+  /**
+   * A stop button that cannot fail visibly is worse than no stop button.
+   *
+   * This used to discard the response entirely and swallow the throw, on the
+   * grounds that cancellation is best-effort. But "best-effort" describes the
+   * cancel eve accepted and applied late; it does not describe one that never
+   * arrived. In that case the banner stayed up saying the in-flight call was
+   * still finishing, the run completed in full, and the only thing missing was
+   * the "Run cancelled." line nobody was looking for. The operator's belief and
+   * the agent's behaviour diverged with nothing on screen to say so.
+   *
+   * So: read the answer. A refusal reverts the banner and says why. And
+   * `no_active_turn` is not a cancellation either — it means eve could not hand
+   * the command to the session at all — so it must not leave "cancelling" up.
+   */
   const cancel = useCallback(async () => {
     if (!sessionId) return;
+    const before = statusRef.current;
     setStatus("cancelling");
     try {
-      await fetch(`/api/control/sessions/${sessionId}/cancel`, {
+      const response = await fetch(`/api/control/sessions/${sessionId}/cancel`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: "{}",
       });
-    } catch {
-      // Cancellation is best-effort by nature; the banner explains why.
+      const body = await response.json().catch(() => ({}));
+      const outcome = readCancelOutcome(response.status, body);
+      if (outcome.kind === "refused") {
+        setError(outcome.message);
+        setStatus(before);
+      } else if (outcome.kind === "nothing-to-cancel") {
+        setError(outcome.message);
+        setStatus("waiting");
+      }
+      // `cancelling` stays up; the stream decides when it ends.
+    } catch (e) {
+      setError(
+        `Could not reach the dashboard to cancel: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      setStatus(before);
     }
   }, [sessionId]);
 
