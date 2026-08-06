@@ -101,23 +101,51 @@ test.describe("evestack landing page", () => {
     expect(later).toBeGreaterThan(early);
   });
 
-  test("hero entrance settles with all CTAs visible", async ({ page }) => {
-    await page.goto("/");
-    await page.waitForTimeout(2600); // entrance (~1.6s) + margin
-    const opacities = await page.evaluate(() =>
-      [...document.querySelector("[data-hero='ctas']")!.children].map(
-        (c) => getComputedStyle(c).opacity,
-      ),
-    );
-    expect(opacities).toEqual(["1", "1", "1"]);
-    // clearProps ran — no leftover inline tween styles
+  test("hero copy is legible in the first frame, never animated in", async ({ page }) => {
+    /* There is no hero entrance any more, on purpose: the headline, sub and
+       CTAs are server-rendered and a GSAP intro used to hide them and replay
+       them over ~1.6s, so a refresh flashed an empty hero.
+
+       The test this replaced waited 2600ms and then checked opacity once,
+       which passes whether or not an entrance exists — it could not fail if
+       someone reintroduced the hide-and-replay. Sampling across the window
+       the old entrance occupied is the assertion that actually holds. */
+    await page.goto("/", { waitUntil: "commit" });
+    const readCopy = () =>
+      page.evaluate(() => {
+        const op = (sel: string) => {
+          const el = document.querySelector(sel);
+          return el ? getComputedStyle(el).opacity : null;
+        };
+        return {
+          h1: op("h1"),
+          sub: op("[data-hero='sub']"),
+          ctas: [...(document.querySelector("[data-hero='ctas']")?.children ?? [])].map(
+            (c) => getComputedStyle(c).opacity,
+          ),
+        };
+      });
+
+    await page.locator("h1").waitFor({ state: "attached" });
+    for (let i = 0; i < 14; i++) {
+      const { h1, sub, ctas } = await readCopy();
+      expect(h1, `h1 opacity at sample ${i}`).toBe("1");
+      expect(sub, `sub opacity at sample ${i}`).toBe("1");
+      expect(ctas, `cta opacities at sample ${i}`).toEqual(["1", "1", "1"]);
+      await page.waitForTimeout(200);
+    }
+
+    // No leftover inline tween state on any of it.
     const inline = await page.evaluate(() =>
-      [...document.querySelector("[data-hero='ctas']")!.children].map((c) =>
-        c.getAttribute("style"),
-      ),
+      [
+        document.querySelector("h1"),
+        document.querySelector("[data-hero='sub']"),
+        ...(document.querySelector("[data-hero='ctas']")?.children ?? []),
+      ].map((c) => c?.getAttribute("style") ?? ""),
     );
     for (const style of inline) {
-      expect(style ?? "").not.toContain("visibility");
+      expect(style).not.toContain("visibility");
+      expect(style).not.toContain("opacity");
     }
   });
 
