@@ -51,7 +51,7 @@ export interface GeneratedEval {
  * a turn's reply and failure state arrive in later events than its opening
  * message.
  */
-interface RecoveredTurn {
+export interface RecoveredTurn {
   turnId: string | null;
   userMessage: string;
   toolNames: string[];

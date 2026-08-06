@@ -1,0 +1,261 @@
+/* Scoped to the evals screen. Colors and radii come from globals.css so this
+   page reads as part of the same dashboard; nothing here redefines a variable. */
+
+.sub {
+  color: var(--text-dim);
+  margin: 0 0 20px;
+  max-width: 78ch;
+}
+
+/* ---- the draft framing ----
+   The one thing a reader must not leave with is the belief that the downloaded
+   file is a finished test. It gets the loudest box on the page, above the
+   source, and the same treatment on both screens. */
+.draft {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  padding: 12px 16px;
+  margin: 0 0 18px;
+  max-width: 92ch;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.65;
+}
+.draft strong { color: var(--text); }
+
+/* A recovered-data problem, not a warning about the agent — same shape as
+   .draft but keyed to the error color so the two never blur together. */
+.warn {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--err);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  padding: 12px 16px;
+  margin: 0 0 12px;
+  max-width: 92ch;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+/* ---- candidate table ---- */
+.why {
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid;
+  white-space: nowrap;
+}
+.whyDenial { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+.whyFailed { color: var(--err); border-color: color-mix(in srgb, var(--err) 45%, transparent); }
+.whyPlain { color: var(--text-dim); border-color: var(--border); }
+.whyEmpty { color: var(--text-faint); border-color: var(--border); }
+
+.whyLine {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-faint);
+  max-width: 52ch;
+}
+
+.tools { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.tool {
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+
+.filenameCell { font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
+.previewLink { color: var(--accent); white-space: nowrap; }
+
+.note {
+  color: var(--text-faint);
+  font-size: 12px;
+  margin: 14px 0 0;
+  max-width: 88ch;
+  line-height: 1.65;
+}
+
+/* ---- preview header ---- */
+.crumb { font-size: 12px; color: var(--text-faint); margin: 0 0 10px; }
+.crumb a { color: var(--accent); }
+
+.actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0 0 18px;
+}
+.btn {
+  font: inherit;
+  font-size: 12px;
+  display: inline-block;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btnPrimary { border-color: var(--accent); color: var(--accent); }
+.copyNote { font-size: 12px; color: var(--text-faint); max-width: 46ch; }
+
+/* ---- where the file goes ----
+   Given its own panel because the path is not a suggestion: eve derives eval
+   identity from it. */
+.fileBox {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  padding: 14px 16px;
+  margin: 0 0 18px;
+}
+.fileLabel {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+}
+.filePath {
+  font-family: var(--mono);
+  font-size: 14px;
+  margin-top: 5px;
+  word-break: break-all;
+}
+.filePathDir { color: var(--text-faint); }
+.fileWhy {
+  margin: 9px 0 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  max-width: 84ch;
+  line-height: 1.65;
+}
+
+/* ---- asserts / does not assert ---- */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 12px;
+  margin-bottom: 22px;
+}
+.card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  padding: 14px 16px;
+}
+.cardHead {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 0 0 10px;
+}
+.cardHeadYes { color: var(--ok); }
+.cardHeadNo { color: var(--text-faint); }
+.cardList { margin: 0; padding: 0; list-style: none; }
+.cardList li {
+  font-size: 13px;
+  color: var(--text-dim);
+  padding: 6px 0 6px 16px;
+  border-bottom: 1px solid var(--border);
+  position: relative;
+  line-height: 1.55;
+}
+.cardList li:last-child { border-bottom: none; }
+.cardList li::before {
+  position: absolute;
+  left: 0;
+  color: var(--text-faint);
+}
+.cardListYes li::before { content: "✓"; color: var(--ok); }
+.cardListNo li::before { content: "·"; }
+.cardList code {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text);
+}
+.cardList em { color: var(--text-faint); font-style: normal; }
+
+/* ---- per-turn breakdown ---- */
+.sectionHead {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 26px 0 10px;
+}
+.sectionHead h2 { font-size: 15px; margin: 0; }
+.sectionNote { font-size: 12px; color: var(--text-faint); }
+
+.msg {
+  display: block;
+  max-width: 46ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.assertLine {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  display: block;
+  padding: 1px 0;
+}
+.assertLineDenied { color: var(--warn); }
+.assertLineSuggest { color: var(--text-faint); }
+
+/* ---- generated source ----
+   Rendered line by line rather than as one text node so commented suggestions
+   can be tinted: the whole point of the page is that those lines are the user's
+   job, not the generator's. */
+.source {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  padding: 14px 0;
+  overflow-x: auto;
+  margin: 0;
+}
+.line {
+  display: block;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.65;
+  white-space: pre;
+  padding: 0 16px;
+  color: var(--text);
+}
+.lineComment { color: var(--text-faint); }
+/* A commented-out assertion — the line the user is meant to uncomment. */
+.lineSuggest {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.legend {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text-faint);
+  margin: 10px 0 0;
+}
+.legendSwatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 6px;
+  vertical-align: -1px;
+}
+.legendSuggest { background: color-mix(in srgb, var(--accent) 45%, transparent); }
+.legendComment { background: var(--text-faint); }
