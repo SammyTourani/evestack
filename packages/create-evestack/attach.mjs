@@ -881,13 +881,49 @@ function minVersion(range) {
   return match ? match[0] : null;
 }
 
-function compareVersions(a, b) {
-  const pa = a.split(".").map(Number);
-  const pb = b.split(".").map(Number);
+/**
+ * Compare two versions. Returns <0, 0 or >0; any prerelease sorts below the
+ * release it precedes.
+ *
+ * The previous version split on "." and mapped Number, which turns
+ * "0.30.1-beta.1" into [0, 30, NaN, 1]. NaN !== 2 is true, so it took the
+ * branch — and then `NaN < 2` is *false*, so it returned 1: "0.30.1-beta.1 is
+ * newer than 0.30.2".
+ *
+ * That is not a cosmetic ordering bug. `installed` is read verbatim out of
+ * node_modules/eve/package.json, so a user on any 0.30.x prerelease below
+ * 0.30.2 silently skipped the `< 0` branch at the call site and was never shown
+ * the warning that eve's localDev() matched an unanchored /^127\./ against the
+ * Host header — meaning `127.evil.com` resolved to an unauthenticated
+ * principal. The check that exists to catch that release range reported it as
+ * newer than certified.
+ *
+ * Mirrors contract/lib/semver.mjs `compare()`, which is correct but lives
+ * outside the published package and cannot be imported from here.
+ */
+export function compareVersions(a, b) {
+  const parse = (value) => {
+    const match = /^\D*(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?/.exec(String(value ?? ""));
+    if (match === null) return null;
+    return {
+      release: [Number(match[1]), Number(match[2]), Number(match[3])],
+      prerelease: match[4] ?? null,
+    };
+  };
+
+  const left = parse(a);
+  const right = parse(b);
+  // Unparseable input must not silently claim an ordering. The call site
+  // already handles "could not read a version number out of that range".
+  if (left === null || right === null) return 0;
+
   for (let i = 0; i < 3; i += 1) {
-    if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) < (pb[i] ?? 0) ? -1 : 1;
+    if (left.release[i] !== right.release[i]) return left.release[i] < right.release[i] ? -1 : 1;
   }
-  return 0;
+  if (left.prerelease === right.prerelease) return 0;
+  if (left.prerelease === null) return 1;
+  if (right.prerelease === null) return -1;
+  return left.prerelease < right.prerelease ? -1 : 1;
 }
 
 /**
