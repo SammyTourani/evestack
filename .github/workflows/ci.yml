@@ -11,6 +11,12 @@ on:
 # including malicious ones probing for spend. Typecheck and build catch the
 # large majority of regressions for free; eval stays a local/maintainer gate
 # documented in CONTRIBUTING.md.
+#
+# A key is not the only way to run it, though, and CONTRIBUTING.md now says so:
+# the suite passes on the $0 Ollama path with no key anywhere (measured — 4 evals,
+# 13 gates, 37.6s, sandbox included). A contributor should not believe the gate
+# they are asked to run costs money. It still does not belong in this workflow: a
+# runner would pull a 5.2 GB model before every job. Different reason, same answer.
 jobs:
   typecheck:
     runs-on: ubuntu-latest

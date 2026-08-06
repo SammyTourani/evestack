@@ -17,7 +17,7 @@ git clone https://github.com/<you>/evestack
 cd evestack
 pnpm install
 docker compose up -d postgres
-cd templates/default && cp .env.example .env.local   # add a model API key
+cd templates/default && cp .env.example .env.local   # pick a provider; see below for the $0 one
 pnpm run db:bootstrap                                # creates the workflow schema
 ```
 
@@ -35,8 +35,45 @@ pnpm -r typecheck
 cd templates/default && pnpm exec eve eval
 ```
 
-Both must be clean. The eval suite drives a real agent turn through a real Docker sandbox —
-it needs Docker running and a model key in `.env.local`, same as normal development.
+Both must be clean. The eval suite drives a real agent turn through a real Docker sandbox, so
+it needs Docker running.
+
+**It does not need a paid model key.** The `$0` Ollama path runs the whole suite — this said
+otherwise for a while, which is the wrong thing for this project of all projects to be wrong
+about. Two lines in `.env.local`, `ollama pull qwen3`, and:
+
+```bash
+cd templates/default && pnpm exec eve eval
+# EVALS 4 — smoke 1/1, deny-survives 4/4, sandbox 3/3, memory 5/5 — 13 gates, 37.6s
+```
+
+Measured on qwen3 with no `OPENAI_API_KEY` and no `ANTHROPIC_API_KEY` set anywhere, including
+the sandbox eval, which really does start a container (and really does start it with no
+network — `docker ps --filter label=eve.sandbox` shows `none`). A hosted key is faster and
+better at tool calling; it is not a prerequisite for running the gate.
+
+### The negative control is part of the gate
+
+A green suite means the fixes still work only if the suite can still go red. `evals/deny-survives`
+has a documented vacuous failure mode — the model answers in prose, never calls the gated tool,
+and the assertions never reach their subject — so before trusting a green, prove it can fail:
+
+```bash
+BROKEN="$(node contract/runtime/negative-control.mjs /tmp/agent-without-the-fix)"
+cd "$BROKEN"
+pnpm install
+npx eve dev --port 2998 &
+until curl -sf -o /dev/null http://127.0.0.1:2998/eve/v1/health; do sleep 1; done
+npx eve eval deny-survives --url http://127.0.0.1:2998/   # MUST fail
+```
+
+That builds the real template with `approval: always()` removed from the `forget` tool, so the
+call never parks and the eval's first gate fails. On Ollama the pair is unambiguous: 4/4 against
+the real agent, 0/1 against the sabotaged one, same model and same eval — which is what shows the
+model is genuinely reaching the human-in-the-loop path rather than passing for some other reason.
+
+`.github/workflows/evals.yml` runs the control first for this reason, and will not publish a
+green suite without it.
 
 If you touch `packages/dashboard`, load the pages you changed in a browser and check them
 against real data — a session that only exists in your head doesn't catch layout bugs.
