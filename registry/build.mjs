@@ -70,7 +70,12 @@ const ITEMS = [
     // `EOVERRIDE: Override for ai@^7.0.51 conflicts with direct dependency`.
     // Pinning it was meant to prevent a version mismatch and instead made
     // `eve add @evestack/memory` impossible on a stock project.
-    dependencies: pin(["pg", "@ai-sdk/openai"]),
+    // Both embedding providers, because lib/memory.ts imports both at the top
+    // and chooses between them at runtime from EVESTACK_PROVIDER. Shipping only
+    // `@ai-sdk/openai` is what made this item unusable on a local-model project:
+    // the import resolved, the call did not, and `remember` died on
+    // `AI_LoadAPIKeyError` on a stack that was supposed to need no key.
+    dependencies: pin(["pg", "@ai-sdk/openai", "ai-sdk-ollama"]),
     devDependencies: pin(["@types/pg"], "devDependencies"),
     files: [
       { source: "lib/memory.ts", target: "lib/memory.ts" },

@@ -20,11 +20,10 @@
  */
 import { randomBytes } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { createConnection } from "node:net";
 import { isAbsolute, join, resolve } from "node:path";
 import {
-  basename, C, DASHBOARD_IMAGE, DASHBOARD_IMAGE_PUBLISHED, detectPm, dim, makePrompter,
-  ok, REPO, say, step, templateDir, warn,
+  basename, C, DASHBOARD_IMAGE, DASHBOARD_IMAGE_PUBLISHED, detectPm, dim, freePort, makePrompter,
+  ok, portAnswers, REPO, say, step, templateDir, warn,
 } from "./shared.mjs";
 
 /**
@@ -926,32 +925,4 @@ export function compareVersions(a, b) {
   return left.prerelease < right.prerelease ? -1 : 1;
 }
 
-/**
- * The first port from `start` that nothing answers on.
- *
- * Docker's own error for a taken port is `Bind for 0.0.0.0:5433 failed`, which
- * arrives minutes later at `docker compose up`. Worse is the case where it does
- * NOT fail: a second attached project pointed at the first project's database,
- * reading someone else's sessions. Probing loopback misses a port bound only to
- * another interface — that case still gets docker's error, just not ours.
- */
-async function freePort(start) {
-  for (let port = start; port < start + 20; port += 1) {
-    if (!(await portAnswers(port))) return port;
-  }
-  return start;
-}
 
-function portAnswers(port) {
-  return new Promise((res) => {
-    const socket = createConnection({ host: "127.0.0.1", port });
-    const done = (answered) => {
-      socket.destroy();
-      res(answered);
-    };
-    socket.setTimeout(400);
-    socket.once("connect", () => done(true));
-    socket.once("timeout", () => done(false));
-    socket.once("error", () => done(false));
-  });
-}

@@ -14,7 +14,8 @@
     "build": "eve build",
     "start": "eve start",
     "typecheck": "tsc",
-    "db:bootstrap": "node --env-file-if-exists=.env.local node_modules/@workflow/world-postgres/bin/setup.js"
+    "db:bootstrap": "node scripts/bootstrap.mjs",
+    "verify": "node --env-file-if-exists=.env.local scripts/verify.mjs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.30",

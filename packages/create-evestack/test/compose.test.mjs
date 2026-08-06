@@ -94,3 +94,24 @@ test("a password with URL-significant characters is still quoted in YAML", () =>
   const text = composeFile("my-agent", "-leading-dash_ok");
   assert.match(text, /POSTGRES_PASSWORD: "-leading-dash_ok"/);
 });
+
+/* -------------------------------------------------------------------------- */
+/* ports                                                                       */
+/* -------------------------------------------------------------------------- */
+
+test("the compose file publishes the ports it was given, not the defaults", () => {
+  const text = composeFile("my-agent", PASSWORD, { pgPort: 5455, dashboardPort: 4044 });
+  assert.match(text, /- "127\.0\.0\.1:5455:5432"/);
+  assert.match(text, /- "127\.0\.0\.1:\$\{DASHBOARD_PORT:-4044\}:4000"/);
+  // and the header a human reads names the same port it published
+  assert.match(text, /the dashboard on :4044/);
+  // the old hardcoded values must not survive anywhere in the file
+  assert.doesNotMatch(text, /127\.0\.0\.1:5433:5432/);
+  assert.doesNotMatch(text, /DASHBOARD_PORT:-4000/);
+});
+
+test("omitting the ports keeps the documented defaults", () => {
+  const text = composeFile("my-agent", PASSWORD);
+  assert.match(text, /- "127\.0\.0\.1:5433:5432"/);
+  assert.match(text, /- "127\.0\.0\.1:\$\{DASHBOARD_PORT:-4000\}:4000"/);
+});

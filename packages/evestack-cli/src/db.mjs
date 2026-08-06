@@ -13,22 +13,33 @@
  * `_private_jobs` without an index to help them, and an unbounded seq scan on
  * someone's real queue is a denial of service we would have caused.
  */
-import { setDefaultAutoSelectFamily } from "node:net";
-
-/**
- * Connect to one address at a time instead of racing every address a hostname
- * resolves to.
+/*
+ * ─ There used to be a `setDefaultAutoSelectFamily(false)` here ───────────────
  *
- * Ported from packages/dashboard/lib/db.ts, where it was measured: `localhost`
- * resolves to both ::1 and 127.0.0.1, and when every attempt is refused Node's
- * happy-eyeballs path can build its summary `AggregateError` from a list it has
- * already cleared, throwing `TypeError: object null is not iterable` out of
- * node:net on a socket callback where no `await` can catch it. The dashboard
- * measured 100 seconds and four uncaught exceptions for the single most likely
- * misconfiguration there is — Postgres not started — which is also the most
- * likely state of the world when someone reaches for a doctor command.
+ * Ported from packages/dashboard/lib/db.ts to dodge a Node bug where a refused
+ * happy-eyeballs race threw an uncaught `TypeError` instead of rejecting. In
+ * this file it did direct harm, and it is the reason the doctor lied.
+ *
+ * With the race off, Node attempts only the FIRST address a name resolves to.
+ * `localhost` is ::1 first on macOS; Docker Desktop and Colima publish IPv4
+ * only. So `evestack doctor` — pointed at the `…@localhost:5433` URL the
+ * scaffolder itself writes — reported:
+ *
+ *     Cannot reach Postgres at postgres://evestack:***@localhost:5433/evestack
+ *       connect ECONNREFUSED ::1:5433
+ *     Set WORKFLOW_POSTGRES_URL, or start one:  docker compose up -d postgres
+ *
+ * ...while the agent, the dashboard and the runtime probes were all connected
+ * to that database on that exact URL. The one command whose entire job is to
+ * tell you what is broken was the only thing that was.
+ *
+ * The bug it guarded against is fixed across everything `engines.node: >=24`
+ * permits: measured on 24.11.1, 24.15.0 and 26.0.0, a refused
+ * `…@localhost:5999` rejects with a well-formed `AggregateError` in 7 ms.
+ * `connectionTimeoutMillis` below is what bounds the wait now, which is where
+ * that responsibility belonged anyway. test/dual-stack.test.mjs fails if this
+ * line comes back.
  */
-setDefaultAutoSelectFamily(false);
 
 /** pg's OID for `timestamp without time zone`. Hardcoded rather than imported
  *  so this module does not need pg loaded to be unit-testable. */
