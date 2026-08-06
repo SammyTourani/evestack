@@ -140,6 +140,12 @@ export async function makePrompter(nonInteractive) {
 
   const confirm = async (q, def = true) => {
     const a = (await ask(`${q} ${C.dim}(${def ? "Y/n" : "y/N"})${C.reset}`)).toLowerCase();
+    // EOF is not consent. `ask` answers "" both when someone pressed Enter and
+    // when stdin closed under it, and mapping "" to the default meant Ctrl-D at
+    // a Y/n prompt read as yes — which, on the offers this wizard makes, starts
+    // a runtime nobody agreed to start. Enter still takes the default; a closed
+    // stdin declines whatever was asked, because nobody was there to answer.
+    if (stdinClosed) return false;
     return a === "" ? def : a.startsWith("y");
   };
 

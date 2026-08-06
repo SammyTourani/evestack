@@ -35,6 +35,7 @@ import {
   dockerStatusLines,
   inspectDocker,
   probeDocker,
+  runCommand,
 } from "./preflight.mjs";
 
 /* -------------------------------------------------------------------------- */
@@ -123,7 +124,14 @@ function inspectDockerState() {
 }
 
 function hasOllama() {
-  return spawnSync("ollama", ["--version"], { stdio: "ignore" }).status === 0;
+  // runCommand, not a bare spawnSync. spawnSync with no timeout waits forever,
+  // and `ollama` is a client that talks to a daemon: if that daemon is wedged,
+  // `ollama --version` can hang and take the whole wizard with it, before the
+  // user has been asked a single question. This is the same unbounded-probe
+  // bug preflight.mjs was written to remove, and it was the one call site left
+  // behind. runCommand's timeout is SIGKILL-backed, so a child that ignores
+  // SIGTERM cannot outlive the bound either.
+  return runCommand("ollama", ["--version"], { timeoutMs: 3_000 }).status === 0;
 }
 
 /**
