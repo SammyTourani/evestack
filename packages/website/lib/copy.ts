@@ -25,12 +25,6 @@ export const site = {
   eyebrow: "Open source · Apache-2.0",
   command: "npx create-evestack",
   github: "https://github.com/SammyTourani/evestack",
-  compat: "/compat",
-  /* "certified against every release" was not true and was checkable in one
-     click: contract/history/ holds 10 reports and eve has 143 published npm
-     versions (`npm view eve time --json`, 2026-08-05). The claim that survives
-     is the one the history directory actually supports — every release since
-     0.29.5 — and "tested" rather than "certified", which nobody granted us. */
   attribution:
     "evestack is built on vercel/eve (Apache-2.0) and tested against every eve release since 0.29.5.",
   /* Prominent, not buried: this sits in the site header, not only the footer. */
@@ -418,7 +412,6 @@ export const footerColumns = [
       /* Also linked above the fold and in the header — it is the most
          verifiable artifact here and was reachable from nowhere on the
          landing page. */
-      { label: "eve compatibility matrix", href: "/compat" },
       { label: "GitHub", href: site.github },
       { label: "License — Apache-2.0", href: `${site.github}/blob/main/LICENSE` },
       { label: "eve (upstream)", href: "https://eve.dev" },

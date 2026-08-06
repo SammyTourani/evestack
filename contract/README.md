@@ -101,8 +101,8 @@ though it were the old one:
 
 Every word of that is true, and it is the most misleading thing this project
 could publish. `record.mjs` refuses to certify below the floor and
-`gen-compatibility.mjs` refuses to publish below it, so a hollowed-out suite
-cannot reach the public page.
+A hollowed-out suite therefore fails the run rather than reporting a smaller
+number as though nothing had changed.
 
 Per-contract rather than one total, because a total hides erosion behind growth:
 twelve assertions lost from telemetry and twelve gained elsewhere nets to zero.

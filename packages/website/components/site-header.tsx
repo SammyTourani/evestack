@@ -48,16 +48,6 @@ export function SiteHeader() {
           >
             Docs
           </a>
-          {/* /compat is the most falsifiable thing on this site — every
-              published eve release run through the contract suite, reds
-              included — and until now nothing on the landing page pointed at
-              it. */}
-          <a
-            href={site.compat}
-            className="text-copy-14 text-gray-900 transition-colors hover:text-gray-1000"
-          >
-            Compatibility
-          </a>
           <a
             href={site.github}
             target="_blank"
@@ -104,14 +94,6 @@ export function SiteHeader() {
                   className="block rounded-lg px-3 py-2 text-copy-14 text-gray-900 hover:bg-gray-100 hover:text-gray-1000"
                 >
                   Docs
-                </a>
-              </li>
-              <li>
-                <a
-                  href={site.compat}
-                  className="block rounded-lg px-3 py-2 text-copy-14 text-gray-900 hover:bg-gray-100 hover:text-gray-1000"
-                >
-                  Compatibility
                 </a>
               </li>
               <li>

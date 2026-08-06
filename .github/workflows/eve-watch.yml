@@ -234,28 +234,6 @@ jobs:
           node contract/runtime/run.mjs --format=json > /tmp/runtime.json || true
           node contract/runtime/run.mjs --require=postgres,typescript
 
-      - name: record the verdict and refresh the compatibility page
-        if: steps.check.outputs.proceed == 'true' && steps.install.outcome == 'success'
-        # Without this every PR this job opens is born red. ci.yml runs
-        # `gen-compatibility.mjs --check`, which regenerates the table from the
-        # eve that is now installed and fails if the committed page disagrees —
-        # and the bump guarantees it disagrees. A bot whose PRs always arrive
-        # failing is a bot whose failures stop meaning anything.
-        #
-        # It also fills in the public matrix. The page at /compat is a function
-        # of contract/history/, so a release that is never recorded is a release
-        # the page silently omits — the gap being least visible exactly when a
-        # version is new, which is when someone is most likely to look.
-        #
-        # Runs whether or not the contracts held: a red verdict is what the page
-        # exists to show. Tolerant of its own failure, because losing the
-        # bookkeeping is not a reason to lose the upgrade report too.
-        continue-on-error: true
-        run: |
-          node contract/record.mjs || echo "::warning::could not record the contract run"
-          node contract/render-compat.mjs || echo "::warning::could not render the compat matrix"
-          node scripts/gen-compatibility.mjs || echo "::warning::could not regenerate docs/compatibility.mdx"
-
       - name: assemble the pull-request body
         if: steps.check.outputs.proceed == 'true'
         run: |

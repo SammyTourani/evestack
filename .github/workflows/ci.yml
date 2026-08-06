@@ -39,11 +39,23 @@ jobs:
       # a list that will be wrong.
       - run: pnpm -r --if-present run build
       - run: pnpm -r typecheck
-      # The contract table in docs/compatibility.mdx is generated from the
-      # suite, so it can go stale the moment a contract is added — which is
-      # exactly when the published page most needs to be right. --check writes
-      # nothing and fails if it drifted.
-      - run: node scripts/gen-compatibility.mjs --check
+      # packages/dashboard/lib/pricing.ts is generated the same way, from
+      # Vercel's public model catalog — which raises the obvious objection: a
+      # check against a live upstream goes red when a provider reprices
+      # overnight, or when the catalog is merely slow, on a PR that touched
+      # nothing. That step would be worse than no step.
+      #
+      # It does not do that. `--check` never opens a socket: it reads the
+      # `// N models. sha256:…` line the generator wrote into the marked region
+      # and re-hashes the table beneath it. So it answers the one question CI
+      # can actually own — was a generated price hand-edited, or the region
+      # truncated — and stays silent about freshness, which is answered by
+      # `git log -1 packages/dashboard/lib/pricing.ts` instead. Confirmed
+      # offline by running it with `globalThis.fetch` replaced by a throwing
+      # stub: still exits 0.
+      #
+      # Needs no install and no build — node, fs and crypto only.
+      - run: node packages/dashboard/scripts/gen-pricing.mjs --check
 
   # The workspace's own tests. `pnpm test` at the root is
   # `node contract/run.mjs && pnpm -r --if-present test`, and docs/upgrading.mdx
@@ -324,6 +336,47 @@ jobs:
         with:
           node-version: 24
       - run: node registry/build.mjs
+
+      # THE gate. Every assertion below this step describes the JSON that
+      # `node registry/build.mjs` just wrote into this checkout — content is
+      # non-empty, versions are pinned — and every one of them is just as happy
+      # with a file generated thirty seconds ago as with the file users actually
+      # download. Nothing compared the two. So an edit to templates/default
+      # without a regeneration left the committed items stale and this job green,
+      # which is the exact failure the whole "inline from the real source"
+      # design exists to prevent.
+      #
+      # Not hypothetical. Items inline templates/default/agent/sandbox/sandbox.ts
+      # and templates/default/agent/agent.ts verbatim as JSON string content;
+      # both changed, the committed JSON silently went stale, and it was caught
+      # by hand. compat-page.yml has done this correctly for the committed page
+      # since it was written — this is the same check for the same reason.
+      - name: the committed registry matches templates/default
+        run: |
+          # Untracked first: git diff is blind to a registry/r/*.json that
+          # build.mjs created for a brand-new item and nobody committed, and an
+          # item the catalog advertises but the repo does not carry is a 404 on
+          # `eve add`.
+          untracked="$(git ls-files --others --exclude-standard -- registry/)"
+          if [ -n "$untracked" ]; then
+            echo "::error file=registry/build.mjs::A generated registry file was never committed:"
+            echo "$untracked"
+            exit 1
+          fi
+
+          # `--exit-code` is the assertion; `--quiet` stops it dumping the patch,
+          # because an item diff is an entire TypeScript file inlined as one
+          # JSON string and the raw hunk is a handful of thousand-column lines.
+          # The bounded summary below is printed instead, wide lines truncated,
+          # which is enough to see which item and which target moved.
+          if ! git diff --exit-code --quiet -- registry/; then
+            echo "::error file=registry/build.mjs::registry/r/ is stale. Run 'node registry/build.mjs' and commit the result."
+            git diff --stat -- registry/
+            git diff -- registry/ | cut -c1-200 | head -40
+            exit 1
+          fi
+          echo "registry/r/ is byte-identical to a fresh build from templates/default"
+
       - name: every registry item has non-empty inlined content
         run: |
           node -e '

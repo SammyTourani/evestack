@@ -76,7 +76,6 @@ const results = {};
 results["docs-dark"] = await shoot("docs-index-dark", "/docs", "dark", 1440, 900);
 results["docs-light"] = await shoot("docs-index-light", "/docs", "light", 1440, 900);
 results["obs-dark"] = await shoot("docs-observability-dark", "/docs/observability", "dark", 1440, 900);
-results["compat-dark"] = await shoot("docs-compatibility-dark", "/docs/compatibility", "dark", 1440, 900);
 results["selfhost-dark"] = await shoot("docs-selfhosting-dark", "/docs/self-hosting", "dark", 1440, 900);
 await shoot("docs-mobile-dark", "/docs", "dark", 390, 844);
 /* the landing page, same theme, for a side-by-side token comparison */

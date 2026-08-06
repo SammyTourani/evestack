@@ -6,8 +6,7 @@
   "description": "Marketing site for evestack — run eve agents on infrastructure you own.",
   "license": "Apache-2.0",
   "scripts": {
-    "dev": "node scripts/render-compat.mjs && next dev --port 3000",
-    "prebuild": "node scripts/render-compat.mjs",
+    "dev": "next dev --port 3000",
     "build": "next build",
     "preview": "next start --port 3000",
     "typecheck": "tsc --noEmit",

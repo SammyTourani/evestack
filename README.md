@@ -11,13 +11,11 @@ four more bring it up.
 [![CI](https://github.com/SammyTourani/evestack/actions/workflows/ci.yml/badge.svg)](https://github.com/SammyTourani/evestack/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/create-evestack?color=2563eb&label=create-evestack)](https://www.npmjs.com/package/create-evestack)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](./LICENSE)
-[![eve compatibility](https://img.shields.io/badge/eve%20compatibility-every%20release-2563eb)](https://evestack.vercel.app/compat)
 
 *eve is a trademark of Vercel. evestack is an independent project, not affiliated with or
 endorsed by Vercel.*
 
-**[See it before you run it →](https://evestack.vercel.app)** ·
-**[Every eve release, run through the contract suite →](https://evestack.vercel.app/compat)**
+**[See it before you run it →](https://evestack.vercel.app)**
 
 Found [vercel/eve#1658](https://github.com/vercel/eve/issues/1658) — denying a tool approval
 permanently fails the durable session (p1, open).
@@ -93,7 +91,7 @@ What it isn't is a durable, shared surface:
 So the gap is a single place that speaks *sessions, turns, tokens, cost and approvals*, that
 more than one person can open, that keeps history for as long as you keep the rows, and that
 can act on the agent instead of only watching it. evestack is that, packaged end to end and
-tested against every eve release since `0.29.5` — [see the matrix](https://evestack.vercel.app/compat).
+covered by the contract suite in `contract/`.
 
 ## Same framework, your infrastructure
 

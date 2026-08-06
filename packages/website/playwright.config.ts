@@ -28,10 +28,9 @@ export default defineConfig({
     ? {}
     : {
         webServer: {
-          // Build then serve, rather than assuming a build exists: the
-          // compatibility matrix is written by the `prebuild` step, so a stale
-          // or absent .next means /compat 404s and the matrix test fails for a
-          // reason that has nothing to do with the matrix.
+          // Build then serve, rather than assuming a build exists: a stale or
+          // absent .next means the suite tests whatever was compiled last, not
+          // what is in the tree.
           command: "pnpm build && pnpm preview",
           url: "http://localhost:3000",
           reuseExistingServer: false,

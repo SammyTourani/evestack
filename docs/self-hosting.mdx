@@ -184,7 +184,7 @@ legitimate local-dev access over a LAN IP, a tunnel, or a container hostname.
 **Pin `eve` to `^0.30.2` or newer.** `contract/contracts/07-auth.contract.mjs` asserts both
 halves of the fixed behaviour — that no hostile `Host` makes `localDev()` grant, and that it
 still grants inside `EVE_DEV=1` — and it goes red against 0.29.5. See
-[Compatibility](/docs/compatibility) for which eve versions have been run against this suite.
+The contract suite in `contract/` records which eve versions have been run against it.
 
 ### The route-auth policy does not cover everything under `/eve/`
 
@@ -408,9 +408,6 @@ you wire up trace export; delete the file to get it back. Details in
 [Observability](/docs/observability).
 
 <CardGroup cols={2}>
-  <Card title="Compatibility" icon="check" href="/docs/compatibility">
-    Which eve versions this stack has actually been run against, and what the contract suite pins.
-  </Card>
   <Card title="Local setup" icon="wrench" href="/docs/local-setup">
     Docker, Ollama, and the setup-time failures that are not deployment failures.
   </Card>
