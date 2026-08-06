@@ -38,6 +38,7 @@ import {
   connectPostgres,
   dockerRunning,
   envValue,
+  eveArgsWithPort,
   inspectOllama,
   readEnvFile,
   schemasPresent,
@@ -64,11 +65,9 @@ function stop(title, lines) {
  * A `--port` the user typed always wins: the pin is a default, not a rule.
  */
 function startEve() {
-  const args = ["dev", ...passthrough];
-  const pinned = process.env.EVESTACK_AGENT_PORT?.trim();
-  if (pinned && !passthrough.some((a) => a === "--port" || a.startsWith("--port="))) {
-    args.push("--port", pinned);
-  }
+  // Shared with scripts/start.mjs. It lived here first and `start` did without
+  // it, which is the whole reason a built server ignored the recorded port.
+  const args = eveArgsWithPort("dev", passthrough, process.env.EVESTACK_AGENT_PORT);
   // `eve` from the local install rather than a global one, so the version the
   // project pinned is the version that runs.
   const child = spawn("eve", args, {

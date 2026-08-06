@@ -285,3 +285,34 @@ export async function findAgent(explicitUrl, pinnedPort, startPort = 2000, span 
   }
   return { url: `http://127.0.0.1:${startPort}`, health: null };
 }
+
+/**
+ * The argv for `eve <command>`, with this project's recorded port applied.
+ *
+ * Shared by `npm run dev` and `npm run start` because the two drifted apart and
+ * only one of them was right. `dev` passed EVESTACK_AGENT_PORT through as
+ * `--port`; `start` passed nothing, so a BUILT server took `$PORT` or eve's own
+ * default of 3000 and ignored the port the project had written down.
+ *
+ * Everything else in the project reads that variable as the answer to "where is
+ * the agent": `verify` probes it, and the generated compose file points the
+ * dashboard's EVESTACK_AGENT_URL at it. So in production all of them were
+ * pointing somewhere the agent was not.
+ *
+ * Measured: `npm run start` bound 3000, which on that machine was already an
+ * unrelated Next app, so the built agent served nothing at all and said so
+ * nowhere. 3000 is a bad number to land on by accident — it is the default for
+ * Next, CRA and Vite.
+ *
+ * A `--port` the caller typed always wins: the recorded port is a default, not a
+ * rule. `--port=N` and `--port N` are both honoured, which is why this checks for
+ * the prefix as well as equality.
+ */
+export function eveArgsWithPort(command, passthrough = [], pinnedPort) {
+  const args = [command, ...passthrough];
+  const pinned = pinnedPort?.trim();
+  if (!pinned) return args;
+  if (passthrough.some((arg) => arg === "--port" || arg.startsWith("--port="))) return args;
+  args.push("--port", pinned);
+  return args;
+}
