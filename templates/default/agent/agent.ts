@@ -71,27 +71,51 @@ const DEFAULT_MODEL: Record<Provider, string> = {
 };
 
 /**
- * Denying a tool approval must not kill the session — but without this
- * middleware it does, on every eve version we tested (0.30.2 and 0.30.6).
+ * Normalize a tool result whose output type the AI SDK cannot map, so an
+ * unmappable type never reaches the provider as `output: undefined`.
  *
- * When a human denies a gated tool call, eve records the result with
- * `output.type = "execution-denied"`. That type is not part of the AI SDK's
- * tool-output contract (`text` | `json` | `error-text` | `error-json` |
- * `content`), so when the next turn replays the transcript, @ai-sdk/openai's
- * mapping switch falls through and serializes the denied call as
- * `function_call_output` with `output: undefined`. OpenAI rejects the request —
- * "Missing required parameter: 'input[N].output'" — and the turn, and with it
- * the whole durable session, dies with `session.failed`. Approving is fine;
- * only denial poisons the transcript. Observed live, both versions, and the
- * offending request body was captured before writing this.
+ * This exists because of a real outage, and the version numbers are the whole
+ * story. Under @ai-sdk/openai **v2**, the `output.type = "execution-denied"`
+ * that eve records when a human denies a gated tool call was outside the SDK's
+ * tool-output contract: the mapping switch fell through and the next turn
+ * replayed the denial as `{type: "function_call_output", call_id,
+ * output: undefined}`. OpenAI answered "Missing required parameter:
+ * 'input[N].output'" and the turn — and with it the whole durable session —
+ * died `session.failed`. Approving was always fine; only denial poisoned the
+ * transcript. Observed live on eve 0.30.2 and 0.30.6, request body captured.
  *
- * The fix is at the one seam we own: the model passes through here before eve
- * ever calls it, so normalize any tool result the SDK's switch cannot map into
- * `error-json`. The model then sees the denial verbatim ("Tool execution was
- * denied") and answers accordingly — verified end to end. Harmless once eve
- * emits a conforming type; the normalization simply never fires.
+ * **v4 fixes that upstream, which is why `execution-denied` is listed below and
+ * this middleware no longer touches a denial.** In @ai-sdk/provider 4.0.5 it is
+ * a first-class member of `LanguageModelV4ToolResultOutput`, and
+ * @ai-sdk/openai 4.0.30 has an explicit case in both converters
+ * (`responses/convert-to-openai-responses-input.ts`,
+ * `chat/convert-to-openai-chat-messages.ts`) that sends
+ * `output.reason ?? "Tool call execution denied."`. Intercepting it now would
+ * be a downgrade twice over: it replaces eve's prose reason with a JSON blob,
+ * and it defeats the two v4 guards that skip a denial already carried by the
+ * sibling `tool-approval-response` part — one matching on the output type, one
+ * on `providerOptions.openai.approvalId`, which the rewrite below drops along
+ * with the type. Those guards are inert today only because eve 0.30.8 builds
+ * the denial as `{type: "execution-denied", reason}` with no providerOptions
+ * (`eve/dist/src/harness/input-requests.js`); the day it stamps one, rewriting
+ * the part would send the denial twice. `evals/deny-survives.eval.ts` — the
+ * regression test for the original outage — passes on v4 with this middleware
+ * bypassed.
+ *
+ * What the middleware still buys is the case it can catch: an output type new
+ * to BOTH eve and this list. v4's `function_call_output` switch has no default
+ * branch, so an unrecognized type still serializes to `output: undefined` and
+ * still 400s exactly as v2 did — hence the normalization stays, and the set is
+ * the full v4 union as of @ai-sdk/provider 4.0.5.
  */
-const SDK_TOOL_OUTPUT_TYPES = new Set(["text", "json", "error-text", "error-json", "content"]);
+const SDK_TOOL_OUTPUT_TYPES = new Set([
+  "text",
+  "json",
+  "execution-denied",
+  "error-text",
+  "error-json",
+  "content",
+]);
 
 const surviveDeniedToolResults: LanguageModelMiddleware = {
   transformParams: async ({ params }) => {
