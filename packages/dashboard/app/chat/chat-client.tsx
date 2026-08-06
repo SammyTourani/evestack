@@ -44,6 +44,23 @@ export function ChatClient({ initialSessionId }: { initialSessionId?: string }) 
   const [sessionId, setSessionId] = useState<string | null>(initialSessionId ?? null);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [pending, setPending] = useState<PendingRequest[]>([]);
+
+  /**
+   * Clear the spinner on any tool card still marked running.
+   *
+   * A card is marked `pending` on `actions.requested` and cleared on
+   * `action.result`. Measured against a real agent: an APPROVED tool call
+   * publishes no `action.result` at all, while a DENIED one does — so the
+   * approved path span forever and the denied path resolved, which is exactly
+   * backwards. Whether that omission is universal or one provider's is not
+   * settled, so this does not guess at the trigger; it uses the one fact that
+   * holds either way. Once the turn is over, nothing is still running.
+   */
+  const settleToolCards = useCallback(() => {
+    setEntries((prev) =>
+      prev.some((e) => e.pending) ? prev.map((e) => (e.pending ? { ...e, pending: false } : e)) : prev,
+    );
+  }, []);
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -228,9 +245,11 @@ export function ChatClient({ initialSessionId }: { initialSessionId?: string }) 
           break;
         case "turn.completed":
           setStatus((s) => (s === "cancelling" ? "cancelling" : "waiting"));
+          settleToolCards();
           break;
         case "turn.cancelled":
           setStatus("waiting");
+          settleToolCards();
           setEntries((prev) => [
             ...prev,
             { id: `sys-${prev.length}`, role: "system", text: "Run cancelled." },
