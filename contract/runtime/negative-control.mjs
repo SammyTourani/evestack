@@ -50,9 +50,18 @@
  * it shows the eval reaches its subject, not that it would catch a
  * serialization regression that no longer exists here.
  *
- * The middleware is left in place in the real template. It is documented as
- * harmless once the provider maps the type correctly, `@evestack/*` peer ranges
- * still admit @ai-sdk/openai v2, and anyone on v2 still needs it.
+ * The middleware is left in place in the real template. Bisected 2026-08-06 with
+ * `--sabotage=middleware --pin-openai=`: @ai-sdk/openai 2.0.117 still fails
+ * (`session.failed`, 2 of 4 gates) where 4.0.30 passes 4 of 4, same eve, same
+ * `ai`, same model. So it is a no-op on what this template installs and still
+ * load-bearing below v4.
+ *
+ * An earlier version of this comment said `@evestack/*` peer ranges admit v2.
+ * That was false and worth correcting rather than deleting: no `@evestack/*`
+ * package declares a peer range on @ai-sdk/openai at all, and this template
+ * pins `^4.0.0`. The real argument is the absence of a constraint, not the
+ * presence of a permissive one — eve declares no peer range on the provider
+ * either, so an app on `ai@7` can resolve v2 and hit this.
  *
  * Usage:
  *   node contract/runtime/negative-control.mjs <destination>
