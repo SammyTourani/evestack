@@ -396,10 +396,41 @@
   }
 }
 
-/* The `.mon` staged-reveal rules were deleted with
-   components/sections/monitors-panel.tsx — the fabricated "Observability /
-   Monitors" screen. §06 now renders real dashboard captures via
-   components/ui/dashboard-shot.tsx, which needs no reveal choreography. */
+/* ── Monitors panel staged reveal ────────────────────────────────────────
+   Default (no attributes) = settled, fully visible — the SSR / no-JS /
+   reduced-motion truth. The component ARMS itself only client-side with
+   motion allowed (hiding the animated pieces), then LIVE plays everything
+   to the settled state with per-element --d delays. */
+.mon [data-anim] {
+  transition:
+    opacity 0.5s ease,
+    transform 0.55s cubic-bezier(0.16, 1, 0.3, 1);
+  transition-delay: var(--d, 0s);
+}
+.mon[data-armed]:not([data-live]) [data-anim="fade"] {
+  opacity: 0;
+  transform: translateY(10px);
+}
+.mon[data-armed]:not([data-live]) [data-anim="bar-x"] {
+  transform: scaleX(0);
+}
+.mon[data-armed]:not([data-live]) [data-anim="bar-y"] {
+  transform: scaleY(0);
+}
+.mon[data-armed]:not([data-live]) [data-anim="pop"] {
+  opacity: 0;
+  transform: scale(0.5);
+}
+/* SVG children animate around their own box, not the viewport origin */
+.mon svg [data-anim] {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mon [data-anim] {
+    transition: none;
+  }
+}
 
 /* Dashboard demo loop-progress hairline: brighter leading edge = honest
    "this is a scripted loop" signal. */

@@ -16,21 +16,9 @@ export function Integrations() {
           title={integrations.heading}
           sub={integrations.sub}
         />
-        <div data-reveal="stagger" className="mx-auto mb-8 max-w-4xl">
+        <div data-reveal="stagger" className="mx-auto mb-16 max-w-4xl">
           <IntegrationHub />
         </div>
-        {/* The site's motto is "Everything runs on your network." This section
-            is the exception, so the exception is stated in this section rather
-            than left for a reader to find in the docs. */}
-        <p className="mx-auto mb-16 max-w-2xl text-balance text-center text-copy-14 text-gray-700">
-          {integrations.caveat.text}{" "}
-          <a
-            href={integrations.caveat.href}
-            className="underline decoration-border-strong underline-offset-4 transition-colors hover:text-gray-1000"
-          >
-            {integrations.caveat.linkLabel} →
-          </a>
-        </p>
       </div>
       <LogoMarquee items={integrations.marquee} />
     </Section>
