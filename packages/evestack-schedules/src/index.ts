@@ -150,9 +150,21 @@ async function replayMissed<TArgs>(
     const { fires, truncated } = missedFires(cron, from, currentTick(), limit);
     if (fires.length === 0) return;
 
+    /* "older ticks dropped" was backwards, and the direction matters when you are
+       reading a log to work out what the agent actually did.
+       `missedFires` walks forward from `from`, so hitting the cap keeps the OLDEST
+       fires in the batch and leaves the newest unreplayed. They are not lost:
+       `lastFireAt` is MAX(fire_at), so it advances to the last one replayed and the
+       next tick resumes from there, draining the backlog in order. They are only
+       genuinely lost if they fall out of the catch-up window before it gets to them.
+       Measured: a 2-hour gap of `* * * * *` with a limit of 5 replayed 00:01–00:05
+       and deferred everything up to 02:00. */
     console.warn(
       `[evestack:schedules] ${name}: replaying ${fires.length} missed fire(s) since ` +
-        `${from.toISOString()}${truncated ? ` (capped at ${limit}; older ticks dropped)` : ""}`,
+        `${from.toISOString()}` +
+        (truncated
+          ? ` (capped at ${limit}; the newest missed ticks are deferred to the next tick, oldest first)`
+          : ""),
     );
 
     for (const fire of fires) {
