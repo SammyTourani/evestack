@@ -10,40 +10,16 @@
 export const site = {
   name: "evestack",
   mark: "▚",
-  title: "evestack — the self-hosted distribution of eve",
-  /* One sentence, used verbatim on the site, the README, the GitHub description
-     and npm. It was four different sentences across those four surfaces, so
-     anyone arriving via npm → GitHub → here got re-pitched three times and
-     never landed on one idea. Change it in all four or in none. */
-  tagline: "The whole eve stack. On your own machine.",
-  /* Was "… One command." That was false and one `npx` away from being caught:
-     the scaffolder itself prints three more commands (packages/create-evestack/
-     index.mjs:245-251) and the dashboard is a separate clone (:258-260). The
-     count below is the literal number of shell lines in the README block. */
+  title: "evestack — the open replacement for Vercel Agent Runs",
+  tagline: "The open replacement for Vercel Agent Runs.",
   subhead:
-    "Durable sessions, sandboxing, memory, approvals, schedules, 1,070 tool integrations, and a dashboard that drives the agent. One command scaffolds it; four bring it up.",
+    "A fully free, self-hosted distribution of the eve agent framework. Durable sessions, sandbox, dashboard — one command. No Vercel account. No metered compute.",
   eyebrow: "Open source · Apache-2.0",
   command: "npx create-evestack",
   github: "https://github.com/SammyTourani/evestack",
-  compat: "/compat",
-  /* "certified against every release" was not true and was checkable in one
-     click: contract/history/ holds 10 reports and eve has 143 published npm
-     versions (`npm view eve time --json`, 2026-08-05). The claim that survives
-     is the one the history directory actually supports — every release since
-     0.29.5 — and "tested" rather than "certified", which nobody granted us. */
   attribution:
-    "evestack is built on vercel/eve (Apache-2.0) and tested against every eve release since 0.29.5.",
-  /* Prominent, not buried: this sits in the site header, not only the footer. */
-  trademark: "eve is a trademark of Vercel. evestack is an independent project, not affiliated with or endorsed by Vercel.",
-  motto: "Everything runs on your network.",
-  /* The one upstream credential, stated at exactly its real weight. The triage
-     comment on the issue is from `e0-gh-vercel-connect[bot]` and PR #1660 is
-     from `vercel-gh-bot-3[bot]` and is still an unmerged draft, so neither is
-     claimed here. Verify: `gh api repos/vercel/eve/issues/1658`. */
-  byline: {
-    text: "Found vercel/eve#1658 — denying a tool approval permanently fails the durable session (p1, open).",
-    href: "https://github.com/vercel/eve/issues/1658",
-  },
+    "evestack is built on vercel/eve (Apache-2.0). Not affiliated with Vercel.",
+  motto: "Nothing here phones home.",
 } as const;
 
 export const nav = [
@@ -81,76 +57,24 @@ export const terminal = {
     { text: "eve dev ready on http://localhost:2000", kind: "ok" as const },
     { text: "[world-postgres] Re-enqueued 2 active run(s) on startup", kind: "ok" as const },
   ],
-  caption: "One command scaffolds it. Four more bring it up.",
+  caption: "One command scaffolds it. $0 runs it.",
 } as const;
 
-/* §4 comparison — the axis is WHERE IT RUNS, not what anything costs.
-   eve.dev's own docs frame managed and self-hosted as two deployment targets
-   for the same framework; this table mirrors that framing and stays on it.
-
-   Every managed-column cell is a number or a quote from Vercel's current docs,
-   with the URL in `footnotes` below and rendered under the table. Two rows were
-   wrong and have been dealt with:
-
-   - "Tool approvals | Vercel Passport" is DELETED. Passport is deployment
-     access control against your own IdP over OIDC and is Enterprise-only
-     (vercel.com/docs/passport) — it has nothing to do with tool approvals. eve's
-     HITL approvals are Apache-2.0 framework functionality that behaves the same
-     off Vercel, so there was never a row here: it is a dashboard-surface
-     difference, which the Dashboard row already carries.
-   - "Run history | Retained by the platform" was vague where the real facts are
-     both specific and stronger. They are quoted now. */
+/* §4 comparison — answers eve.dev's own managed-vs-self-hosted table.
+   Their docs name the self-host path; evestack ships it. */
 export const comparison = {
-  heading: "Same framework. Your infrastructure.",
-  sub: "eve is Apache-2.0 and Vercel documents self-hosting it. evestack ships that path end to end — the durable store, the sandbox, and the dashboard, wired together and tested against every eve release since 0.29.5.",
-  columns: ["", "Managed", "Self-hosted with evestack"],
+  heading: "Everything Vercel hosts. Nothing Vercel holds.",
+  sub: "eve is Apache-2.0 and runs entirely without a Vercel account. evestack packages the self-hosted column their docs describe — and adds the dashboard they kept.",
+  columns: ["", "Vercel hosted", "evestack"],
   rows: [
-    ["Runs on", "Vercel's infrastructure", "Your machine, VPS, or cluster"],
-    ["Session state", "Vercel Workflows", "Your Postgres on :5433"],
-    [
-      "Run-state retention",
-      "Purged 1 day (Hobby) / 7 (Pro) / 30 (Enterprise) after a run completes¹",
-      "As long as you keep the rows",
-    ],
-    [
-      "Observability retention",
-      "12 hours (Hobby) / 1 day (Pro) / 3 days (Enterprise); 30 days with Observability Plus²",
-      "Your retention policy, on your disk",
-    ],
-    ["Retained run data", "Billed at $0.50 per GB-month¹", "Your disk"],
-    ["Getting run history out", "No agent-runs or workflow-runs Drains schema³", "It is a table — SELECT it"],
-    ["Dashboard", "Agent Runs, hosted", "Included — observes and drives"],
-    ["Where your data sits", "Vercel's platform", "Inside your network, always"],
-    ["Setup", "Deploy to Vercel", "npx create-evestack, then four commands"],
-  ],
-  /* Rendered under the table. Verified 2026-08-05 against the pages named. */
-  footnotes: [
-    {
-      marker: "1",
-      /* Verbatim: "Storage retention is not configurable by default. You can
-         request a custom retention period by contacting support." The meter is
-         listed in the same page's pricing table as "Workflow Data Retained". */
-      text: "Workflow storage retention and the Workflow Data Retained meter — Vercel, Workflow Pricing and Limits. Retention is “not configurable by default”; a custom period is a support request.",
-      href: "https://vercel.com/docs/workflows/pricing",
-    },
-    {
-      marker: "2",
-      /* Agent Runs is a surface inside Vercel Observability (the dashboard route
-         is /[team]/[project]/observability/agent-runs, per
-         vercel.com/docs/eve/observability), so this is the retention table that
-         governs it. Stated as Observability retention, which is what the doc
-         says, rather than as an Agent-Runs-specific number it does not state. */
-      text: "Observability data retention — Vercel, Observability Plus “Limitations”. Agent Runs is a surface inside Observability.",
-      href: "https://vercel.com/docs/observability/observability-plus#limitations",
-    },
-    {
-      marker: "3",
-      /* The schemas table lists exactly: log, trace, analytics, speed_insights,
-         audit_log. No agent-runs or workflow-runs schema exists, so agent run
-         history is not a thing Drains can export. */
-      text: "Drains ships five schemas — log, trace, analytics, speed_insights, audit_log — and none of them carry agent runs or workflow runs.",
-      href: "https://vercel.com/docs/drains",
-    },
+    ["Account required", "Vercel account", "None"],
+    ["Compute", "Metered", "Your machine — $0.00"],
+    ["Agent state", "Managed workflow store", "Your Postgres on :5433"],
+    ["Run history kept", "12h free · 1d Pro · 3d Enterprise", "Forever — it's your database"],
+    ["Agent Runs dashboard", "Read-only, hosted", "Observe and control, self-hosted"],
+    ["Approve gated tools", "—", "From your browser"],
+    ["Telemetry", "Platform", "Nothing here phones home"],
+    ["License", "Proprietary dashboard", "Apache-2.0, all of it"],
   ],
 } as const;
 
@@ -175,14 +99,8 @@ export const features = {
       demo: "privacy" as const,
     },
     {
-      /* Was "Full-depth tracing … The span tree is the product." Half of that
-         was aspiration: the OTLP endpoint really does receive and store the
-         full tree including prompt bodies and tool arguments
-         (packages/dashboard/lib/traces.ts — parseOtlpTraces, insertSpans,
-         getSpanTree, listModelCalls, listToolCalls), but no dashboard page
-         renders any of it yet. Claim the endpoint, not a screen. */
-      title: "Full-depth trace ingest",
-      body: "agent.session down to every model stream, exported to your own OTLP endpoint and stored in your Postgres — prompts and tool arguments included, queryable today, not yet rendered as a view.",
+      title: "Full-depth tracing",
+      body: "agent.session down to every model stream, streamed to your own dashboard over OTLP. The span tree is the product.",
       demo: "spans" as const,
     },
     {
@@ -200,7 +118,7 @@ export const features = {
 
 /* §7 architecture nodes + beams. */
 export const architecture = {
-  heading: "One compose file. Everything on localhost.",
+  heading: "One compose file. Zero services you rent.",
   sub: "Postgres runs in Docker; the agent is a process on your machine that spawns per-session sandbox containers. The dashboard reads run state straight from the workflow tables and receives spans over OTLP. Everything speaks localhost.",
   nodes: [
     { id: "agent", title: "agent runtime", detail: "eve dev · :2000" },
@@ -218,63 +136,10 @@ export const architecture = {
     "Architecture: the eve agent runtime on port 2000 writes workflow events to Postgres on port 5433 running in Docker, executes code in per-session Docker sandbox containers, and exports OTLP traces to the dashboard on port 4000, which also reads run state directly from Postgres over SQL.",
 } as const;
 
-/* §8 observability — the span tree verbatim from a live run (FINDINGS.md), and
-   two REAL captures of the shipped dashboard.
-
-   This section used to render a fabricated "Observability / Monitors" screen:
-   p50/p75/p95/p99 chips, error and timeout rates, a runs-over-time chart,
-   session search and pagination, inside a tilted <figure> captioned "read
-   straight from your own postgres". None of it exists.
-   `grep -rniE "p95|percentile|Monitors" packages/dashboard/{app,lib,components}`
-   returns nothing, and the real nav (packages/dashboard/app/layout.tsx:19-27) is
-   Sessions, Chat, Schedules, Memory, Skills, Approvals, Integrations — no
-   Monitors route, no Traces route, no percentile code anywhere.
-
-   It is replaced by packages/website/public/screenshots/*, captured from the
-   dashboard in this repo. Every claim below names a file that renders it. */
+/* §8 observability — the span tree verbatim from a live run (FINDINGS.md). */
 export const observability = {
-  heading: "Every session, read straight from your own Postgres.",
-  sub: "Session list, run trees, token rollups, and a cost we compute ourselves — the same $eve.* data your agent already writes, queried from the database you own. No ingest pipeline to keep in sync.",
-  /* Each of these is a shipped file, named so the claim is checkable. */
-  capabilities: [
-    {
-      title: "Session list",
-      body: "Every agent run on the machine, with status, turns, model, tokens in/out/cached, cost and age. Team totals across the top.",
-      source: "packages/dashboard/app/page.tsx",
-    },
-    {
-      title: "Run tree",
-      body: "Each session expands into its turns and subagents, with duration, tokens, cache reads and writes, tool count and per-run cost.",
-      source: "packages/dashboard/app/sessions/[id]/page.tsx",
-    },
-    {
-      title: "Cost we compute, labelled honestly",
-      body: "eve emits gen_ai.usage.cost only for AI-Gateway calls, and a self-hosted agent calls its provider directly — so we price token counts ourselves. A model with no configured price renders `unpriced` and an em dash, never $0.00.",
-      source: "packages/dashboard/lib/pricing.ts",
-    },
-    {
-      title: "Approvals",
-      body: "Gated tool calls park the session and wait for a decision in the browser, resolved through eve's ordinary follow-up route.",
-      source: "packages/dashboard/app/approvals/page.tsx",
-    },
-  ],
-  /* The two committed captures, cropped by scripts/optimize-images.mjs. */
-  shots: {
-    sessions: {
-      name: "sessions",
-      width: 2880,
-      height: 1560,
-      alt: "The evestack dashboard's Sessions page: 30 sessions, 42 turns, 207,300 in / 17,804 out tokens, $0.05 model spend and an Infrastructure tile reading $0.00, above a table of real runs. The gpt-4o-mini row is labelled `unpriced` in orange rather than being counted as free.",
-      caption: "Sessions — the dashboard in this repo, captured running.",
-    },
-    detail: {
-      name: "session-detail",
-      width: 2880,
-      height: 1360,
-      alt: "A session detail page in the evestack dashboard: a 1500-word essay run showing 1 turn, 5,123 in / 3,704 out tokens, 4,608 cached reads and $0.0077 model spend, above a run tree with one completed turn on openai/gpt-5-mini — 41.0s, 13 tools, $0.0077.",
-      caption: "One session's run tree — same capture session.",
-    },
-  },
+  heading: "The dashboard Vercel kept. Yours now.",
+  sub: "Session list, full span trees, token rollups, computed cost — read straight from your own Postgres. This is the Agent Runs tab, without the account.",
   spanTree: [
     { depth: 0, name: "agent.session", note: "ROOT" },
     { depth: 1, name: "agent.turn", note: "" },
@@ -288,7 +153,7 @@ export const observability = {
 /* §10 control plane. */
 export const control = {
   heading: "Observability you can act on",
-  sub: "Approve or deny gated tool calls, start sessions, cancel runs, and chat with the agent — from the browser, with every decision recorded.",
+  sub: "Agent Runs shows you what happened. evestack lets you decide what happens next — approve or deny gated tool calls, start sessions, and chat, from the browser.",
   demo: {
     tool: "send_email",
     args: '{ "to": "team@…", "subject": "Deploy done" }',
@@ -306,17 +171,6 @@ export const control = {
 export const integrations = {
   heading: "Your tools, one click",
   sub: "Composio wires the agent into 1,070 toolkits — Gmail, GitHub, Slack, Notion, Linear, and everything after. Sign in once from the dashboard.",
-  /* The one place on this site where "Everything runs on your network" stops
-     being true, said here rather than left for someone to discover. Composio is
-     a hosted third party: it performs the OAuth dance and holds the resulting
-     tokens. It is also genuinely off unless you opt in — with COMPOSIO_API_KEY
-     unset, `composioTools()` resolves to no tools and logs one line
-     (packages/evestack-composio; see /docs/composio-auth). */
-  caveat: {
-    text: "The one exception to “everything runs on your network”: Composio is a hosted third party, and it holds the OAuth tokens for the accounts you connect. It is off unless you set COMPOSIO_API_KEY — with no key the agent boots with its sandbox and memory and simply has no connectors.",
-    href: "/docs/composio-auth",
-    linkLabel: "Read the tradeoff in full",
-  },
   hub: {
     /* left / right tile columns around the agent node — icon-only,
        equal-size tiles keep the composition perfectly symmetric */
@@ -390,14 +244,14 @@ export const quickstart = {
       title: "Run your agent",
       code: "pnpm dev",
       lang: "bash",
-      body: "eve dev on :2000. The agent, the database, and the dashboard are all on your machine.",
+      body: "eve dev on :2000. Nothing here bills you — no Vercel account, no metered compute.",
     },
   ],
 } as const;
 
 export const closing = {
-  heading: "Your agents, on your infrastructure.",
-  sub: "Five commands, and it's running on your machine.",
+  heading: "Own your agent stack today.",
+  sub: "One command. Your servers. $0.",
 } as const;
 
 export const footerColumns = [
@@ -415,10 +269,6 @@ export const footerColumns = [
     title: "Open source",
     links: [
       { label: "Docs", href: "/docs" },
-      /* Also linked above the fold and in the header — it is the most
-         verifiable artifact here and was reachable from nowhere on the
-         landing page. */
-      { label: "eve compatibility matrix", href: "/compat" },
       { label: "GitHub", href: site.github },
       { label: "License — Apache-2.0", href: `${site.github}/blob/main/LICENSE` },
       { label: "eve (upstream)", href: "https://eve.dev" },

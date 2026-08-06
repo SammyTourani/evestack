@@ -51,23 +51,6 @@ export function Hero() {
               Star on GitHub
             </Button>
           </div>
-
-          {/* The compatibility matrix, and nothing else. A second link here
-              named an upstream bug this project reported; whether to put that
-              on the landing page is the owner's call and it was not theirs to
-              make, so it is out. `site.byline` still exists in lib/copy.ts if
-              it is ever wanted back. */}
-          <p
-            data-hero="proof"
-            className="flex max-w-2xl flex-col items-center gap-x-3 gap-y-1.5 text-balance text-center text-label-12 text-gray-700 sm:flex-row"
-          >
-            <a
-              href={site.compat}
-              className="underline decoration-border-strong underline-offset-4 transition-colors hover:text-gray-1000"
-            >
-              Every eve release, run through the contract suite →
-            </a>
-          </p>
         </HeroClient>
 
         {/* ground the hero into the page */}

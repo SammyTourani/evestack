@@ -1,3 +1,4 @@
+import { withBase } from "@/lib/asset";
 
 /* Real dashboard capture, theme-paired. Explicit dimensions → zero CLS.
    Plain <img> — static export runs images.unoptimized anyway; AVIF/WebP
@@ -20,10 +21,10 @@ export function DashboardShot({
 }) {
   const img = (theme: "dark" | "light", visibility: string) => (
     <picture className={visibility}>
-      <source srcSet={`/screenshots/${name}-${theme}@2x.avif`} type="image/avif" />
-      <source srcSet={`/screenshots/${name}-${theme}@2x.webp`} type="image/webp" />
+      <source srcSet={withBase(`/screenshots/${name}-${theme}@2x.avif`)} type="image/avif" />
+      <source srcSet={withBase(`/screenshots/${name}-${theme}@2x.webp`)} type="image/webp" />
       <img
-        src={`/screenshots/${name}-${theme}@2x.webp`}
+        src={withBase(`/screenshots/${name}-${theme}@2x.webp`)}
         width={width}
         height={height}
         alt={alt}

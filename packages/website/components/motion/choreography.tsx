@@ -55,19 +55,78 @@ function Choreography() {
       mm.add("(prefers-reduced-motion: no-preference)", () => {
         /* one signal tears down every listener this callback attaches */
         const uiAbort = new AbortController();
-        /* ── No hero entrance, deliberately ──────────────────────────────
-           The headline, sub and CTAs are server-rendered and MUST be legible
-           in the first frame. There used to be a GSAP intro here that hid
-           them (autoAlpha 0 / SplitText yPercent 110) and played them back
-           in over ~1.6s, which meant the most important copy on the site
-           arrived last and a refresh flashed an empty hero.
+        /* ── Hero entrance (once, on load) ─────────────────────────────
+           This chunk loads post-hydration; if it arrived late (slow
+           network), the content has been visible for a while — skip the
+           intro rather than hide-and-replay it. */
+        const runEntrance = performance.now() < 2500 && window.scrollY < 80;
+        const badge = document.querySelector("[data-hero='badge']");
+        const h1 = document.querySelector<HTMLElement>("#hero-heading");
+        const sub = document.querySelector<HTMLElement>("[data-hero='sub']");
+        const ctas = document.querySelector("[data-hero='ctas']");
+        const toggle = document.querySelector("[data-hero='toggle']");
 
-           The motion people actually notice is behind the copy: the slabs
-           assemble in the 3D stage and the glyph field settles. Those still
-           run. Do not reintroduce an opacity-0 start on anything inside
-           [data-hero-copy] — it also makes the h1, which is the LCP element,
-           paint late for no benefit. The scroll-driven fade below is a
-           different thing and stays. */
+        if (runEntrance) {
+          /* fromTo with EXPLICIT end values everywhere — .from() captures
+             "current" as the destination, which resize/refresh re-renders
+             can poison mid-flight (observed: buttons frozen at opacity 0).
+             onComplete clears every inline prop so no tween state survives
+             the intro. */
+          const entranceTargets: Element[] = [
+            ...(badge ? [badge] : []),
+            ...(sub ? [sub] : []),
+            ...(ctas ? Array.from((ctas as HTMLElement).children) : []),
+            ...(toggle ? [toggle] : []),
+          ];
+          let split: SplitText | null = null;
+          const heroTl = gsap.timeline({
+            defaults: { ease: "power2.out" },
+            onComplete: () => {
+              split?.revert();
+              gsap.set(entranceTargets, { clearProps: "all" });
+            },
+          });
+          if (badge) {
+            heroTl.fromTo(
+              badge,
+              { autoAlpha: 0, y: 8, filter: "blur(8px)" },
+              { autoAlpha: 1, y: 0, filter: "blur(0px)", duration: 0.5 },
+            );
+          }
+          if (h1) {
+            split = SplitText.create(h1, { type: "lines", mask: "lines" });
+            heroTl.fromTo(
+              split.lines,
+              { yPercent: 110 },
+              { yPercent: 0, duration: 0.9, ease: "expo.out", stagger: 0.09 },
+              0.1,
+            );
+          }
+          if (sub) {
+            heroTl.fromTo(
+              sub,
+              { autoAlpha: 0, y: 10, filter: "blur(6px)" },
+              { autoAlpha: 1, y: 0, filter: "blur(0px)", duration: 0.7 },
+              0.35,
+            );
+          }
+          if (ctas) {
+            heroTl.fromTo(
+              (ctas as HTMLElement).children,
+              { autoAlpha: 0, y: 10 },
+              { autoAlpha: 1, y: 0, duration: 0.55, stagger: 0.07 },
+              0.5,
+            );
+          }
+          if (toggle) {
+            heroTl.fromTo(
+              toggle,
+              { autoAlpha: 0 },
+              { autoAlpha: 1, duration: 0.5 },
+              0.75,
+            );
+          }
+        }
 
         /* ── Hero disassembly scrub (0..1 across the 190vh section) ── */
         const labels = gsap.utils.toArray<HTMLElement>("[data-layer-label]");
@@ -102,6 +161,16 @@ function Choreography() {
         if (heroCopy) {
           scrub.fromTo(heroCopy, { y: 0, autoAlpha: 1 }, { y: -40, autoAlpha: 0, duration: 0.1 }, 0);
         }
+        if (toggle) {
+          // explicit values + no immediate render: never captures a
+          // mid-entrance hidden state as its resting value
+          scrub.fromTo(
+            toggle,
+            { autoAlpha: 1 },
+            { autoAlpha: 0, duration: 0.06, immediateRender: false },
+            0,
+          );
+        }
         if (annotations) {
           scrub.to(annotations, { autoAlpha: 1, duration: 0.02 }, 0.52);
         }
@@ -124,15 +193,6 @@ function Choreography() {
         gsap.utils.toArray<HTMLElement>("[data-reveal='lines']").forEach((el) => {
           // skip elements inside the hero (choreographed above)
           if (el.closest("#hero")) return;
-          /* NEVER line-split text painted through background-clip:text.
-             SplitText re-wraps each line in a new element; the gradient lives
-             on the original box, so the clones inherit `color: transparent`
-             with nothing painting them and the heading renders as a hollow
-             -webkit-text-stroke outline until the split reverts. This bit the
-             closing CTA. Guarding here means adding data-reveal to a
-             gradient-clipped heading can never resurrect it. */
-          const clip = getComputedStyle(el);
-          if (clip.webkitBackgroundClip === "text" || clip.backgroundClip === "text") return;
           const split = SplitText.create(el, { type: "lines", mask: "lines" });
           gsap.fromTo(
             split.lines,
@@ -223,6 +283,7 @@ function Choreography() {
           const prompt = terminal.querySelector<HTMLElement>("[data-terminal-prompt]");
           const cursor = terminal.querySelector<HTMLElement>(".terminal-cursor");
           const lines = gsap.utils.toArray<HTMLElement>("[data-terminal-line]", terminal);
+          const result = document.querySelector<HTMLElement>("[data-terminal-result]");
           /* Same policy as the hero entrance: if this chunk initializes with
              the terminal already at/past its trigger line (mid-page reload,
              anchor link below it), the settled SSR content has been visible —
@@ -247,6 +308,7 @@ function Choreography() {
                animation while hidden (cleared again on reveal). */
             if (chars && cursor) gsap.set(cursor, { autoAlpha: 0, animation: "none" });
             gsap.set(lines, { autoAlpha: 0 });
+            if (result) gsap.set(result, { autoAlpha: 0, y: 24, scale: 0.985 });
 
             /* the timeline only ANIMATES the reveal — no hides inside it */
             const termTl = gsap.timeline({
@@ -284,32 +346,16 @@ function Choreography() {
               },
               ">+0.45",
             );
-          }
-        }
-
-        /* ── The dashboard under the terminal (§3) ──────────────────────
-           This reveals on ITS OWN position in the viewport, never on the
-           terminal's typing timeline. It used to be the last beat of termTl,
-           roughly 2.4s after the terminal hit its trigger, so anyone who
-           scrolled down at a normal pace arrived to a blank box and waited
-           out a timer they could not see. It is the payoff of the section —
-           it should be there when its space is. */
-        const result = document.querySelector<HTMLElement>("[data-terminal-result]");
-        if (result) {
-          /* Same late-arrival policy as everything else: if this chunk loads
-             with the dashboard already on screen, leave the settled SSR
-             content alone rather than hiding and replaying it. */
-          const START = 0.92; // fraction of viewport height, matches the trigger below
-          if (result.getBoundingClientRect().top >= window.innerHeight * START) {
-            gsap.set(result, { autoAlpha: 0, y: 16 });
-            gsap.to(result, {
-              autoAlpha: 1,
-              y: 0,
-              duration: 0.5,
-              ease: "power2.out",
-              scrollTrigger: { trigger: result, start: `top ${START * 100}%`, once: true },
-              onComplete: () => gsap.set(result, { clearProps: "all" }),
-            });
+            if (result) {
+              // the payoff: the dashboard surfaces as the FIRST ✓ lands — it
+              // overlaps the cascade tail instead of waiting out the whole
+              // typing rhythm (which would leave ~5s of dead space below).
+              termTl.to(
+                result,
+                { autoAlpha: 1, y: 0, scale: 1, duration: 0.6, ease: "power2.inOut" },
+                "<+1.0",
+              );
+            }
           }
         }
 

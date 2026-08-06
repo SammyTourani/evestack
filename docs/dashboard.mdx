@@ -24,6 +24,74 @@ This is where evestack diverges from Agent Runs, which is read-only:
   before building anything that assumes a cancel is instant
 - **Promote a session to an eval** — turn any run, especially one that went wrong, into a real
   `evals/*.eval.ts` replaying its actual messages
+- **Replay a session into a new one** — re-send its messages with one turn rewritten. Read
+  [Replaying a session](#replaying-a-session) first; it re-runs the original's tool calls
+
+## Replaying a session
+
+**Replay into a new session**, on a session's page, re-sends that conversation's user messages
+into a fresh session, optionally rewriting one of them. It answers the question you always have
+after a bad run — *would it have worked if I had said it differently?* — without retyping the
+conversation and hoping you reproduced it.
+
+The durable event log holds every user message, so the dashboard rebuilds turns 1..N and sends
+them in order: the first creates the fork, and each later one waits for the fork to park before it
+is sent. You pick where to stop, and may rewrite that last turn. Turns after it are dropped —
+they answered a conversation that is no longer happening.
+
+### It re-executes the tool calls, against the real world
+
+Replaying turn 5 means running turns 1 through 4 again, for real. Nothing is stubbed or simulated:
+an email the original sent is sent again, money it spent is spent again, a PR it opened is opened
+again, a file it deleted is deleted again.
+
+The panel is built around that one fact. It reads the per-turn tool list from the same transcript
+`GET /api/evals/promote/:id` reads, marks which turns are in range and which tools each of them
+ran, and keeps the run button disabled behind a checkbox that names those tools — a generic "this
+spends money" notice would not tell you that turn 3 called `send_email`. Changing the range clears
+the checkbox, because ticking it for turns 1–2 must not authorise turns 1–6.
+
+That list is what the original ran, not a promise about the replay. The model is free to take a
+different path this time and call something that is not on it.
+
+### It is not a checkpoint fork
+
+LangGraph forks from a serialized checkpoint: you branch off saved state, edit it if you want, and
+the turns before the branch point never execute twice. eve's durable record is an event log, not a
+resumable state snapshot, and it exposes no checkpoint to branch from — so the only way to reach
+turn 5 here is to run turns 1 through 4 again. That is strictly weaker than a checkpoint fork and
+strictly more expensive, and it is what the durable model allows.
+
+What it replaces is not a cheap branch. It is a person pasting the same messages back into the
+chat box, which re-runs the same tools with no warning, no record of what it was forked from, and
+no chance to stop short.
+
+### What it costs
+
+A fork is an ordinary session: it spends real tokens, and it shows up in Sessions with its own
+computed cost. It also takes about as long as the original conversation did, because each turn has
+to finish before the next is sent. Leaving the page stops the remaining turns from being sent; the
+ones already sent keep running.
+
+### A partial fork is a normal outcome
+
+The replay stops at the first turn that does not land — it does not skip it and try the rest. When
+it stops, the fork already exists and already holds the turns that did land, so the route answers
+with the new session id, `turnsPlanned`, `turnsDelivered` and `complete: false` rather than an
+error, and the panel reports *Sent 2 of 4 turns* with the reason instead of claiming success.
+There is nothing to roll back: the turns that landed have already run their tools.
+
+| It stopped because | What that means |
+| --- | --- |
+| `awaiting_human` | a replayed turn parked on a tool approval or a question. The log records that a tool was denied, never why, so the replay will not answer for you — open the fork and answer it there |
+| `session_ended` | the replay diverged into a run that finished or failed, so there is no session left to send the next turn to |
+| `timeout` | a turn did not come back within 90s, or the replay used up its 240s budget. Nothing is lost — continue the fork from its own page |
+| `session_mismatch` | the agent started a different session instead of continuing the fork. That run is live and was not part of the replay; cancel it |
+| `agent_error` | the agent rejected the follow-up |
+
+The API takes the same view. `fromTurn` is required and never assumed — an empty body used to mean
+"replay everything", and the largest blast radius is the wrong thing to get by saying nothing.
+`GET` the same URL to see the turns, and the tools each one ran, without running any of them.
 
 ## Who approved it
 
