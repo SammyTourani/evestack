@@ -23,22 +23,43 @@
  * one line that fixes the bug, and require the eval to fail against it. If it
  * passes, the eval is not testing what its name says.
  *
- * ── What it removes, and why only this ───────────────────────────────────────
+ * ── What it removes, and why it is no longer the middleware ──────────────────
  *
- * Exactly one edit: `wrapLanguageModel(...)` is replaced with the bare model, so
- * denied tool results reach the provider in the shape eve records them —
- * `output.type = "execution-denied"`, which @ai-sdk/openai cannot map, producing
- * `output: undefined` and an OpenAI 400 on the next turn. That is the original
- * bug, reproduced by subtraction rather than by simulation. Nothing else is
- * touched, so a failure cannot be blamed on the sabotage having broken
- * something unrelated.
+ * This first removed the `wrapLanguageModel(...)` call, so denied tool results
+ * would reach the provider as `output.type = "execution-denied"` — the shape
+ * @ai-sdk/openai v2 could not map, producing `output: undefined` and a 400 on
+ * the next turn.
+ *
+ * That stopped working as a control on 2026-08-05, and the reason is worth
+ * recording. Run against eve 0.30.8 with @ai-sdk/openai 4.0.30, the deny eval
+ * passed 4 gates out of 4 **with the middleware removed** — and not vacuously:
+ * `calledTool("forget", { status: "rejected" })` was among the gates that
+ * passed, so the tool really was called, really was denied, and
+ * `t.respondAll("deny")` really did replay that transcript to the provider.
+ * The turn that used to kill the session completed normally.
+ *
+ * So on the current stack that bug is gone, and removing the fix for it no
+ * longer produces a failure. A control has to sabotage something that is
+ * actually broken, or it proves nothing.
+ *
+ * What it sabotages now is the approval gate itself: `approval: always()` is
+ * removed from the `forget` tool, so the call never parks. The eval's very
+ * first assertion is `turn1.parked()`, which then fails — proving the eval is
+ * exercising the human-in-the-loop path rather than passing for some unrelated
+ * reason. That is a narrower claim than the original, and it is the honest one:
+ * it shows the eval reaches its subject, not that it would catch a
+ * serialization regression that no longer exists here.
+ *
+ * The middleware is left in place in the real template. It is documented as
+ * harmless once the provider maps the type correctly, `@evestack/*` peer ranges
+ * still admit @ai-sdk/openai v2, and anyone on v2 still needs it.
  *
  * Usage:
  *   node contract/runtime/negative-control.mjs <destination>
  *
  * Prints the destination on success. Exits non-zero if the line it expects to
  * remove is not there — which is itself worth failing on, because it means the
- * fix moved and this control is no longer removing it.
+ * thing being sabotaged moved and this control is no longer removing it.
  */
 import { cpSync, existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -46,11 +67,15 @@ import { REPO_ROOT } from "../lib/repo.mjs";
 
 const TEMPLATE = join(REPO_ROOT, "templates", "default");
 
-const FIXED = "const model = wrapLanguageModel({ model: baseModel, middleware: surviveDeniedToolResults });";
-const SABOTAGED = `// NEGATIVE CONTROL: the middleware is deliberately bypassed here, so a denied
-// tool result reaches the provider in the shape eve records it. If the deny
-// eval still passes against this build, the eval is not testing what it claims.
-const model = baseModel;`;
+/** Relative to the copied project. */
+const TARGET_FILE = join("agent", "tools", "forget.ts");
+
+const FIXED = "  approval: always(),";
+const SABOTAGED = `  // NEGATIVE CONTROL: the approval gate is deliberately removed, so this tool
+  // never parks for a human. The deny eval's first assertion is \`parked()\`, so
+  // it MUST fail against this build. If it passes, the eval is not exercising
+  // the human-in-the-loop path and nothing it reports about denial means
+  // anything.`;
 
 const destination = process.argv[2];
 if (!destination) {
@@ -112,19 +137,19 @@ if (linked.length > 0) {
   process.stderr.write(`negative-control: linked ${linked.join(", ")} out of the workspace\n`);
 }
 
-const agentPath = join(destination, "agent", "agent.ts");
-const source = readFileSync(agentPath, "utf8");
+const targetPath = join(destination, TARGET_FILE);
+const source = readFileSync(targetPath, "utf8");
 
 if (!source.includes(FIXED)) {
   process.stderr.write(
     "negative-control: could not find the line it exists to remove:\n" +
       `  ${FIXED}\n\n` +
-      "The deny-path fix has moved or been rewritten. Update this file to remove whatever\n" +
-      "now applies the middleware — a negative control that silently sabotages nothing is\n" +
-      "worse than none, because the eval will pass against it and that will read as proof.\n",
+      `Looked in ${TARGET_FILE}. The approval gate has moved or been rewritten. Update this\n` +
+      "file to remove whatever now gates the tool — a negative control that silently sabotages\n" +
+      "nothing is worse than none, because the eval will pass against it and read as proof.\n",
   );
   process.exit(1);
 }
 
-writeFileSync(agentPath, source.replace(FIXED, SABOTAGED));
+writeFileSync(targetPath, source.replace(FIXED, SABOTAGED));
 process.stdout.write(`${destination}\n`);
