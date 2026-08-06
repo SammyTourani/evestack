@@ -2,7 +2,6 @@
 
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import { withBase } from "@/lib/asset";
 import {
   baseSessions,
   baseStats,
@@ -82,7 +81,6 @@ const LIVE_N = Math.min(LIVE_PLAN.length, liveSessions.length);
 /* a pass is "active" until the last row's completion flash fades */
 const PASS_ACTIVE =
   Math.max(...LIVE_PLAN.slice(0, LIVE_N).map((p) => p.at + HOLD_MS + p.count)) + FLASH_MS;
-const TOTAL_ROWS = LIVE_N + baseSessions.length;
 
 /* Settled feed = SSR / reduced-motion truth: every live row completed at
    full values. rowsAt(PASS_ACTIVE) lands on exactly this frame, so the
@@ -147,16 +145,19 @@ function StatusPill({ status }: { status: SessionStatus }) {
   );
 }
 
+/* Rows are ALWAYS painted. There used to be a `shown` prop that faded them in
+   one at a time; because a row keeps its height and border while hidden, a
+   visitor scrolling past saw a table of empty ruled lines. The live loop
+   converts these rows in place, which is motion enough — the data itself must
+   never be something you wait for. */
 function SessionRow({
   s,
-  shown,
   flash,
   expanded,
   onToggle,
   panelId,
 }: {
   s: DemoSession;
-  shown: boolean;
   flash: boolean;
   expanded: boolean;
   onToggle: () => void;
@@ -168,12 +169,10 @@ function SessionRow({
         type="button"
         aria-expanded={expanded}
         aria-controls={panelId}
-        tabIndex={shown ? 0 : -1}
         onClick={onToggle}
         className={cn(
           ROW_GRID,
-          "h-10 w-full text-left transition-[background-color,opacity,transform] duration-300 hover:bg-gray-100 motion-reduce:transition-none",
-          shown ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0",
+          "h-10 w-full text-left transition-colors duration-300 hover:bg-gray-100 motion-reduce:transition-none",
           flash && "bg-gray-100",
         )}
       >
@@ -254,7 +253,6 @@ export function DashboardDemo() {
   const [tab, setTab] = useState<Tab>("Sessions");
   const [indicator, setIndicator] = useState<{ x: number; w: number } | null>(null);
   const [panelH, setPanelH] = useState<number | null>(null);
-  const [revealed, setRevealed] = useState(TOTAL_ROWS);
   const [rows, setRows] = useState<LiveRow[]>(settledRows);
   const [expanded, setExpanded] = useState<string | null>(null);
   /* chat: shown = fully rendered messages; streamWords > 0 = message
@@ -304,7 +302,7 @@ export function DashboardDemo() {
     if (!root || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     stopRef.current = false;
 
-    const FIRST_TOTAL = 150 + (TOTAL_ROWS - 1) * 90 + 700 + PASS_ACTIVE;
+    const FIRST_TOTAL = 700 + PASS_ACTIVE;
     const prog = { elapsed: 0, total: FIRST_TOTAL };
 
     const timer = (ms: number, onFrame: ((t: number) => void) | null, onDone: () => void) => {
@@ -358,28 +356,24 @@ export function DashboardDemo() {
       );
     };
 
-    const play = () => {
-      let n = 0;
-      const next = () => {
-        setRevealed(++n);
-        if (n < TOTAL_ROWS) timer(90, null, next);
-        else timer(700, null, pass);
-      };
-      next();
-    };
+    /* The table is fully painted from SSR and stays that way. This only waits
+       a beat before the live loop starts converting rows in place.
 
-    // fade the rows back in top-to-bottom (live rows included — they keep
-    // their settled values until the first pass flips them); height is
-    // constant throughout, only opacity/translate move
-    setRevealed(0);
+       The threshold is deliberately low. It used to be 0.35, and `timer` only
+       advances while inViewRef is true (0.3) — so while the panel was entering
+       the viewport, neither fired, the staggered reveal stalled part-way, and
+       the table sat there as a set of empty ruled lines. Nothing about the
+       DATA depends on this observer any more, but the same trap would stall
+       the animation, so keep both thresholds small: `threshold` is a fraction
+       of the ELEMENT, and this panel can be taller than the viewport. */
     const io = new IntersectionObserver(
       ([entry]) => {
         if (!entry.isIntersecting) return;
         io.disconnect();
         if (barRef.current) barRef.current.style.opacity = "1";
-        timer(150, null, play);
+        timer(700, null, pass);
       },
-      { threshold: 0.35 },
+      { threshold: 0.1 },
     );
     io.observe(root);
     return () => {
@@ -398,7 +392,10 @@ export function DashboardDemo() {
       ([entry]) => {
         inViewRef.current = entry.isIntersecting;
       },
-      { threshold: 0.3 },
+      /* Small on purpose: a fraction of the ELEMENT, which is often taller
+         than the viewport. At 0.3 the demo's clocks stayed frozen while it
+         was scrolling into view. */
+      { threshold: 0.1 },
     );
     io.observe(root);
     const stopped = { v: false };
@@ -659,7 +656,6 @@ export function DashboardDemo() {
                     <SessionRow
                       key={src.id}
                       s={s}
-                      shown={i < revealed}
                       flash={r.flash}
                       expanded={expanded === src.id}
                       onToggle={() => toggle(src.id)}
@@ -671,7 +667,6 @@ export function DashboardDemo() {
                   <SessionRow
                     key={s.id}
                     s={s}
-                    shown={LIVE_N + i < revealed}
                     flash={false}
                     expanded={expanded === s.id}
                     onToggle={() => toggle(s.id)}
@@ -764,7 +759,7 @@ export function DashboardDemo() {
                   <div className="flex min-w-0 items-center gap-3">
                     <span aria-hidden className="logo-tile h-8 w-8 shrink-0 rounded-lg">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={withBase(`/logos/${slug}.svg`)} alt="" className="h-[62%] w-[62%]" loading="lazy" />
+                      <img src={`/logos/${slug}.svg`} alt="" className="h-[62%] w-[62%]" loading="lazy" />
                     </span>
                     <div className="min-w-0">
                       <p className="text-copy-14 text-gray-1000">{name}</p>

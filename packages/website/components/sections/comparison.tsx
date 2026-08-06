@@ -8,7 +8,7 @@ export function Comparison() {
       <div
         tabIndex={0}
         role="region"
-        aria-label="Vercel hosted versus evestack comparison"
+        aria-label="Managed versus self-hosted comparison"
         className="overflow-x-auto"
       >
         <table

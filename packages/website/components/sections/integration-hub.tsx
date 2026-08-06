@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { cn } from "@/lib/utils";
-import { withBase } from "@/lib/asset";
 import { integrations } from "@/lib/copy";
 
 /* The integrations centerpiece: equal-size tool tiles beam into the ▚ agent
@@ -198,7 +197,7 @@ function Tile({ app, active, hovered, onHover }: {
     >
       <span aria-hidden className="logo-tile h-9 w-9 shrink-0 rounded-lg md:h-10 md:w-10">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={withBase(`/logos/${app.slug}.svg`)} alt="" className="h-[62%] w-[62%]" loading="lazy" />
+        <img src={`/logos/${app.slug}.svg`} alt="" className="h-[62%] w-[62%]" loading="lazy" />
       </span>
     </div>
   );
@@ -358,7 +357,7 @@ export function IntegrationHub() {
       >
         <span className="logo-tile h-4 w-4 rounded-[4px]">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={withBase(`/logos/${call.app}.svg`)} alt="" className="h-[62%] w-[62%]" />
+          <img src={`/logos/${call.app}.svg`} alt="" className="h-[62%] w-[62%]" />
         </span>
         <span className="text-gray-1000">{call.action}</span>
         <span className="text-ok">✓ {call.ms}ms</span>

@@ -1,5 +1,4 @@
 import { footerColumns, site } from "@/lib/copy";
-import { withBase } from "@/lib/asset";
 import { ThemeSwitcher } from "@/components/ui/theme-switcher";
 
 export function SiteFooter() {
@@ -26,9 +25,7 @@ export function SiteFooter() {
                 {col.links.map((link) => (
                   <li key={link.label}>
                     <a
-                      /* route links need the Pages prefix; anchors and
-                         absolute URLs must be left alone */
-                      href={link.href.startsWith("/") ? withBase(link.href) : link.href}
+                      href={link.href}
                       {...(link.href.startsWith("http")
                         ? { target: "_blank", rel: "noreferrer" }
                         : {})}
