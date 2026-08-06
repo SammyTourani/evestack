@@ -16,13 +16,25 @@ export function SiteHeader() {
       {/* No trademark bar here. It ran as a full-width strip above the fold and
           was the first thing on the page; the attribution still runs in the
           footer, which is where this kind of notice normally lives. */}
+      {/* The flanks carry flex-1 so the nav lands on the TRUE centre. Under a
+          plain justify-between it sat 47px to the left at every width — the
+          Docs/GitHub/Get-started group is ~95px wider than the wordmark, and
+          the nav splits the difference. Equal-basis flanks centre it wherever
+          there is room and collapse back to the old spacing where there is
+          not; absolute centring was the other candidate and is wrong here,
+          because below ~900px the side gaps are under 20px and it would lay
+          the nav over the buttons. */}
       <div className="site-container flex h-16 items-center justify-between gap-4">
-        <a href="#hero" className="flex items-center gap-2 text-copy-16 font-medium">
-          <span aria-hidden className="text-blue-700">
-            {site.mark}
-          </span>
-          {site.name}
-        </a>
+        <div className="flex flex-1 items-center">
+          {/* the link stays its own width — a flex-1 anchor would make half
+              the header a click target for the logo */}
+          <a href="#hero" className="flex items-center gap-2 text-copy-16 font-medium">
+            <span aria-hidden className="text-blue-700">
+              {site.mark}
+            </span>
+            {site.name}
+          </a>
+        </div>
 
         <nav aria-label="Site" data-scrollspy className="hidden md:block">
           <ul className="flex items-center gap-6">
@@ -39,7 +51,7 @@ export function SiteHeader() {
           </ul>
         </nav>
 
-        <div className="hidden items-center gap-3 md:flex">
+        <div className="hidden flex-1 items-center justify-end gap-3 md:flex">
           {/* Outside the scrollspy nav on purpose: that list is anchor-only,
               and a route link would never match a section. */}
           <a
