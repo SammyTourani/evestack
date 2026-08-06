@@ -100,9 +100,10 @@ though it were the old one:
 > All 15 contracts hold against eve 0.31.0 — 219 assertions, all green
 
 Every word of that is true, and it is the most misleading thing this project
-could publish. `record.mjs` refuses to certify below the floor and
-A hollowed-out suite therefore fails the run rather than reporting a smaller
-number as though nothing had changed.
+could publish. `contract/floor.json` records a per-contract minimum assertion
+count and `contract/lib/floor.mjs` fails the run — exit code 3 — when any
+contract drops below it. A hollowed-out suite therefore fails rather than
+reporting a smaller number as though nothing had changed.
 
 Per-contract rather than one total, because a total hides erosion behind growth:
 twelve assertions lost from telemetry and twelve gained elsewhere nets to zero.

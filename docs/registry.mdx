@@ -55,6 +55,10 @@ only what its own files import, not the template's whole dependency list. A bare
 name would resolve to whatever npm calls latest on the day you run it, and the pin is what stops
 an item installing a major version the code was never exercised against.
 
+`ai` is deliberately **not** among them even though `lib/memory.ts` imports `embed` from it.
+Every eve project already depends on `ai` and carries an `overrides` entry pinning it, so an item
+that declared it directly would fail the install with `EOVERRIDE` rather than resolve.
+
 This paragraph used to read `@ai-sdk/openai@^2.0.0` and warn against ending up on v4. The repo
 moved to v4 deliberately (`@ai-sdk/openai@4.0.30` made `execution-denied` a first-class tool
 result), so the warning had inverted into a caution against the current, tested state. Read the

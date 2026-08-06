@@ -135,11 +135,10 @@ async function main() {
   const results = [];
   for (const contract of selected) {
     // A repo-scoped contract asserts something about this checkout, not about
-    // eve. Certifying an arbitrary release (record.mjs, via
-    // EVESTACK_CONTRACT_EVE_DIR) would fail it for a tautology — eve 0.30.2
-    // cannot satisfy a `^0.30.6` pin — and stamp a red cell on the public
-    // matrix for a version that is in fact fine. Skipped, not passed: a silent
-    // pass would be a claim we did not check.
+    // eve. Interrogating an arbitrary release via EVESTACK_CONTRACT_EVE_DIR
+    // would fail it for a tautology — eve 0.30.2 cannot satisfy a `^0.30.6`
+    // pin — and report a red result for a version that is in fact fine.
+    // Skipped, not passed: a silent pass would be a claim we did not check.
     if (contract.scope === "repo" && eve.isOverride) {
       results.push({
         id: contract.id,

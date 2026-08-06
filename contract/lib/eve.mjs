@@ -80,8 +80,13 @@ export const eve = {
   /**
    * True when this eve came from EVESTACK_CONTRACT_EVE_DIR rather than from the
    * repo's own install — i.e. the suite is interrogating some other release on
-   * purpose, which is what `contract/record.mjs` does for every row of the
-   * public compatibility matrix.
+   * purpose. That is how you check a candidate before bumping the pin:
+   *
+   *   EVESTACK_CONTRACT_EVE_DIR=/tmp/eve-0.31.0 node contract/run.mjs
+   *
+   * A `contract/record.mjs` used to drive this over every published release to
+   * render a compatibility matrix. Both were removed on 2026-08-05; the manual
+   * override is what survived.
    *
    * Contracts that describe *this repository's* install rather than eve's
    * behaviour are meaningless in that mode; the runner skips those. See
