@@ -27,14 +27,33 @@ import { C, dim, say } from "./shared.mjs";
 
 const argv = process.argv.slice(2);
 
-if (argv[0] === "attach") {
-  const { attach } = await import("./attach.mjs");
-  process.exitCode = (await attach(argv.slice(1))) ?? 0;
-} else if (argv.includes("--help") || argv.includes("-h")) {
-  usage();
-} else {
-  const { create } = await import("./create.mjs");
-  process.exitCode = await create(argv);
+// Wrapped, because both commands report their real failures by throwing. attach
+// refuses a directory that is not an eve project with a three-line message that
+// names the file it wanted and the command to run instead; unwrapped, node
+// prints that message inside a stack trace under a source excerpt and a
+// "Node.js v26" footer, so the useful part is the least visible thing on
+// screen. The `evestack` bin already does exactly this around the same two
+// functions (see evestack-cli/src/cli.mjs), and it was the only front door that
+// did — the same failure on the flagship `npx create-evestack` path was a crash
+// report.
+//
+// Only the message is printed. A stack trace is for a bug in here, and a
+// mistyped path is not one, so it is kept behind EVESTACK_DEBUG rather than
+// thrown away.
+try {
+  if (argv[0] === "attach") {
+    const { attach } = await import("./attach.mjs");
+    process.exitCode = (await attach(argv.slice(1))) ?? 0;
+  } else if (argv.includes("--help") || argv.includes("-h")) {
+    usage();
+  } else {
+    const { create } = await import("./create.mjs");
+    process.exitCode = await create(argv);
+  }
+} catch (error) {
+  console.error(`\n${C.red}${error?.message ?? error}${C.reset}`);
+  if (process.env.EVESTACK_DEBUG) console.error(error);
+  process.exitCode = 1;
 }
 
 function usage() {
