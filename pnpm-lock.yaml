@@ -70,6 +70,12 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
 
+  packages/evestack-cli:
+    dependencies:
+      pg:
+        specifier: ^8.20.3
+        version: 8.22.0
+
   packages/evestack-composio:
     dependencies:
       '@composio/core':
