@@ -4,7 +4,7 @@ import { z } from "zod";
 // Relative for the same reason as remember.ts and recall.ts: this file ships as
 // part of the `@evestack/memory` registry item and must resolve in a stock eve
 // project, which has no `#lib/*` mapping.
-import { forget, recall } from "../../lib/memory";
+import { forget, recent } from "../../lib/memory";
 
 /**
  * Deleting a memory is the one memory operation that cannot be undone, so it is
@@ -43,7 +43,11 @@ export default defineTool({
     if (!deleted) {
       // A missing id is far more likely to be a hallucinated number than a race,
       // so say what actually exists instead of reporting a bare failure.
-      const remaining = await recall("", { limit: 5 });
+      // `recent`, not `recall("")`. An empty query has to be embedded, and an
+      // empty embedding is an error on every provider — measured locally as
+      // "Empty embeddings array returned", and a 400 from OpenAI. This branch
+      // exists to explain a bad id and it was the one branch that threw.
+      const remaining = await recent(5);
       return {
         deleted: false,
         note: `No memory with id ${id}. Use recall to get real ids before deleting.`,
