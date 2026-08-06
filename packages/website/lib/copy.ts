@@ -374,39 +374,105 @@ export const integrations = {
   ],
 } as const;
 
-/* §12 quickstart — mirrors the next-steps create-evestack itself prints. */
+/* §12 quickstart — the pipeline and the receipt.
+
+   The steps render as a self-completing pipeline (stations flip ✓, a spine
+   draws down) beside a "receipt": the output of a first `npm run verify`,
+   line for line. Nothing here is typed or invented — the premium convention
+   (and ours) is finished, real artifacts:
+
+     - each step's receipt line is verbatim from the tool that prints it
+       (packages/create-evestack/create.mjs ok() lines, templates/default/
+       scripts/bootstrap.mjs, the eve dev ready line from FINDINGS.md);
+     - the verify panel mirrors templates/default/scripts/verify.mjs exactly —
+       the openai path, which is the scaffolder's option 1 with its default
+       model. That run prints these nine checks; the ollama path adds a tenth
+       (`memory`). So no step body counts the checks — a count was wrong here
+       once before (see the git history of this block).
+     - the agent answers on 127.0.0.1 and the dashboard is printed as
+       localhost — that asymmetry is real (verify.mjs builds the dashboard
+       URL for a human to click, findAgent probes loopback).
+
+   `commands` splits each line so the payload renders bright over dim
+   boilerplate (the opencode/Convex/Bun convergence). Five command rows in
+   four steps — the same "five commands" the closing section claims. */
 export const quickstart = {
-  /* Counts the cards below. It said "three" while there were four of them for
-     exactly as long as it took to look at the rendered page. */
   heading: "Running in four steps",
+  sub: "Five commands, with their real receipts.",
+  /* No step bodies, deliberately: the receipt line under each command IS the
+     explanation, in the tool's own words. Prose the panel already proves is
+     prose the section does not need (user-tightened 2026-08-06). */
   steps: [
     {
+      slug: "scaffold",
       title: "Scaffold",
-      code: "npx create-evestack",
-      lang: "bash",
-      body: "Prompts for a model key (or Ollama), writes .env.local, generates agent credentials.",
+      commands: [{ pre: "npx ", cmd: "create-evestack" }],
+      /* The scaffolder's last ok() before "Done." — picked over its longer
+         `Generated .env.local with a unique auth password and trace-ingest
+         token`, which wrapped to two lines and made this step taller than
+         the rest. Every receipt is now one line, verbatim. */
+      receipt: "Dependencies installed",
     },
     {
+      slug: "postgres",
       title: "Durable Postgres",
-      code: "docker compose up -d postgres",
-      lang: "bash",
-      /* `npm run db:bootstrap`, never the upstream bootstrap bin — see the note
-         on the terminal artwork above for what that one actually does. */
-      body: "Then npm run db:bootstrap creates the workflow tables. Sessions now survive restarts.",
+      commands: [
+        { pre: "docker ", cmd: "compose up -d postgres" },
+        /* `npm run db:bootstrap`, never the upstream bootstrap bin — see the
+           note on the terminal artwork above for what that one actually does. */
+        { pre: "npm run ", cmd: "db:bootstrap" },
+      ],
+      receipt: "Schema created.",
     },
     {
+      slug: "run",
       title: "Run your agent",
-      code: "npm run dev",
-      lang: "bash",
-      body: "eve dev on :2000, after checking Postgres, the schema and your model are all ready. The agent, the database, and the dashboard are all on your machine.",
+      commands: [{ pre: "npm run ", cmd: "dev" }],
+      receipt: "eve dev ready on http://localhost:2000",
     },
     {
+      slug: "verify",
       title: "Check it",
-      code: "npm run verify",
-      lang: "bash",
-      body: "Ten checks — Docker, Postgres, the schema, the model, the agent, the dashboard, the trace token — each with the command that fixes it. Then it offers to open the dashboard.",
+      commands: [{ pre: "npm run ", cmd: "verify" }],
+      /* The rail's last receipt is the panel's payoff line — same run, and
+         every receipt here is now a verbatim quote rather than a summary. */
+      receipt: "Everything works.",
     },
   ],
+  verify: {
+    header: "evestack verify",
+    checks: [
+      { name: "config", detail: ".env.local" },
+      { name: "docker", detail: "daemon is responding" },
+      { name: "postgres", detail: "reachable at 127.0.0.1:5433" },
+      { name: "schema", detail: "workflow tables exist" },
+      { name: "pgvector", detail: "installed — long-term memory can store vectors" },
+      { name: "model", detail: "openai/gpt-5-mini, OPENAI_API_KEY is set" },
+      { name: "agent", detail: "answering at http://127.0.0.1:2000" },
+      { name: "dashboard", detail: "answering at http://localhost:4000, database connected" },
+      { name: "traces", detail: "the agent's ingest token is accepted by the dashboard" },
+    ],
+    done: "Everything works.",
+    dashboard: { label: "Your dashboard", value: "http://localhost:4000" },
+    /* The real script prints the generated password here — a per-project
+       secret, so the receipt masks it the way the demo masks API keys.
+       (The script's closing curl snippet was rendered here once and cut for
+       space at the user's call — restore from git if it earns its lines.) */
+    signin: { label: "Sign in", user: "evestack", mask: "••••••••••" },
+    prompt: "Open the dashboard now? (Y/n)",
+    /* Bun links its install script; the receipt links its own source. */
+    source: {
+      label: "verify.mjs",
+      href: `${site.github}/blob/main/templates/default/scripts/verify.mjs`,
+    },
+  },
+  /* The 2026 install path (Convex, Clerk, better-auth all ship one): the
+     machine-readable summary really is served at /llms.txt (app/llms.txt). */
+  agent: {
+    lead: "For coding agents:",
+    display: "evestack.vercel.app/llms.txt",
+    copy: "https://evestack.vercel.app/llms.txt",
+  },
 } as const;
 
 export const closing = {
