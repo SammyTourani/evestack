@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { concerns, cpuFraction, ORPHAN_AFTER_MS } from "../lib/sandboxes.ts";
+import { concerns, cpuFraction, ORPHAN_AFTER_MS, SANDBOX_LABELS } from "../lib/sandboxes.ts";
 
 /**
  * The editorial rules of the sandboxes page, tested without a daemon.
@@ -105,4 +105,40 @@ test("cpu is a fraction of one core, so it can exceed 1 on a busy multicore box"
   });
   // 100/200 of the machine, times 4 cores = 2 cores.
   assert.equal(busy, 2);
+});
+
+/**
+ * The sandbox labels are eve's, not ours.
+ *
+ * `eve.sandbox`, `eve.sandbox.role`, `eve.sandbox.tag.*` and
+ * `eve.sandbox.template-key` are written by `eve/sandbox/docker` upstream — no
+ * code in this repo authors them. That makes them a contract in the same
+ * category as the `$eve.*` run attributes, and a rename upstream empties the
+ * sandboxes page in silence rather than failing.
+ *
+ * `09-sandbox-backend.contract.mjs` guards the backend INTERFACE shape and
+ * asserts nothing about label names, which is the gap this closes. It is a unit
+ * test rather than a contract because eve's dist does not carry the label
+ * strings as literals — they are assembled — so the strongest available check
+ * is that the reader and the page agree on one spelling.
+ */
+test("every label the page reads is the one the client looks for", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { fileURLToPath } = await import("node:url");
+  const { dirname, join } = await import("node:path");
+  const here = dirname(fileURLToPath(import.meta.url));
+
+  const src = readFileSync(join(here, "..", "lib", "sandboxes.ts"), "utf8");
+  const declared = [...src.matchAll(/"(eve\.sandbox[a-z.-]*)"/g)].map((m) => m[1]);
+
+  // Every label string in the module is reachable through SANDBOX_LABELS, so
+  // there is exactly one place to change when upstream renames one.
+  const viaMap = new Set(Object.values(SANDBOX_LABELS));
+  for (const label of declared) {
+    assert.ok(viaMap.has(label), `${label} is hard-coded somewhere instead of going through SANDBOX_LABELS`);
+  }
+
+  // And the marker is the one the Docker filter uses, or the page lists nothing.
+  assert.equal(SANDBOX_LABELS.marker, "eve.sandbox");
+  assert.ok(SANDBOX_LABELS.sessionId.startsWith("eve.sandbox.tag."));
 });

@@ -21,7 +21,7 @@ export const fmt = (n: number): string => n.toLocaleString("en-US");
  * text in one document. Clamping per payload keeps the page navigable, and the
  * clamp is always stated rather than silently swallowing the tail of a result.
  */
-export const MAX_PAYLOAD_CHARS = 24_000;
+const MAX_PAYLOAD_CHARS = 24_000;
 
 export interface Payload {
   text: string;

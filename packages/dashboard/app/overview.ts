@@ -49,7 +49,7 @@ export function windowLabel(hours: number): string {
  * that a month is not a fixed number of seconds — so this list is deliberately
  * short of anything calendar-shaped.
  */
-export function granularityFor(hours: number): "minute" | "hour" | "day" {
+function granularityFor(hours: number): "minute" | "hour" | "day" {
   if (hours <= 6) return "minute";
   if (hours <= 24 * 7) return "hour";
   return "day";

@@ -15,9 +15,12 @@
  *
  *   - The feature is OFF unless `EVESTACK_DOCKER_SOCKET` names a path. Absent is
  *     not an error; the page says the feature is off and how to turn it on.
- *   - This module issues GET requests only. Lifecycle verbs live behind a SECOND
- *     flag (`EVESTACK_DOCKER_LIFECYCLE`) and go through the approval audit, so
- *     "I can see the sandboxes" and "I can kill them" are separate decisions.
+ *   - This module issues GET requests only. There are no lifecycle verbs yet; when
+ *     they land they get a SECOND flag and the approval audit, so "I can see the
+ *     sandboxes" and "I can kill them" stay separate decisions. The reader for
+ *     that flag was written here before the actions existed and has been
+ *     removed — a env-var reader with no caller is a promise the code does not
+ *     keep, and this file is not the place to keep one.
  *   - The compose file does not mount it. Someone has to choose this.
  *
  * ── The labels are eve's, not ours ───────────────────────────────────────────
@@ -115,15 +118,9 @@ export type SandboxAvailability =
   | { readonly kind: "ok"; readonly sandboxes: readonly Sandbox[] };
 
 /** The socket path, or null when the operator has not opted in. */
-export function dockerSocket(): string | null {
+function dockerSocket(): string | null {
   const raw = process.env.EVESTACK_DOCKER_SOCKET?.trim();
   return raw && raw.length > 0 ? raw : null;
-}
-
-/** Lifecycle verbs need their own opt-in. See the header. */
-export function lifecycleEnabled(): boolean {
-  const raw = process.env.EVESTACK_DOCKER_LIFECYCLE?.trim().toLowerCase();
-  return raw === "1" || raw === "true";
 }
 
 const TIMEOUT_MS = 3_000;

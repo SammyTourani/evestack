@@ -138,7 +138,7 @@ export function requiresApprover(): boolean {
 
 let schemaReady: Promise<void> | null = null;
 
-export function ensureApprovalSchema(): Promise<void> {
+function ensureApprovalSchema(): Promise<void> {
   if (!schemaReady) {
     schemaReady = query(readSchemaSql())
       .then(() => undefined)

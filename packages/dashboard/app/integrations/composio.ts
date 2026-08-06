@@ -16,7 +16,7 @@ const API_BASE = process.env.COMPOSIO_BASE_URL ?? "https://backend.composio.dev"
  * agent's — `@evestack/composio` resolves it the same way — or the dashboard
  * will happily connect accounts the agent cannot see.
  */
-export const DEFAULT_COMPOSIO_USER_ID = "evestack";
+const DEFAULT_COMPOSIO_USER_ID = "evestack";
 
 export function composioApiKey(): string | undefined {
   return process.env.COMPOSIO_API_KEY?.trim() || undefined;

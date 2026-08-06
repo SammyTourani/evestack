@@ -571,7 +571,7 @@ const PRUNE_BATCH = 20_000;
  */
 const retentionHours = (days: number): number => Math.max(1, Math.round(days * 24));
 
-export async function pruneSpans(days: number): Promise<number> {
+async function pruneSpans(days: number): Promise<number> {
   await ensureTraceSchema();
   const hours = retentionHours(days);
   let removed = 0;
