@@ -58,6 +58,7 @@ async function pgClient(connectionString) {
  */
 function proxy(upstream, mode) {
   const sockets = new Set();
+  const pairs = new Set();
   const server = createServer((client) => {
     sockets.add(client);
     client.on("close", () => sockets.delete(client));
@@ -74,8 +75,23 @@ function proxy(upstream, mode) {
     server_.on("error", () => client.destroy());
     client.pipe(server_);
     server_.pipe(client);
+
+    const pair = { client, server_ };
+    pairs.add(pair);
+    client.on("close", () => pairs.delete(pair));
   });
-  return { server, sockets };
+
+  /** Kills every ESTABLISHED connection: a Postgres restart, or a laptop resume,
+   *  as seen by a client that already has a socket. */
+  const dropEstablished = () => {
+    for (const { client, server_ } of pairs) {
+      client.destroy();
+      server_.destroy();
+    }
+    pairs.clear();
+  };
+
+  return { server, sockets, dropEstablished };
 }
 
 export default {
@@ -122,7 +138,7 @@ export default {
     const schemaPreexisted = schemaRows.length > 0;
 
     const mode = { forward: false };
-    const { server, sockets } = proxy(upstream, mode);
+    const { server, sockets, dropEstablished } = proxy(upstream, mode);
     await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
     const proxyPort = server.address().port;
 
@@ -196,6 +212,52 @@ export default {
         typeof recovered === "boolean",
         "and it answers normally rather than half-succeeding",
         { actual: String(recovered) },
+      );
+
+      /* ---- 3. the database dies while a pooled client is idle -------------- */
+      //
+      // The severe one. pg-pool attaches its own handler to idle clients and
+      // re-emits their socket errors on the pool; `emit("error")` with nothing
+      // listening THROWS, so this was not a failed query but an
+      // uncaughtException that took the whole agent down — every session and
+      // every channel — because an optional memory tool had left a client idle.
+      // Measured before the fix: exit code 9, "Connection terminated
+      // unexpectedly".
+      //
+      // The temporary listener is what makes this reportable. Without it a
+      // regression would kill the runner and take every other probe's result
+      // with it; with it, the same regression is one red line here.
+      let uncaught = null;
+      const capture = (error) => {
+        uncaught = error;
+      };
+      process.on("uncaughtException", capture);
+      try {
+        dropEstablished();
+        await new Promise((resolve) => setTimeout(resolve, 400));
+      } finally {
+        process.off("uncaughtException", capture);
+      }
+
+      t.ok(
+        uncaught === null,
+        "a pooled client dying while idle does not raise an uncaughtException",
+        uncaught ? { actual: `${uncaught.message} (would have killed the agent)` } : {},
+      );
+
+      let afterDrop = null;
+      let afterDropError = null;
+      try {
+        afterDrop = await forget(1);
+      } catch (error) {
+        afterDropError = error;
+      }
+      t.ok(
+        afterDropError === null && typeof afterDrop === "boolean",
+        "and the pool hands out a working client on the next call",
+        afterDropError
+          ? { actual: String(afterDropError.message ?? afterDropError).slice(0, 160) }
+          : {},
       );
     } finally {
       process.env.WORKFLOW_POSTGRES_URL = saved.url;

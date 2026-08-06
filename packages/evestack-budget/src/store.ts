@@ -72,7 +72,19 @@ function getPool(config: BudgetConfig): Pool {
   }
   // Small on purpose: this runs inside the agent process next to eve's own
   // pool and the memory pool, and it does two tiny indexed writes per step.
-  pool ??= new Pool({ connectionString: url, max: 4, connectionTimeoutMillis: 5_000 });
+  if (!pool) {
+    pool = new Pool({ connectionString: url, max: 4, connectionTimeoutMillis: 5_000 });
+    // Without this, a Postgres restart while a client sits idle here is an
+    // uncaughtException, not a failed query, and it takes the agent down with
+    // it. pg-pool re-emits an idle client's socket error on the pool, and
+    // `emit("error")` with no listener throws. That matters more here than
+    // anywhere: spend caps are ON BY DEFAULT, so this pool exists in every
+    // project whether or not its owner ever thought about budgets.
+    // packages/dashboard/lib/db.ts has carried this listener all along.
+    pool.on("error", (error) => {
+      console.warn(`[evestack:budget] idle Postgres client error: ${error.message}`);
+    });
+  }
   return pool;
 }
 
@@ -194,7 +206,14 @@ export async function ensureSchema(config: BudgetConfig): Promise<void> {
     await db.query(
       "CREATE INDEX IF NOT EXISTS budget_usage_day_idx ON evestack.budget_usage (day DESC) WHERE scope = 'principal-day'",
     );
-  })();
+  })().catch((error: unknown) => {
+    // A memoized promise that REJECTED is still memoized, so without this the
+    // first call made before Postgres was accepting connections disabled spend
+    // tracking for the life of the process and kept quoting the original error
+    // afterwards. Same defect, same fix, as templates/default/lib/memory.ts.
+    ready = null;
+    throw error;
+  });
   return ready;
 }
 

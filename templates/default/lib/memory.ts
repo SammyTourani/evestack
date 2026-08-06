@@ -155,6 +155,30 @@ const NETWORK_CODES = new Set([
   "EAI_AGAIN",
 ]);
 
+/**
+ * The connection failures `pg` reports as plain Errors with NO `code`.
+ *
+ * A syscall error carries ECONNREFUSED and friends, but a connection that drops
+ * once established does not: `pg` throws its own Error, and matching on `code`
+ * alone let it through unannotated. CI caught this — the probe destroys a socket,
+ * which on Linux surfaces as "Connection terminated unexpectedly" rather than the
+ * ECONNRESET macOS produced, so the check for a named host and port failed on a
+ * platform I had not run it on.
+ *
+ * That is the laptop-resume case named in ensureSchema's note, so it is the case
+ * this most needs to read well. Matching on message text is fragile by nature, so
+ * these are copied verbatim from pg 8 (`lib/client.js`, `lib/connection.js`) and
+ * pg-pool, and a string that stops matching costs context in an error message
+ * rather than correctness anywhere.
+ */
+const PG_CONNECTION_FAILURES = new Set([
+  "Connection terminated unexpectedly",
+  "Connection terminated",
+  "Client has encountered a connection error and is not queryable",
+  "timeout expired",
+  "timeout exceeded when trying to connect",
+]);
+
 function networkReason(error: unknown): string | null {
   if (error instanceof AggregateError) {
     const parts = (Array.isArray(error.errors) ? error.errors : [])
@@ -169,9 +193,13 @@ function networkReason(error: unknown): string | null {
       address?: string;
       port?: number;
     };
-    if (!code || !NETWORK_CODES.has(code)) return null;
-    const where = address ? ` (${address}${port ? `:${port}` : ""})` : "";
-    return `${code}${where}`;
+    if (code && NETWORK_CODES.has(code)) {
+      const where = address ? ` (${address}${port ? `:${port}` : ""})` : "";
+      return `${code}${where}`;
+    }
+    // A SQLSTATE is a real answer from a reachable server, so it is never one of
+    // these and must keep its own message.
+    if (!code && PG_CONNECTION_FAILURES.has(error.message.trim())) return error.message.trim();
   }
   return null;
 }
@@ -213,7 +241,28 @@ function getPool(): Pool {
       "Memory needs WORKFLOW_POSTGRES_URL. Start Postgres with `docker compose up postgres`.",
     );
   }
-  pool ??= new Pool({ connectionString: url, max: 4 });
+  if (!pool) {
+    pool = new Pool({ connectionString: url, max: 4 });
+    // WITHOUT THIS LISTENER A POSTGRES RESTART KILLS THE AGENT.
+    //
+    // pg-pool attaches its own handler to idle clients and re-emits their socket
+    // errors on the pool. `EventEmitter.emit("error")` with nothing listening
+    // throws, so the failure is not a rejected query — it is an
+    // uncaughtException that takes down the whole process: every session, every
+    // channel, because an optional memory tool once left a client idle.
+    //
+    // Measured with a proxy that drops an established connection while the
+    // client sat idle in the pool: `UNCAUGHT EXCEPTION -> Connection terminated
+    // unexpectedly`, exit code 9. packages/dashboard/lib/db.ts already carried
+    // this listener and the reason for it; the three pools inside the agent did
+    // not.
+    //
+    // Nothing to do but say so. pg has already discarded the dead client, and
+    // the next call gets a fresh one.
+    pool.on("error", (error) => {
+      console.warn(`[evestack] idle Postgres client error: ${networkReason(error) ?? error.message}`);
+    });
+  }
   return pool;
 }
 
