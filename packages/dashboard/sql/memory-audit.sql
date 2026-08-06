@@ -28,8 +28,10 @@ CREATE TABLE IF NOT EXISTS evestack.memory_deletions (
   session_id   text,
   created_at   timestamptz,
 
-  -- Same identity vocabulary as evestack.approvals: never let a proxy-supplied
-  -- name be mistaken for a proven one.
+  -- Same identity vocabulary as evestack.approvals ("session", "basic",
+  -- "forwarded-user", "forwarded-email", "header", "unidentified"): never let a
+  -- proxy-supplied name be mistaken for a proven one. The forwarded-* values
+  -- are only recorded when EVESTACK_TRUSTED_PROXY declares a proxy trusted.
   actor        text,
   actor_via    text        NOT NULL DEFAULT 'unidentified'
 );

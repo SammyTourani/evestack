@@ -146,3 +146,61 @@ tbody tr:hover { background: var(--bg-hover); }
 
 h1 { font-size: 19px; margin: 0 0 4px; }
 .page-sub { color: var(--text-dim); margin: 0 0 22px; }
+
+/* ---- sign in ----
+   Styled with the same variables as everything else and no framework, because
+   this is the page that has to render when the rest of the app is refusing
+   requests. Nothing here depends on a client bundle having loaded. */
+.signout { margin-left: 12px; display: flex; }
+.signout button {
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-dim);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+.signout button:hover { color: var(--text); background: var(--bg-hover); }
+
+.signin { max-width: 380px; margin: 8vh auto 0; }
+.signin-form { display: flex; flex-direction: column; gap: 14px; }
+.signin-field { display: flex; flex-direction: column; gap: 6px; }
+.signin-field span { color: var(--text-dim); font-size: 12px; }
+.signin-field input {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 9px 11px;
+}
+.signin-field input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.signin-submit {
+  font: inherit;
+  font-weight: 600;
+  color: var(--bg);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 9px 11px;
+  cursor: pointer;
+}
+.signin-error {
+  margin: 0;
+  color: var(--err);
+  font-size: 13px;
+  border: 1px solid color-mix(in srgb, var(--err) 40%, transparent);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+}
+.signin-hint { margin: 26px 0 0; color: var(--text-faint); font-size: 12px; line-height: 1.7; }
+.signin-hint code {
+  font-family: var(--mono);
+  font-size: 11px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 1px 5px;
+}

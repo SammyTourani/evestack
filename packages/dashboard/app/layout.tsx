@@ -28,6 +28,19 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           <span className="badge-selfhosted" title="No Vercel account. No metered compute.">
             self-hosted
           </span>
+          {/*
+            A form, not a link: a GET sign-out is fired by link prefetching and
+            by any <img> on a page the operator visits. Rendered unconditionally
+            rather than only when signed in — knowing that would mean reading
+            cookies() in the root layout, and the trade there is a dynamic API
+            in the one component every page renders through, to hide a button
+            that is harmless on the sign-in page.
+          */}
+          <form className="signout" method="post" action="/api/auth/signout">
+            <button type="submit" title="Clear this browser's session cookie">
+              Sign out
+            </button>
+          </form>
         </header>
         <main className="shell">{children}</main>
       </body>

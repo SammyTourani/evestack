@@ -126,9 +126,12 @@ export async function POST(
     const identity = identifyApprover(request);
     if (identity.approver === null && requiresApprover()) {
       return jsonError(
-        "EVESTACK_REQUIRE_APPROVER is set and this request carries no identity. Put the " +
-          "dashboard behind a proxy that sets X-Forwarded-User (or name a header in " +
-          "EVESTACK_APPROVER_HEADER) so approvals can be attributed to a person.",
+        "EVESTACK_REQUIRE_APPROVER is set and this request carries no identity we can prove. " +
+          "Sign in, or send the EVESTACK_AUTH_* pair as HTTP Basic. To attribute approvals to a " +
+          "person rather than to the deployment, put the dashboard behind a proxy that sets " +
+          "X-Forwarded-User (or name a header in EVESTACK_APPROVER_HEADER) and set " +
+          "EVESTACK_TRUSTED_PROXY — those headers are ignored until you do, because anyone who " +
+          "can reach this port can otherwise write whatever name they like into the audit log.",
         403,
         "approver_required",
       );

@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { authenticate, trustsForwardedIdentity } from "./auth";
 import { query } from "./db";
 
 /**
@@ -15,16 +16,36 @@ import { query } from "./db";
  * WHAT THIS DOES AND DOES NOT CLAIM. evestack does not ship an identity
  * provider and should not: the dashboard is meant to sit behind whatever the
  * deployment already trusts (a reverse proxy doing OAuth, Cloudflare Access,
- * Tailscale, HTTP Basic). So we read identity from the request and always
- * record HOW we learned it. An unidentified approval is still recorded, marked
+ * Tailscale). So we read identity from the request and always record HOW we
+ * learned it. An unidentified approval is still recorded, marked
  * `unidentified`, because a silent gap in an audit log is worse than a visible
  * one. Set EVESTACK_REQUIRE_APPROVER=1 to refuse those outright.
  */
 
 export interface ApproverIdentity {
   readonly approver: string | null;
-  /** How the identity was established — never let a proxy header look proven. */
-  readonly via: "basic" | "forwarded-user" | "forwarded-email" | "header" | "unidentified";
+  /**
+   * How the identity was established. Ordered here by how much it proves:
+   *
+   *   session          a signed cookie this deployment issued
+   *   basic            HTTP Basic whose password this deployment verified
+   *   forwarded-user   X-Forwarded-User, believed only behind EVESTACK_TRUSTED_PROXY
+   *   forwarded-email  X-Forwarded-Email, same condition
+   *   header           EVESTACK_APPROVER_HEADER, same condition
+   *   unidentified     nothing proved anything
+   *
+   * `session` and `basic` prove possession of the one shared deployment
+   * credential — they name an installation, not a person. The three forwarded
+   * values name a person, but only as well as the proxy in front of us does.
+   * Nothing here is allowed to read as more than it is.
+   */
+  readonly via:
+    | "session"
+    | "basic"
+    | "forwarded-user"
+    | "forwarded-email"
+    | "header"
+    | "unidentified";
 }
 
 export interface ApprovalRecord {
@@ -50,41 +71,66 @@ export interface ApprovalRow extends Omit<ApprovalRecord, "identity"> {
 /**
  * Read the caller's identity off the request.
  *
- * Order matters: an explicitly configured header wins, then the two headers
- * standard proxies set, then Basic. Basic is last because it is the weakest —
- * evestack generates a single shared credential, so it identifies a deployment
- * rather than a person, and calling that an approver identity would overstate
- * it. It is still better than nothing and is recorded as `basic` so a reader
- * knows exactly how much to trust it.
+ * WHAT WAS WRONG. This function used to take `X-Forwarded-User`,
+ * `X-Forwarded-Email` and the Authorization username straight off the socket
+ * with nothing in front of them. Every one of those is attacker-controlled:
+ *
+ *   curl -X POST .../approve -d '{"decision":"approve"}' \
+ *        -H 'X-Forwarded-User: someone.else@example.com'
+ *
+ * approved a shell command and stamped a colleague's name on the row. The
+ * Basic branch was no better — it read the username out of the header without
+ * ever checking the password, so any name at all could be spelled into the
+ * audit log. A forgeable audit log is worse than no audit log, because it
+ * invites people to rely on it.
+ *
+ * WHAT IT DOES NOW. Forwarded identity is believed only when
+ * EVESTACK_TRUSTED_PROXY says a proxy in front of us sets it and strips the
+ * client's own copy (see trustsForwardedIdentity in lib/auth.ts). With that
+ * unset the three header sources are not read at all — not read and downgraded,
+ * not read and marked untrusted: ignored, so there is no path by which a
+ * request can name someone it has not proved.
+ *
+ * Order still runs strongest-claim-about-a-person first. A trusted proxy names
+ * an actual human, which is more informative than the shared deployment
+ * credential underneath it; `session` and `basic` name the installation and are
+ * recorded as such.
  */
 export function identifyApprover(request: Request): ApproverIdentity {
-  const configured = process.env.EVESTACK_APPROVER_HEADER;
-  if (configured) {
-    const value = request.headers.get(configured)?.trim();
-    if (value) return { approver: value, via: "header" };
-  }
-
-  const forwardedUser = request.headers.get("x-forwarded-user")?.trim();
-  if (forwardedUser) return { approver: forwardedUser, via: "forwarded-user" };
-
-  const forwardedEmail = request.headers.get("x-forwarded-email")?.trim();
-  if (forwardedEmail) return { approver: forwardedEmail, via: "forwarded-email" };
-
-  const auth = request.headers.get("authorization");
-  if (auth?.startsWith("Basic ")) {
-    try {
-      const decoded = Buffer.from(auth.slice(6), "base64").toString("utf8");
-      const user = decoded.slice(0, decoded.indexOf(":"));
-      if (user) return { approver: user, via: "basic" };
-    } catch {
-      // A malformed header is not an identity. Fall through.
+  if (trustsForwardedIdentity(request)) {
+    const configured = process.env.EVESTACK_APPROVER_HEADER;
+    if (configured) {
+      const value = request.headers.get(configured)?.trim();
+      if (value) return { approver: value, via: "header" };
     }
+
+    const forwardedUser = request.headers.get("x-forwarded-user")?.trim();
+    if (forwardedUser) return { approver: forwardedUser, via: "forwarded-user" };
+
+    const forwardedEmail = request.headers.get("x-forwarded-email")?.trim();
+    if (forwardedEmail) return { approver: forwardedEmail, via: "forwarded-email" };
   }
+
+  // A cookie this deployment signed, or Basic credentials it verified. Both are
+  // proven; neither is a person. `authenticate` is the same function the proxy
+  // gate uses, so an identity recorded here is one that was actually allowed in.
+  const authenticated = authenticate(request);
+  if (authenticated) return { approver: authenticated.user, via: authenticated.via };
 
   return { approver: null, via: "unidentified" };
 }
 
-/** True when the deployment insists every decision names a human. */
+/**
+ * True when the deployment insists every decision names someone.
+ *
+ * Unchanged, and strictly stricter than it was: the identities that satisfy it
+ * can no longer be invented by the caller. Worth knowing what it now buys you —
+ * with route auth on, a decision that reaches the approve route has already
+ * proved the deployment credential, so this flag only bites when that
+ * credential names nobody. If you need per-person attribution, set
+ * EVESTACK_TRUSTED_PROXY and put a proxy that authenticates people in front;
+ * then `approver_via` reads `forwarded-user` rather than `session`.
+ */
 export function requiresApprover(): boolean {
   const value = process.env.EVESTACK_REQUIRE_APPROVER;
   return value === "1" || value?.toLowerCase() === "true";

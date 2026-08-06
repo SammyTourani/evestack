@@ -38,9 +38,15 @@ CREATE TABLE IF NOT EXISTS evestack.approvals (
   -- nothing in front of the dashboard identified the caller — which is itself
   -- worth recording rather than papering over with a default like "admin".
   approver      text,
-  -- Where the identity came from: "basic", "forwarded-user", "forwarded-email",
-  -- "header", or "unidentified". Keeps a proxy-supplied name from being mistaken
-  -- for a proven one.
+  -- Where the identity came from: "session" (a cookie this deployment signed),
+  -- "basic" (credentials it verified), "forwarded-user" / "forwarded-email" /
+  -- "header" (a proxy said so, and only recorded at all when
+  -- EVESTACK_TRUSTED_PROXY declares that proxy trusted), or "unidentified".
+  --
+  -- Keeps a proxy-supplied name from being mistaken for a proven one. Rows
+  -- written before EVESTACK_TRUSTED_PROXY existed carry forwarded-* values that
+  -- nothing verified: any caller could set those headers. Treat a forwarded-*
+  -- row older than that change as unidentified.
   approver_via  text        NOT NULL DEFAULT 'unidentified',
 
   remote_addr   text,
