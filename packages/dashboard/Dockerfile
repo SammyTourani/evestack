@@ -113,8 +113,20 @@ RUN rm -rf /repo/packages/dashboard/.next/cache
 FROM node:24-slim AS runtime
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
-    PORT=4000
-WORKDIR /repo/packages/dashboard
+    PORT=4000 \
+    HOSTNAME=0.0.0.0
+
+# HOSTNAME is NOT decoration and NOT the container's name. Next's standalone
+# server.js binds whatever `process.env.HOSTNAME` says, and Docker sets that to
+# the container id — so without this line the server listens on the container
+# IP alone. Measured: 127.0.0.1:4000 inside the container is ECONNREFUSED while
+# the published port answers fine from the host, so the app looks healthy from
+# outside and the HEALTHCHECK, which has only loopback to work with, fails
+# forever. That marks the container unhealthy permanently and, worse, means
+# `depends_on: condition: service_healthy` in the compose file never releases.
+# The old `next start --hostname 0.0.0.0` passed this on the command line; the
+# standalone server takes it only from the environment.
+WORKDIR /repo
 
 # `image.source` is the one that does real work: GitHub reads it to attach the
 # package to this repository, which is what gives the GHCR page a README, a
@@ -125,51 +137,32 @@ LABEL org.opencontainers.image.source="https://github.com/SammyTourani/evestack"
       org.opencontainers.image.description="Self-hosted observability and control plane for eve agents" \
       org.opencontainers.image.licenses="Apache-2.0"
 
-# pnpm's layout is a symlink farm: packages/*/node_modules/<dep> points into
-# /repo/node_modules/.pnpm. Both halves have to travel together or every import
-# resolves to a dangling link, which is why this copies the root store as well
-# as the per-package directories.
-COPY --from=deps --chown=node:node /repo/node_modules /repo/node_modules
-COPY --from=deps --chown=node:node /repo/packages/dashboard/node_modules /repo/packages/dashboard/node_modules
-COPY --from=deps --chown=node:node /repo/packages/evestack-schedules/node_modules /repo/packages/evestack-schedules/node_modules
-
-# @evestack/schedules is a `workspace:*` symlink target, so the real directory
-# has to exist — with the dist/ the build stage produced, not the empty one a
-# cold clone has.
-COPY --from=build --chown=node:node /repo/packages/evestack-schedules/package.json /repo/packages/evestack-schedules/package.json
-COPY --from=build --chown=node:node /repo/packages/evestack-schedules/dist /repo/packages/evestack-schedules/dist
-
-COPY --from=build --chown=node:node /repo/packages/dashboard/.next ./.next
-COPY --from=build --chown=node:node /repo/packages/dashboard/public ./public
-COPY --from=build --chown=node:node /repo/packages/dashboard/package.json /repo/packages/dashboard/next.config.ts ./
-
-# NOT optional, and the reason the previous runtime stage would have failed on
-# first use even if it had built. `lib/approvals.ts`, `lib/memories.ts` and
-# `lib/traces.ts` each `readFileSync(join(dir, "sql", "<name>.sql"))` at REQUEST
-# time — these schemas are created on demand, not by a migration — walking up
-# from `process.cwd()` and throwing "Could not find sql/<name>.sql above <cwd>"
-# when the walk runs out. Approvals, the memory-deletion audit log and trace
-# ingest each 500 on first use without their file. The old runtime stage copied
-# node_modules, .next, public, package.json and next.config.ts, and nothing else.
-COPY --from=build --chown=node:node /repo/packages/dashboard/sql ./sql
-
-# The malicious skill the scanner self-test scans, read from
-# `<cwd>/fixtures/skills/…` by `readFixtureSkill()`. Absent, the Skills page
-# degrades to "cannot be self-tested here" — and the scanner's proof-of-life is
-# the one thing you want working in the image, not only in a source checkout.
+# `output: "standalone"` emits a tree containing only the modules the tracer
+# proves are reachable, plus a server.js that needs no `next` CLI. Measured on
+# this app: 39 MB against the 448 MB a `--prod` install produced, and
+# node_modules was 448 MB of the 462 MB image. Same three-stage shape, roughly a
+# tenth of the payload.
 #
-# 12 KB, and it cannot be loaded as a skill by anything: `listSkills()` searches
-# `agent/skills` / EVESTACK_SKILLS_DIR and never `fixtures/`, and the only reader
-# is `?selftest=1` passing a hard-coded name. The specimen itself is inert by
-# construction — see fixtures/README.md. So the cost is 12 KB and the benefit is
-# that `curl '.../api/skills?selftest=1'` answers truthfully in production.
-COPY --from=build --chown=node:node /repo/packages/dashboard/fixtures ./fixtures
+# The header used to argue against this, on the grounds that the tracer cannot
+# see `sql/*.sql` read at request time. That objection does not survive being
+# checked: Next copies the package's own non-JS files into the standalone tree,
+# and sql/, fixtures/ and the bundled skills all arrive without being asked for.
+# They are still copied explicitly below, because "the tracer happened to
+# include it" is a weaker guarantee than a COPY line, and these three are the
+# ones that 500 at request time rather than failing the build.
+COPY --from=build --chown=node:node /repo/packages/dashboard/.next/standalone ./
+COPY --from=build --chown=node:node /repo/packages/dashboard/.next/static ./packages/dashboard/.next/static
+COPY --from=build --chown=node:node /repo/packages/dashboard/public ./packages/dashboard/public
 
-# `lib/skills.ts` falls back to `<cwd>/../../templates/default/agent/skills`
-# when the deployment has no `agent/skills` of its own, which a container never
-# does. 8 KB, and it is what makes the Skills page show something real out of
-# the box. Point EVESTACK_SKILLS_DIR at a mounted volume to scan your own.
-COPY --from=build --chown=node:node /repo/templates/default/agent/skills /repo/templates/default/agent/skills
+# The three that are read off disk at REQUEST time, not build time, and so 500
+# the first time a page needs them rather than failing the build:
+# lib/approvals.ts, lib/memories.ts and lib/traces.ts each readFileSync a
+# sql/*.sql walking up from process.cwd(); the Skills page reads the malicious
+# fixture for `?selftest=1`; and lib/skills.ts falls back to the bundled
+# template skills when a deployment has none of its own.
+COPY --from=build --chown=node:node /repo/packages/dashboard/sql ./packages/dashboard/sql
+COPY --from=build --chown=node:node /repo/packages/dashboard/fixtures ./packages/dashboard/fixtures
+COPY --from=build --chown=node:node /repo/templates/default/agent/skills ./templates/default/agent/skills
 
 # Never run as root: this container holds a database URL and can start and
 # cancel agent runs.
@@ -190,4 +183,5 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
 # image by hand with `-p 4000:4000` puts it on every interface instead; every
 # route needs the credential either way, but see docs/self-hosting.mdx for what
 # that does and does not buy you.
-CMD ["node_modules/.bin/next", "start", "--port", "4000", "--hostname", "0.0.0.0"]
+WORKDIR /repo/packages/dashboard
+CMD ["node", "server.js"]
