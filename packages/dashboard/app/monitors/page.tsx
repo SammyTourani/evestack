@@ -1,3 +1,6 @@
+import { Suspense } from "react";
+
+import { AlertsPanel } from "./alerts-panel";
 import { DatabaseUnavailableError, describeDbError } from "@/lib/db";
 import { WINDOWS, getMonitorSummary, type MonitorSummary } from "@/lib/monitors";
 import { clock, duration, stamp } from "@/lib/time";
@@ -133,6 +136,15 @@ export default async function MonitorsPage({
   return (
     <>
       <h1>Monitors</h1>
+
+      {/* Streamed: the sandbox checks talk to the Docker daemon, which costs
+          about two seconds for its CPU sample, and the charts below are pure
+          SQL. Blocking the whole page on the slowest check is the mistake
+          app/sessions/page.tsx already paid 15 seconds for. */}
+      <Suspense fallback={null}>
+        <AlertsPanel />
+      </Suspense>
+
       <p className="page-sub">
         Latency and failure rates over the last {windowLabel(hours)}, from the same{" "}
         <code>workflow.workflow_runs</code> the session list reads. Nothing is sampled and nothing
