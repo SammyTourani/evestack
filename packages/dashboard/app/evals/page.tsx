@@ -1,6 +1,8 @@
 import { listApprovals, type ApprovalRow } from "@/lib/approvals";
 import { describeDbError } from "@/lib/db";
 import { suggestFilename } from "@/lib/promote-eval";
+import { gradeOf, RANK, type Grade } from "./grade";
+import { query } from "@/lib/db";
 import { listSessions, type SessionRow } from "@/lib/queries";
 // Minute precision: this is a ranked list, and the rows are minutes apart.
 import { stamp } from "@/lib/time";
@@ -20,7 +22,6 @@ export const dynamic = "force-dynamic";
  * gets anyway the moment they open a preview. So the list ranks on two columns
  * that are already in hand, and the preview does the real read.
  */
-type Grade = "denial" | "failed" | "plain" | "empty";
 
 interface Candidate {
   session: SessionRow;
@@ -29,14 +30,7 @@ interface Candidate {
   deniedTools: string[];
 }
 
-const RANK: Record<Grade, number> = { denial: 0, failed: 1, plain: 2, empty: 3 };
 
-function gradeOf(session: SessionRow, deniedTools: string[]): Grade {
-  if (session.turnCount === 0) return "empty";
-  if (deniedTools.length > 0) return "denial";
-  if (session.status === "failed" || session.status === "errored") return "failed";
-  return "plain";
-}
 
 /**
  * Why this row is here, in the terms the generated file will actually use.
@@ -105,6 +99,27 @@ export default async function EvalsPage() {
     approvalsError = describeDbError(error);
   }
 
+  /*
+   * How many turns in each session actually failed. One query for the whole
+   * page rather than one per session, and it degrades to "no failures known"
+   * rather than taking the page down: an install whose role cannot read the
+   * evestack schema still gets a working promotion list, just without the
+   * ranking that puts broken sessions first.
+   */
+  const failedBySession = new Map<string, number>();
+  try {
+    const rows = await query<{ session_id: string; n: string }>(
+      `SELECT session_id, count(*)::text AS n
+         FROM evestack.fact_turn
+        WHERE outcome IN ('failed', 'no_model_call') AND session_id = ANY($1::text[])
+        GROUP BY session_id`,
+      [sessions.map((x) => x.id)],
+    );
+    for (const r of rows) failedBySession.set(r.session_id, Number(r.n));
+  } catch {
+    // Ranking degrades; promotion still works.
+  }
+
   const deniedBySession = new Map<string, string[]>();
   for (const row of approvals) {
     if (row.optionId !== "deny") continue;
@@ -120,7 +135,8 @@ export default async function EvalsPage() {
   const candidates: Candidate[] = sessions
     .map((session) => {
       const deniedTools = deniedBySession.get(session.id) ?? [];
-      return { session, deniedTools, grade: gradeOf(session, deniedTools) };
+      const failedTurns = failedBySession.get(session.id) ?? 0;
+      return { session, deniedTools, grade: gradeOf(session, deniedTools, failedTurns) };
     })
     .sort((a, b) => RANK[a.grade] - RANK[b.grade]);
 
