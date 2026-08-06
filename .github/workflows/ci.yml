@@ -152,6 +152,33 @@ jobs:
         run: |
           cd templates/default
           npm run db:bootstrap
+
+          # Channel credentials, so the inbound-auth probe has something real to
+          # verify against. Without them eve leaves the three routes idle and the
+          # probe can only skip — which is how a signature check that had never
+          # been tested stayed untested.
+          #
+          # None of these is a secret. The agent lives for the length of one job,
+          # the two shared secrets are literals, and the Ed25519 pair is generated
+          # here and thrown away. The private half goes to a file because the
+          # probe runs in a later step and has to sign with it; the public half is
+          # what the agent verifies against, so it has to be exported before boot
+          # rather than through $GITHUB_ENV, which only reaches later steps.
+          node -e '
+            const { generateKeyPairSync } = require("node:crypto");
+            const { writeFileSync } = require("node:fs");
+            const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+            writeFileSync("/tmp/discord-probe-key.pem", privateKey.export({ type: "pkcs8", format: "pem" }));
+            // The last 32 bytes of the SPKI DER are the raw key, which is the hex
+            // form Discord publishes and eve expects.
+            process.stdout.write(publicKey.export({ type: "spki", format: "der" }).subarray(12).toString("hex"));
+          ' > /tmp/discord-public-key.txt
+          export DISCORD_PUBLIC_KEY="$(cat /tmp/discord-public-key.txt)"
+          export TELEGRAM_BOT_TOKEN=123456789:AA-ci-probe-token-not-a-real-bot
+          export TELEGRAM_WEBHOOK_SECRET_TOKEN=ci-telegram-secret
+          export SLACK_BOT_TOKEN=xoxb-ci-probe-not-a-real-token
+          export SLACK_SIGNING_SECRET=ci-slack-signing-secret
+
           # No model key on purpose — see the note above the job.
           npx eve dev --port 2999 > /tmp/eve-dev.log 2>&1 &
           echo $! > /tmp/eve-dev.pid
@@ -172,7 +199,18 @@ jobs:
       - name: probes that need the agent
         env:
           EVESTACK_PROBE_AGENT_URL: http://localhost:2999
-        run: node contract/runtime/run.mjs --require=agent --only=protocol
+          # Must match what the boot step exported. Two literals rather than a
+          # shared variable because a step's exports do not survive into the next
+          # step, and a mismatch here would look exactly like a broken signature
+          # check — so the probe fails loudly on a wrong secret rather than
+          # skipping on a missing one.
+          TELEGRAM_WEBHOOK_SECRET_TOKEN: ci-telegram-secret
+          SLACK_SIGNING_SECRET: ci-slack-signing-secret
+        # Two invocations, because --only takes one substring, not a list.
+        run: |
+          export EVESTACK_PROBE_DISCORD_PRIVATE_KEY="$(cat /tmp/discord-probe-key.pem)"
+          node contract/runtime/run.mjs --require=agent --only=protocol
+          node contract/runtime/run.mjs --require=agent --only=channels
 
       - name: the agent's own log
         # Always: a probe failure is usually explained by what the agent logged
