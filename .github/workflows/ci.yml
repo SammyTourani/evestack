@@ -139,10 +139,15 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r --if-present run build
 
-      # Postgres-only and filesystem-only probes first. They are fast, they need
-      # no agent, and if they fail there is no point booting one.
-      - name: probes that need only Postgres
-        run: node contract/runtime/run.mjs --require=postgres,typescript
+      # Everything that does not need the agent booted. Fast, and if any of it
+      # fails there is no point paying to boot one.
+      #
+      # `docker` is required rather than allowed to skip: the sandbox probe is
+      # the only thing that checks the egress policy the template ships, and a
+      # skipped security check reads exactly like a passing one in the summary.
+      # The runner has a daemon; the probe pulls the pinned eve runtime image.
+      - name: probes that need Postgres or Docker
+        run: node contract/runtime/run.mjs --require=postgres,typescript,docker
 
       # A FRESH database for the agent, created per run, so nothing is ever
       # re-enqueued from a previous job. That is not tidiness: re-enqueued runs

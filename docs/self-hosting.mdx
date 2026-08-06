@@ -262,6 +262,24 @@ eve keys sandboxes to durable sessions and keeps one long-lived container per se
 reporting `Linux`, and a working directory of `/workspace`. It needs a Docker daemon the agent
 process can reach, and nothing else.
 
+### Egress is off by default
+
+The template ships `networkPolicy: "deny-all"`, not eve's `allow-all`. The session container is
+attached to no network at all, so anything the model's shell tries to fetch — `curl`,
+`git clone`, `pip install`, `npm install`, `apt-get install` — fails on DNS. Loopback still
+works, and model calls, Postgres, Composio and the channels are all outside the sandbox and
+unaffected. Two variables move it, both read at container-creation time:
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `EVESTACK_SANDBOX_NETWORK` | `deny-all` | `allow-all` gives the shell the host's network. Any other value is a boot error. |
+| `EVESTACK_SANDBOX_IMAGE` | the digest pinned in `sandbox.ts` | Overrides the sandbox runtime image. |
+
+eve keeps one container per durable session and reattaches to it across restarts without
+re-applying the policy, so a change to either variable reaches new sessions only. See
+[Troubleshooting](/docs/troubleshooting) for the failure text and for how to drop the old
+containers.
+
 One limit worth knowing before you plan network policy: the Docker backend honours only
 `allow-all` and `deny-all`. Domain allow-lists need `microsandbox()` (macOS on Apple Silicon, or
 Linux with KVM). For kernel-boundary isolation of code you did not write, there is

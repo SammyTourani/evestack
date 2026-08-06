@@ -63,21 +63,59 @@ const SANDBOX_IMAGE =
  * eve's documented default is `"allow-all"` (its `docs/sandbox.mdx`, "Network
  * policy"), which puts the container on Docker's default bridge: a shell the
  * model drives reaches your LAN, your router, a cloud instance's metadata
- * endpoint, and the internet. This template defaults to `"deny-all"` instead,
- * which starts the container with `--network none`.
+ * endpoint, and the internet. This template defaults to `"deny-all"` instead —
+ * which is what eve's own docs prescribe for anything non-public, sensitive,
+ * regulated, or in production.
  *
- * That costs the agent nothing structural — model calls, Postgres, Composio and
- * every channel run in the app runtime, on the other side of the sandbox
- * boundary. It costs the *shell*: `curl`, `git clone`, `pip install`,
- * `npm install` and `apt-get` all fail with no route. A general assistant may
- * legitimately need those, so this is a default, not a prohibition:
+ * How it is enforced, because the mechanism is what decides the failure text:
+ * this sandbox declares no `bootstrap()` and seeds no `sandbox/workspace/`
+ * files, so eve opens the session with `templateKey: null` — and on that path it
+ * starts the container on the bridge, runs its base setup, then runs
+ * `docker network disconnect --force bridge <container>`. The container ends up
+ * on no network at all: `lo` only, no default route. (`--network none` at
+ * `docker run` time is the *other* path, taken only once a sandbox has a
+ * bootstrap or seed files.) Either way `/etc/resolv.conf` keeps listing the
+ * host's nameserver, so egress dies as a name-resolution failure rather than as
+ * "network unreachable".
+ *
+ * Measured against the pinned image below, not predicted:
+ *
+ *   curl https://example.com  curl: (6) Could not resolve host: example.com
+ *   git clone https://…       fatal: unable to access … Could not resolve host
+ *   pip install requests      "Temporary failure in name resolution" x5, then
+ *                             "No matching distribution found for requests"
+ *   npm install lodash        getaddrinfo EAI_AGAIN registry.npmjs.org
+ *   apt-get update            exits **0** with warnings, and the install after
+ *                             it says "E: Unable to locate package X"
+ *
+ * Those last two are why this also has an entry in `docs/troubleshooting.mdx`:
+ * pip and apt both finish on a sentence that reads like the package does not
+ * exist, which is the wrong conclusion for a model to draw and act on.
+ *
+ * Loopback is untouched — `python3 -m http.server` and a `curl 127.0.0.1` at it
+ * both work — and nothing structural is lost: model calls, Postgres, Composio
+ * and every channel run in the app runtime, on the other side of the sandbox
+ * boundary. What is lost is the shell's ability to fetch anything. A general
+ * assistant may legitimately need that, so this is a default, not a prohibition:
  *
  *   EVESTACK_SANDBOX_NETWORK=allow-all
  *
+ * That variable is read when a session's container is *created*, and eve keeps
+ * one container per durable session with no idle timeout: `create()` returns
+ * early on `docker container inspect` and never re-applies the policy, and the
+ * `docker start` that follows a server restart brings the old policy back along
+ * with the container. Setting the variable therefore does nothing for a
+ * conversation you have already started, in either direction: an existing
+ * session keeps the egress it was born with. Start a new session, or drop the
+ * containers first:
+ *
+ *   docker rm -f $(docker ps -aq --filter label=eve.sandbox.role=session)
+ *
  * There is no middle setting here — the Docker backend honors only these two
  * values, and domain allow-lists need `microsandbox()`. An authored tool that
- * needs egress for one step can also call `sandbox.setNetworkPolicy("allow-all")`
- * on the live handle and put it back afterwards.
+ * needs egress for one step can call `sandbox.setNetworkPolicy("allow-all")` on
+ * the live handle and put it back afterwards; that one does take effect on a
+ * container that is already running.
  *
  * An unrecognized value is a hard error rather than a silent fall back to
  * either side, because "allow_all" and "none" are typos, not choices — and
@@ -93,15 +131,38 @@ function resolveNetworkPolicy(): DockerSandboxNetworkPolicy {
   );
 }
 
+/**
+ * Container environment, under `deny-all` only.
+ *
+ * Both of these turn off a fetch retry loop that cannot possibly succeed: the
+ * container has no route, so every attempt fails identically, and eve enforces
+ * no per-command timeout — the retries are dead time in front of a waiting
+ * user. Measured on the pinned image, deny-all, same error text either way:
+ *
+ *   npm install lodash     70.1s  ->  0.10s   (npm_config_fetch_retries=0)
+ *   pip install requests    7.7s  ->  0.15s   (PIP_RETRIES=0)
+ *
+ * Deliberately not set under `allow-all`, where retrying a flaky network is the
+ * correct behaviour. `docker()` passes these as `-e` on `docker run`, and
+ * `docker exec` inherits them, so every bash tool call sees them.
+ */
+function sandboxEnv(networkPolicy: DockerSandboxNetworkPolicy): Record<string, string> {
+  if (networkPolicy !== "deny-all") return {};
+  return { PIP_RETRIES: "0", npm_config_fetch_retries: "0" };
+}
+
 export default defineSandbox({
   // The factory form, not `docker({...})` directly: eve invokes it lazily on
   // first framework access and memoizes the result, which is what its docs
   // prescribe for create options read from the environment. Called eagerly at
-  // module load, these two would be resolved before eve has finished loading
+  // module load, these would be resolved before eve has finished loading
   // .env/.env.local.
-  backend: () =>
-    docker({
+  backend: () => {
+    const networkPolicy = resolveNetworkPolicy();
+    return docker({
+      env: sandboxEnv(networkPolicy),
       image: process.env.EVESTACK_SANDBOX_IMAGE?.trim() || SANDBOX_IMAGE,
-      networkPolicy: resolveNetworkPolicy(),
-    }),
+      networkPolicy,
+    });
+  },
 });
