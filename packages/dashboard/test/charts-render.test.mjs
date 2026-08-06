@@ -107,7 +107,7 @@ for (const c of CASES) {
         ...c.timeSeries,
       }),
       "bar chart": render(BarChart, { title: "T", unit: "count", ...c.bar }),
-      histogram: render(HistogramChart, { title: "T", unit: "ms", ...c.histogram }),
+      histogram: render(HistogramChart, { title: "T", unit: "duration", ...c.histogram }),
       heatmap: render(Heatmap, { title: "T", unit: "count", ...c.heatmap }),
       "top list": render(TopList, { title: "T", unit: "count", valueLabel: "calls", ...c.topList }),
       sparkline: render(Sparkline, { label: "trend", unit: "count", ...c.spark }),
@@ -153,7 +153,7 @@ test("a chart is always accompanied by its numbers", () => {
 test("the summary a screen reader hears is wired to the figure", () => {
   const html = render(TimeSeriesChart, {
     title: "Turns",
-    unit: "ms",
+    unit: "duration",
     series: [
       {
         id: "a",
@@ -172,7 +172,7 @@ test("the summary a screen reader hears is wired to the figure", () => {
 test("partial coverage is on the face of the chart, not only in the summary", () => {
   const html = render(TimeSeriesChart, {
     title: "Turns",
-    unit: "ms",
+    unit: "duration",
     series: [
       {
         id: "a",
@@ -227,7 +227,7 @@ test("the legend distinguishes series without relying on hue", () => {
 test("a filled mark is textured, because a fill cannot carry a dash", () => {
   const html = render(TimeSeriesChart, {
     title: "Cost",
-    unit: "usd",
+    unit: "cost",
     variant: "stacked-area",
     series: [
       { id: "a", label: "sonnet", points: [{ x: 1, y: 1 }] },
@@ -250,7 +250,7 @@ test("a filled mark is textured, because a fill cannot carry a dash", () => {
 test("a bar chart names the categories it has no value for", () => {
   const html = render(BarChart, {
     title: "Spend by model",
-    unit: "usd",
+    unit: "cost",
     xLabel: "model",
     categories: ["sonnet", "acme/experimental-v1", "ollama/qwen3"],
     series: [{ id: "spend", label: "spend", values: [8.14, null, 0] }],
@@ -265,7 +265,7 @@ test("a bar chart names the categories it has no value for", () => {
 test("a histogram says how many values it could not bin", () => {
   const html = render(HistogramChart, {
     title: "Turn duration",
-    unit: "ms",
+    unit: "duration",
     noun: "turns",
     values: [100, 200, null, null, null],
   });
@@ -337,19 +337,19 @@ test("a top list ranks in a stated order and says how many it hid", () => {
 });
 
 test("a sparkline of nothing is an em dash, not an empty box", () => {
-  const nothing = render(Sparkline, { label: "cost", unit: "usd", values: [null, null] });
+  const nothing = render(Sparkline, { label: "cost", unit: "cost", values: [null, null] });
   assert.doesNotMatch(nothing, /<svg/);
   assert.match(nothing, new RegExp(EM_DASH));
   assert.match(nothing, /cost: no values in 2 buckets\./);
 
-  const gapped = render(Sparkline, { label: "cost", unit: "usd", values: [1, 2, null, 4, 5] });
+  const gapped = render(Sparkline, { label: "cost", unit: "cost", values: [1, 2, null, 4, 5] });
   assert.equal(gapped.split("<path").length - 1, 2, "a gap is two paths, not one line across");
   assert.match(gapped, /role="img"/);
   assert.match(gapped, /1 of 5 buckets reported no value and are drawn as gaps\./);
 
   // A value stranded between two gaps still has to appear, and a path of one
   // point draws nothing at all, so it becomes a dot.
-  const stranded = render(Sparkline, { label: "cost", unit: "usd", values: [null, 4, null] });
+  const stranded = render(Sparkline, { label: "cost", unit: "cost", values: [null, 4, null] });
   assert.equal(stranded.split("<path").length - 1, 0);
   assert.equal(stranded.split("<circle").length - 1, 1);
 });
@@ -357,7 +357,7 @@ test("a sparkline of nothing is an em dash, not an empty box", () => {
 test("an unpriced model never renders as free", () => {
   const unpriced = render(QueryValue, {
     label: "Spend",
-    unit: "usd",
+    unit: "cost",
     value: 0,
     priced: false,
     previous: 3,
@@ -367,7 +367,7 @@ test("an unpriced model never renders as free", () => {
   // No ratio either: a delta against an unknown is an unknown.
   assert.match(unpriced, /no comparison: the previous period has no value/);
 
-  const free = render(QueryValue, { label: "Spend", unit: "usd", value: 0, priced: true });
+  const free = render(QueryValue, { label: "Spend", unit: "cost", value: 0, priced: true });
   assert.match(free, /\$0\.00/);
   assert.doesNotMatch(free, /unpriced/);
 });
@@ -375,7 +375,7 @@ test("an unpriced model never renders as free", () => {
 test("a delta is readable without colour", () => {
   const html = render(QueryValue, {
     label: "Spend",
-    unit: "usd",
+    unit: "cost",
     value: 11.2,
     previous: 10,
     previousLabel: "the previous 7 days",
@@ -390,7 +390,7 @@ test("a delta is readable without colour", () => {
 test("a tile over partial data says so on the tile", () => {
   const html = render(QueryValue, {
     label: "TTFT p50",
-    unit: "ms",
+    unit: "duration",
     value: 410,
     coverage: { observed: 41, total: 1203, noun: "turns" },
   });

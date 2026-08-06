@@ -37,7 +37,7 @@ export type Delta =
   /** Both periods are zero. */
   | { readonly kind: "unchanged" }
   | {
-      readonly kind: "ratio";
+      readonly kind: "percent";
       /** Signed fraction: 0.12 is +12%. */
       readonly fraction: number;
       readonly direction: Direction;
@@ -64,7 +64,7 @@ export function periodDelta(current: Value, previous: Value, better: Better = "n
   }
   const fraction = (current - previous) / Math.abs(previous);
   const direction: Direction = fraction > 0 ? "up" : fraction < 0 ? "down" : "flat";
-  return { kind: "ratio", fraction, direction, sentiment: sentimentOf(direction, better) };
+  return { kind: "percent", fraction, direction, sentiment: sentimentOf(direction, better) };
 }
 
 /**
@@ -80,7 +80,7 @@ export function formatDelta(delta: Delta): string {
       return "no change";
     case "from-zero":
       return delta.direction === "up" ? "new" : "now negative";
-    case "ratio": {
+    case "percent": {
       if (delta.direction === "flat") return "no change";
       const sign = delta.fraction > 0 ? "+" : "-";
       return `${sign}${formatRatio(Math.abs(delta.fraction))}`;
@@ -99,7 +99,7 @@ export function describeDelta(delta: Delta, periodLabel: string): string {
       return delta.direction === "up"
         ? `new: ${periodLabel} was zero`
         : `now negative: ${periodLabel} was zero`;
-    case "ratio": {
+    case "percent": {
       if (delta.direction === "flat") return `unchanged from ${periodLabel}`;
       const word = delta.direction === "up" ? "up" : "down";
       return `${word} ${formatRatio(Math.abs(delta.fraction))} from ${periodLabel}`;

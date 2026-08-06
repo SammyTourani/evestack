@@ -125,16 +125,16 @@ export default function ChartGallery() {
         />
         <QueryValue
           label="Spend"
-          unit="usd"
+          unit="cost"
           value={11.05}
           previous={9.4}
           previousLabel="the previous 30 days"
           better="lower"
         />
-        <QueryValue label="acme/experimental-v1 spend" unit="usd" value={0} priced={false} />
+        <QueryValue label="acme/experimental-v1 spend" unit="cost" value={0} priced={false} />
         <QueryValue
           label="TTFT p50"
-          unit="ms"
+          unit="duration"
           value={412}
           previous={508}
           better="lower"
@@ -163,7 +163,7 @@ export default function ChartGallery() {
       <TimeSeriesChart
         title="Cost by model"
         subtitle="Stacked. ollama/qwen3 is local inference, so its zero is a measured zero."
-        unit="usd"
+        unit="cost"
         variant="stacked-area"
         overflow="sum"
         overflowNoun="model"
@@ -173,7 +173,7 @@ export default function ChartGallery() {
       <BarChart
         title="Spend by model"
         xLabel="model"
-        unit="usd"
+        unit="cost"
         categories={["sonnet", "gpt-5-mini", "ollama/qwen3", "acme/experimental-v1"]}
         series={[{ id: "spend", label: "spend", values: [8.14, 2.91, 0, null] }]}
       />
@@ -181,7 +181,7 @@ export default function ChartGallery() {
       <HistogramChart
         title="Turn duration"
         subtitle="Nice bin edges, so two windows can be compared."
-        unit="ms"
+        unit="duration"
         noun="turns"
         values={durations}
       />

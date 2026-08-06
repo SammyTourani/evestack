@@ -167,12 +167,12 @@ export function TopList(props: TopListProps) {
                   <Cell text={formatValue(row.value, props.unit)} />
                   {hasErrorRate ? (
                     <Cell
-                      text={formatValue(rate, "ratio")}
+                      text={formatValue(rate, "percent")}
                       tone={rate !== null && rate > 0 ? "err" : undefined}
                     />
                   ) : null}
                   {hasDuration ? (
-                    <Cell text={formatValue(row.durationMs ?? null, "ms")} />
+                    <Cell text={formatValue(row.durationMs ?? null, "duration")} />
                   ) : null}
                 </tr>
               );

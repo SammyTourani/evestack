@@ -60,20 +60,20 @@ const { chartSummary, chartTable } = await import("../components/charts/lib/a11y
 /* ── format ─────────────────────────────────────────────────────────────── */
 
 test("an absent value is an em dash in every unit, and never a zero", () => {
-  for (const unit of ["count", "ms", "usd", "ratio", "tokens", "bytes"]) {
+  for (const unit of ["count", "duration", "cost", "percent", "tokens", "bytes"]) {
     assert.equal(formatValue(null, unit), ABSENT, unit);
     assert.equal(formatTick(null, unit), ABSENT, unit);
   }
   // A NaN or an Infinity arrives from a division nobody guarded. It is an
   // absence too, not a very large number.
   assert.equal(formatValue(Number.NaN, "count"), ABSENT);
-  assert.equal(formatValue(Number.POSITIVE_INFINITY, "usd"), ABSENT);
+  assert.equal(formatValue(Number.POSITIVE_INFINITY, "cost"), ABSENT);
 });
 
 test("a real zero still renders as a zero", () => {
   assert.equal(formatValue(0, "count"), "0");
-  assert.equal(formatValue(0, "usd"), "$0.00");
-  assert.equal(formatValue(0, "ratio"), "0%");
+  assert.equal(formatValue(0, "cost"), "$0.00");
+  assert.equal(formatValue(0, "percent"), "0%");
 });
 
 test("unpriced renders as an absence, free renders as $0.00", () => {
@@ -105,7 +105,7 @@ test("axis ticks compact only where a full number would not fit", () => {
   assert.equal(formatTick(9999, "count"), "9,999");
   assert.equal(formatTick(12_345, "count"), "12.3K");
   assert.equal(formatTick(1_240_000, "tokens"), "1.2M");
-  assert.equal(formatTick(6600, "ms"), "6.6s");
+  assert.equal(formatTick(6600, "duration"), "6.6s");
 });
 
 test("bytes are base 10, like every other size in this dashboard", () => {
@@ -304,7 +304,7 @@ test("partial coverage produces a sentence, full coverage produces silence", () 
         coverage: { observed: 41, total: 1203, noun: "turns" },
       },
     ],
-    { unit: "ms" },
+    { unit: "duration" },
   );
   assert.equal(coverageNote(partial), "Partial data. TTFT covers 41 of 1,203 turns (3%).");
 
@@ -317,7 +317,7 @@ test("partial coverage produces a sentence, full coverage produces silence", () 
         coverage: { observed: 1203, total: 1203, noun: "turns" },
       },
     ],
-    { unit: "ms" },
+    { unit: "duration" },
   );
   assert.equal(coverageNote(full), null, "a chart with nothing to disclose says nothing");
   assert.equal(describeCoverage(null), null);
@@ -373,7 +373,7 @@ test("a direction is not a judgement", () => {
 
 test("a ratio reports its size and its words", () => {
   const up = periodDelta(112, 100);
-  assert.equal(up.kind, "ratio");
+  assert.equal(up.kind, "percent");
   assert.equal(formatDelta(up), "+12%");
   assert.equal(describeDelta(up, "the previous 7 days"), "up 12% from the previous 7 days");
   assert.equal(formatDelta(periodDelta(88, 100)), "-12%");
@@ -750,7 +750,7 @@ test("the spoken summary leads with the caveat, not the number", () => {
         coverage: { observed: 41, total: 1203, noun: "turns" },
       },
     ],
-    { unit: "ms" },
+    { unit: "duration" },
   );
   const summary = chartSummary(chart, { ...TABLE_OPTIONS, kind: "Line chart" });
   assert.match(summary, /^Line chart: Turns\./);

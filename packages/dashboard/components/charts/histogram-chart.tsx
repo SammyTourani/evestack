@@ -58,7 +58,7 @@ export function HistogramChart(props: HistogramChartProps) {
       series={[{ id: "count", label: `${noun} in bin`, values: bins.bins.map((b) => b.count) }]}
       // The bars count occurrences; the bin labels carry the measured unit.
       unit="count"
-      xLabel={props.unit === "ms" ? "duration" : "bucket"}
+      xLabel={props.unit === "duration" ? "duration" : "bucket"}
       height={props.height}
       extraNotes={extra}
     />

@@ -28,7 +28,7 @@ export interface QueryValueProps {
   readonly value: Value;
   readonly unit: Unit;
   /**
-   * Only meaningful for `unit: "usd"`. `false` means no catalog price covers
+   * Only meaningful for `unit: "cost"`. `false` means no catalog price covers
    * the model, so the spend is unknown rather than zero.
    */
   readonly priced?: boolean;
@@ -51,17 +51,17 @@ const CHIP: Record<string, string> = {
 export function QueryValue(props: QueryValueProps) {
   const priced = props.priced ?? true;
   const text =
-    props.unit === "usd" ? formatCost(props.value, priced) : formatValue(props.value, props.unit);
+    props.unit === "cost" ? formatCost(props.value, priced) : formatValue(props.value, props.unit);
 
   // A delta against an unpriced number would be a ratio of two unknowns.
-  const comparable = props.unit === "usd" && !priced ? null : props.value;
+  const comparable = props.unit === "cost" && !priced ? null : props.value;
   const delta = periodDelta(comparable, props.previous ?? null, props.better ?? "neutral");
   const previousLabel = props.previousLabel ?? "the previous period";
   const coverage = describeCoverage(props.coverage);
 
-  const sentiment = delta.kind === "ratio" || delta.kind === "from-zero" ? delta.sentiment : "neutral";
+  const sentiment = delta.kind === "percent" || delta.kind === "from-zero" ? delta.sentiment : "neutral";
   const arrow =
-    delta.kind === "ratio" || delta.kind === "from-zero"
+    delta.kind === "percent" || delta.kind === "from-zero"
       ? delta.direction === "up"
         ? "▲"
         : delta.direction === "down"
@@ -74,7 +74,7 @@ export function QueryValue(props: QueryValueProps) {
       <span className="text-micro tracking-wide text-text-dim uppercase">{props.label}</span>
       <span className="font-mono text-metric text-text">
         {text}
-        {props.unit === "usd" && !priced ? (
+        {props.unit === "cost" && !priced ? (
           <span className="ml-2 font-sans text-micro text-warn">unpriced</span>
         ) : null}
       </span>

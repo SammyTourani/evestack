@@ -355,7 +355,7 @@ function FacetChip<T>({ column }: { column: Column<T, unknown> }) {
       ) : (
         <ul className="m-0 list-none p-0">
           {options.map((option) => (
-            <li key={option.key ?? " null"}>
+            <li key={option.key ?? "null"}>
               <label
                 className={`flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-body hover:bg-bg-hover`}
               >

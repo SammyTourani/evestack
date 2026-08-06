@@ -25,13 +25,25 @@ export const ABSENT = "—";
  * with the formatter call so that the axis, the tooltip, the legend and the
  * data table cannot disagree about it.
  */
-export type Unit =
-  | "count" // 1,204
-  | "ms" // 6.6s
-  | "usd" // $8.14
-  | "ratio" // 0.031 → 3.1%
-  | "tokens" // 1.2M
-  | "bytes"; // 4.1 kB
+export type { Unit } from "../../../lib/metrics";
+import type { Unit } from "../../../lib/metrics";
+
+/*
+ * The unit vocabulary is NOT declared here. It is imported from
+ * `lib/metrics.ts`, which stamps a unit on every measure it returns, because a
+ * chart is supposed to be renderable straight from a `/api/metrics/query`
+ * response — that is the entire point of shipping a query API.
+ *
+ * An earlier version of this file declared its own list: `ms`, `usd`, `ratio`.
+ * The two halves of the same wave, built in parallel, invented incompatible
+ * vocabularies at the one seam where they meet, so a series fed from the API
+ * carried units no chart could match and every cost rendered as a bare count.
+ * Importing the type instead of restating it makes that divergence a
+ * compile error rather than a silent mis-render, which is better than the test
+ * that would otherwise have to notice. `switch` statements below are
+ * exhaustive over it, so adding a unit to the catalog breaks the build here
+ * until this file handles it.
+ */
 
 /** A value that may be genuinely absent. `null` is a gap, never a zero. */
 export type Value = number | null;
@@ -93,14 +105,16 @@ export function formatRatio(r: number): string {
 export function formatValue(value: Value, unit: Unit): string {
   if (value === null || !Number.isFinite(value)) return ABSENT;
   switch (unit) {
-    case "ms":
+    case "duration":
       return formatDuration(value);
-    case "usd":
+    case "cost":
       return formatUsd(value);
-    case "ratio":
+    case "percent":
       return formatRatio(value);
     case "bytes":
       return formatBytes(value);
+    case "tokens_per_second":
+      return `${COUNT.format(Math.round(value))}/s`;
     case "count":
     case "tokens":
       return COUNT.format(value);
@@ -114,7 +128,7 @@ export function formatValue(value: Value, unit: Unit): string {
  */
 export function formatTick(value: Value, unit: Unit): string {
   if (value === null || !Number.isFinite(value)) return ABSENT;
-  if (unit === "count" || unit === "tokens") {
+  if (unit === "count" || unit === "tokens" || unit === "tokens_per_second") {
     return Math.abs(value) < 10_000 ? COUNT.format(value) : COMPACT.format(value);
   }
   return formatValue(value, unit);
@@ -130,5 +144,5 @@ export function formatTick(value: Value, unit: Unit): string {
  */
 export function formatCost(value: Value, priced: boolean): string {
   if (!priced) return ABSENT;
-  return formatValue(value, "usd");
+  return formatValue(value, "cost");
 }
