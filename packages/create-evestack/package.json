@@ -2,7 +2,7 @@
   "name": "create-evestack",
   "version": "0.4.0",
   "type": "module",
-  "description": "The whole eve stack, on your machine. Durable Postgres sessions, a Docker sandbox, memory, approvals, schedules, 1,070 tool integrations, and a dashboard that drives the agent.",
+  "description": "The whole eve stack. On your own machine. Durable Postgres sessions, a Docker sandbox, memory, approvals, schedules, 1,070 tool integrations, and a dashboard that drives the agent.",
   "license": "Apache-2.0",
   "keywords": [
     "eve",

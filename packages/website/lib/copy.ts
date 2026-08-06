@@ -15,7 +15,7 @@ export const site = {
      and npm. It was four different sentences across those four surfaces, so
      anyone arriving via npm → GitHub → here got re-pitched three times and
      never landed on one idea. Change it in all four or in none. */
-  tagline: "The whole eve stack, on your machine.",
+  tagline: "The whole eve stack. On your own machine.",
   /* Was "… One command." That was false and one `npx` away from being caught:
      the scaffolder itself prints three more commands (packages/create-evestack/
      index.mjs:245-251) and the dashboard is a separate clone (:258-260). The

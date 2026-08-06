@@ -2,7 +2,7 @@
 
 # evestack
 
-### The whole eve stack, on your machine.
+### The whole eve stack. On your own machine.
 
 A self-hosted distribution of the eve agent framework — durable Postgres sessions, a Docker
 sandbox, and a dashboard that **observes *and drives*** the agent. One command scaffolds it;

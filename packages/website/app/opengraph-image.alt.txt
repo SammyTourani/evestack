@@ -1,1 +1,1 @@
-evestack — the whole eve stack, on your machine. Durable sessions, sandboxing, memory, approvals, schedules, 1,070 tool integrations, and a dashboard that drives the agent.
+evestack: the whole eve stack, on your own machine. Durable sessions, sandboxing, memory, approvals, schedules, 1,070 tool integrations, and a dashboard that drives the agent.
