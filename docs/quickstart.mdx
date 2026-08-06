@@ -13,8 +13,13 @@ description: One command to a running, durable, dashboard-observed agent.
 ## Create the project
 
 ```bash
-npx create-evestack my-agent
+npx evestack create my-agent
 ```
+
+`npx create-evestack my-agent` does the same thing. They are two published names for one
+implementation — `evestack` is the single command (`create`, `attach`, `doctor`), and
+`create-evestack` is the name npm's `create-*` convention leads people to. Same code, same
+prompts, same flags.
 
 You'll be asked for a model provider — OpenAI, Anthropic or Ollama — and whether to enable
 Composio's one-click tool sign-in. Answer both, or pass `--yes` to skip prompts and fill in
@@ -81,34 +86,45 @@ process, because it never lived in the process to begin with.
 
 ## See it in the dashboard
 
-The dashboard is not part of the scaffolded project — `create-evestack` gives you the agent —
-and evestack publishes no dashboard image yet, so this is a **build, not a pull**. Once, from
-anywhere; you can delete the clone afterwards:
-
-```bash
-git clone https://github.com/SammyTourani/evestack
-docker build -t evestack-dashboard:local -f evestack/packages/dashboard/Dockerfile evestack
-```
-
-<Note>
-  The build context is the repository **root**, not `packages/dashboard`. The dashboard depends
-  on `@evestack/schedules` through pnpm's `workspace:*` protocol, which resolves only against
-  the root lockfile — building from the package directory is what used to end at
-  `EUNSUPPORTEDPROTOCOL`.
-</Note>
-
-Then, back in your project, where the generated `docker-compose.yml` already has the service
-wired to this project's database and credentials:
+One command, in the project you just scaffolded:
 
 ```bash
 docker compose --profile dashboard up -d
 ```
 
+That is a **pull**. The generated `docker-compose.yml` points at
+`ghcr.io/sammytourani/evestack-dashboard`, pinned to the version tested with this template, and
+the service is already wired to this project's database and to the `.env.local` your agent
+reads — so there is no repository to clone, no image to build, and no credential to copy across.
+
+<Warning>
+  **The image is not published yet.** It lands with evestack's first dashboard release; until
+  then the command above fails with `manifest unknown`. Build that exact tag once and Docker
+  finds it locally, with nothing in your project to change:
+
+  ```bash
+  git clone https://github.com/SammyTourani/evestack
+  docker build -t ghcr.io/sammytourani/evestack-dashboard:0.1.0 \
+    -f evestack/packages/dashboard/Dockerfile evestack
+  ```
+
+  The build context is the repository **root**, not `packages/dashboard`. The dashboard depends
+  on `@evestack/schedules` through pnpm's `workspace:*` protocol, which resolves only against
+  the root lockfile — building from the package directory is what used to end at
+  `EUNSUPPORTEDPROTOCOL`. Delete the clone afterwards; the image stays.
+</Warning>
+
+<Note>
+  To run an image of your own — a fork, a private registry, a local build under a different name
+  — set `EVESTACK_DASHBOARD_IMAGE` in a `.env` beside the compose file, or export it in your
+  shell. Nothing else in the generated compose file needs to change.
+</Note>
+
 Open `http://localhost:4000` and sign in with the `EVESTACK_AUTH_USER` and
-`EVESTACK_AUTH_PASSWORD` that `create-evestack` generated into `.env.local`. Every route is
-behind that credential — the dashboard starts agent runs, approves gated shell commands and
-deletes memories, so it fails closed rather than serving a viewer to anyone who reaches the
-port. Scripts can use HTTP Basic instead:
+`EVESTACK_AUTH_PASSWORD` generated into `.env.local` — the scaffolder prints them when it
+finishes. Every route is behind that credential: the dashboard starts agent runs, approves
+gated shell commands and deletes memories, so it fails closed rather than serving a viewer to
+anyone who reaches the port. Scripts can use HTTP Basic instead:
 
 ```bash
 curl -u "$EVESTACK_AUTH_USER:$EVESTACK_AUTH_PASSWORD" localhost:4000/api/fleet

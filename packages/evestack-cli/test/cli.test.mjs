@@ -8,7 +8,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { parseArgs, main, USAGE } from "../src/cli.mjs";
+import { parseArgs, main, scaffoldCommand, USAGE, DOCTOR_USAGE } from "../src/cli.mjs";
 import { safeIdentifier, redact, parseUtcTimestamp, DoctorError } from "../src/db.mjs";
 import { duration, table, firstLine } from "../src/format.mjs";
 
@@ -63,12 +63,68 @@ test("--help exits 0", async () => {
 test("an unknown command does not fall through to doctor", async () => {
   const stderr = new Sink();
   assert.equal(await main(["fix"], { stdout: new Sink(), stderr }), 2);
-  assert.match(stderr.text, /Only `doctor` exists/);
+  assert.match(stderr.text, /Unknown command "fix"/);
+  assert.match(stderr.text, /create, attach or doctor/);
 });
 
 test("the usage text does not advertise a --fix that deliberately does not exist", () => {
   assert.doesNotMatch(USAGE, /--fix/);
+  assert.doesNotMatch(DOCTOR_USAGE, /--fix/);
   assert.match(USAGE, /never writes to your database/);
+});
+
+/* -------------------------------------------------------------------------- */
+/* one command, three subcommands                                              */
+/* -------------------------------------------------------------------------- */
+
+test("the top-level usage names all three commands and both front doors", () => {
+  // The whole point of merging the two CLIs: someone who runs `evestack` with
+  // no arguments has to be able to see that `create` exists here, and that the
+  // `npx create-evestack` in every doc is the same thing.
+  for (const command of ["evestack create", "evestack attach", "evestack doctor"]) {
+    assert.match(USAGE, new RegExp(command.replace(" ", "\\s")));
+  }
+  assert.match(USAGE, /npx create-evestack/);
+});
+
+test("`--help` gets the command list; `doctor --help` gets doctor's flags", async () => {
+  const top = new Sink();
+  assert.equal(await main(["--help"], { stdout: top, stderr: new Sink() }), 0);
+  assert.equal(top.text, USAGE);
+
+  const doctor = new Sink();
+  assert.equal(await main(["doctor", "--help"], { stdout: doctor, stderr: new Sink() }), 0);
+  assert.equal(doctor.text, DOCTOR_USAGE);
+  assert.match(doctor.text, /--schema=NAME/);
+});
+
+test("scaffold commands are routed before doctor's parser sees their flags", () => {
+  assert.equal(scaffoldCommand(["create", "my-agent", "--yes"]), "create");
+  assert.equal(scaffoldCommand(["attach", ".", "--dry-run"]), "attach");
+  assert.equal(scaffoldCommand(["doctor", "--json"]), null);
+  assert.equal(scaffoldCommand([]), null);
+  // Only in first position: `evestack doctor create` is a doctor invocation
+  // with a stray argument, and misreading it as a scaffold would create a
+  // directory for someone who asked to diagnose a database.
+  assert.equal(scaffoldCommand(["doctor", "create"]), null);
+
+  // This is what the router is protecting against. doctor's parser takes one
+  // positional and refuses every flag it does not know, and a scaffold
+  // invocation is neither — `evestack create my-agent` is already an
+  // "Unexpected argument", and `--yes` an "Unknown option", so routing after
+  // parsing would mean the wizard never started.
+  assert.throws(() => parseArgs(["create", "my-agent", "--yes"]), /Unexpected argument "my-agent"/);
+  assert.throws(() => parseArgs(["create", "--yes"]), /Unknown option --yes/);
+});
+
+test("both scaffold commands are actually reachable", async () => {
+  // Not executed — the wizard writes files and runs a package install — but the
+  // delegation module has to export exactly the names the router indexes it by,
+  // and a typo there is only discoverable at runtime in a no-build package.
+  const scaffold = await import("../src/scaffold.mjs");
+  for (const name of ["create", "attach"]) {
+    assert.equal(typeof scaffold[name], "function", name);
+  }
 });
 
 /* -------------------------------------------------------------------------- */

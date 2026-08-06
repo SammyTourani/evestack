@@ -272,11 +272,31 @@ are adding it to an existing eve project rather than starting from the template.
 
 ## The dashboard container
 
-There is **no published image**. Build one from a checkout — the context is the repository
+The dashboard ships as an image, not as an npm package — npm has no way to run a Next.js
+application, so `@evestack/dashboard` is `private: true` and the deliverable is
+`ghcr.io/sammytourani/evestack-dashboard`. It is public and needs no registry login to pull.
+
+A scaffolded project's `docker-compose.yml` already points at it, pinned to the version tested
+with that template:
+
+```bash
+docker compose --profile dashboard up -d
+```
+
+<Warning>
+  **Not published yet.** The image lands with evestack's first dashboard release
+  (`.github/workflows/publish-dashboard.yml`, triggered by a `dashboard-v*` tag). Until then the
+  command above fails with `manifest unknown` and you need the local build below.
+</Warning>
+
+### Building it yourself
+
+You need this for three reasons and no others: the image is not published yet, you are changing
+the dashboard, or you want an image in a registry you control. The context is the repository
 **root**, not `packages/dashboard`:
 
 ```bash
-docker build -t evestack-dashboard:local -f packages/dashboard/Dockerfile .
+docker build -t ghcr.io/sammytourani/evestack-dashboard:0.1.0 -f packages/dashboard/Dockerfile .
 ```
 
 That is not a style preference. `packages/dashboard/package.json` declares
@@ -286,16 +306,26 @@ installs anything. The Dockerfile therefore runs `pnpm install --filter @evestac
 at the root, against the real lockfile, and builds `@evestack/schedules` first because its
 `dist/` is gitignored and a cold clone has none.
 
-From this repository the whole thing is one command, which builds that image for you:
+Tagging it with the **published** name rather than something like `evestack-dashboard:local` is
+what makes a scaffolded project find it with no further configuration: Docker uses a local image
+when one exists under that name and only reaches for the registry when it does not. From this
+repository the same build is one command, because the root compose file declares both `image:`
+and `build:`:
 
 ```bash
-docker compose --profile full up -d
+docker compose --profile dashboard up -d     # `--profile full` is the same profile
 ```
 
-Publishing an image later is a one-step follow-up: `docker build` as above, tag it for a
-registry, `docker push`. The compose service that `create-evestack` generates already reads
-`${EVESTACK_DASHBOARD_IMAGE:-evestack-dashboard:local}`, so a published tag becomes a default
-change rather than a topology change.
+To run something else entirely — a fork, a private registry, a differently-named local build —
+set `EVESTACK_DASHBOARD_IMAGE`. Both compose files read
+`${EVESTACK_DASHBOARD_IMAGE:-ghcr.io/sammytourani/evestack-dashboard:<version>}`, so it is a
+one-variable change and not a topology change.
+
+The version tag tracks `packages/dashboard/package.json`. The publish workflow refuses to
+release when the git tag, that `version`, and the tag the scaffolder writes into generated
+compose files disagree — the failure it prevents is silent, since a release that publishes
+`:0.1.1` while every scaffold asks for `:0.1.0` looks entirely successful and is a 404 for every
+user.
 
 ## Expose the dashboard last
 

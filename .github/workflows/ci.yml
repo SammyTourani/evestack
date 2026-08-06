@@ -194,6 +194,20 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Before the build, deliberately. The dashboard's unit tests import
+      # lib/auth.ts, lib/pricing.ts, lib/traces.ts and lib/promote-eval.ts
+      # directly under `node --test`; their whole import graph is node builtins
+      # plus `pg` (checked: no workspace package and no Next entry point among
+      # them), so they need neither `pnpm -r run build` nor a Next build and
+      # they finish in about 300ms. Running them ahead of a two-minute
+      # `next build` is the difference between learning that default-deny
+      # routing broke in seconds and learning it after the compile.
+      #
+      # These also run inside the `test` job via the root `pnpm test`, which is
+      # `pnpm -r --if-present test`. That is not redundant on purpose: this step
+      # is the fast signal, that one is the promise docs/upgrading.mdx makes
+      # that `pnpm test` runs everything.
+      - run: pnpm --filter @evestack/dashboard test
       # Same cold-checkout problem as the typecheck job: the dashboard imports
       # @evestack/schedules/cron, which resolves to a gitignored dist/, so
       # Turbopack fails with "Module not found" on a fresh clone. Every job that

@@ -1,12 +1,25 @@
-# @evestack/cli
+# evestack
 
-`evestack doctor` — why is this durable job dead?
+One command for the whole self-hosted [eve](https://github.com/vercel/eve) stack.
 
 ```bash
-npx @evestack/cli doctor
+npx evestack create my-agent    # scaffold an agent + dashboard
+npx evestack attach .           # add evestack to an eve project you already have
+npx evestack doctor             # why is this durable job dead?
 ```
 
-A self-hosted [eve](https://github.com/vercel/eve) agent runs its durable sessions on
+`create` and `attach` are [`create-evestack`](https://www.npmjs.com/package/create-evestack),
+imported rather than reimplemented — `npx create-evestack my-agent` is the same code under the
+name npm's `create-*` convention leads people to, and it keeps working. The dependency points
+this way round because the scaffolder is dependency-free and carries the agent template, while
+`doctor` needs a Postgres driver; inverting it would put `pg` in front of every first scaffold.
+See `src/scaffold.mjs`.
+
+The rest of this file is about `doctor`, which is the part that is not a wrapper.
+
+## `evestack doctor`
+
+A self-hosted eve agent runs its durable sessions on
 `@workflow/world-postgres`, which runs on [graphile-worker](https://worker.graphile.org/). When a
 worker process is killed mid-turn, the job it was holding can become **permanently unclaimable** —
 and through every supported surface it reads as healthy. This finds those, says which kind of dead

@@ -6,7 +6,7 @@
 
 A self-hosted distribution of the eve agent framework — durable Postgres sessions, a Docker
 sandbox, and a dashboard that **observes *and drives*** the agent. One command scaffolds it;
-four more bring it up.
+four more bring it up — dashboard included, pulled not built.
 
 [![CI](https://github.com/SammyTourani/evestack/actions/workflows/ci.yml/badge.svg)](https://github.com/SammyTourani/evestack/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/create-evestack?color=2563eb&label=create-evestack)](https://www.npmjs.com/package/create-evestack)
@@ -36,31 +36,42 @@ runs on your own hardware, and we fill in the operational layer that self-hostin
      — six weeks before this repo — and it has 97 stars. Nothing was kept. -->
 
 ```bash
-npx create-evestack my-agent
+npx evestack create my-agent
 cd my-agent
 docker compose up -d postgres
-npm run db:bootstrap     # create the workflow schema — nothing creates it for you
-npm run dev              # the agent on :2000
+npm run db:bootstrap                       # create the workflow schema — nothing creates it for you
+npm run dev                                # the agent on :2000
+docker compose --profile dashboard up -d   # the dashboard on :4000
 ```
 
-That is five commands, and none of them start the dashboard. The dashboard lives in this
-repository rather than in the scaffolder, and no image is published yet — so it is a clone and
-a build, once:
+That is it. No clone of this repository, no `docker build`, nothing to copy between the two
+halves: the generated `docker-compose.yml` pulls a published dashboard image and reads the
+`.env.local` your agent already reads, so the credentials it signs you in with are the ones the
+scaffolder generated. It prints them.
 
-```bash
-git clone https://github.com/SammyTourani/evestack
-docker build -t evestack-dashboard:local -f evestack/packages/dashboard/Dockerfile evestack
-cd my-agent && docker compose --profile dashboard up -d   # :4000
-```
+`npx create-evestack my-agent` is the same scaffolder under the name npm's `create-*`
+convention expects — one implementation, two published names, either one.
 
-The context is the repository **root**, not `packages/dashboard`: the dashboard resolves
-`@evestack/schedules` over pnpm's `workspace:*` protocol, which exists only against the root
-lockfile. The generated `docker-compose.yml` already wires the service to your project's
-database and to the `EVESTACK_AUTH_*` credentials in `.env.local` — sign in with those, because
-every route is behind them.
+> [!IMPORTANT]
+> **The dashboard image is not published yet.** `ghcr.io/sammytourani/evestack-dashboard:0.1.0`
+> lands with evestack's first dashboard release; until then that last line fails with
+> `manifest unknown`. Build that exact tag once and Docker finds it locally, with nothing in
+> your project to change:
+>
+> ```bash
+> git clone https://github.com/SammyTourani/evestack
+> docker build -t ghcr.io/sammytourani/evestack-dashboard:0.1.0 \
+>   -f evestack/packages/dashboard/Dockerfile evestack
+> ```
+>
+> The context is the repository **root**, not `packages/dashboard`: the dashboard resolves
+> `@evestack/schedules` over pnpm's `workspace:*` protocol, which exists only against the root
+> lockfile. Delete the clone afterwards; the image stays.
 
-From a clone of this repository on its own, the same thing is one command:
-`docker compose --profile full up -d`.
+To run an image of your own instead — a fork, a private registry — set
+`EVESTACK_DASHBOARD_IMAGE` in a `.env` beside the compose file. From a clone of this repository
+`docker compose --profile dashboard up -d` builds rather than pulls, which is what you want
+while changing the dashboard.
 
 ## Why this exists
 
@@ -213,17 +224,27 @@ a hosted provider is the practical choice.
 
 ```
 templates/default/             the agent: Postgres durability, Docker sandbox, memory
-packages/dashboard/            Next.js observability + control plane
-packages/create-evestack/      the one-command scaffolder            -> npm: create-evestack
+packages/dashboard/            Next.js observability + control plane  -> ghcr.io/sammytourani/evestack-dashboard
+packages/evestack-cli/         the `evestack` command                -> npm: evestack
+packages/create-evestack/      the scaffolder both commands run      -> npm: create-evestack
 packages/evestack-composio/    Composio wiring for one-click tool auth -> npm: @evestack/composio
 packages/sandbox-opensandbox/  OpenSandbox sandbox backend            -> npm: @evestack/sandbox-opensandbox
 packages/website/              the landing page
 registry/                      the @evestack eve registry
 ```
 
-The dashboard, the website and the agent template are not published to npm — the dashboard runs
-from this repository, and the template ships *inside* `create-evestack`. Release order for the
-three that are published is in [RELEASING.md](./RELEASING.md).
+Two published names, one implementation: `evestack create` and `npx create-evestack` both run
+`packages/create-evestack/create.mjs`, so a bug is fixed in one place. `evestack` depends on
+`create-evestack` and not the other way round — the scaffolder is dependency-free on purpose,
+and inverting that would put `evestack doctor`'s Postgres driver in front of every first
+scaffold.
+
+The dashboard, the website and the agent template are not published to npm. The dashboard ships
+as a container image instead — npm has no way to run a Next.js app — and the template ships
+*inside* `create-evestack`. Release order for the npm packages is in
+[RELEASING.md](./RELEASING.md); the image is built and pushed by
+[`.github/workflows/publish-dashboard.yml`](./.github/workflows/publish-dashboard.yml) on a
+`dashboard-v*` tag.
 
 ## Notes from building this
 

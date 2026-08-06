@@ -2,18 +2,79 @@
  * Argument parsing and process wiring, kept out of bin/ so it can be tested
  * without spawning anything.
  *
+ * `evestack` is the one command: `create`, `attach`, `doctor`. There used to be
+ * two CLIs — a published `create-evestack` that scaffolds, and this one, which
+ * only knew `doctor` and was never published. Two names is fine; two
+ * implementations is not, so `create` and `attach` are routed straight into
+ * `create-evestack`'s own modules (src/scaffold.mjs explains the direction of
+ * the dependency). `npx create-evestack` still works and always will — it is
+ * the convention, it is in every doc, and it is in people's shell history.
+ *
  * Exit codes follow the repro scripts in contract/runtime/repro, because an
  * operator who has run those already knows what they mean:
  *
  *   0  looked, found nothing that is costing a run right now
  *   1  at least one fault — a stranded run, a wedged job, a wedged session
  *   2  could not look (no database, wrong schema, bad arguments)
+ *
+ * `create` and `attach` follow the same shape: 0 is a project you can run, 1 is
+ * one you cannot.
  */
 import { DoctorError } from "./db.mjs";
 import { diagnose } from "./doctor.mjs";
 import { renderText, renderJson, renderVerbose } from "./render.mjs";
 
-export const USAGE = `evestack doctor — explain why a durable job is dead
+/**
+ * Handed to `create-evestack` verbatim, argument for argument.
+ *
+ * These commands are routed BEFORE parseArgs runs, because parseArgs is
+ * doctor's parser and refuses unknown flags — `evestack create x --yes` would
+ * die on "Unknown option --yes" before the scaffolder ever saw it. Routing
+ * first is also what keeps the two front doors identical: whatever
+ * `npx create-evestack --whatever` accepts, `evestack create --whatever`
+ * accepts, without this file having to know what that is.
+ */
+const SCAFFOLD_COMMANDS = new Set(["create", "attach"]);
+
+/**
+ * Which scaffolder command this argv is, or null for everything else.
+ *
+ * Exported so the routing decision can be asserted without running a wizard
+ * that writes files and shells out to a package manager.
+ */
+export function scaffoldCommand(argv) {
+  return SCAFFOLD_COMMANDS.has(argv[0]) ? argv[0] : null;
+}
+
+export const USAGE = `evestack — the whole eve stack, on your own machine
+
+  evestack create [name]        scaffold an agent + dashboard into a new directory
+  evestack attach [dir]         add evestack to an eve project you already have
+  evestack doctor               explain why a durable job is dead
+
+  \`npx create-evestack [name]\` is the same scaffolder under the name npm's
+  create-* convention expects. Same code, same flags, either one.
+
+Getting started
+
+  npx evestack create my-agent
+  cd my-agent
+  docker compose up -d postgres
+  npm run db:bootstrap
+  npm run dev
+  docker compose --profile dashboard up -d     # the dashboard on :4000
+
+Options
+
+  -h, --help                    this, or the options for a command
+  -V, --version                 print the version
+
+\`evestack doctor\` is read-only: it never writes to your database, and when
+there is something to fix it prints the SQL and lets you decide. Run
+\`evestack doctor --help\` for its options.
+`;
+
+export const DOCTOR_USAGE = `evestack doctor — explain why a durable job is dead
 
   evestack doctor [options]
 
@@ -66,16 +127,16 @@ export function parseArgs(argv) {
     else if (arg.startsWith("--")) {
       const [name, ...rest] = arg.slice(2).split("=");
       if (!FLAGS_WITH_VALUES.has(name)) {
-        throw new DoctorError(`Unknown option --${name}\n\n${USAGE}`);
+        throw new DoctorError(`Unknown option --${name}\n\n${DOCTOR_USAGE}`);
       }
       if (rest.length === 0) {
         // Refused rather than guessed: `--limit 50` would otherwise silently
         // become `--limit` plus a stray positional and run with the default.
-        throw new DoctorError(`--${name} needs a value, as --${name}=VALUE\n\n${USAGE}`);
+        throw new DoctorError(`--${name} needs a value, as --${name}=VALUE\n\n${DOCTOR_USAGE}`);
       }
       options[name] = rest.join("=");
     } else if (options.command === null) options.command = arg;
-    else throw new DoctorError(`Unexpected argument "${arg}"\n\n${USAGE}`);
+    else throw new DoctorError(`Unexpected argument "${arg}"\n\n${DOCTOR_USAGE}`);
   }
   return options;
 }
@@ -88,6 +149,22 @@ function numeric(value, name) {
 }
 
 export async function main(argv, { stdout = process.stdout, stderr = process.stderr } = {}) {
+  // Before parseArgs, and before anything is imported: `create` and `attach`
+  // own every argument after their own name. See SCAFFOLD_COMMANDS.
+  const routed = scaffoldCommand(argv);
+  if (routed) {
+    const scaffold = await import("./scaffold.mjs");
+    try {
+      return await scaffold[routed](argv.slice(1));
+    } catch (error) {
+      // The scaffolder writes its own output to the real stdout — it is an
+      // interactive wizard, not a renderer — so only the failure comes back
+      // through here.
+      stderr.write(`${error?.message ?? error}\n`);
+      return 1;
+    }
+  }
+
   let options;
   try {
     options = parseArgs(argv);
@@ -97,7 +174,10 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
   }
 
   if (options.help || (options.command === null && !options.version)) {
-    stdout.write(USAGE);
+    // `evestack doctor --help` gets doctor's flags; a bare `--help` gets the
+    // command list. Printing the 30-line doctor block to someone who typed
+    // `evestack --help` buries the two commands they are more likely to want.
+    stdout.write(options.command === "doctor" ? DOCTOR_USAGE : USAGE);
     return options.help ? 0 : 2;
   }
   if (options.version) {
@@ -107,7 +187,9 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
     return 0;
   }
   if (options.command !== "doctor") {
-    stderr.write(`Unknown command "${options.command}". Only \`doctor\` exists so far.\n\n${USAGE}`);
+    stderr.write(
+      `Unknown command "${options.command}". Try create, attach or doctor.\n\n${USAGE}`,
+    );
     return 2;
   }
 

@@ -1,0 +1,225 @@
+# Build and push the dashboard image to GHCR.
+#
+# This workflow is the thing that removes the single biggest piece of friction
+# in evestack. Until it has run once, a scaffolded project's
+# `docker compose --profile dashboard up -d` ends at `manifest unknown`, and the
+# only way to a dashboard is a monorepo clone plus a `docker build` — the step
+# the scaffolder and every setup doc used to have to print an apology for.
+#
+# It is release-gated, not push-gated. `packages/dashboard` changes on most PRs
+# and none of those are a version anyone should be pulling; ci.yml's
+# `dashboard-build` job already proves the image compiles on every commit, which
+# is the signal a PR needs. This one publishes.
+#
+#   git tag dashboard-v0.1.0 && git push origin dashboard-v0.1.0
+#
+# The tag has to agree with packages/dashboard/package.json and with the tag the
+# scaffolder writes into every generated docker-compose.yml. Both are checked
+# below and both are fatal, because the failure they prevent is silent: a
+# release that publishes :0.1.1 while every scaffold asks for :0.1.0 looks
+# entirely successful here and is a 404 for every user.
+name: Publish dashboard image
+
+on:
+  push:
+    tags:
+      - "dashboard-v*"
+  # For the first publish, and for re-running one that failed after the tag
+  # already existed. Same checks; nothing is skipped for a manual run.
+  workflow_dispatch:
+
+concurrency:
+  group: publish-dashboard-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/sammytourani/evestack-dashboard
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # version agreement — cheap, and it runs before anything is built or pushed
+  # ---------------------------------------------------------------------------
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: read
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./packages/dashboard/package.json').version")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "dashboard version: $version"
+
+          # The tag, when there is one. workflow_dispatch has no tag to check —
+          # it publishes whatever packages/dashboard/package.json says, which is
+          # the only sane reading of a manual run.
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+            expected="dashboard-v$version"
+            if [ "$GITHUB_REF_NAME" != "$expected" ]; then
+              echo "::error::tag $GITHUB_REF_NAME does not match packages/dashboard/package.json ($expected). Bump one of them."
+              exit 1
+            fi
+          fi
+
+          # And the tag the scaffolder pins every generated compose file to.
+          # Read out of the source rather than re-derived, so this fails for the
+          # same reason a user's pull would: the two strings differ.
+          pinned="$(node -p "
+            const src = require('fs').readFileSync('packages/create-evestack/shared.mjs', 'utf8');
+            const m = src.match(/DASHBOARD_IMAGE_TAG = \"([^\"]+)\"/);
+            m ? m[1] : '';
+          ")"
+          if [ "$pinned" != "$version" ]; then
+            echo "::error::packages/create-evestack/shared.mjs pins DASHBOARD_IMAGE_TAG=$pinned but the dashboard is $version. Every scaffolded project would pull a tag this release does not publish."
+            exit 1
+          fi
+          echo "scaffolder pin agrees: $pinned"
+
+  # ---------------------------------------------------------------------------
+  # build — one native runner per architecture, pushed by digest
+  # ---------------------------------------------------------------------------
+  # arm64 is not optional: this project's whole audience runs it on a laptop, and
+  # a large share of those laptops are Apple Silicon. The alternative to a second
+  # runner is QEMU on ubuntu-latest, and a `next build` under emulation is the
+  # kind of step that takes hours and occasionally kills the Node process
+  # outright — a release path that fails that way fails at the worst moment.
+  # GitHub's arm64 runners are free for public repositories, so this costs
+  # nothing but the YAML.
+  #
+  # Each job pushes an unnamed digest; `merge` below assembles the two digests
+  # into one multi-arch tag. This is Docker's documented pattern for exactly this
+  # split, and it is why no `tags:` appear here — two jobs pushing the same tag
+  # would race and the loser's architecture would vanish.
+  build:
+    needs: version
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          # No secret to create. GITHUB_TOKEN can write packages owned by this
+          # repository's owner, which is why `permissions: packages: write`
+          # above is the entire authorisation story.
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          # The repository ROOT. packages/dashboard/Dockerfile explains at
+          # length why: `@evestack/schedules` is a `workspace:*` dependency that
+          # resolves only against the root lockfile.
+          context: .
+          file: packages/dashboard/Dockerfile
+          platforms: ${{ matrix.platform }}
+          # Anonymous digest now, tags in `merge`. `push-by-digest` is what makes
+          # two jobs able to contribute to one tag without racing.
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          # `org.opencontainers.image.source` is what links the package to this
+          # repository on GitHub — without it the package page has no README, no
+          # source link, and inherits no visibility settings.
+          labels: |
+            org.opencontainers.image.source=https://github.com/SammyTourani/evestack
+            org.opencontainers.image.description=Self-hosted observability and control plane for eve agents
+            org.opencontainers.image.licenses=Apache-2.0
+            org.opencontainers.image.version=${{ needs.version.outputs.version }}
+          # Off on purpose. Provenance adds attestation entries to the manifest
+          # list, which `imagetools create` below would carry through as extra
+          # `unknown/unknown` platform entries — harmless but confusing on the
+          # package page, and one more moving part in a path that has never run.
+          provenance: false
+          cache-from: type=gha,scope=dashboard-${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=dashboard-${{ matrix.platform }}
+
+      - name: export the digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/digests
+          # The file NAME carries the digest; the file itself is empty. `merge`
+          # globs the directory back into `IMAGE@sha256:…` references, which is
+          # why the `sha256:` prefix is stripped here and restored there.
+          touch "/tmp/digests/${DIGEST#sha256:}"
+          ls -l /tmp/digests
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ strategy.job-index }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # ---------------------------------------------------------------------------
+  # merge — one tag, both architectures
+  # ---------------------------------------------------------------------------
+  merge:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Two tags, and the difference matters. The version tag is what every
+      # scaffolded docker-compose.yml pins, so it is immutable in practice —
+      # someone's project must keep resolving to the image it was tested with.
+      # `latest` is the opt-in for people who would rather track the newest, and
+      # it is the only tag that moves.
+      - name: assemble the multi-arch tag
+        working-directory: /tmp/digests
+        run: |
+          set -euo pipefail
+          version='${{ needs.version.outputs.version }}'
+          docker buildx imagetools create \
+            --tag "${IMAGE}:${version}" \
+            --tag "${IMAGE}:latest" \
+            $(printf "${IMAGE}@sha256:%s " *)
+
+      - name: prove it pulls
+        run: |
+          set -euo pipefail
+          version='${{ needs.version.outputs.version }}'
+          docker buildx imagetools inspect "${IMAGE}:${version}"
+          # The claim the whole release makes is "a stranger runs
+          # `docker compose --profile dashboard up -d` and it pulls". A logged-in
+          # inspect does not test that; only an anonymous one does. The package
+          # is PRIVATE by default on first publish and has to be made public once
+          # by hand in the package settings — so this step is the thing that
+          # notices when that was forgotten, rather than the first user to try.
+          docker logout ghcr.io
+          if ! docker buildx imagetools inspect "${IMAGE}:${version}" > /dev/null 2>&1; then
+            echo "::error::${IMAGE}:${version} is not anonymously pullable. Set the package to Public: https://github.com/users/SammyTourani/packages/container/evestack-dashboard/settings"
+            exit 1
+          fi
+          echo "anonymous pull works"

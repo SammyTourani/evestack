@@ -2,10 +2,23 @@
 #
 # evestack dashboard.
 #
+# MOST PEOPLE SHOULD NEVER RUN THIS FILE. The image it produces is published to
+# ghcr.io/sammytourani/evestack-dashboard by .github/workflows/publish-dashboard.yml,
+# and a scaffolded project pulls it — `docker compose --profile dashboard up -d`,
+# no clone, no build. This is the contributor's path and the escape hatch.
+#
+# `@evestack/dashboard` stays `private: true` in package.json and that is not
+# what stops anyone installing it. A Next.js application is not something npm
+# can usefully carry — the deliverable is this OCI image, and `private` is what
+# keeps `pnpm -r publish` from trying to push 10k lines of app to a registry
+# that has no way to run it. The `version` field is not dead either: it is the
+# image tag, checked against the release tag and against the scaffolder's pin
+# by the publish workflow.
+#
 # THE BUILD CONTEXT IS THE REPOSITORY ROOT, NOT THIS DIRECTORY:
 #
 #   docker build -f packages/dashboard/Dockerfile -t evestack-dashboard .
-#   docker compose --profile full up -d          # does exactly that for you
+#   docker compose --profile dashboard up -d     # does exactly that for you
 #
 # ---------------------------------------------------------------------------
 # Why the root, and not this directory
@@ -17,6 +30,9 @@
 # is a pnpm protocol npm does not implement — so every build of this image, by
 # anyone, ended at `EUNSUPPORTEDPROTOCOL`. No CI job built it, which is why that
 # went unnoticed: `docker compose --profile full up -d` had never once worked.
+# ci.yml's `dashboard-build` job compiles the app on every commit and the
+# publish workflow builds this file for real on every release tag, so that
+# particular silence is over.
 #
 # Three ways out were weighed:
 #
@@ -99,6 +115,15 @@ ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     PORT=4000
 WORKDIR /repo/packages/dashboard
+
+# `image.source` is the one that does real work: GitHub reads it to attach the
+# package to this repository, which is what gives the GHCR page a README, a
+# source link, and inherited access settings. The publish workflow sets the same
+# labels (plus `version`) through docker/metadata-action; these are here so an
+# image built by hand — the escape hatch in the header — is identified too.
+LABEL org.opencontainers.image.source="https://github.com/SammyTourani/evestack" \
+      org.opencontainers.image.description="Self-hosted observability and control plane for eve agents" \
+      org.opencontainers.image.licenses="Apache-2.0"
 
 # pnpm's layout is a symlink farm: packages/*/node_modules/<dep> points into
 # /repo/node_modules/.pnpm. Both halves have to travel together or every import

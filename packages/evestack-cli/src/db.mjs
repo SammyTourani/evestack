@@ -112,7 +112,10 @@ export async function connect({ connectionString, timeoutMs = 15_000 }) {
   } catch (cause) {
     throw new DoctorError(
       "evestack doctor needs the `pg` package and could not load it. " +
-        "Install this CLI with its dependencies (`npm i -g @evestack/cli`), " +
+        // The package is named `evestack`, not `@evestack/cli` — the scoped name
+        // was never published and `npm i -g @evestack/cli` is an E404. Kept in
+        // step with the same instruction in src/scaffold.mjs.
+        "Install this CLI with its dependencies (`npm i -g evestack`), " +
         "or run it from a project that already has pg.",
       { cause },
     );

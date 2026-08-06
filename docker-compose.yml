@@ -1,7 +1,12 @@
 # evestack — the whole stack, on your own machine, for $0.
 #
-#   docker compose up -d                    # Postgres only
-#   docker compose --profile full up -d     # Postgres + the dashboard on :4000
+#   docker compose up -d                         # Postgres only
+#   docker compose --profile dashboard up -d     # Postgres + the dashboard on :4000
+#
+# THIS FILE IS THE CONTRIBUTOR'S. It BUILDS the dashboard from the checkout you
+# are standing in, which is what you want when you are changing it. A scaffolded
+# project's docker-compose.yml — the one `evestack create` writes — pulls the
+# published image instead and never needs this repository at all.
 #
 # Nothing here phones home. No Vercel account, no metered compute, no gateway.
 #
@@ -47,6 +52,15 @@ services:
   # stays on the loopback interface even though the process inside the container
   # binds 0.0.0.0 (it has to; nothing could reach it otherwise).
   dashboard:
+    # `image` AND `build`, deliberately. Compose builds when the tag is not
+    # already present locally and tags the result with this name — so a
+    # contributor's build lands under exactly the name the published image uses,
+    # `docker compose push` works without a second tagging step, and a scaffolded
+    # project on the same machine finds the local build without being told to.
+    #
+    # The tag tracks packages/dashboard/package.json `version`; the publish
+    # workflow refuses to release when they disagree.
+    image: ${EVESTACK_DASHBOARD_IMAGE:-ghcr.io/sammytourani/evestack-dashboard:0.1.0}
     build:
       # The REPOSITORY ROOT, not packages/dashboard. The dashboard depends on
       # @evestack/schedules over pnpm's `workspace:*` protocol, which only
@@ -105,7 +119,11 @@ services:
       - "127.0.0.1:${DASHBOARD_PORT:-4000}:4000"
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    profiles: ["full"]
+    # Two names for one profile. `full` is what this file has always used and
+    # what docs/self-hosting.mdx has told readers to type; `dashboard` is what a
+    # scaffolded project uses, and a reader moving between the two files should
+    # not have to notice which one they are in.
+    profiles: ["full", "dashboard"]
 
 volumes:
   evestack-pgdata:

@@ -1,6 +1,6 @@
 {
   "name": "create-evestack",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "type": "module",
   "description": "The whole eve stack. On your own machine. Durable Postgres sessions, a Docker sandbox, memory, approvals, schedules, 1,070 tool integrations, and a dashboard that drives the agent.",
   "license": "Apache-2.0",
@@ -16,8 +16,15 @@
   "bin": {
     "create-evestack": "./index.mjs"
   },
+  "exports": {
+    ".": "./create.mjs",
+    "./create": "./create.mjs",
+    "./attach": "./attach.mjs",
+    "./package.json": "./package.json"
+  },
   "files": [
     "index.mjs",
+    "create.mjs",
     "attach.mjs",
     "shared.mjs",
     "template/",
@@ -29,7 +36,7 @@
   },
   "scripts": {
     "prepack": "node scripts/sync-template.mjs",
-    "test": "node scripts/sync-template.mjs && node --check index.mjs && node --check attach.mjs && node --check shared.mjs"
+    "test": "node scripts/sync-template.mjs && node --check index.mjs && node --check create.mjs && node --check attach.mjs && node --check shared.mjs"
   },
   "homepage": "https://github.com/SammyTourani/evestack#readme",
   "bugs": {

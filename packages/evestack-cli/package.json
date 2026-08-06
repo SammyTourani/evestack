@@ -1,8 +1,8 @@
 {
-  "name": "@evestack/cli",
+  "name": "evestack",
   "version": "0.1.0",
   "type": "module",
-  "description": "evestack doctor — explains why a durable eve job is dead. Read-only forensics for the graphile-worker queue behind @workflow/world-postgres: finds jobs that can never be claimed again, tells process death apart from genuine failure, and prints the remediation SQL for a human to run.",
+  "description": "One command for the whole self-hosted eve stack: `evestack create` scaffolds an agent and a dashboard, `evestack attach` wraps an eve project you already have, and `evestack doctor` explains why a durable job is dead.",
   "license": "Apache-2.0",
   "bin": {
     "evestack": "./bin/evestack.mjs"
@@ -21,6 +21,8 @@
   "keywords": [
     "eve",
     "agent",
+    "self-hosted",
+    "scaffold",
     "graphile-worker",
     "postgres",
     "queue",
@@ -30,9 +32,11 @@
   ],
   "scripts": {
     "typecheck": "node scripts/check.mjs",
+    "prepack": "node scripts/prepack.mjs",
     "test": "node scripts/check.mjs && node --test test/*.test.mjs"
   },
   "dependencies": {
+    "create-evestack": "workspace:^",
     "pg": "^8.20.3"
   },
   "engines": {

@@ -23,7 +23,8 @@ import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "
 import { createConnection } from "node:net";
 import { isAbsolute, join, resolve } from "node:path";
 import {
-  basename, C, detectPm, dim, makePrompter, ok, say, step, templateDir, warn,
+  basename, C, DASHBOARD_IMAGE, DASHBOARD_IMAGE_PUBLISHED, detectPm, dim, makePrompter,
+  ok, REPO, say, step, templateDir, warn,
 } from "./shared.mjs";
 
 /**
@@ -67,7 +68,6 @@ const OTEL_RANGE = "^2.1.3";
  */
 const WORLD_TAG = "beta";
 const DASHBOARD_INGEST = "http://localhost:4000/api/ingest/v1/traces";
-const REPO = "https://github.com/SammyTourani/evestack";
 
 const COMPOSE_NAMES = ["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"];
 const AGENT_ENTRIES = ["agent.ts", "agent.tsx", "agent.mts", "agent.js", "agent.mjs"];
@@ -554,33 +554,45 @@ function printSummary(plan) {
   }
   say(`    ${pm} run dev`);
   say();
-  // The dashboard is the reason to attach at all, and it lives in the repo
-  // rather than in any npm package — so a user who never opens the README would
-  // finish this command without learning how to start it.
+  // The dashboard is the reason to attach at all, so it cannot be left to the
+  // README. This used to print `git clone`, `cd evestack/packages/dashboard`,
+  // `pnpm install && pnpm run dev` — three commands, and the last two do not
+  // work: the install has to happen at the workspace ROOT for `workspace:*` to
+  // resolve, and @evestack/schedules has to be built before Turbopack can find
+  // its dist/. One `docker run` against the published image has none of that.
+  //
+  // A `docker run` rather than a compose service, because attach does not own
+  // this project's compose file — it either wrote a Postgres-only one or found
+  // one the user wrote, and merging a service into someone else's compose file
+  // by service name is exactly the overwrite rule 2 forbids.
   say(`  ${C.bold}Then the dashboard${C.reset} ${C.dim}— sessions, cost, approvals, chat:${C.reset}`);
-  say(`    git clone ${REPO}`);
-  say(`    cd evestack/packages/dashboard`);
-  if (plan.dbUrl) say(`    echo 'WORKFLOW_POSTGRES_URL=${plan.dbUrl}' > .env.local`);
-  // The one value that MUST be copied by hand. attach writes no compose service
-  // for the dashboard, so unlike a `create-evestack` scaffold there is no shared
-  // env_file carrying it across — and a dashboard whose EVESTACK_INGEST_TOKEN
-  // differs from the agent's 401s every span without either side saying so.
-  if (plan.ingestToken) {
-    say(`    echo 'EVESTACK_INGEST_TOKEN=${plan.ingestToken}' >> .env.local`);
-  }
-  // Not optional and not a nicety: the dashboard reads these at every request
-  // and 503s the whole app — sign-in page included — when either is missing.
-  // Printed after the others because it is the pair a reader is most likely to
-  // assume has a default. It does not.
-  say(`    echo 'EVESTACK_AUTH_USER=${plan.dashboardUser}' >> .env.local`);
-  say(`    echo 'EVESTACK_AUTH_PASSWORD=${plan.dashboardPassword}' >> .env.local`);
-  say(`    pnpm install && pnpm run dev          ${C.dim}# http://localhost:4000${C.reset}`);
-  dim(`    Sign in with ${plan.dashboardUser} / ${plan.dashboardPassword}`);
+  for (const line of dashboardRunCommand(plan)) say(`    ${line}`);
+  say();
+  dim(`  Sign in at http://localhost:4000 with ${plan.dashboardUser} / ${plan.dashboardPassword}`);
   if (plan.ingestToken) {
     say();
+    // The one value that MUST travel by hand. A `create-evestack` scaffold has
+    // a compose service reading the agent's own .env.local, so both halves come
+    // from one file; here there is no such file, and a dashboard whose
+    // EVESTACK_INGEST_TOKEN differs from the agent's 401s every span without
+    // either side saying so.
     dim(`That token is the same one written to ${plan.envFileName}. Both sides need it byte for`);
     dim("byte: the agent sends it as `x-evestack-ingest-token`, and a mismatch is a 401 on");
     dim('every span that shows up only as a Traces tab stuck on "no traces yet".');
+  }
+  if (!DASHBOARD_IMAGE_PUBLISHED) {
+    say();
+    warn(`${DASHBOARD_IMAGE} is not published yet, so that`);
+    warn("pull fails with `manifest unknown`. Until the first release, build that exact");
+    warn("tag once and docker will find it locally:");
+    say();
+    say(`    git clone ${REPO}`);
+    say(`    docker build -t ${DASHBOARD_IMAGE} \\`);
+    say("      -f evestack/packages/dashboard/Dockerfile evestack");
+    say();
+    dim("The context is the repo ROOT, not packages/dashboard — the dashboard resolves a");
+    dim("pnpm `workspace:*` dependency that only exists against the root lockfile. Delete");
+    dim("the clone afterwards if you like; the image stays.");
   }
   say();
 
@@ -733,6 +745,56 @@ name: ${projectName}
 
 ${composeService({ password, port })}
 `;
+}
+
+/**
+ * The one command that brings the dashboard up against this project.
+ *
+ * Returned as lines rather than a string so the caller can indent them; every
+ * line but the last ends in a backslash, so the block pastes into a shell as a
+ * single command.
+ *
+ * Everything the dashboard fails closed without is passed explicitly. It has no
+ * usable default for any of them: EVESTACK_AUTH_* missing means 503 on every
+ * route including the sign-in page, and EVESTACK_AGENT_URL defaults to
+ * 127.0.0.1:2000, which inside a container is the container.
+ */
+function dashboardRunCommand(plan) {
+  const lines = [
+    "docker run -d --name evestack-dashboard \\",
+    // 127.0.0.1 on purpose: this is a control plane that starts agent runs and
+    // approves gated shell commands. `-p 4000:4000` would publish it on every
+    // interface the host has.
+    "  -p 127.0.0.1:4000:4000 \\",
+    // Docker Desktop resolves host.docker.internal already; on Linux nothing
+    // does unless this flag adds it, and there the agent is otherwise
+    // unreachable from the container.
+    "  --add-host host.docker.internal:host-gateway \\",
+    `  -e WORKFLOW_POSTGRES_URL='${fromContainer(plan.dbUrl)}' \\`,
+    // `eve dev` listens on 2000 and auto-increments if that port is taken —
+    // read its startup log and change this if it landed somewhere else.
+    "  -e EVESTACK_AGENT_URL=http://host.docker.internal:2000 \\",
+    `  -e EVESTACK_AUTH_USER=${plan.dashboardUser} \\`,
+    `  -e EVESTACK_AUTH_PASSWORD='${plan.dashboardPassword}' \\`,
+  ];
+  if (plan.ingestToken) lines.push(`  -e EVESTACK_INGEST_TOKEN=${plan.ingestToken} \\`);
+  lines.push(`  ${DASHBOARD_IMAGE}`);
+  return lines;
+}
+
+/**
+ * The same Postgres URL, as seen from inside a container.
+ *
+ * The env file says 127.0.0.1 because the AGENT runs on the host. A container's
+ * 127.0.0.1 is the container, so the identical string reaches nothing and the
+ * dashboard comes up with an empty session list and ECONNREFUSED in its log —
+ * a failure that looks like "the dashboard is broken" rather than like a
+ * networking mistake. A database that is already remote is left exactly as
+ * written; it is reachable from anywhere and rewriting it would be wrong.
+ */
+function fromContainer(url) {
+  if (!url) return "postgres://evestack:evestack@host.docker.internal:5433/evestack";
+  return url.replace(/@(?:127\.0\.0\.1|localhost|\[::1\]|0\.0\.0\.0)(?=[:/]|$)/, "@host.docker.internal");
 }
 
 function envBlock(pending) {

@@ -14,6 +14,30 @@ import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
+export const REPO = "https://github.com/SammyTourani/evestack";
+
+/**
+ * The dashboard image, and whether it exists yet.
+ *
+ * Pinned to a tag rather than `latest` for the same reason sync-template.mjs
+ * pins the template's workspace ranges: a scaffold should get the combination
+ * that was tested with it, not whatever was pushed to the registry this
+ * morning. `latest` is published too, for anyone who wants to opt into drift.
+ *
+ * The tag tracks packages/dashboard/package.json `version` — NOT this package's
+ * version, which moves for reasons that have nothing to do with the image.
+ * .github/workflows/publish-dashboard.yml refuses to publish when the two
+ * disagree, so this constant cannot go stale silently.
+ *
+ * PUBLISHED is false until the first GHCR push. It is the only edit needed
+ * afterwards: it removes the "this pull will fail" paragraph from the printed
+ * steps and from the generated compose header. Printing a pull command that
+ * 404s, with nothing saying so, is worse than the clone-and-build it replaced.
+ */
+export const DASHBOARD_IMAGE_TAG = "0.1.0";
+export const DASHBOARD_IMAGE = `ghcr.io/sammytourani/evestack-dashboard:${DASHBOARD_IMAGE_TAG}`;
+export const DASHBOARD_IMAGE_PUBLISHED = false;
+
 export const C = {
   reset: "\x1b[0m", dim: "\x1b[2m", bold: "\x1b[1m",
   cyan: "\x1b[36m", green: "\x1b[32m", yellow: "\x1b[33m", red: "\x1b[31m",

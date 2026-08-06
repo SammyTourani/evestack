@@ -72,6 +72,9 @@ importers:
 
   packages/evestack-cli:
     dependencies:
+      create-evestack:
+        specifier: workspace:^
+        version: link:../create-evestack
       pg:
         specifier: ^8.20.3
         version: 8.22.0
