@@ -25,9 +25,18 @@ export const site = {
   eyebrow: "Open source · Apache-2.0",
   command: "npx create-evestack",
   github: "https://github.com/SammyTourani/evestack",
+  /* Was "… tested against every eve release since 0.29.5". Every package here
+     declares `eve: ">=0.30.0 <1.0.0"`, which EXCLUDES 0.29.5 — they will not
+     install against it, so the sentence claimed testing on a version the code
+     refuses to run on. The contract suite is the real, checkable claim. */
   attribution:
-    "evestack is built on vercel/eve (Apache-2.0) and tested against every eve release since 0.29.5.",
-  /* Prominent, not buried: this sits in the site header, not only the footer. */
+    "evestack is built on vercel/eve (Apache-2.0) and pinned to it by a contract suite that runs on every commit.",
+  /* Footer, one line, small. Not a banner.
+     The point of a non-affiliation notice is that somebody who wonders "is this
+     an official Vercel thing?" can find the answer — so it goes where a reader
+     looks for exactly that, which is the footer beside the attribution. Making
+     it genuinely unfindable would leave the impression it exists to correct,
+     which is the whole risk. Small and conventional is the version that works. */
   trademark: "eve is a trademark of Vercel. evestack is an independent project, not affiliated with or endorsed by Vercel.",
   motto: "Everything runs on your network.",
   /* The one upstream credential, stated at exactly its real weight. The triage

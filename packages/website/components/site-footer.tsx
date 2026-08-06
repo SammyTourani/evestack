@@ -41,7 +41,14 @@ export function SiteFooter() {
         </div>
 
         <div className="flex flex-col items-start justify-between gap-6 border-t border-border-subtle pt-8 md:flex-row md:items-center">
-          <p className="text-copy-14 text-gray-700">{site.attribution}</p>
+          {/* Attribution and the non-affiliation notice, one block, footer-sized.
+              The notice is deliberately quiet — no banner, no bar above the fold —
+              but it is here rather than nowhere, because a reader wondering
+              whether this is an official Vercel project looks at the footer. */}
+          <div className="flex flex-col gap-1">
+            <p className="text-copy-14 text-gray-700">{site.attribution}</p>
+            <p className="text-copy-14 text-gray-700">{site.trademark}</p>
+          </div>
           <ThemeSwitcher />
         </div>
       </div>
