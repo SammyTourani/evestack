@@ -137,7 +137,29 @@ function getPool(): Pool {
       "Memory needs WORKFLOW_POSTGRES_URL. Start Postgres with `docker compose up postgres`.",
     );
   }
-  pool ??= new Pool({ connectionString: url, max: 4 });
+  if (!pool) {
+    const created = new Pool({ connectionString: url, max: 4 });
+    // A pool with no `error` listener turns an idle client's socket error into
+    // an unhandled `error` EVENT, and an unhandled event is not a rejected
+    // promise: no `await`, no `try/catch`, and no `.catch()` anywhere in this
+    // file can see it. Node prints the stack and kills the process.
+    //
+    // The trigger is not exotic. Measured: one ordinary `recall()`, then
+    // `pg_terminate_backend` on the pooled connection — which is what a
+    // Postgres restart, a failover, a `docker compose restart postgres` or an
+    // idle-connection reaper all do — and the whole agent died, taking every
+    // session and every unrelated tool with it. An optional memory feature
+    // must not be able to do that.
+    //
+    // Logged rather than swallowed, and nothing else is needed to recover: pg
+    // discards the broken client, and the next query opens a fresh one.
+    // packages/dashboard/lib/db.ts has carried the same three lines, for the
+    // same reason, since before this file existed.
+    created.on("error", (error: Error) => {
+      console.warn(`[evestack] idle Postgres client error in long-term memory: ${error.message}`);
+    });
+    pool = created;
+  }
   return pool;
 }
 
