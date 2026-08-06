@@ -69,6 +69,50 @@ save the turn. Both are ignored on the hosted providers, whose models the catalo
   tradeoff for $0 total cost — try it, and switch to a cloud key if tool use feels unreliable.
 </Note>
 
+## Docker
+
+`create-evestack` checks for Docker before it asks you a single question, and separates three
+states that used to produce one message:
+
+| What it found | What it says |
+| --- | --- |
+| No `docker` on `PATH` | How to install one, per platform |
+| A `docker` CLI whose daemon is silent | The command that starts the runtime you already have |
+| A daemon that refuses the socket | `usermod -aG docker`, and what that group actually grants |
+
+On macOS with Homebrew it will offer to run `brew install colima docker docker-compose` for you.
+It asks first, it prints the exact command, and the default answer is **no** — installing a
+container runtime is a large, privileged, hard-to-reverse thing to do to somebody's laptop.
+Colima is the one it offers because it is the only option that needs no `sudo`, installs no GUI
+application and carries no licence question; Docker Desktop and OrbStack are printed beside it
+if you would rather have those.
+
+Nothing is ever installed under `--yes` or when stdin is not a terminal. A non-interactive run
+prints the command and continues.
+
+On Linux and Windows nothing is offered at all. Every Linux path is root plus a system service —
+Docker's own repository, the `get.docker.com` script piped into a root shell, or a distro
+package — and Windows needs WSL2 and a reboot. Those are printed and left to you.
+
+Inside WSL, a missing `docker` is almost never a missing Docker. It is Docker Desktop on the
+Windows side not being shared into the distro: **Settings → Resources → WSL integration**.
+Installing a second daemon inside the distro is the wrong fix, so it is not suggested.
+
+### Ports
+
+The scaffolder probes `5433` and `4000` on loopback and moves them if something answers, then
+writes the port it picked into `docker-compose.yml`, `.env.local` and the sign-in line it prints,
+so all three agree. Without that, a second project on one machine reached
+`docker compose up` and got Docker's own `port is already allocated`.
+
+`2000` is reported but never moved: `eve dev` picks its own port and auto-increments, so only
+eve knows where it landed. If something is already there, read the port out of eve's startup log
+and set `EVESTACK_AGENT_URL` to match, or the dashboard's chat and approvals will be talking to
+whatever else is on 2000.
+
+A port bound on an interface other than loopback is invisible to this probe and still collides
+in Docker. That case gets Docker's error, not ours.
+
 ## Docker sandbox
 
 The default backend, `docker()`, keeps one long-lived container per durable session and

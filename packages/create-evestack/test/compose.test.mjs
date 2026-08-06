@@ -94,3 +94,26 @@ test("a password with URL-significant characters is still quoted in YAML", () =>
   const text = composeFile("my-agent", "-leading-dash_ok");
   assert.match(text, /POSTGRES_PASSWORD: "-leading-dash_ok"/);
 });
+
+test("a relocated Postgres port reaches the compose file, still on loopback", () => {
+  const text = composeFile("my-agent", PASSWORD, { pgPort: 5436, dashboardPort: 4002 });
+  const ports = publishedPorts(text);
+  assert.ok(ports.includes("127.0.0.1:5436:5432"), `Postgres published as ${ports}`);
+  assert.ok(
+    !ports.some((entry) => entry.includes(":5433:")),
+    "the hardcoded default port survived somewhere in the compose file",
+  );
+});
+
+test("a relocated dashboard port keeps its DASHBOARD_PORT override", () => {
+  // The env var stays an override; only its default moves. Someone who has set
+  // DASHBOARD_PORT means it, whatever this scaffold measured.
+  const text = composeFile("my-agent", PASSWORD, { pgPort: 5433, dashboardPort: 4002 });
+  assert.match(text, /\$\{DASHBOARD_PORT:-4002\}:4000/);
+});
+
+test("omitting the ports keeps the documented defaults", () => {
+  const ports = publishedPorts(compose());
+  assert.ok(ports.includes("127.0.0.1:5433:5432"));
+  assert.match(compose(), /\$\{DASHBOARD_PORT:-4000\}:4000/);
+});

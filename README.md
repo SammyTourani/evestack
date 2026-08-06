@@ -206,6 +206,13 @@ a hosted provider is the practical choice.
 
 - Node 24+
 - Docker (Postgres and the agent sandbox)
+
+`npx evestack create` checks both before it asks you anything, tells apart "not installed" from
+"installed but not running" from "running but you cannot reach the socket", and on macOS with
+Homebrew offers to install a runtime — printing the exact command first, defaulting to no, and
+never installing anything under `--yes` or in CI. It also moves the Postgres and dashboard ports
+if something is already on them, so a second project on one machine does not end at Docker's
+`port is already allocated`. Details in [docs/local-setup.mdx](docs/local-setup.mdx#docker).
 - A model API key — or [Ollama](https://ollama.com) for a genuinely $0 stack
 
 ## Repository layout

@@ -27,6 +27,7 @@
     "create.mjs",
     "attach.mjs",
     "shared.mjs",
+    "preflight.mjs",
     "template/",
     "README.md",
     "LICENSE"
@@ -36,7 +37,7 @@
   },
   "scripts": {
     "prepack": "node scripts/sync-template.mjs",
-    "test": "node scripts/sync-template.mjs && node --check index.mjs && node --check create.mjs && node --check attach.mjs && node --check shared.mjs && node --test test/*.test.mjs"
+    "test": "node scripts/sync-template.mjs && node --check index.mjs && node --check create.mjs && node --check attach.mjs && node --check shared.mjs && node --check preflight.mjs && node --test test/*.test.mjs"
   },
   "homepage": "https://github.com/SammyTourani/evestack#readme",
   "bugs": {
