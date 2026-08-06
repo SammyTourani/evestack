@@ -3,6 +3,7 @@ import { describeDbError } from "@/lib/db";
 import { suggestFilename } from "@/lib/promote-eval";
 import { listSessions, type SessionRow } from "@/lib/queries";
 import styles from "./evals.module.css";
+import { DatabaseError } from "@/app/db-error";
 
 export const dynamic = "force-dynamic";
 
@@ -97,14 +98,7 @@ export default async function EvalsPage() {
     sessions = await listSessions(100);
   } catch (error) {
     return (
-      <div className="empty">
-        <h2>Can&apos;t reach the database</h2>
-        <p className="dim">{describeDbError(error)}</p>
-        <p className="faint">
-          Eval candidates are ranked from the same Postgres the session list reads. Start it with{" "}
-          <code>docker compose up postgres</code>.
-        </p>
-      </div>
+      <DatabaseError error={error} />
     );
   }
 

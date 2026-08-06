@@ -1,6 +1,7 @@
 import { getTraceOverview, listTracedSessions } from "@/lib/traces";
 import { ago, duration, fmt } from "./format";
 import styles from "./traces.module.css";
+import { DatabaseError } from "@/app/db-error";
 
 export const dynamic = "force-dynamic";
 
@@ -20,14 +21,7 @@ export default async function TracesPage() {
     [overview, sessions] = await Promise.all([getTraceOverview(), listTracedSessions(200)]);
   } catch (error) {
     return (
-      <div className="empty">
-        <h2>Can&apos;t reach the database</h2>
-        <p className="dim">{error instanceof Error ? error.message : String(error)}</p>
-        <p className="faint">
-          Spans live in the <code>evestack</code> schema of the same Postgres that holds your
-          sessions. Start it with <code>docker compose up postgres</code>.
-        </p>
-      </div>
+      <DatabaseError error={error} />
     );
   }
 

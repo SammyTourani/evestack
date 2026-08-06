@@ -38,7 +38,34 @@ export async function GET(): Promise<Response> {
   }
 
   try {
-    await query("SELECT 1");
+    // `SELECT 1` proves the pool works and nothing more, and "nothing more" was
+    // the bug: a stack brought up without `npm run db:bootstrap` answered 200
+    // here and reported HEALTHY in `docker ps` while every page in the dashboard
+    // failed, because `workflow.workflow_runs` did not exist. Measured on a
+    // clean machine — healthy container, unusable product.
+    //
+    // to_regclass() rather than a query against the table: it answers NULL
+    // instead of raising, needs no permissions beyond catalog read, and cannot
+    // be confused with the connection failing. Reporting unhealthy here is the
+    // same judgement the unconfigured branch above already makes — the process
+    // is up and refusing to pretend it can do its job. An unhealthy HEALTHCHECK
+    // marks the container; it does not restart it, so this surfaces the
+    // misconfiguration without a crash loop.
+    const [schema] = await query<{ present: string | null }>(
+      "SELECT to_regclass('workflow.workflow_runs')::text AS present",
+    );
+    if (!schema?.present) {
+      return Response.json(
+        {
+          ok: false,
+          database: "connected",
+          status: "schema-missing",
+          error:
+            "Postgres is reachable but has no agent schema. Run `npm run db:bootstrap` in your agent project.",
+        },
+        { status: 503, headers },
+      );
+    }
     return Response.json({ ok: true, database: "connected" }, { headers });
   } catch {
     // No error detail here. pg's messages carry the host, port and database

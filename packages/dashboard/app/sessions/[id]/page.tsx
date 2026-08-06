@@ -2,6 +2,7 @@ import { formatUsd, isPriced } from "@/lib/pricing";
 import { getSession, getSessionTree, type TurnRow } from "@/lib/queries";
 import { ForkPanel } from "./fork-client";
 import styles from "./session.module.css";
+import { DatabaseError } from "@/app/db-error";
 
 export const dynamic = "force-dynamic";
 
@@ -176,14 +177,7 @@ export default async function SessionDetailPage(props: PageProps<"/sessions/[id]
     [session, rows] = await Promise.all([getSession(id), getSessionTree(id)]);
   } catch (error) {
     return (
-      <div className="empty">
-        <h2>Can&apos;t reach the database</h2>
-        <p className="dim">{error instanceof Error ? error.message : String(error)}</p>
-        <p className="faint">
-          The dashboard reads the same Postgres that stores your agent&apos;s sessions. Start it
-          with <code>docker compose up postgres</code>.
-        </p>
-      </div>
+      <DatabaseError error={error} />
     );
   }
 

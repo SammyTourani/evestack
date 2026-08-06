@@ -18,6 +18,7 @@ import {
 } from "../format";
 import styles from "../traces.module.css";
 import { Fact, MessagesBlock, PayloadBlock } from "./payload";
+import { DatabaseError } from "@/app/db-error";
 
 export const dynamic = "force-dynamic";
 
@@ -72,14 +73,7 @@ export default async function TraceDetailPage(props: PageProps<"/traces/[id]">) 
     ]);
   } catch (error) {
     return (
-      <div className="empty">
-        <h2>Can&apos;t reach the database</h2>
-        <p className="dim">{error instanceof Error ? error.message : String(error)}</p>
-        <p className="faint">
-          Spans live in the <code>evestack</code> schema of the same Postgres that holds your
-          sessions. Start it with <code>docker compose up postgres</code>.
-        </p>
-      </div>
+      <DatabaseError error={error} />
     );
   }
 

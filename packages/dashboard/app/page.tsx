@@ -2,6 +2,7 @@ import { FleetBanner } from "./fleet-banner";
 import { isPriced } from "@/lib/pricing";
 import { formatUsd } from "@/lib/pricing";
 import { getTotals, listSessions } from "@/lib/queries";
+import { DatabaseError } from "@/app/db-error";
 
 export const dynamic = "force-dynamic";
 
@@ -23,14 +24,7 @@ export default async function SessionsPage() {
     [sessions, totals] = await Promise.all([listSessions(100), getTotals()]);
   } catch (error) {
     return (
-      <div className="empty">
-        <h2>Can&apos;t reach the database</h2>
-        <p className="dim">{error instanceof Error ? error.message : String(error)}</p>
-        <p className="faint">
-          The dashboard reads the same Postgres that stores your agent&apos;s sessions. Start it
-          with <code>docker compose up postgres</code>.
-        </p>
-      </div>
+      <DatabaseError error={error} />
     );
   }
 

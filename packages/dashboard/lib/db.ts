@@ -185,3 +185,51 @@ export async function query<T = Record<string, unknown>>(
     throw new DatabaseUnavailableError(describeDbError(error));
   }
 }
+
+/** PostgreSQL `undefined_table`. */
+const UNDEFINED_TABLE = "42P01";
+
+/**
+ * Whether a failure is "the schema was never created" rather than "the database
+ * is not there".
+ *
+ * These are opposite problems with opposite fixes and they looked identical.
+ * A container brought up without `npm run db:bootstrap` reported **healthy**,
+ * answered `/api/health` with 200, and rendered "Can't reach the database —
+ * Start it with `docker compose up postgres`" on every page. Postgres was
+ * running the whole time; the user had already done the thing being suggested,
+ * and the one command that would have fixed it was named nowhere on the screen.
+ *
+ * Matched on the SQLSTATE and the schema name rather than the message text, so
+ * a Postgres locale change cannot silently turn this back into the wrong advice.
+ */
+export function isMissingSchema(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes(UNDEFINED_TABLE) && message.includes("workflow.");
+}
+
+export interface DbFailure {
+  readonly title: string;
+  readonly detail: string;
+  /** What to actually do, as prose. Never contradicts what the user just did. */
+  readonly guidance: string;
+}
+
+/** One classification, so five pages cannot drift into five diagnoses. */
+export function describeDbFailure(error: unknown): DbFailure {
+  const detail = describeDbError(error);
+  if (isMissingSchema(error)) {
+    return {
+      title: "The database has no agent schema yet",
+      detail,
+      guidance:
+        "Postgres is running — this is the one step nothing creates for you. Run `npm run db:bootstrap` in your agent project, then reload.",
+    };
+  }
+  return {
+    title: "Can't reach the database",
+    detail,
+    guidance:
+      "The dashboard reads the same Postgres that stores your agent's sessions. Start it with `docker compose up -d postgres`.",
+  };
+}
