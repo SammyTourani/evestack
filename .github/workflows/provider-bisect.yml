@@ -140,7 +140,26 @@ jobs:
               node -p "['@ai-sdk/openai','ai'].map((p)=>{try{return p+' '+require('$dir/node_modules/'+p+'/package.json').version}catch{return p+' unresolved'}}).join('\n')" 2>/dev/null || true
             } >&2
 
-            if [ $result -eq 0 ]; then echo "survived"; else echo "died"; fi
+            # Exit code alone is not a verdict, and this tool proved that on its
+            # own first run: the v4 arm exited non-zero because the model never
+            # called the gated tool, so the turn never parked and the test never
+            # reached its subject. Read as "died", that says the bug reproduces.
+            # It says nothing at all.
+            #
+            # Three outcomes, distinguished by what the eval actually reported:
+            #   reproduced — session.failed / turn.failed: the bug is present
+            #   vacuous    — the parked gate failed: the denial never happened
+            #   survived   — everything held
+            local log="/tmp/$label-eval.log"
+            if [ $result -eq 0 ]; then
+              echo "survived"
+            elif grep -q "notEvent(session.failed).*found\|notEvent(turn.failed).*found" "$log" 2>/dev/null; then
+              echo "reproduced"
+            elif grep -q "parked (0%" "$log" 2>/dev/null; then
+              echo "vacuous"
+            else
+              echo "failed-other"
+            fi
           }
 
           OLD_RESULT="$(run_arm old '${{ inputs.old }}' 2996)"
@@ -159,7 +178,11 @@ jobs:
             echo "| \`${{ inputs.old }}\` | $OLD_RESULT |"
             echo "| \`${{ inputs.new }}\` | $NEW_RESULT |"
             echo
-            if [ "$OLD_RESULT" = "died" ] && [ "$NEW_RESULT" = "survived" ]; then
+            if [ "$OLD_RESULT" = "vacuous" ] || [ "$NEW_RESULT" = "vacuous" ]; then
+              echo "**Inconclusive — a vacuous arm.** The model answered in prose and never"
+              echo "called the gated tool, so that arm never reached its subject. It is not"
+              echo "evidence either way. Re-run; this happens roughly one run in four."
+            elif [ "$OLD_RESULT" = "reproduced" ] && [ "$NEW_RESULT" = "survived" ]; then
               echo "**The provider fixed it.** eve still emits the shape that broke"
               echo "\`${{ inputs.old }}\`; upgrading the provider is what makes the session survive."
               echo "vercel/eve#1658 is still a real bug for anyone on the older provider."
@@ -167,12 +190,12 @@ jobs:
               echo "**Not the provider.** The bug does not reproduce on either version, so"
               echo "something in eve changed. Check what eve now records for a denied tool"
               echo "call before claiming anything on #1658."
-            elif [ "$OLD_RESULT" = "died" ] && [ "$NEW_RESULT" = "died" ]; then
+            elif [ "$OLD_RESULT" = "reproduced" ] && [ "$NEW_RESULT" = "reproduced" ]; then
               echo "**Still broken on both.** The middleware is still load-bearing; the"
               echo "nightly's earlier result needs re-examining."
             else
-              echo "**Inconclusive** — see the logs below. An \`install-failed\` arm proves"
-              echo "nothing about the bug."
+              echo "**Inconclusive** — see the logs below. An \`install-failed\` or"
+              echo "\`failed-other\` arm proves nothing about the bug."
             fi
             echo
             echo "<details><summary>old arm</summary>"
