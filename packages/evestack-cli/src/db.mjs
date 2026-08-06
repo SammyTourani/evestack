@@ -13,53 +13,33 @@
  * `_private_jobs` without an index to help them, and an unbounded seq scan on
  * someone's real queue is a denial of service we would have caused.
  */
-import { isIP, setDefaultAutoSelectFamily } from "node:net";
-import { lookup as dnsLookup } from "node:dns/promises";
-
-/**
- * Connect to one address at a time instead of racing every address a hostname
- * resolves to.
+/*
+ * ─ There used to be a `setDefaultAutoSelectFamily(false)` here ───────────────
  *
- * Ported from packages/dashboard/lib/db.ts, where it was measured: `localhost`
- * resolves to both ::1 and 127.0.0.1, and when every attempt is refused Node's
- * happy-eyeballs path can build its summary `AggregateError` from a list it has
- * already cleared, throwing `TypeError: object null is not iterable` out of
- * node:net on a socket callback where no `await` can catch it. The dashboard
- * measured 100 seconds and four uncaught exceptions for the single most likely
- * misconfiguration there is — Postgres not started — which is also the most
- * likely state of the world when someone reaches for a doctor command.
+ * Ported from packages/dashboard/lib/db.ts to dodge a Node bug where a refused
+ * happy-eyeballs race threw an uncaught `TypeError` instead of rejecting. In
+ * this file it did direct harm, and it is the reason the doctor lied.
+ *
+ * With the race off, Node attempts only the FIRST address a name resolves to.
+ * `localhost` is ::1 first on macOS; Docker Desktop and Colima publish IPv4
+ * only. So `evestack doctor` — pointed at the `…@localhost:5433` URL the
+ * scaffolder itself writes — reported:
+ *
+ *     Cannot reach Postgres at postgres://evestack:***@localhost:5433/evestack
+ *       connect ECONNREFUSED ::1:5433
+ *     Set WORKFLOW_POSTGRES_URL, or start one:  docker compose up -d postgres
+ *
+ * ...while the agent, the dashboard and the runtime probes were all connected
+ * to that database on that exact URL. The one command whose entire job is to
+ * tell you what is broken was the only thing that was.
+ *
+ * The bug it guarded against is fixed across everything `engines.node: >=24`
+ * permits: measured on 24.11.1, 24.15.0 and 26.0.0, a refused
+ * `…@localhost:5999` rejects with a well-formed `AggregateError` in 7 ms.
+ * `connectionTimeoutMillis` below is what bounds the wait now, which is where
+ * that responsibility belonged anyway. test/dual-stack.test.mjs fails if this
+ * line comes back.
  */
-setDefaultAutoSelectFamily(false);
-
-/**
- * Every address the host resolves to, IPv4 first, so the caller can try them
- * one at a time.
- *
- * Turning happy-eyeballs off above fixed the all-refused crash and introduced
- * the opposite bug: Node hands back ::1 first for `localhost`, so a single
- * attempt hit ::1 and stopped. Docker publishes a loopback port on 127.0.0.1
- * and does NOT listen on ::1, and since the scaffolder started binding Postgres
- * to 127.0.0.1 rather than 0.0.0.0 that is the normal shape of a healthy
- * install — so `evestack doctor` against its own DEFAULT_CONNECTION
- * (postgres://...@localhost:5433/...) failed with ECONNREFUSED ::1:5433 while
- * psql on the same machine connected fine. Reproduced 3/3.
- *
- * IPv4 first rather than resolver order because the refused address is the
- * IPv6 one in every case this tool is pointed at: a Docker-published port.
- * A literal IP or a unix socket path is returned untouched.
- */
-export async function connectionCandidates(host) {
-  if (!host || isIP(host) || host.startsWith("/")) return [host];
-  try {
-    const addresses = await dnsLookup(host, { all: true });
-    if (addresses.length === 0) return [host];
-    return addresses.sort((a, b) => a.family - b.family).map((a) => a.address);
-  } catch {
-    // Let the connect attempt produce the error, so the message a user sees
-    // comes from one place.
-    return [host];
-  }
-}
 
 /** pg's OID for `timestamp without time zone`. Hardcoded rather than imported
  *  so this module does not need pg loaded to be unit-testable. */
@@ -152,88 +132,27 @@ export async function connect({ connectionString, timeoutMs = 15_000 }) {
     );
   }
 
-  // One attempt per resolved address. See connectionCandidates: with
-  // happy-eyeballs off, a single attempt would stop at ::1 and never reach the
-  // 127.0.0.1 that Docker is actually listening on.
-  const parsed = URL.parse(connectionString);
-  const candidates = await connectionCandidates(parsed?.hostname ?? "");
-
-  const typeOverrides = () => ({
-    // Scoped to this client on purpose: pg's `setTypeParser` mutates a
-    // process-wide registry that every other pg consumer would inherit.
-    getTypeParser: (id, format) =>
-      id === NAIVE_TIMESTAMP_OID && (format ?? "text") === "text"
-        ? (value) => parseUtcTimestamp(value, pg.types.getTypeParser(id, format))
-        : pg.types.getTypeParser(id, format),
-  });
-
-  const shared = {
+  const client = new pg.Client({
+    connectionString,
     application_name: "evestack-doctor",
     connectionTimeoutMillis: Math.min(timeoutMs, 10_000),
-  };
-
-  const makeClient = (address) => {
-    // An IPv6 address cannot go back through a connection string. pg's parser
-    // keeps the brackets URL syntax requires and then hands `[::1]` to
-    // getaddrinfo, which answers ENOTFOUND — verified against pg 8.22.0. So an
-    // IPv6 candidate is passed as discrete fields, where no parsing happens.
-    if (parsed && address && address.includes(":")) {
-      return new pg.Client({
-        ...shared,
-        host: address,
-        port: parsed.port ? Number(parsed.port) : 5432,
-        user: parsed.username ? decodeURIComponent(parsed.username) : undefined,
-        password: parsed.password ? decodeURIComponent(parsed.password) : undefined,
-        database: decodeURIComponent(parsed.pathname.replace(/^\//, "")) || undefined,
-        types: typeOverrides(),
-      });
-    }
-
-    let target = connectionString;
-    if (parsed && address && address !== parsed.hostname) {
-      const rewritten = new URL(connectionString);
-      rewritten.hostname = address;
-      target = rewritten.toString();
-    }
-    return new pg.Client({
-      connectionString: target,
-      application_name: "evestack-doctor",
-    connectionTimeoutMillis: Math.min(timeoutMs, 10_000),
     // Scoped to this client on purpose: pg's `setTypeParser` mutates a
     // process-wide registry that every other pg consumer would inherit.
-      types: typeOverrides(),
-    });
-  };
+    types: {
+      getTypeParser: (id, format) =>
+        id === NAIVE_TIMESTAMP_OID && (format ?? "text") === "text"
+          ? (value) => parseUtcTimestamp(value, pg.types.getTypeParser(id, format))
+          : pg.types.getTypeParser(id, format),
+    },
+  });
 
-  let client = null;
-  // The FIRST failure, not the last. Candidates are IPv4-first, so the first
-  // error is the one describing the address a user actually expects to be
-  // listening; the trailing ::1 attempt reports a bracketed-literal DNS error
-  // that explains nothing about why their Postgres is unreachable.
-  let firstCause = null;
-  for (const address of candidates) {
-    const attempt = makeClient(address);
-    try {
-      await attempt.connect();
-      client = attempt;
-      break;
-    } catch (cause) {
-      firstCause ??= cause;
-      // Release the failed socket rather than leaving it for the GC; a doctor
-      // run that leaks a handle per address never exits on its own.
-      try {
-        await attempt.end();
-      } catch {
-        /* never connected */
-      }
-    }
-  }
-
-  if (client === null) {
+  try {
+    await client.connect();
+  } catch (cause) {
     throw new DoctorError(
-      `Cannot reach Postgres at ${redact(connectionString)}\n  ${firstCause?.message ?? "no address to try"}\n\n` +
+      `Cannot reach Postgres at ${redact(connectionString)}\n  ${cause.message}\n\n` +
         `Set WORKFLOW_POSTGRES_URL, or start one:  docker compose up -d postgres`,
-      { cause: firstCause ?? undefined },
+      { cause },
     );
   }
 

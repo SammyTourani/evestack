@@ -179,7 +179,29 @@ const model = wrapLanguageModel({ model: baseModel, middleware: surviveDeniedToo
  * 32768 matches Qwen3's native window. Override for a model with a different
  * one; too high and compaction triggers too late to save the turn.
  */
-const localContextWindow = Number(process.env.EVESTACK_CONTEXT_WINDOW?.trim() || 32768);
+const localContextWindow = readContextWindow();
+
+/**
+ * A bare `Number(...)` here accepted anything and produced `NaN` for a typo —
+ * `32k`, `32,768`, a trailing comment — which eve then took verbatim as the
+ * compaction budget. Nothing threw, nothing warned, and compaction silently
+ * stopped working on the one provider that has no catalog to fall back on.
+ * Every other setting in this file refuses a value it does not understand
+ * rather than passing it on; this one now does too.
+ */
+function readContextWindow(): number {
+  const raw = process.env.EVESTACK_CONTEXT_WINDOW?.trim();
+  if (!raw) return 32768;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1024) {
+    throw new Error(
+      `EVESTACK_CONTEXT_WINDOW="${raw}" is not a context window. It must be a whole number of ` +
+        "tokens, at least 1024, and it must match what the local model actually accepts — " +
+        "32768 for qwen3. Leave it unset to use that default.",
+    );
+  }
+  return value;
+}
 
 export default defineAgent({
   model,

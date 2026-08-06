@@ -475,18 +475,69 @@ export function isCrossSiteWrite(request: Request): boolean {
   if (!sent) return true;
 
   // Hosts, not full origins. Behind TLS termination the browser sends
-  // `Origin: https://evestack.example.com` while `request.url` is reconstructed
-  // from the Host header as `http://…`, and comparing schemes would 403 every
-  // write on a correctly configured deployment. Host equality is what CSRF
-  // turns on anyway: an attacker's page cannot forge the Origin header, and a
-  // same-host attacker is already inside the boundary this is defending.
-  const allowed = new Set([new URL(request.url).host]);
+  // `Origin: https://evestack.example.com` while the request arrives over plain
+  // http, and comparing schemes would 403 every write on a correctly configured
+  // deployment. Host equality is what CSRF turns on anyway: an attacker's page
+  // cannot forge the Origin header, and a same-host attacker is already inside
+  // the boundary this is defending.
+  //
+  // The comparison is against the HOST HEADER, not `new URL(request.url).host`.
+  // That distinction was the whole bug: Next builds `request.url` in the proxy
+  // from the address the server is BOUND to, and the container runs
+  // `next start --hostname 0.0.0.0`, so `request.url.host` was literally
+  // `0.0.0.0:4000` — a value no browser will ever send as an Origin. Every
+  // write from a browser 403'd, sign-in included, so the shipped dashboard
+  // could not be logged into at all. Nothing caught it because curl sends no
+  // Origin and takes the early return above.
+  //
+  // Host is the right side of the comparison on its own merits: it is the name
+  // the browser dialled, so `Origin.host === Host` IS the same-origin test. It
+  // is attacker-supplied, but not by the attacker who matters here — a page on
+  // evil.com cannot change the Host the victim's browser sends to us, and
+  // cannot set Origin at all.
+  const allowed = new Set<string>();
+  for (const host of expectedHosts(request)) allowed.add(host);
   const configured = process.env.EVESTACK_PUBLIC_URL?.trim();
   if (configured) {
     const parsed = URL.parse(configured);
     if (parsed) allowed.add(parsed.host);
   }
   return !allowed.has(sent.host);
+}
+
+/**
+ * The host names a browser could legitimately have used to reach this request.
+ *
+ * `X-Forwarded-Host` is believed only behind a declared trusted proxy, the same
+ * rule the identity headers follow — otherwise a forged header would name its
+ * own origin as allowed and disable the check it is part of.
+ *
+ * The bind address from `request.url` is kept as a last resort for a runtime
+ * that presents no Host header at all (HTTP/1.0, some test harnesses). It is
+ * last, and it is never the only reason a browser Origin is accepted in a real
+ * deployment, because real browsers always send Host.
+ */
+function expectedHosts(request: Request): string[] {
+  const hosts: string[] = [];
+
+  if (trustsForwardedIdentity(request)) {
+    const forwarded = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
+    if (forwarded) hosts.push(forwarded.toLowerCase());
+  }
+
+  const host = request.headers.get("host")?.trim();
+  if (host) {
+    hosts.push(host.toLowerCase());
+    // Deliberately no bind-address fallback once Host is present. Adding it
+    // would put `0.0.0.0:4000` back on the allow-list permanently, which is the
+    // state this function is being fixed out of.
+    return hosts;
+  }
+
+  const parsed = URL.parse(request.url);
+  if (parsed?.host) hosts.push(parsed.host.toLowerCase());
+
+  return hosts;
 }
 
 /**

@@ -20,7 +20,9 @@
     ".": "./create.mjs",
     "./create": "./create.mjs",
     "./attach": "./attach.mjs",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./template/scripts/verify.mjs": "./template/scripts/verify.mjs",
+    "./template/scripts/checks.mjs": "./template/scripts/checks.mjs"
   },
   "files": [
     "index.mjs",

@@ -24,12 +24,19 @@ agent **and drives it**.
 ## Quickstart
 
 ```bash
-npx evestack create my-agent
+npx evestack create my-agent               # offers to do the next three for you
 cd my-agent
 docker compose up -d postgres
 npm run db:bootstrap                       # creates the workflow schema
-npm run dev                                # agent on :2000
 docker compose --profile dashboard up -d   # dashboard on :4000
+npm run dev                                # agent on :2000 — holds this terminal
+```
+
+In another terminal:
+
+```bash
+npm run verify                             # checks every part, names the fix for anything
+                                           # broken, then offers to open the dashboard
 ```
 
 The scaffolder generates your credentials and prints them. Sign in at

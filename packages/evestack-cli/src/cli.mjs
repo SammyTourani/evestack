@@ -37,6 +37,13 @@ import { renderText, renderJson, renderVerbose } from "./render.mjs";
 const SCAFFOLD_COMMANDS = new Set(["create", "attach"]);
 
 /**
+ * Routed before parseArgs for the same reason the scaffolder is: these own
+ * their own flags. `evestack verify --json` must reach the checker, not die on
+ * doctor's parser calling --json unknown for a command it does not handle.
+ */
+const PROJECT_COMMANDS = new Set(["verify", "open"]);
+
+/**
  * Which scaffolder command this argv is, or null for everything else.
  *
  * Exported so the routing decision can be asserted without running a wizard
@@ -46,9 +53,17 @@ export function scaffoldCommand(argv) {
   return SCAFFOLD_COMMANDS.has(argv[0]) ? argv[0] : null;
 }
 
+/** Which project-scoped command this argv is, or null. Exported to be asserted
+ *  without shelling out to a checker that talks to Docker and Postgres. */
+export function projectCommand(argv) {
+  return PROJECT_COMMANDS.has(argv[0]) ? argv[0] : null;
+}
+
 export const USAGE = `evestack — the whole eve stack, on your own machine
 
   evestack create [name]        scaffold an agent + dashboard into a new directory
+  evestack verify               check every part of the stack and say what to fix
+  evestack open                 print the dashboard URL and sign-in, and open it
   evestack attach [dir]         add evestack to an eve project you already have
   evestack doctor               explain why a durable job is dead
 
@@ -57,12 +72,19 @@ export const USAGE = `evestack — the whole eve stack, on your own machine
 
 Getting started
 
-  npx evestack create my-agent
+  npx evestack create my-agent                 # offers to do the next three for you
   cd my-agent
-  docker compose up -d postgres
-  npm run db:bootstrap
-  npm run dev
-  docker compose --profile dashboard up -d     # the dashboard on :4000
+  docker compose up -d postgres                # durable sessions
+  npm run db:bootstrap                         # create the schema
+  docker compose --profile dashboard up -d     # the dashboard
+  npm run dev                                  # the agent
+
+Then, in another terminal:
+
+  evestack verify                              # is it working? what do I fix?
+  evestack open                                # take me to the dashboard
+
+Both work from anywhere inside the project directory.
 
 Options
 
@@ -151,6 +173,17 @@ function numeric(value, name) {
 export async function main(argv, { stdout = process.stdout, stderr = process.stderr } = {}) {
   // Before parseArgs, and before anything is imported: `create` and `attach`
   // own every argument after their own name. See SCAFFOLD_COMMANDS.
+  const project = projectCommand(argv);
+  if (project) {
+    const commands = await import("./project.mjs");
+    try {
+      return await commands[project](argv.slice(1), { stdout, stderr });
+    } catch (error) {
+      stderr.write(`${error?.message ?? error}\n`);
+      return 1;
+    }
+  }
+
   const routed = scaffoldCommand(argv);
   if (routed) {
     const scaffold = await import("./scaffold.mjs");

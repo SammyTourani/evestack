@@ -21,22 +21,128 @@
  * writes files and credentials.
  */
 import { spawnSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync,
 } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
-  basename, C, DASHBOARD_IMAGE, DASHBOARD_IMAGE_PUBLISHED, detectPm, dim, makePrompter,
+  basename, C, DASHBOARD_IMAGE, DASHBOARD_IMAGE_PUBLISHED, detectPm, dim, freePort, makePrompter,
   ok, REPO, say, step, templateDir, warn,
 } from "./shared.mjs";
-import {
-  DOCKER_DENIED, DOCKER_MISSING, DOCKER_RUNNING, DOCKER_UNRESPONSIVE, applyOffer, hasFindings,
-  offerLines, preflight, preflightLines, probeDocker,
-} from "./preflight.mjs";
+
+/* -------------------------------------------------------------------------- */
+/* bringing it up                                                              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Ask before starting anything.
+ *
+ * Only on a terminal. In CI, in a heredoc, or under `--yes`, "would you like me
+ * to start containers" has no one to answer it, and a scaffolder that pulls a
+ * 200 MB image because nobody was there to say no is a scaffolder people stop
+ * running unattended.
+ */
+async function confirmStart() {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return false;
+  const { confirm, close } = await makePrompter(false);
+  const yes = await confirm(
+    `Start Postgres, create the schema and pull the dashboard now? ${C.dim}(~200 MB)${C.reset}`,
+    true,
+  );
+  close();
+  return yes;
+}
+
+/** Run a command in the project, streaming its output. Returns true on exit 0. */
+function run(cwd, command, args) {
+  const result = spawnSync(command, args, { cwd, stdio: "inherit" });
+  return result.status === 0;
+}
+
+/**
+ * The three commands that have one correct answer, in the order they depend on
+ * each other, stopping at the first failure.
+ *
+ * Each step says what it is doing first, because `docker compose up` on a cold
+ * machine is a long silence followed by a wall of layer hashes, and a reader
+ * who does not know which of the four steps they are in cannot tell a slow pull
+ * from a hang.
+ */
+async function bringUp(target, pm, dashboardPort) {
+  say();
+  step("Starting Postgres");
+  if (!run(target, "docker", ["compose", "up", "-d", "--wait", "postgres"])) {
+    warn("Postgres did not come up. The commands below will show you why.");
+    return false;
+  }
+  ok("Postgres is up");
+
+  step("Creating the workflow schema");
+  if (!run(target, pm, ["run", "db:bootstrap"])) {
+    warn("The schema was not created. Fix what it printed, then re-run it.");
+    return false;
+  }
+
+  step(`Pulling and starting the dashboard on :${dashboardPort}`);
+  if (!run(target, "docker", ["compose", "--profile", "dashboard", "up", "-d", "--wait"])) {
+    warn("The dashboard did not start. `docker compose logs dashboard` has the reason.");
+    warn("Everything else is up — the agent works without it.");
+    return false;
+  }
+  ok(`Dashboard is up on :${dashboardPort}`);
+  return true;
+}
+
+function hasDocker() {
+  const r = spawnSync("docker", ["info"], { stdio: "ignore" });
+  return r.status === 0;
+}
 
 function hasOllama() {
   return spawnSync("ollama", ["--version"], { stdio: "ignore" }).status === 0;
+}
+
+/**
+ * What is actually available from the local Ollama, asked over its HTTP API.
+ *
+ * `ollama list` would need the CLI to be the same install the agent will talk
+ * to; the agent uses OLLAMA_BASE_URL, so this asks the same endpoint the agent
+ * will. A tag matches with or without an explicit `:latest`, because `qwen3`
+ * and `qwen3:latest` are the same model and the user may have pulled either
+ * spelling.
+ */
+async function inspectOllama(chatModel, embedModel = "nomic-embed-text") {
+  const baseUrl = process.env.OLLAMA_BASE_URL?.trim() || "http://127.0.0.1:11434";
+  const result = {
+    baseUrl,
+    installed: hasOllama(),
+    running: false,
+    hasChatModel: false,
+    hasEmbedModel: false,
+  };
+  try {
+    const response = await fetch(new URL("/api/tags", baseUrl), {
+      signal: AbortSignal.timeout(2500),
+    });
+    if (!response.ok) return result;
+    const body = await response.json();
+    result.running = true;
+    // Reaching the API proves Ollama is there even if its CLI is not on PATH —
+    // a remote OLLAMA_BASE_URL, or a GUI install that never linked the binary.
+    result.installed = true;
+    const tags = new Set(
+      (Array.isArray(body?.models) ? body.models : []).flatMap((m) =>
+        typeof m?.name === "string" ? [m.name, m.name.replace(/:latest$/, "")] : [],
+      ),
+    );
+    const has = (name) => tags.has(name) || tags.has(name.replace(/:latest$/, ""));
+    result.hasChatModel = has(chatModel);
+    result.hasEmbedModel = has(embedModel);
+  } catch {
+    // Not running, or not reachable. `running` stays false and the caller says so.
+  }
+  return result;
 }
 
 /**
@@ -54,7 +160,7 @@ export async function create(argv) {
     argv.includes("--yes") || argv.includes("-y") || !process.stdin.isTTY;
   const positional = argv.filter((a) => !a.startsWith("-"));
 
-  const { ask, confirm, pause, resume, close } = await makePrompter(nonInteractive);
+  const { ask, confirm, close } = await makePrompter(nonInteractive);
 
   say();
   say(`${C.cyan}${C.bold}  evestack${C.reset} ${C.dim}— eve on your own machine, $0 infrastructure${C.reset}`);
@@ -68,31 +174,6 @@ export async function create(argv) {
     console.error(`\n${C.red}${target} already exists and is not empty.${C.reset}`);
     return 1;
   }
-
-  // ---- preflight ------------------------------------------------------------
-  // After the directory is known to be usable, before anything else.
-  //
-  // After, because a mistyped project name must not cost someone a prompt to
-  // install Docker and the download that follows it, only to be told the
-  // directory was occupied all along.
-  //
-  // Before everything else, for two different reasons. Two of these findings
-  // change what this wizard WRITES: a taken 5433 or 4000 has to be settled
-  // before docker-compose.yml and .env.local exist, because those two files,
-  // the trace-ingest URL and the printed sign-in line all have to agree about
-  // one number. The rest is about when somebody learns. The check this replaces
-  // ran after `npm install`, so a machine with no Docker spent two minutes
-  // downloading a project before being told, in one sentence that was wrong for
-  // it, to start an application it had never installed.
-  const machine = await preflight({ dir: target });
-  let docker = machine.docker;
-  if (hasFindings(machine)) {
-    step("Checking your machine");
-    for (const line of preflightLines(machine)) say(line);
-    docker = await considerOffer(machine, { confirm, pause, resume, nonInteractive });
-  }
-  const pgPort = machine.ports.pg.chosen;
-  const dashboardPort = machine.ports.dashboard.chosen;
 
   // ---- model ----------------------------------------------------------------
   say();
@@ -125,8 +206,34 @@ export async function create(argv) {
   let apiKeyLine = "";
   let modelLine = `EVESTACK_PROVIDER=${chosen.id}\nEVESTACK_MODEL=${chosen.model}`;
   if (useOllama) {
-    if (!hasOllama()) {
-      warn("Ollama not found on PATH — install it from https://ollama.com, then `ollama pull qwen3`.");
+    // Three separate things can be missing, and each has a different fix. The
+    // wizard used to check only the first, so someone with Ollama installed but
+    // no model pulled got a clean scaffold, a clean install, and then an opaque
+    // failure on their first message — the point at which they have the least
+    // context for debugging it.
+    const ollama = await inspectOllama(chosen.model);
+    if (!ollama.installed) {
+      warn("Ollama is not on PATH. Install it from https://ollama.com, then:");
+      warn(`  ollama pull ${chosen.model} && ollama pull nomic-embed-text`);
+    } else if (!ollama.running) {
+      warn("Ollama is installed but not answering on " + ollama.baseUrl + ". Start it, then:");
+      warn(`  ollama pull ${chosen.model} && ollama pull nomic-embed-text`);
+    } else {
+      // Pull the models now rather than at first message. `ollama pull` of a
+      // model already present is a no-op that prints one line, so naming both
+      // unconditionally is cheaper than explaining when each is needed.
+      if (!ollama.hasChatModel) {
+        warn(`Ollama has no "${chosen.model}" yet. Before your first message:`);
+        warn(`  ollama pull ${chosen.model}`);
+      }
+      // A SECOND, SEPARATE model. The chat model cannot produce embeddings, so
+      // `remember` and `recall` fail without this one — and they fail inside a
+      // tool call, where the model tends to report success anyway.
+      if (!ollama.hasEmbedModel) {
+        warn("Long-term memory needs a local embedding model, which is a separate pull:");
+        warn("  ollama pull nomic-embed-text");
+        dim("Skip it if you do not want the remember/recall tools; nothing else uses it.");
+      }
     }
     // The wizard is where this warning has to land. By the time someone reads
     // the README section on local models they have usually already run the
@@ -229,6 +336,29 @@ export async function create(argv) {
   //
   // base64url so it is safe both unquoted in a URL and inside the compose file.
   const dbPassword = randomBytes(18).toString("base64url");
+
+  // Ports are chosen against the machine, not assumed.
+  //
+  // `attach` has always done this; `create` hardcoded 5433 and 4000, which is
+  // the wrong way round — `create` is the command someone runs first, and runs
+  // twice. A second project, or a clone of this repo with its own compose file,
+  // took the port and `docker compose up` failed halfway with
+  // `Bind for 0.0.0.0:5433 failed: port is already allocated`, leaving a
+  // container created but with nothing published. `docker compose ps` then
+  // says "healthy" while the port is missing, so the failure surfaces one
+  // command later as a raw ECONNREFUSED out of a migration library.
+  const pgPort = await freePort(5433);
+  const dashboardPort = await freePort(4000);
+  // The agent's port is PINNED, not discovered.
+  //
+  // `eve dev` takes 2000 and silently auto-increments when it is busy, and
+  // nothing recorded where it landed — so the compose file below pointed the
+  // dashboard at a hardcoded :2000 and `verify` probed 2000..2004 and believed
+  // the first answer. With two projects up, the second project's dashboard
+  // drove the FIRST project's agent: real runs, started in the wrong place,
+  // with nothing anywhere saying so. Recording the port turns three guesses
+  // into one fact.
+  const agentPort = await freePort(2000);
   writeFileSync(
     join(target, ".env.local"),
     [
@@ -238,8 +368,13 @@ export async function create(argv) {
       apiKeyLine,
       modelLine,
       "",
+      "# The port the agent listens on. `npm run dev` passes it to eve, the",
+      "# dashboard container is pointed at it, and `evestack verify` reads it —",
+      "# so a second project on this machine cannot be mistaken for this one.",
+      `EVESTACK_AGENT_PORT=${agentPort}`,
+      "",
       "# Durable sessions (docker compose provides this Postgres)",
-      `WORKFLOW_POSTGRES_URL=postgres://evestack:${dbPassword}@localhost:${pgPort}/evestack`,
+      `WORKFLOW_POSTGRES_URL=postgres://evestack:${dbPassword}@127.0.0.1:${pgPort}/evestack`,
       "WORKFLOW_POSTGRES_MAX_POOL_SIZE=20",
       "WORKFLOW_POSTGRES_WORKER_CONCURRENCY=20",
       "",
@@ -248,7 +383,7 @@ export async function create(argv) {
       `EVESTACK_AUTH_PASSWORD=${password}`,
       "",
       "# Dashboard trace export",
-      `EVESTACK_DASHBOARD_URL=http://localhost:${dashboardPort}/api/ingest/v1/traces`,
+      `EVESTACK_DASHBOARD_URL=http://127.0.0.1:${dashboardPort}/api/ingest/v1/traces`,
       "# Read by BOTH halves: the agent sends it as the x-evestack-ingest-token",
       "# header, and the dashboard container gets it from this same file via",
       "# `env_file:` in docker-compose.yml. Change it in one place or neither —",
@@ -265,13 +400,25 @@ export async function create(argv) {
   // Compose only accepts [a-z0-9][a-z0-9_-]* as a project name, and a directory
   // name is not constrained to that — so normalise rather than emit a file that
   // fails to parse.
-  const composeProject =
-    basename(target).toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^[^a-z0-9]+/, "") ||
-    "evestack";
-  writeFileSync(
-    join(target, "docker-compose.yml"),
-    composeFile(composeProject, dbPassword, { pgPort, dashboardPort }),
-  );
+  //
+  // THE SUFFIX IS THE POINT. Compose treats `name:` as the project identity, so
+  // two directories that normalise to the same name are ONE project: the second
+  // `docker compose up` recreates the first one's containers and both agents
+  // then read one database, with nothing anywhere saying so.
+  //
+  // This used to be the bare basename, which fixed an earlier collision against
+  // the literal string "evestack" and left the far likelier one wide open —
+  // `my-agent` is the DEFAULT name, so two default scaffolds collide by default.
+  // Observed on this machine: ~/evestack-trial/my-agent and
+  // ~/evestack-stranger/my-agent, with the surviving container reporting
+  // `com.docker.compose.project.working_dir` pointing at the second directory.
+  // One agent's sessions, memories and traces were in the other's database.
+  //
+  // Hashing the ABSOLUTE PATH rather than counting upwards keeps the name stable
+  // for a given directory — it has to be, or every `docker compose` in that
+  // project would address a different stack than the last one did.
+  const composeProject = projectNameFor(target);
+  writeFileSync(join(target, "docker-compose.yml"), composeFile(composeProject, dbPassword, { pgPort, dashboardPort, agentPort }));
   ok("Wrote docker-compose.yml — Postgres, and the dashboard behind a profile");
 
   // ---- install --------------------------------------------------------------
@@ -288,10 +435,9 @@ export async function create(argv) {
   }
 
   // ---- next steps -----------------------------------------------------------
-  // Re-probed rather than reused. Minutes of `npm install` have gone by since
-  // the preflight, and the most likely thing to have happened in them is the
-  // reader going and starting the Docker they were just told about.
-  const finalDocker = docker.state === DOCKER_RUNNING ? docker : probeDocker();
+  const dockerUp = hasDocker();
+  // localhost, not 127.0.0.1, because this one is for a human to click.
+  const dashboardUrl = `http://localhost:${dashboardPort}`;
   say();
   if (!installed) {
     say(`${C.yellow}${C.bold}  Created, but dependencies are not installed.${C.reset}`);
@@ -308,25 +454,43 @@ export async function create(argv) {
   }
   say(`${C.green}${C.bold}  Done.${C.reset}`);
   say();
-  // Not "start Docker Desktop" any more. That sentence was printed for every
-  // non-zero exit of `docker info`, including on machines with no Docker and on
-  // Linux, where Docker Desktop is not what anybody is running. The preflight
-  // above already said the true thing at length; this is the one-line reminder
-  // that the next command will not work yet, and it names the state.
-  if (finalDocker.state !== DOCKER_RUNNING) {
-    warn(`${dockerBlocker(finalDocker)} Postgres and the agent sandbox both need it.`);
-    // Only point upwards when there is something up there. Docker can also have
-    // gone away DURING the install, in which case the preflight said nothing
-    // about it and "scroll up" sends the reader looking for advice that was
-    // never printed.
-    if (machine.remedy) dim("Scroll up for the fix for this machine.");
-    else dim("Run `docker version` to see what it says.");
+  if (!dockerUp) {
+    warn("Docker isn't running. Start Docker Desktop first — Postgres and the sandbox need it.");
     say();
   }
   // Five lines, one of them the dashboard. This used to be five lines plus a
   // monorepo clone plus a `docker build` that had never been run by anyone —
   // the largest single piece of friction in the product. What replaced it is a
   // pull, because the compose file written above points at a published image.
+  // ---- offer to do the infrastructure part ----------------------------------
+  //
+  // Two of the four remaining commands are pure setup with one correct answer:
+  // start Postgres, create the schema. The third pulls an image. None of them
+  // needs a decision, all of them fail in ways that are hard to read, and every
+  // one is a chance to stop. `npm run dev` stays manual because it runs in the
+  // foreground and belongs to the user's terminal.
+  //
+  // Asked, not assumed: it starts containers and pulls ~200 MB. Declining
+  // prints the same list it always did.
+  if (dockerUp && (await confirmStart())) {
+    const brought = await bringUp(target, pm, dashboardPort);
+    if (brought) {
+      say();
+      say(`  ${C.bold}Left to do:${C.reset}`);
+      say(`    cd ${basename(target)} && ${pm} run dev        ${C.dim}# the agent, in this terminal${C.reset}`);
+      say(`    ${pm} run verify                    ${C.dim}# checks all of it, in another${C.reset}`);
+      say();
+      say(`  ${C.dim}Dashboard${C.reset} ${dashboardUrl} ${C.dim}—${C.reset} evestack ${C.dim}/${C.reset} ${password}`);
+      say();
+      say(`  ${C.dim}Nothing here bills you. No Vercel account, no metered compute.${C.reset}`);
+      say();
+      return 0;
+    }
+    // bringUp already explained what failed; fall through to the manual list so
+    // the reader has the commands in front of them.
+    say();
+  }
+
   say(`  ${C.bold}Next:${C.reset}`);
   say(`    cd ${basename(target)}`);
   say(`    docker compose up -d postgres              ${C.dim}# durable sessions${C.reset}`);
@@ -337,12 +501,13 @@ export async function create(argv) {
   say(`    ${pm} run db:bootstrap                       ${C.dim}# create the workflow schema${C.reset}`);
   say(`    ${pm} run dev                                ${C.dim}# chat with your agent on :2000${C.reset}`);
   say(`    docker compose --profile dashboard up -d   ${C.dim}# the dashboard on :${dashboardPort}${C.reset}`);
+  say(`    ${pm} run verify                             ${C.dim}# check every part of it${C.reset}`);
   say();
   // The dashboard is the reason to pick evestack over plain eve, so the sign-in
   // is printed rather than left to be dug out of .env.local. It is a freshly
   // generated per-project secret on the user's own terminal; the alternative is
   // a user who brings the container up and cannot get past the sign-in page.
-  say(`  ${C.dim}Sign in at${C.reset} http://localhost:${dashboardPort} ${C.dim}with${C.reset} evestack ${C.dim}/${C.reset} ${password}`);
+  say(`  ${C.dim}Sign in at${C.reset} ${dashboardUrl} ${C.dim}with${C.reset} evestack ${C.dim}/${C.reset} ${password}`);
   dim("(it is in .env.local, which the dashboard container reads too — nothing to copy)");
   say();
   if (!DASHBOARD_IMAGE_PUBLISHED) {
@@ -422,13 +587,34 @@ function readdirSafe(p) {
   }
 }
 
-export function composeFile(projectName, dbPassword, { pgPort = 5433, dashboardPort = 4000 } = {}) {
-  // The compose project name has to be per-directory, not the literal string
-  // "evestack". Compose treats `name:` as the project identity, so two scaffolds
-  // — or one scaffold plus a cloned evestack repo — become the SAME project. The
-  // second `docker compose up` then recreates the first one's container and both
-  // agents silently share one database. Observed live: scaffolding into a new
-  // directory recreated an unrelated running evestack-postgres-1.
+/**
+ * The Compose project name for a scaffolded directory.
+ *
+ * Exported so test/compose.test.mjs asserts THIS derivation rather than its own
+ * copy of it — a collision test that re-implements the hashing would keep
+ * passing after the real one changed.
+ */
+export function projectNameFor(target) {
+  const slug =
+    basename(target).toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^[^a-z0-9]+/, "") ||
+    "evestack";
+  return `${slug}-${createHash("sha256").update(target).digest("hex").slice(0, 6)}`;
+}
+
+export function composeFile(projectName, dbPassword, { pgPort = 5433, dashboardPort = 4000, agentPort = 2000 } = {}) {
+  // The compose project name has to be unique to this DIRECTORY PATH, not to its
+  // name. Compose treats `name:` as the project identity, so two scaffolds — or
+  // one scaffold plus a cloned evestack repo — become the SAME project: the
+  // second `docker compose up` recreates the first one's container and both
+  // agents silently share one database. Observed twice, most recently with two
+  // directories both called `my-agent`, which is the DEFAULT name.
+  //
+  // The trade this makes, stated because the generated file says it too: the
+  // name is derived from the absolute path, so MOVING the project directory
+  // gives it a new identity and Compose no longer recognises the old containers
+  // and volume. That is visible and recoverable — `docker compose up -d` makes
+  // fresh ones, and the old volume is still there to copy out of. Sharing a
+  // database with an unrelated agent is neither.
   //
   // The dashboard sits behind a profile so a plain `docker compose up -d` starts
   // Postgres alone — the agent is useful without the dashboard, and pulling a
@@ -450,6 +636,12 @@ export function composeFile(projectName, dbPassword, { pgPort = 5433, dashboardP
 # a pnpm \`workspace:*\` dependency that only exists against the root lockfile.)
 `;
   return `# evestack — your whole stack, on your machine, for $0.
+#
+# The "name:" line below is this directory's identity to Docker Compose, and it
+# carries a hash of the directory's full path so that two projects with the same
+# folder name cannot silently share one database. Move this directory and Compose
+# will not recognise the containers and volume it made here — bring them up again
+# and copy out of the old volume if you need what was in it.
 #
 #   docker compose up -d postgres              durable sessions
 #   docker compose --profile dashboard up -d   + the dashboard on :${dashboardPort}
@@ -518,97 +710,21 @@ services:
     env_file:
       - .env.local
     environment:
-      # .env.local says localhost:${pgPort} because the AGENT runs on your host.
+      # .env.local says localhost:5433 because the AGENT runs on your host.
       # Inside a container "localhost" is the container, so the same database is
       # reached over the compose network instead.
       WORKFLOW_POSTGRES_URL: postgres://evestack:${dbPassword}@postgres:5432/evestack
       # \`npm run dev\` also runs on the host, not in compose.
-      EVESTACK_AGENT_URL: \${EVESTACK_AGENT_URL:-http://host.docker.internal:2000}
+      EVESTACK_AGENT_URL: \${EVESTACK_AGENT_URL:-http://host.docker.internal:${agentPort}}
     ports:
       # 127.0.0.1 on purpose. The process inside binds 0.0.0.0 because nothing
       # could reach it otherwise; the published mapping is where exposure is
       # actually decided, and this one keeps the control plane on loopback.
-      - "127.0.0.1:\${DASHBOARD_PORT:-${dashboardPort}}:4000"
+      - "127.0.0.1:${"$"}{DASHBOARD_PORT:-${dashboardPort}}:4000"
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
 volumes:
   evestack-pgdata:
 `;
-}
-
-/**
- * Offer to fix what was found, and never do it without being told to.
- *
- * Three rules, and they are the whole of the consent policy:
- *
- *   1. Nobody is asked unless there is a human at the keyboard. Under `--yes`
- *      or a pipe the command is printed and that is all — a non-interactive
- *      run must never install system software on the strength of a default.
- *   2. The literal command is printed immediately above the question, along
- *      with what it downloads. Consent to "install Docker" is not consent; it
- *      is a shrug. Consent to `brew install colima docker docker-compose` is.
- *   3. Declining costs nothing. The instructions stay on screen, the scaffold
- *      continues, and the same advice is repeated at the end.
- *
- * Returns the Docker state to use from here on: re-probed after an install that
- * succeeded, unchanged otherwise, so the closing lines describe the machine as
- * it is rather than as it was when the wizard started.
- */
-async function considerOffer(machine, { confirm, pause, resume, nonInteractive }) {
-  const offer = machine.remedy?.offer;
-  if (!offer) return machine.docker;
-
-  // --yes means "stop asking me", and a pipe means there is nobody to ask.
-  // Neither is consent to install system software, so both print and move on.
-  if (nonInteractive) {
-    dim("Not asking, because this run is non-interactive. Run it yourself when you can.");
-    return machine.docker;
-  }
-
-  for (const line of offerLines(offer)) say(line);
-  say();
-  if (!(await confirm(offer.label, offer.defaultYes))) {
-    dim("Nothing installed. The commands above are still there when you want them.");
-    return machine.docker;
-  }
-
-  say();
-  step(offer.display);
-  // readline holds this stdin, and the child is about to want it. Without the
-  // pause they split the keystrokes between them.
-  pause();
-  const { ok: succeeded } = applyOffer(offer);
-  resume();
-
-  if (!succeeded) {
-    warn(`\`${offer.display}\` did not finish successfully.`);
-    dim("Whatever it printed above is the real reason. Run it yourself once that");
-    dim("is sorted; nothing else in this scaffold depends on it right now.");
-    return machine.docker;
-  }
-
-  ok(`${offer.display} finished`);
-  if (offer.note) dim(offer.note);
-  // Only re-probed after an install. A `start` offer has launched something
-  // that takes tens of seconds, and probing it immediately would report a
-  // failure for a runtime that is coming up perfectly well.
-  if (offer.kind !== "install") return machine.docker;
-  const after = probeDocker();
-  if (after.state === DOCKER_RUNNING) ok("Docker is running");
-  return after;
-}
-
-/**
- * The one-line version of why the next command will not work.
- *
- * Separate from the preflight text on purpose: this is the reminder at the
- * bottom of a long, successful scaffold, and it has to be one sentence that is
- * true in every state rather than a second copy of the advice.
- */
-function dockerBlocker({ state }) {
-  if (state === DOCKER_MISSING) return "Docker still is not installed.";
-  if (state === DOCKER_DENIED) return "Docker runs, but this user cannot reach its socket.";
-  if (state === DOCKER_UNRESPONSIVE) return "Docker is not answering yet.";
-  return "Docker's daemon is not running yet.";
 }

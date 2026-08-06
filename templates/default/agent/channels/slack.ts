@@ -32,13 +32,29 @@ import { defaultSlackAuth, slackChannel } from "eve/channels/slack";
 const missing = ["SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET"].filter(
   (name) => !process.env[name],
 );
+// One line by default, the whole story under EVESTACK_VERBOSE. See the note in
+// agent/channels/telegram.ts for why.
 if (missing.length > 0) {
-  console.warn(
-    `[evestack:slack] ${missing.join(" and ")} not set, so the Slack channel is registered ` +
-      "but idle: unsigned inbound requests get a 401 and outbound Web API calls throw. " +
-      "Everything else works. See docs/channels/slack.mdx.",
-  );
+  if (verbose()) {
+    console.warn(
+      `[evestack:slack] ${missing.join(" and ")} not set, so the Slack channel is registered ` +
+        "but idle: unsigned inbound requests get a 401 and outbound Web API calls throw. " +
+        "Everything else works. See docs/channels/slack.mdx.",
+    );
+  } else {
+    console.log(
+      `[evestack] slack idle — no ${missing.join("/")} (docs/channels/slack.mdx)`,
+    );
+  }
 }
+/** `EVESTACK_VERBOSE=1` turns the one-line boot notice below into the full
+ *  explanation. Defined per file on purpose: this module also ships as a
+ *  standalone registry item and cannot import a sibling. */
+function verbose(): boolean {
+  const value = process.env.EVESTACK_VERBOSE?.trim();
+  return Boolean(value) && value !== "0" && value !== "false";
+}
+
 
 export default slackChannel({
   /**

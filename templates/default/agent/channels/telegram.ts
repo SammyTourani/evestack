@@ -35,12 +35,33 @@ import { telegramChannel } from "eve/channels/telegram";
  * their own: eve throws unless TELEGRAM_WEBHOOK_SECRET_TOKEN is configured and
  * the X-Telegram-Bot-Api-Secret-Token header matches it in constant time.
  */
+/*
+ * ONE LINE, not a paragraph. This warning fires on every boot of a correctly
+ * configured project that simply does not use Telegram, and it used to be three
+ * sentences — one of three such blocks, so a fresh `npm run dev` opened with
+ * three paragraphs about credentials the reader had not set before anything said
+ * the agent had started. Warnings that always fire are how people learn to
+ * scroll past output. The full explanation moved behind EVESTACK_VERBOSE, which
+ * is where you want it the moment you actually try to configure this.
+ */
 if (!process.env.TELEGRAM_BOT_TOKEN) {
-  console.warn(
-    "[evestack:telegram] TELEGRAM_BOT_TOKEN is not set, so the Telegram channel is idle. " +
-      "Everything else works. See docs/channels/telegram.mdx to get a token from BotFather.",
-  );
+  if (verbose()) {
+    console.warn(
+      "[evestack:telegram] TELEGRAM_BOT_TOKEN is not set, so the Telegram channel is idle. " +
+        "Everything else works. See docs/channels/telegram.mdx to get a token from BotFather.",
+    );
+  } else {
+    console.log("[evestack] telegram idle — no TELEGRAM_BOT_TOKEN (docs/channels/telegram.mdx)");
+  }
 }
+/** `EVESTACK_VERBOSE=1` turns the one-line boot notice below into the full
+ *  explanation. Defined per file on purpose: this module also ships as a
+ *  standalone registry item and cannot import a sibling. */
+function verbose(): boolean {
+  const value = process.env.EVESTACK_VERBOSE?.trim();
+  return Boolean(value) && value !== "0" && value !== "false";
+}
+
 
 export default telegramChannel({
   // Without this, an `@yourbot` mention in a group is indistinguishable from any

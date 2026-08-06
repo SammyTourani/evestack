@@ -1,5 +1,6 @@
 import { openai } from "@ai-sdk/openai";
-import { embed } from "ai";
+import { embed, type EmbeddingModel } from "ai";
+import { createOllama } from "ai-sdk-ollama";
 import { Pool } from "pg";
 
 /**
@@ -14,8 +15,117 @@ import { Pool } from "pg";
  * conversation, memory persists across all of them.
  */
 
-const DIMENSIONS = Number(process.env.EVESTACK_EMBED_DIMENSIONS ?? 1536);
-const EMBED_MODEL = process.env.EVESTACK_EMBED_MODEL ?? "text-embedding-3-small";
+/* -------------------------------------------------------------------------- */
+/* which model turns text into a vector                                        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Embeddings follow the chat provider unless told otherwise.
+ *
+ * This file used to call `openai.textEmbeddingModel(...)` unconditionally, and
+ * that made the whole `$0` story false. Pick Ollama in the scaffolder — the
+ * option whose own text reads *"Local models need no API key"* — and the first
+ * `remember` call died on `AI_LoadAPIKeyError: OpenAI API key is missing`. It
+ * failed in the worst possible way, too: the tool error went to the log, the
+ * model saw it, and it told the user *"saved to long-term memory"* anyway.
+ * A silent lie about what was persisted is worse than a crash.
+ *
+ * Anthropic has no embeddings endpoint at all, so an Anthropic project borrows
+ * OpenAI's if a key is present and otherwise says so in one sentence naming the
+ * variable that fixes it. Guessing a provider the user never configured is how
+ * the original bug happened; this asks instead.
+ */
+const EMBED_PROVIDERS = ["openai", "ollama"] as const;
+type EmbedProvider = (typeof EMBED_PROVIDERS)[number];
+
+/** Model and vector width that go together. Change one, change the other. */
+const EMBED_DEFAULTS: Record<EmbedProvider, { model: string; dimensions: number }> = {
+  // 1536 is text-embedding-3-small's native width.
+  openai: { model: "text-embedding-3-small", dimensions: 1536 },
+  // nomic-embed-text is 274 MB and 768-wide — the small, ordinary choice for a
+  // local stack. It is a SEPARATE pull from the chat model: `ollama pull
+  // nomic-embed-text`. `npm run verify` checks for it by name.
+  ollama: { model: "nomic-embed-text", dimensions: 768 },
+};
+
+function readEmbedProvider(): EmbedProvider {
+  const explicit = process.env.EVESTACK_EMBED_PROVIDER?.trim().toLowerCase();
+  if (explicit) {
+    if ((EMBED_PROVIDERS as readonly string[]).includes(explicit)) return explicit as EmbedProvider;
+    throw new Error(
+      `EVESTACK_EMBED_PROVIDER="${process.env.EVESTACK_EMBED_PROVIDER}" is not an embedding provider ` +
+        `this agent knows. Use one of: ${EMBED_PROVIDERS.join(", ")}.`,
+    );
+  }
+
+  const chat = process.env.EVESTACK_PROVIDER?.trim().toLowerCase() || "openai";
+  if (chat === "ollama") return "ollama";
+  if (chat === "openai") return "openai";
+
+  // anthropic, or anything else that reached here.
+  if (process.env.OPENAI_API_KEY?.trim()) return "openai";
+  throw new Error(
+    `EVESTACK_PROVIDER=${chat} has no embeddings endpoint, so long-term memory needs one from ` +
+      "somewhere else. Either set OPENAI_API_KEY, or run embeddings locally with " +
+      "EVESTACK_EMBED_PROVIDER=ollama (then `ollama pull nomic-embed-text`).",
+  );
+}
+
+/**
+ * Resolved on FIRST USE, not at module load, and that is load-bearing.
+ *
+ * `remember.ts`, `recall.ts` and `forget.ts` all import this module, and eve
+ * loads every tool at boot — so a `throw` at module scope is not "the memory
+ * tools are unavailable", it is "the agent does not start". An Anthropic
+ * project with no OPENAI_API_KEY is a perfectly ordinary configuration that
+ * simply cannot do embeddings, and the first version of this file bricked its
+ * whole agent over it. A misconfiguration that disables one optional tool has
+ * to surface as that tool failing, where the message reaches the operator and
+ * everything else keeps working.
+ *
+ * Memoized because the answer cannot change within a process, and because
+ * `ensureSchema` and `embedText` must agree on the vector width.
+ */
+let embedConfig: { provider: EmbedProvider; model: string; dimensions: number } | null = null;
+
+function embedSettings(): { provider: EmbedProvider; model: string; dimensions: number } {
+  if (embedConfig) return embedConfig;
+  const provider = readEmbedProvider();
+  const model = process.env.EVESTACK_EMBED_MODEL?.trim() || EMBED_DEFAULTS[provider].model;
+  embedConfig = { provider, model, dimensions: readDimensions(provider) };
+  return embedConfig;
+}
+
+/**
+ * Trimmed and checked rather than `??`: `EVESTACK_EMBED_DIMENSIONS=` is an
+ * empty string, which `??` keeps and `Number("")` turns into 0 — a
+ * `vector(0)` column that fails at CREATE TABLE with a message about nothing
+ * the reader configured.
+ */
+function readDimensions(provider: EmbedProvider): number {
+  const raw = process.env.EVESTACK_EMBED_DIMENSIONS?.trim();
+  if (!raw) return EMBED_DEFAULTS[provider].dimensions;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1 || value > 16000) {
+    throw new Error(
+      `EVESTACK_EMBED_DIMENSIONS="${raw}" is not a vector width. It must be a whole number ` +
+        "between 1 and 16000, and it must match what EVESTACK_EMBED_MODEL actually returns.",
+    );
+  }
+  return value;
+}
+
+function embeddingModel(): EmbeddingModel {
+  const { provider, model } = embedSettings();
+  if (provider === "ollama") {
+    // Same base-URL rule as the chat model: host only, no `/api` suffix, or
+    // every call returns `OllamaError: 404 page not found`.
+    return createOllama({
+      baseURL: process.env.OLLAMA_BASE_URL?.trim() || "http://127.0.0.1:11434",
+    }).textEmbeddingModel(model);
+  }
+  return openai.textEmbeddingModel(model);
+}
 
 let pool: Pool | null = null;
 let ready: Promise<void> | null = null;
@@ -50,7 +160,7 @@ async function ensureSchema(): Promise<void> {
         content     text NOT NULL,
         tags        text[] NOT NULL DEFAULT '{}',
         session_id  text,
-        embedding   vector(${DIMENSIONS}) NOT NULL,
+        embedding   vector(${embedSettings().dimensions}) NOT NULL,
         created_at  timestamptz NOT NULL DEFAULT now()
       )
     `);
@@ -76,15 +186,59 @@ async function ensureSchema(): Promise<void> {
     await db.query(
       "CREATE INDEX IF NOT EXISTS memories_tags_idx ON evestack.memories USING gin (tags)",
     );
+
+    // `CREATE TABLE IF NOT EXISTS` is a no-op against a table that already
+    // exists, INCLUDING when its vector column is a different width — so a
+    // project that switches embedding provider gets a schema step that reports
+    // success and an insert that fails later with
+    //
+    //     error: expected 1536 dimensions, not 768
+    //
+    // which names neither the model, nor the setting, nor the table. Measured
+    // exactly that while moving a live project from OpenAI to Ollama. Checking
+    // the column here turns it into one sentence at startup with the command
+    // that fixes it.
+    const { rows } = await db.query<{ dims: number | null }>(
+      `SELECT a.atttypmod AS dims
+         FROM pg_attribute a
+         JOIN pg_class c ON c.oid = a.attrelid
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'evestack' AND c.relname = 'memories' AND a.attname = 'embedding'`,
+    );
+    const existing = rows[0]?.dims ?? null;
+    const { provider, model, dimensions } = embedSettings();
+    if (existing !== null && existing > 0 && existing !== dimensions) {
+      throw new Error(
+        `evestack.memories stores ${existing}-dimensional vectors but this agent is configured for ` +
+          `${dimensions} (${provider}/${model}). Vectors from two different models are ` +
+          "not comparable, so the old rows cannot be kept. Either set " +
+          `EVESTACK_EMBED_DIMENSIONS=${existing} and go back to the model that wrote them, or drop ` +
+          "the table and start over:\n" +
+          "    docker compose exec postgres psql -U evestack -d evestack -c 'DROP TABLE evestack.memories'",
+      );
+    }
   })();
   return ready;
 }
 
 async function embedText(text: string): Promise<number[]> {
-  const { embedding } = await embed({
-    model: openai.textEmbeddingModel(EMBED_MODEL),
-    value: text,
-  });
+  const { embedding } = await embed({ model: embeddingModel(), value: text });
+
+  // A width that does not match the column is caught here, once, with both
+  // numbers and the variable that reconciles them — rather than as pgvector's
+  // `expected N dimensions, not M` from inside an INSERT, which names neither
+  // the model nor the setting that produced it. It is the first thing that goes
+  // wrong when someone changes EVESTACK_EMBED_MODEL on a database that already
+  // has rows.
+  const { provider, model, dimensions } = embedSettings();
+  if (embedding.length !== dimensions) {
+    throw new Error(
+      `${provider}/${model} returns ${embedding.length}-dimensional vectors but this ` +
+        `database stores ${dimensions}. Set EVESTACK_EMBED_DIMENSIONS=${embedding.length} and drop ` +
+        "the evestack.memories table (existing rows were embedded by the old model and cannot be " +
+        "compared against the new one).",
+    );
+  }
   return embedding;
 }
 

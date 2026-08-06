@@ -22,13 +22,9 @@ import { randomBytes } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import {
-  basename, C, DASHBOARD_IMAGE, DASHBOARD_IMAGE_PUBLISHED, detectPm, dim, makePrompter,
-  ok, REPO, say, step, templateDir, warn,
+  basename, C, DASHBOARD_IMAGE, DASHBOARD_IMAGE_PUBLISHED, detectPm, dim, freePort, makePrompter,
+  ok, portAnswers, REPO, say, step, templateDir, warn,
 } from "./shared.mjs";
-// One implementation of the port probe, in preflight.mjs, because `create` grew
-// the same need and a second copy is a second place for the off-by-one that
-// hands two projects the same "free" port.
-import { DOCKER_RUNNING, dockerStatusLines, freePort, inspectDocker } from "./preflight.mjs";
 
 /**
  * The eve release this evestack is tested against.
@@ -98,18 +94,6 @@ export async function attach(argv) {
   const project = detectEveProject(target);
   step(`Attaching ${C.bold}${target}${C.reset}`);
   reportEveVersion(project);
-
-  // Reported, never acted on. Everything this command ends by telling you to
-  // run is `docker compose up -d postgres` and a `docker run` for the
-  // dashboard, and until now it printed both without ever checking whether
-  // there was a daemon to receive them. No install is offered here: attach is
-  // for a project that already exists and already works, so the right place for
-  // that conversation is `create`, not in the middle of someone's repository.
-  const machine = inspectDocker();
-  if (machine.docker.state !== DOCKER_RUNNING) {
-    say();
-    for (const line of dockerStatusLines(machine)) say(line);
-  }
 
   const pm = detectPm(target);
   const env = readEnvFiles(target);
@@ -322,10 +306,6 @@ function buildPlan({ target, project, env, envFileName, pm, wantTraces, existing
     // address only, and a resolver that answers localhost with ::1 first turns
     // a working stack into ECONNREFUSED.
     plan.dbUrl = `postgres://evestack:${password}@127.0.0.1:${port}/evestack`;
-    // Kept, because it has to reach two printers. The compose service and the
-    // dashboard's connection string are two halves of one credential, and the
-    // only thing that makes them one is that they read the same variable.
-    plan.dbPassword = password;
 
     const existingCompose = COMPOSE_NAMES.find((n) => existsSync(join(target, n)));
     if (!existingCompose) {
@@ -628,12 +608,7 @@ function printSummary(plan) {
     if (plan.manual.some(([what]) => what === "Add Postgres yourself")) {
       say();
       dim("The compose service:");
-      // plan.dbPassword, not a fresh one. This block generated its own, and the
-      // `docker run` above it prints plan.dbUrl, so the two credentials for one
-      // database were different every time this branch ran: paste both as
-      // printed and the dashboard answers `password authentication failed for
-      // user "evestack"` against a Postgres that is up and healthy.
-      say(composeService({ password: plan.dbPassword, port: plan.port })
+      say(composeService({ password: randomBytes(18).toString("base64url"), port: plan.port })
         .split("\n").map((l) => `      ${C.dim}${l}${C.reset}`).join("\n"));
     }
     say();
@@ -949,3 +924,5 @@ export function compareVersions(a, b) {
   if (right.prerelease === null) return -1;
   return left.prerelease < right.prerelease ? -1 : 1;
 }
+
+

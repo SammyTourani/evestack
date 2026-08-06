@@ -315,13 +315,27 @@ function NoKey() {
       </p>
       <div className="empty">
         <h2>No Composio API key yet</h2>
+        {/*
+          These used to read `packages/dashboard/.env.local` and
+          `templates/default/.env.local`, which are paths inside the evestack
+          REPOSITORY. Nobody running the dashboard has them: a scaffolded
+          project is one directory with one `.env.local`, and the dashboard
+          container reads that same file through `env_file:` in the generated
+          compose file. So the only instruction on this page told the reader to
+          edit two files that do not exist, and implied a second copy of a
+          secret that must not be duplicated.
+        */}
         <p>
-          Grab a free key at <code>composio.dev</code>, then add it to the dashboard and the agent:
+          Grab a free key at <code>composio.dev</code>, then add one line to your project&apos;s{" "}
+          <code>.env.local</code> — the agent and this dashboard both read it, so there is nothing
+          to copy twice:
         </p>
         <p className="faint mono" style={{ marginTop: 14 }}>
-          COMPOSIO_API_KEY=… &nbsp;→&nbsp; packages/dashboard/.env.local
-          <br />
-          COMPOSIO_API_KEY=… &nbsp;→&nbsp; templates/default/.env.local
+          COMPOSIO_API_KEY=ak_…
+        </p>
+        <p className="faint">
+          Then restart both: <code>docker compose --profile dashboard up -d --force-recreate</code>{" "}
+          and your <code>npm run dev</code>.
         </p>
         <p className="faint">
           Until then the agent runs exactly as it does now, minus the connectors. Nothing here

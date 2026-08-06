@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { composeFile } from "../create.mjs";
+import { composeFile, projectNameFor } from "../create.mjs";
 
 /**
  * The compose file a stranger actually gets.
@@ -95,37 +95,53 @@ test("a password with URL-significant characters is still quoted in YAML", () =>
   assert.match(text, /POSTGRES_PASSWORD: "-leading-dash_ok"/);
 });
 
-test("a relocated Postgres port reaches the compose file, still on loopback", () => {
-  const text = composeFile("my-agent", PASSWORD, { pgPort: 5436, dashboardPort: 4002 });
-  const ports = publishedPorts(text);
-  assert.ok(ports.includes("127.0.0.1:5436:5432"), `Postgres published as ${ports}`);
-  assert.ok(
-    !ports.some((entry) => entry.includes(":5433:")),
-    "the hardcoded default port survived somewhere in the compose file",
-  );
-});
+/* -------------------------------------------------------------------------- */
+/* ports                                                                       */
+/* -------------------------------------------------------------------------- */
 
-test("a relocated dashboard port keeps its DASHBOARD_PORT override", () => {
-  // The env var stays an override; only its default moves. Someone who has set
-  // DASHBOARD_PORT means it, whatever this scaffold measured.
-  const text = composeFile("my-agent", PASSWORD, { pgPort: 5433, dashboardPort: 4002 });
-  assert.match(text, /\$\{DASHBOARD_PORT:-4002\}:4000/);
+test("the compose file publishes the ports it was given, not the defaults", () => {
+  const text = composeFile("my-agent", PASSWORD, { pgPort: 5455, dashboardPort: 4044 });
+  assert.match(text, /- "127\.0\.0\.1:5455:5432"/);
+  assert.match(text, /- "127\.0\.0\.1:\$\{DASHBOARD_PORT:-4044\}:4000"/);
+  // and the header a human reads names the same port it published
+  assert.match(text, /the dashboard on :4044/);
+  // the old hardcoded values must not survive anywhere in the file
+  assert.doesNotMatch(text, /127\.0\.0\.1:5433:5432/);
+  assert.doesNotMatch(text, /DASHBOARD_PORT:-4000/);
 });
 
 test("omitting the ports keeps the documented defaults", () => {
-  const ports = publishedPorts(compose());
-  assert.ok(ports.includes("127.0.0.1:5433:5432"));
-  assert.match(compose(), /\$\{DASHBOARD_PORT:-4000\}:4000/);
+  const text = composeFile("my-agent", PASSWORD);
+  assert.match(text, /- "127\.0\.0\.1:5433:5432"/);
+  assert.match(text, /- "127\.0\.0\.1:\$\{DASHBOARD_PORT:-4000\}:4000"/);
 });
 
-test("a moved port leaves no trace of the port it moved off", () => {
-  // Every number in this file is generated from one variable except the one
-  // in the dashboard comment, which was typed. Read while debugging exactly
-  // the case that moved the port, it names a port nothing is listening on.
-  const text = composeFile("my-agent", PASSWORD, { pgPort: 5434, dashboardPort: 4001 });
-  assert.ok(
-    !/5433/.test(text.replace(/Publishing "5433:5432"/, "")),
-    "the compose file still refers to 5433 after Postgres moved to 5434",
-  );
-  assert.match(text, /\.env\.local says localhost:5434/);
+/* -------------------------------------------------------------------------- */
+/* project identity                                                            */
+/* -------------------------------------------------------------------------- */
+
+test("two directories with the same name are not the same Compose project", () => {
+  // The bug this prevents, observed live: ~/evestack-trial/my-agent and
+  // ~/evestack-stranger/my-agent both emitted `name: my-agent`, so Compose
+  // treated them as one project — the second `up` recreated the first's
+  // containers and both agents read one database. `my-agent` is the DEFAULT
+  // name, so this was the common case, not the exotic one.
+  const a = projectNameFor("/Users/someone/evestack-trial/my-agent");
+  const b = projectNameFor("/Users/someone/evestack-stranger/my-agent");
+  assert.notEqual(a, b, "same basename in different directories must not collide");
+  assert.match(a, /^my-agent-[0-9a-f]{6}$/);
+  assert.match(b, /^my-agent-[0-9a-f]{6}$/);
+});
+
+test("the same directory always gets the same project name", () => {
+  // Load-bearing: if this varied, every `docker compose` in a project would
+  // address a different stack than the last one did.
+  const path = "/Users/someone/agents/my-agent";
+  assert.equal(projectNameFor(path), projectNameFor(path));
+});
+
+test("a directory name Compose would reject is normalised, and still unique", () => {
+  const weird = projectNameFor("/tmp/My Agent!! (v2)");
+  assert.match(weird, /^[a-z0-9][a-z0-9_-]*$/, "must satisfy Compose's project-name grammar");
+  assert.notEqual(weird, projectNameFor("/tmp/my-agent-v2"));
 });

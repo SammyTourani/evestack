@@ -21,7 +21,7 @@ export const site = {
      index.mjs:245-251) and the dashboard is a separate clone (:258-260). The
      count below is the literal number of shell lines in the README block. */
   subhead:
-    "Durable sessions, sandboxing, memory, approvals, schedules, 1,070 tool integrations, and a dashboard that drives the agent. One command scaffolds it; four bring it up.",
+    "Durable sessions, sandboxing, memory, approvals, schedules, 1,070 tool integrations, and a dashboard that drives the agent. One command scaffolds it and offers to bring it up.",
   eyebrow: "Open source · Apache-2.0",
   command: "npx create-evestack",
   github: "https://github.com/SammyTourani/evestack",
@@ -72,21 +72,40 @@ export const stats = [
 export const scrambleStat = "100% yours";
 
 /* §3 terminal — mirrors the scaffolder's real flow: the exact next-steps
-   create-evestack prints (index.mjs), the standard Postgres ready log, and
-   the verified re-enqueue line from FINDINGS.md. `cmd` rows are typed
-   commands; dim rows are summaries, ok rows are real output. */
+   create-evestack prints, the standard Postgres ready log, and the verified
+   re-enqueue line from FINDINGS.md. `cmd` rows are typed commands; dim rows
+   are summaries, ok rows are real output.
+
+   THESE MUST BE THE COMMANDS THE SCAFFOLDER PRINTS, and for a long time two of
+   them were not:
+
+     - `npx --package=@workflow/world-postgres bootstrap`. It looks equivalent
+       to the project's own script and is not: upstream's CLI loads `.env`
+       through dotenv and never reads `.env.local`, which is the only place the
+       generated connection string exists. Run in a real scaffolded project it
+       dials `postgres://…@localhost:5432/world` and dies on
+       `role "world" does not exist`. create.mjs has carried a comment about
+       this for a while; this file never got the message, so the first code
+       block a visitor sees was the one command guaranteed to fail. It is
+       `npm run db:bootstrap`, which wires .env.local in explicitly.
+     - `pnpm dev`. A scaffolded project is an npm project with a `dev` script.
+       pnpm is correct inside this repository and nowhere a visitor will be.
+
+   Anything typed here should be copy-pasteable into a fresh project and work.
+   If it cannot be, it does not belong in the artwork. */
 export const terminal = {
   prompt: "npx create-evestack",
   lines: [
     { text: "… prompts for a model key, writes .env.local, installs deps", kind: "dim" as const },
     { text: "docker compose up -d postgres", kind: "cmd" as const },
     { text: "evestack-postgres-1 | database system is ready to accept connections", kind: "ok" as const },
-    { text: "npx --package=@workflow/world-postgres bootstrap", kind: "cmd" as const },
-    { text: "pnpm dev", kind: "cmd" as const },
+    { text: "npm run db:bootstrap", kind: "cmd" as const },
+    { text: "Schema created.", kind: "ok" as const },
+    { text: "npm run dev", kind: "cmd" as const },
     { text: "eve dev ready on http://localhost:2000", kind: "ok" as const },
     { text: "[world-postgres] Re-enqueued 2 active run(s) on startup", kind: "ok" as const },
   ],
-  caption: "One command scaffolds it. Four more bring it up.",
+  caption: "One command scaffolds it, and offers to bring it up for you.",
 } as const;
 
 /* §4 comparison — the axis is WHERE IT RUNS, not what anything costs.
@@ -339,7 +358,9 @@ export const integrations = {
 
 /* §12 quickstart — mirrors the next-steps create-evestack itself prints. */
 export const quickstart = {
-  heading: "Running in three steps",
+  /* Counts the cards below. It said "three" while there were four of them for
+     exactly as long as it took to look at the rendered page. */
+  heading: "Running in four steps",
   steps: [
     {
       title: "Scaffold",
@@ -351,13 +372,21 @@ export const quickstart = {
       title: "Durable Postgres",
       code: "docker compose up -d postgres",
       lang: "bash",
-      body: "Then `npx --package=@workflow/world-postgres bootstrap` creates the workflow tables. Sessions now survive restarts.",
+      /* `npm run db:bootstrap`, never the upstream bootstrap bin — see the note
+         on the terminal artwork above for what that one actually does. */
+      body: "Then npm run db:bootstrap creates the workflow tables. Sessions now survive restarts.",
     },
     {
       title: "Run your agent",
-      code: "pnpm dev",
+      code: "npm run dev",
       lang: "bash",
-      body: "eve dev on :2000. The agent, the database, and the dashboard are all on your machine.",
+      body: "eve dev on :2000, after checking Postgres, the schema and your model are all ready. The agent, the database, and the dashboard are all on your machine.",
+    },
+    {
+      title: "Check it",
+      code: "npm run verify",
+      lang: "bash",
+      body: "Ten checks — Docker, Postgres, the schema, the model, the agent, the dashboard, the trace token — each with the command that fixes it. Then it offers to open the dashboard.",
     },
   ],
 } as const;
