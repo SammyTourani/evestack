@@ -1,5 +1,5 @@
 import { FleetBanner } from "./fleet-banner";
-import { agentBaseUrl } from "@/lib/agent-client";
+import { agentUrlForHumans } from "@/lib/agent-client";
 import { isPriced } from "@/lib/pricing";
 import { formatUsd } from "@/lib/pricing";
 import { getTotals, listSessions } from "@/lib/queries";
@@ -79,14 +79,17 @@ export default async function SessionsPage() {
             want it. The URL is read from EVESTACK_AGENT_URL rather than
             hardcoded to :2000, because `eve dev` auto-increments when that port
             is taken and a copy-pasteable command that quietly points at someone
-            else&apos;s agent is worse than no command.
+            else&apos;s agent is worse than no command. Through
+            agentUrlForHumans(), because inside the container the configured host
+            is `host.docker.internal`, which does not resolve in the terminal
+            this is meant to be pasted into.
           */}
           <p>
             <a href="/chat">Open Chat</a> and send your agent a message — it will show up here.
           </p>
           <p className="faint">Or from a terminal:</p>
           <p className="faint mono">
-            curl -X POST {agentBaseUrl()}/eve/v1/session -H &apos;content-type:
+            curl -X POST {agentUrlForHumans()}/eve/v1/session -H &apos;content-type:
             application/json&apos; -d &apos;{"{"}&quot;message&quot;:&quot;hello&quot;{"}"}&apos;
           </p>
         </div>
