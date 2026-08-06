@@ -40,7 +40,7 @@
  * remove is not there — which is itself worth failing on, because it means the
  * fix moved and this control is no longer removing it.
  */
-import { cpSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { REPO_ROOT } from "../lib/repo.mjs";
 
@@ -71,6 +71,46 @@ cpSync(TEMPLATE, destination, {
   // runs, and copying it would re-enqueue someone else's sessions.
   filter: (src) => !/[/\\](node_modules|\.eve|\.next|dist)([/\\]|$)/.test(src),
 });
+
+/**
+ * `workspace:*` only resolves for a package that is a member of the pnpm
+ * workspace, and the whole point of this copy is that it is not one — it lives
+ * outside the repo so a sabotaged agent can never be mistaken for the real
+ * template. The first version ignored that and died on install:
+ *
+ *   ERR_PNPM_WORKSPACE_PKG_NOT_FOUND  "@evestack/budget@workspace:*" is in the
+ *   dependencies but no package named "@evestack/budget" is present
+ *
+ * `link:` points at the same directories the workspace protocol would have
+ * resolved to, without requiring membership. Absolute, because the copy is not
+ * at a fixed depth relative to the repo.
+ */
+const manifestPath = join(destination, "package.json");
+const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+const linked = [];
+for (const field of ["dependencies", "devDependencies"]) {
+  for (const [name, range] of Object.entries(manifest[field] ?? {})) {
+    if (typeof range !== "string" || !range.startsWith("workspace:")) continue;
+    // Directory names do not match scoped package names (@evestack/budget lives
+    // in packages/evestack-budget), so the location is read from the workspace
+    // rather than derived from the name.
+    const dir = readdirSync(join(REPO_ROOT, "packages")).find((d) => {
+      const file = join(REPO_ROOT, "packages", d, "package.json");
+      if (!existsSync(file)) return false;
+      return JSON.parse(readFileSync(file, "utf8")).name === name;
+    });
+    if (dir === undefined) {
+      process.stderr.write(`negative-control: ${name} is declared workspace:* but is not in packages/\n`);
+      process.exit(1);
+    }
+    manifest[field][name] = `link:${join(REPO_ROOT, "packages", dir)}`;
+    linked.push(name);
+  }
+}
+if (linked.length > 0) {
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  process.stderr.write(`negative-control: linked ${linked.join(", ")} out of the workspace\n`);
+}
 
 const agentPath = join(destination, "agent", "agent.ts");
 const source = readFileSync(agentPath, "utf8");
