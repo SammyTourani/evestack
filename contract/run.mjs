@@ -23,6 +23,10 @@
  * Exit codes: 0 green · 1 a contract failed · 2 the runner could not start ·
  * 3 the suite shrank below contract/floor.json (see contract/lib/floor.mjs).
  *
+ * 1 outranks 3. A run can both fail a contract and shrink; both are printed, and
+ * the exit code is 1, because a broken assumption about the eve that is installed
+ * is more urgent than coverage that stopped being generated.
+ *
  * 3 is only reachable when the suite is describing its own install. Under
  * EVESTACK_CONTRACT_EVE_DIR a lower assertion count is a fact about the release
  * being certified, not erosion here, so it is reported and does not set the code.
@@ -262,7 +266,9 @@ async function main() {
   if (violations.length > 0) {
     const lines = [
       "",
-      "  THE SUITE SHRANK. Everything above may be green and still cover less than it did:",
+      report.ok
+        ? "  THE SUITE SHRANK. Everything above may be green and still cover less than it did:"
+        : "  THE SUITE ALSO SHRANK. On top of the failure(s) above, it covers less than it did:",
       ...violations.map((v) => `    · ${v}`),
       "",
       "  These assertions are generated from evestack's own source, so this usually means",
@@ -271,12 +277,28 @@ async function main() {
       "",
       "    node contract/run.mjs --write-floor",
       "",
+      ...(report.ok
+        ? []
+        : [
+            "  A contract failed as well. That is the more urgent problem, so it sets the exit",
+            "  code (1) and this does not. Fix the failure, then come back to the floor.",
+            "",
+          ]),
     ];
     process.stderr.write(`${lines.join("\n")}\n`);
-    process.exit(FLOOR_EXIT_CODE);
   }
 
-  process.exit(report.ok ? 0 : 1);
+  // Precedence, and it is the whole reason these are three statements rather than
+  // one. A failed contract is a live incompatibility with the eve that is installed;
+  // a shrunken suite is coverage that stopped being written. Both earn a non-zero
+  // exit and only one of them can have it, and exiting 3 for the shrink hid the
+  // failure outright: every caller that tests for 1, and every CI step that treats 3
+  // as the bookkeeping code it is, read a broken contract as a floor to re-record.
+  // So the failure wins the code, and the shrink is printed above either way rather
+  // than swallowed by it.
+  if (!report.ok) process.exit(1);
+  if (violations.length > 0) process.exit(FLOOR_EXIT_CODE);
+  process.exit(0);
 }
 
 /* -------------------------------------------------------------------------- */
