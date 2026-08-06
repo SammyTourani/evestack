@@ -170,3 +170,38 @@ test("the manual Postgres branch prints the URL it tells you to set", (t) => {
   const env = readFileSync(join(dir, ".env.local"), "utf8");
   assert.doesNotMatch(env, /^WORKFLOW_POSTGRES_URL=/m);
 });
+
+/**
+ * The same branch, one layer down.
+ *
+ * attach rewrites agent.ts to select @workflow/world-postgres in every branch,
+ * and then decided whether to ADD that package by asking whether it had written
+ * a compose file. In this branch it writes none — so the generated project
+ * selected a world it did not depend on, and had no db:bootstrap to create the
+ * schema with either. The rewrite is not the mistake: the entire branch is
+ * instructions for putting THIS project on Postgres by hand. The dependency was
+ * simply keyed off the wrong fact.
+ */
+test("the manual Postgres branch installs the world it just selected", (t) => {
+  const dir = bothComposeFiles();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const text = runAttach(dir);
+  assert.match(text, /Add Postgres yourself/, "this fixture never reached the manual branch");
+
+  const agent = readFileSync(join(dir, "agent", "agent.ts"), "utf8");
+  assert.match(agent, /@workflow\/world-postgres/, "attach did not rewrite the agent at all");
+
+  const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
+  assert.ok(
+    pkg.dependencies?.["@workflow/world-postgres"],
+    "agent.ts selects a package package.json does not depend on",
+  );
+  assert.ok(
+    pkg.scripts?.["db:bootstrap"],
+    "nothing in the project can create the workflow schema",
+  );
+
+  // And the reader is told to run it, since no compose service of ours starts
+  // Postgres in this branch to hang that instruction off.
+  assert.match(text, /db:bootstrap/);
+});
