@@ -66,7 +66,23 @@ const OTEL_RANGE = "^2.1.3";
  * runtime rejects a mismatched protocol version outright.
  */
 const WORLD_TAG = "beta";
-const DASHBOARD_INGEST = "http://localhost:4000/api/ingest/v1/traces";
+/**
+ * Where the dashboard is published, and where the agent posts its spans.
+ *
+ * A default, not a fact. attach has probed for a free Postgres port since it
+ * was written, and then hardcoded 4000 for the dashboard in three places at
+ * once: the EVESTACK_DASHBOARD_URL written into the env file, the sign-in line
+ * printed at the end, and the `-p` inside the printed `docker run`. 4000 is a
+ * popular port — Grafana, an SSH tunnel, another project — and when it was
+ * taken that command died on Docker with `port is already allocated`, which
+ * reads as a broken instruction rather than as a port clash. Probed once now,
+ * and all three read the answer, because three printed numbers that can
+ * disagree are worse than any one of them being wrong.
+ */
+const DEFAULT_DASHBOARD_PORT = 4000;
+
+/** The dashboard ingest route, on whichever host port the dashboard got. */
+const dashboardIngest = (port) => `http://localhost:${port}/api/ingest/v1/traces`;
 
 const COMPOSE_NAMES = ["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"];
 const AGENT_ENTRIES = ["agent.ts", "agent.tsx", "agent.mts", "agent.js", "agent.mjs"];
@@ -125,7 +141,12 @@ export async function attach(argv) {
   // Resolved before the plan is built so the plan can name the port it will
   // publish on rather than promising 5433 and using something else.
   const port = await freePort(5433);
-  const plan = buildPlan({ target, project, env, envFileName, pm, wantTraces, existingInstrumentation, port });
+  // The dashboard gets the same treatment, and for a sharper reason: its port
+  // is printed three times, so a hardcoded one can disagree with itself.
+  const dashboardPort = await freePort(DEFAULT_DASHBOARD_PORT);
+  const plan = buildPlan({
+    target, project, env, envFileName, pm, wantTraces, existingInstrumentation, port, dashboardPort,
+  });
   printPlan(plan);
   prompt.close();
 
@@ -276,14 +297,25 @@ function reportEveVersion({ range, installed }) {
 // plan
 // ---------------------------------------------------------------------------
 
-function buildPlan({ target, project, env, envFileName, pm, wantTraces, existingInstrumentation, port }) {
+function buildPlan({
+  target, project, env, envFileName, pm, wantTraces, existingInstrumentation, port, dashboardPort,
+}) {
   const plan = {
-    target, pm, envFileName, port,
+    target, pm, envFileName, port, dashboardPort,
     adds: [], changes: [], skips: [], manual: [], notes: [],
     dbUrl: null, composeFile: null,
   };
   const add = (path, what, undo, write) => plan.adds.push({ path, what, undo, write });
   const change = (path, what, undo, write) => plan.changes.push({ path, what, undo, write });
+
+  // Said out loud when it happens. Every doc, the README and the scaffolder all
+  // say 4000, so a reader who is handed 4001 with no explanation assumes a typo
+  // and edits it back to the port that is already taken.
+  if (dashboardPort !== DEFAULT_DASHBOARD_PORT) {
+    plan.notes.push(
+      `Something already answers on :${DEFAULT_DASHBOARD_PORT}, so the dashboard is published on :${dashboardPort}.`,
+    );
+  }
 
   const agentPath = join(target, "agent", project.agentEntry);
   const agentSrc = readFileSync(agentPath, "utf8");
@@ -397,7 +429,7 @@ function buildPlan({ target, project, env, envFileName, pm, wantTraces, existing
     envAdditions.push(
       ["", ""],
       ["", "# Dashboard trace export — the dashboard's own ingest route, not OTLP 4318"],
-      ["EVESTACK_DASHBOARD_URL", DASHBOARD_INGEST],
+      ["EVESTACK_DASHBOARD_URL", dashboardIngest(dashboardPort)],
       ["", "# The exporter sends this as the `x-evestack-ingest-token` header. The"],
       ["", "# dashboard needs the SAME value in its own EVESTACK_INGEST_TOKEN, or it"],
       ["", "# 401s every span while the rest of the dashboard keeps working."],
@@ -571,7 +603,7 @@ function printSummary(plan) {
   say(`  ${C.bold}Then the dashboard${C.reset} ${C.dim}— sessions, cost, approvals, chat:${C.reset}`);
   for (const line of dashboardRunCommand(plan)) say(`    ${line}`);
   say();
-  dim(`  Sign in at http://localhost:4000 with ${plan.dashboardUser} / ${plan.dashboardPassword}`);
+  dim(`  Sign in at http://localhost:${plan.dashboardPort} with ${plan.dashboardUser} / ${plan.dashboardPassword}`);
   if (plan.ingestToken) {
     say();
     // The one value that MUST travel by hand. A `create-evestack` scaffold has
@@ -773,7 +805,10 @@ function dashboardRunCommand(plan) {
     // 127.0.0.1 on purpose: this is a control plane that starts agent runs and
     // approves gated shell commands. `-p 4000:4000` would publish it on every
     // interface the host has.
-    "  -p 127.0.0.1:4000:4000 \\",
+    //
+    // The host half is probed, the container half is not: the image listens on
+    // 4000 inside no matter what, and only the published half can collide.
+    `  -p 127.0.0.1:${plan.dashboardPort}:4000 \\`,
     // Docker Desktop resolves host.docker.internal already; on Linux nothing
     // does unless this flag adds it, and there the agent is otherwise
     // unreachable from the container.
