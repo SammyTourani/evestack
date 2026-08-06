@@ -25,6 +25,27 @@
  * things: the process is still running afterwards, and the next recall works.
  * The second half matters as much as the first — a handler that swallowed the
  * error but left the pool poisoned would pass the first check and be useless.
+ *
+ * ── The embedding provider going away ────────────────────────────────────────
+ *
+ * `forget` is gated behind `approval: always()`, so every deletion parks the
+ * turn for a human. When the id turns out not to exist, the tool answers with
+ * the ids that DO exist rather than a bare failure — a branch that exists
+ * because a bad id is far more likely to be a hallucinated number than a race.
+ *
+ * That branch used to call `recall("")`, and an empty string is not something
+ * any embedding endpoint will embed. Measured against the local default
+ * (Ollama + nomic-embed-text):
+ *
+ *     recall("") -> OllamaError: Empty embeddings array returned
+ *
+ * OpenAI 400s on the same input. So the one branch written to be helpful was
+ * the only one that threw, and it threw a message about embeddings at someone
+ * who had just approved an irreversible delete.
+ *
+ * The provider stays pointed at a closed port for these checks, because "works
+ * when embeddings are down" is the actual requirement and a probe that let the
+ * provider answer would not be testing it.
  */
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
@@ -52,7 +73,7 @@ function withDatabase(url, name) {
 
 export default {
   id: "memory/an-optional-feature-cannot-kill-the-agent",
-  title: "long-term memory survives the database restarting under it",
+  title: "long-term memory survives the database restarting and the embedder going away",
   needs: ["postgres"],
   why:
     "pg.Pool emits an error EVENT when an idle client socket fails, and an unhandled event is " +
@@ -145,6 +166,72 @@ export default {
       }
       t.ok(recovered === false, "the next memory query reconnects and answers", {
         ...(recovered === false ? {} : { expected: "false", actual: recoveryError ?? String(recovered) }),
+      });
+
+      /* ── the embedding provider going away ─────────────────────────────── */
+
+      t.ok(typeof mem.recentMemories === "function",
+        "lib/memory.ts exports recentMemories, a listing that needs no model", {
+          ...(typeof mem.recentMemories === "function"
+            ? {}
+            : { expected: "function", actual: typeof mem.recentMemories }),
+        });
+
+      // The call the old forget.ts made when an id was not found.
+      let blank = null;
+      let blankError = null;
+      try {
+        blank = await mem.recall("", { limit: 5 });
+      } catch (error) {
+        blankError = error.message;
+      }
+      const blankIsEmpty = Array.isArray(blank) && blank.length === 0;
+      t.ok(blankIsEmpty, "recall on a blank query answers with no matches instead of throwing", {
+        ...(blankIsEmpty ? {} : { expected: "[]", actual: blankError ?? JSON.stringify(blank) }),
+      });
+
+      // Seeded as SQL, because remember() needs the provider that is off on
+      // purpose. The vector is whatever width ensureSchema() chose.
+      const seed = new pg.Client({ connectionString: process.env.WORKFLOW_POSTGRES_URL });
+      await seed.connect();
+      try {
+        const dims = Number((await seed.query(
+          "SELECT a.atttypmod AS dims FROM pg_attribute a" +
+          " JOIN pg_class c ON c.oid = a.attrelid" +
+          " JOIN pg_namespace n ON n.oid = c.relnamespace" +
+          " WHERE n.nspname = $1 AND c.relname = $2 AND a.attname = $3",
+          ["evestack", "memories", "embedding"],
+        )).rows[0]?.dims);
+        const filler = "[" + new Array(dims).fill(0.01).join(",") + "]";
+        for (const content of ["oldest fact", "middle fact", "newest fact"]) {
+          await seed.query(
+            "INSERT INTO evestack.memories (content, tags, embedding) VALUES ($1, $2, $3::vector)",
+            [content, ["seeded"], filler],
+          );
+          // Distinct created_at, so "newest first" has a defined answer rather
+          // than a tie broken however the executor feels.
+          await seed.query("SELECT pg_sleep(0.01)");
+        }
+      } finally {
+        await seed.end().catch(() => {});
+      }
+
+      const listed = await mem.recentMemories(5);
+      const order = listed.map((m) => m.content);
+      const wanted = ["newest fact", "middle fact", "oldest fact"];
+      const rightOrder = order.length === wanted.length && order.every((v, i) => v === wanted[i]);
+      t.ok(rightOrder, "recentMemories lists the seeded rows newest first, with no model call", {
+        ...(rightOrder ? {} : { expected: wanted.join(", "), actual: order.join(", ") || "NOTHING" }),
+      });
+
+      const realIds = listed.every((m) => Number.isInteger(m.id) && m.id > 0);
+      t.ok(realIds, "every listed memory carries the real id forget has to be given", {
+        ...(realIds ? {} : { expected: "integer ids", actual: JSON.stringify(listed.map((m) => m.id)) }),
+      });
+
+      const deleted = await mem.forget(listed[0].id);
+      t.ok(deleted === true, "forget deletes a real id with the embedding provider still down", {
+        ...(deleted === true ? {} : { expected: "true", actual: String(deleted) }),
       });
     } finally {
       for (const [key, value] of [

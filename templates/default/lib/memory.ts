@@ -302,18 +302,33 @@ interface MemoryRow {
   similarity: string | number;
 }
 
-export interface Recalled {
+/** A memory as stored. No similarity, because nothing was compared to it. */
+export interface StoredMemory {
   id: number;
   content: string;
   tags: string[];
-  similarity: number;
   createdAt: string;
+}
+
+export interface Recalled extends StoredMemory {
+  similarity: number;
 }
 
 export async function recall(
   queryText: string,
   options: { limit?: number; tags?: string[]; minSimilarity?: number } = {},
 ): Promise<Recalled[]> {
+  // A blank query has no semantic content to search for, and every embedding
+  // endpoint refuses it rather than returning a zero vector: Ollama answers
+  // `OllamaError: Empty embeddings array returned` and OpenAI 400s. Measured —
+  // this is not theoretical. Answering "nothing matched an empty question" is
+  // both the honest reply and the one that keeps a caller with nothing to
+  // search for from taking the whole tool down with it.
+  //
+  // Deliberately BEFORE ensureSchema(), so it costs no connection and works on
+  // a project whose embedding provider is misconfigured or offline.
+  if (queryText.trim() === "") return [];
+
   await ensureSchema();
   const embedding = await embedText(queryText);
   const limit = Math.min(options.limit ?? 5, 50);
@@ -371,6 +386,39 @@ export async function recall(
       createdAt: new Date(r.created_at).toISOString(),
     }))
     .filter((r) => r.similarity >= floor);
+}
+
+/**
+ * The newest memories, without an embedding call.
+ *
+ * `forget.ts` needs this. Its not-found branch is supposed to answer a
+ * hallucinated id with the ids that actually exist, and it used to do that by
+ * calling `recall("")` — which sends an empty string to the embedding
+ * endpoint, which every provider refuses. So the one branch written to be
+ * helpful was the one that threw, and it threw a message about embeddings at
+ * a human who had just approved a deletion. Measured against Ollama:
+ * `OllamaError: Empty embeddings array returned`.
+ *
+ * Listing by recency needs no vector at all, which also means this keeps
+ * working when the embedding provider is down — the state in which someone is
+ * most likely to be poking at memory by hand.
+ */
+export async function recentMemories(limit = 5): Promise<StoredMemory[]> {
+  await ensureSchema();
+  const capped = Math.min(Math.max(1, Math.trunc(limit)), 50);
+  const { rows } = await getPool().query<Omit<MemoryRow, "similarity">>(
+    `SELECT id, content, tags, created_at
+       FROM evestack.memories
+      ORDER BY created_at DESC, id DESC
+      LIMIT $1`,
+    [capped],
+  );
+  return rows.map((r) => ({
+    id: Number(r.id),
+    content: r.content,
+    tags: r.tags ?? [],
+    createdAt: new Date(r.created_at).toISOString(),
+  }));
 }
 
 export async function forget(id: number): Promise<boolean> {
