@@ -40,6 +40,11 @@ export const FLOOR_FILE = join(REPO_ROOT, "contract", "floor.json");
  *  different: the suite did not shrink because eve moved, it shrank because
  *  evestack did.
  *
+ *  It is also the junior of the two non-zero verdicts. A run that both fails a
+ *  contract and shrinks exits 1: coverage that stopped being written can wait, an
+ *  assumption that no longer holds about the eve installed right now cannot. run.mjs
+ *  prints both findings and gives the code to the failure.
+ *
  *  Which is why run.mjs only reaches for it when the suite is describing the
  *  install this checkout owns. Pointed at some other release, a lower count is
  *  eve having less surface, and saying "evestack did" would be a false accusation

@@ -114,6 +114,22 @@ node contract/run.mjs --write-floor   # after deliberately adding or removing
 
 Raising it is automatic. Lowering it is a decision that shows up in a diff.
 
+### Which code wins
+
+A run can fail a contract and shrink at the same time. Both are reported; the
+exit code is **1**. A failed contract is a live incompatibility with the eve that
+is installed, a shrunken suite is coverage that stopped being written, and only
+one of them can have the code. It used to be 3, which hid the failure from every
+caller that tests for 1 and from every CI step that treats 3 as bookkeeping.
+
+```bash
+node --test contract/test/*.test.mjs   # the exit codes, and that precedence
+```
+
+`contract/test/exit-codes.test.mjs` arranges each condition in a throwaway copy
+of the repo rather than in the working tree, so a case that crashes cannot leave
+a tampered floor behind.
+
 ## The runtime tier
 
 `contract/runtime/` is the other half, and it exists because everything above is
