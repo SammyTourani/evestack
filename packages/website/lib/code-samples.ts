@@ -121,11 +121,25 @@ export async function getCodeSamples(): Promise<CodeSample[]> {
     /\? \{ (.+) \} : \{\}/,
     linesFrom(agent, /experimental: \{ workflow \}/),
   );
-  const exporterProp = extract(
-    /^(\s*)traceExporter: (new \S+)\(\{ (.+) \}\),$/,
-    linesFrom(instrumentation, /traceExporter:/),
+  /* The exporter property used to be a single line, and this used to take it
+     apart with one regex and re-wrap it. It stopped being a single line — a
+     comment grew inside the call — and the build failed loudly, which is the
+     design working.
+
+     Anchored to its real lines instead of reconstructed, so nothing shown is
+     assembled from captured fragments. The conditional `headers` spread is left
+     out: it is 80-odd columns, cannot fit the card at any indentation, and is an
+     implementation detail of the auth tier rather than part of "this is how you
+     point traces at the dashboard". Everything shown is a verbatim line. */
+  const exporterOpen = extract(
+    /^(\s*)traceExporter: (new \S+)\(\{$/,
+    linesFrom(instrumentation, /traceExporter: new /),
   );
-  const pad = exporterProp[1];
+  const pad = exporterOpen[1];
+  /* `url: endpoint,` verbatim from the source, re-indented to sit under the
+     re-wrapped call above. Text unchanged, whitespace only — the same
+     "re-wrapped, never rewritten" rule the rest of this file follows. */
+  const exporterUrl = linesFrom(instrumentation, /^\s+url: endpoint,$/).trim();
 
   return [
     {
@@ -148,7 +162,15 @@ export async function getCodeSamples(): Promise<CodeSample[]> {
             "",
             linesFrom(compose, /^ {2}dashboard:/),
             linesFrom(compose, /^\s+build:/),
-            linesFrom(compose, /context: \.\/packages\/dashboard/),
+            // `context: .` — the repository root, not packages/dashboard. The
+            // anchor used to spell out the old path and broke when the context
+            // moved, which is the anchor doing its job. Matched on the key so
+            // it survives the value changing again.
+            //
+            // Just this line: the `dockerfile:` beneath it is 46 columns and
+            // fails the width check at any indentation. The surprising part is
+            // that the context is the root at all, and that is what shows.
+            linesFrom(compose, /^\s+context: /),
             linesFrom(compose, /^\s+depends_on:/, 3),
           ].join("\n"),
         ),
@@ -193,9 +215,14 @@ export async function getCodeSamples(): Promise<CodeSample[]> {
             linesFrom(instrumentation, /^export default defineInstrumentation\(\{/, 2),
             linesFrom(instrumentation, /^\s+registerOTel\(\{/, 2),
             [
+              // The source line is 51 columns, so the call is broken after the
+              // property name — the same re-wrap this did before the exporter
+              // grew a comment inside it and stopped being one line. Every
+              // token here comes from the file; only the line breaks and
+              // indentation are ours.
               `${pad}traceExporter:`,
-              `${pad}  ${exporterProp[2]}({`,
-              `${pad}    ${exporterProp[3]},`,
+              `${pad}  ${exporterOpen[2]}({`,
+              `${pad}    ${exporterUrl}`,
               `${pad}  }),`,
             ].join("\n"),
             linesFrom(instrumentation, /^\s+\}\);$/, 2),
