@@ -176,16 +176,31 @@ async function ensureSchema(): Promise<void> {
     const db = getPool();
     await db.query("CREATE EXTENSION IF NOT EXISTS vector");
     await db.query("CREATE SCHEMA IF NOT EXISTS evestack");
-    await db.query(`
-      CREATE TABLE IF NOT EXISTS evestack.memories (
-        id          bigserial PRIMARY KEY,
-        content     text NOT NULL,
-        tags        text[] NOT NULL DEFAULT '{}',
-        session_id  text,
-        embedding   vector(${embedSettings().dimensions}) NOT NULL,
-        created_at  timestamptz NOT NULL DEFAULT now()
-      )
-    `);
+    // The vector width is needed to CREATE the table and for nothing else, so
+    // it is only asked for when the table is missing. embedSettings() throws
+    // outright on EVESTACK_PROVIDER=anthropic without OPENAI_API_KEY — Anthropic
+    // has no embeddings endpoint — and `forget(id)`, which is a DELETE by
+    // primary key that embeds nothing, routed through here and inherited that
+    // throw. On an Anthropic agent whose memories were written by some other
+    // provider, deleting one was impossible, and the error talked about
+    // embeddings rather than about the delete the user had asked for.
+    const { rows: present } = await db.query<{ exists: boolean }>(
+      "SELECT to_regclass('evestack.memories') IS NOT NULL AS exists",
+    );
+    if (!present[0]?.exists) {
+      // Creating storage genuinely does require knowing the width, so a throw
+      // here is the right answer rather than an inherited one.
+      await db.query(`
+        CREATE TABLE evestack.memories (
+          id          bigserial PRIMARY KEY,
+          content     text NOT NULL,
+          tags        text[] NOT NULL DEFAULT '{}',
+          session_id  text,
+          embedding   vector(${embedSettings().dimensions}) NOT NULL,
+          created_at  timestamptz NOT NULL DEFAULT now()
+        )
+      `);
+    }
     // HNSW, not IVFFlat — and this is not a style preference, it is a
     // correctness bug we hit.
     //
@@ -244,7 +259,18 @@ async function ensureSchema(): Promise<void> {
         WHERE n.nspname = 'evestack' AND c.relname = 'memories' AND a.attname = 'embedding'`,
     );
     const existing = rows[0]?.dims ?? null;
-    const { provider, model, dimensions } = embedSettings();
+    // Skipped, not fatal, when this agent has no embedding provider: the check
+    // exists to catch two models disagreeing about width, and a caller that
+    // never embeds cannot be the second model. Throwing here would put the
+    // anthropic-without-a-key failure straight back into forget().
+    let settings: ReturnType<typeof embedSettings> | null = null;
+    try {
+      settings = embedSettings();
+    } catch {
+      settings = null;
+    }
+    if (settings === null) return;
+    const { provider, model, dimensions } = settings;
     if (existing !== null && existing > 0 && existing !== dimensions) {
       throw new Error(
         `evestack.memories stores ${existing}-dimensional vectors but this agent is configured for ` +
