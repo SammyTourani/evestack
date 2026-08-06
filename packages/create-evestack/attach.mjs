@@ -322,6 +322,10 @@ function buildPlan({ target, project, env, envFileName, pm, wantTraces, existing
     // address only, and a resolver that answers localhost with ::1 first turns
     // a working stack into ECONNREFUSED.
     plan.dbUrl = `postgres://evestack:${password}@127.0.0.1:${port}/evestack`;
+    // Kept, because it has to reach two printers. The compose service and the
+    // dashboard's connection string are two halves of one credential, and the
+    // only thing that makes them one is that they read the same variable.
+    plan.dbPassword = password;
 
     const existingCompose = COMPOSE_NAMES.find((n) => existsSync(join(target, n)));
     if (!existingCompose) {
@@ -624,7 +628,12 @@ function printSummary(plan) {
     if (plan.manual.some(([what]) => what === "Add Postgres yourself")) {
       say();
       dim("The compose service:");
-      say(composeService({ password: randomBytes(18).toString("base64url"), port: plan.port })
+      // plan.dbPassword, not a fresh one. This block generated its own, and the
+      // `docker run` above it prints plan.dbUrl, so the two credentials for one
+      // database were different every time this branch ran: paste both as
+      // printed and the dashboard answers `password authentication failed for
+      // user "evestack"` against a Postgres that is up and healthy.
+      say(composeService({ password: plan.dbPassword, port: plan.port })
         .split("\n").map((l) => `      ${C.dim}${l}${C.reset}`).join("\n"));
     }
     say();
