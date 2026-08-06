@@ -151,16 +151,39 @@ asks why the agent deleted the thing it deleted.
 
 ## Running it
 
-The dashboard is not part of a `create-evestack` project — clone the repository for it. It needs
-to reach the same Postgres your agent uses and to be given the same credential, so it can live
-anywhere:
+**In the project you already have.** `evestack create` writes a `dashboard` service into your
+project's `docker-compose.yml`, behind a profile, pointing at the published image. So there is
+nothing to clone and nothing to build:
+
+```bash
+docker compose --profile dashboard up -d
+npm run verify   # prints the URL and the sign-in pair
+```
+
+It reads the same `.env.local` your agent does, through `env_file:`, so the Postgres URL and the
+credential are already there. The port is whichever one the scaffolder published — it picks a free
+one, so it is not always 4000, and `npm run verify` is what tells you.
+
+<Note>
+  This section used to open with "The dashboard is not part of a `create-evestack` project — clone
+  the repository for it", followed by `git clone` and `cd evestack/packages/dashboard`. Both halves
+  were wrong: the scaffolder has shipped that compose service for a while, and the clone recipe did
+  not work either. Installing from `packages/dashboard` cannot resolve `workspace:*`, and
+  `@evestack/schedules` has no `dist/` in a fresh clone — its `dist/` is gitignored and it has no
+  `prepare` script — so `/schedules` fails to compile with `Can't resolve
+  '@evestack/schedules/cron'`. Three other pages said the opposite of this one.
+</Note>
+
+**From a clone, if you are working on the dashboard itself.** Install and build from the
+repository root, not from `packages/dashboard`:
 
 ```bash
 git clone https://github.com/SammyTourani/evestack
-cd evestack/packages/dashboard
-cp .env.example .env.local   # WORKFLOW_POSTGRES_URL + EVESTACK_AUTH_USER/PASSWORD
+cd evestack
 pnpm install
-pnpm run dev                 # http://localhost:4000
+pnpm -r --if-present run build          # workspace dist/, which a cold clone has none of
+cp packages/dashboard/.env.example packages/dashboard/.env.local
+pnpm --filter @evestack/dashboard dev   # http://localhost:4000
 ```
 
 Both halves of `EVESTACK_AUTH_*` are required and neither is defaulted: with either missing the
