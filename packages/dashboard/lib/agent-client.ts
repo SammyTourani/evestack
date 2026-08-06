@@ -24,7 +24,6 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 
 /** Newline-delimited JSON. eve's stream is NOT text/event-stream. */
 export const EVE_STREAM_CONTENT_TYPE = "application/x-ndjson; charset=utf-8";
-export const EVE_SESSION_ID_HEADER = "x-eve-session-id";
 export const EVE_STREAM_TAIL_INDEX_HEADER = "x-eve-stream-tail-index";
 
 /* -------------------------------------------------------------------------- */

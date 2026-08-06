@@ -489,15 +489,6 @@ export async function listSpansBySession(sessionId: string, limit = 5000): Promi
   return rows.map(toSpanRow);
 }
 
-export async function listSpansByTrace(traceId: string, limit = 5000): Promise<SpanRow[]> {
-  await ensureTraceSchema();
-  const rows = await query<Record<string, unknown>>(
-    `${SELECT_SPAN} WHERE trace_id = $1 ORDER BY start_unix_nano, span_id LIMIT $2`,
-    [traceId, limit],
-  );
-  return rows.map(toSpanRow);
-}
-
 /**
  * The session's spans as a forest, with session and turn ids filled in from the
  * nearest ancestor that has them.
@@ -658,21 +649,6 @@ export async function listToolCalls(sessionId: string): Promise<ToolCall[]> {
         statusCode: node.statusCode,
       };
     });
-}
-
-/** Which sessions have spans at all, so a UI can hide a dead trace tab. */
-export async function listTracedSessionIds(limit = 500): Promise<string[]> {
-  await ensureTraceSchema();
-  const rows = await query<{ session_id: string }>(
-    `SELECT session_id, MAX(start_unix_nano) AS latest
-     FROM evestack.spans
-     WHERE session_id IS NOT NULL
-     GROUP BY session_id
-     ORDER BY latest DESC
-     LIMIT $1`,
-    [limit],
-  );
-  return rows.map((row) => row.session_id);
 }
 
 /**

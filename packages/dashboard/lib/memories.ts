@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { ApproverIdentity } from "./approvals";
-import { query } from "./db";
+import { describeDbError, query } from "./db";
 
 /**
  * Read and curate the agent's long-term memory.
@@ -96,23 +96,6 @@ export async function listMemories(options: {
   };
 }
 
-export async function getMemory(id: string): Promise<MemoryRow | null> {
-  if (!(await memoriesTableExists())) return null;
-  const rows = await query<Record<string, unknown>>(
-    `SELECT id, content, tags, session_id, created_at FROM evestack.memories WHERE id = $1`,
-    [id],
-  );
-  const raw = rows[0];
-  if (!raw) return null;
-  return {
-    id: String(raw.id),
-    content: String(raw.content ?? ""),
-    tags: Array.isArray(raw.tags) ? (raw.tags as string[]) : [],
-    sessionId: (raw.session_id as string) ?? null,
-    createdAt: new Date(raw.created_at as string | Date).toISOString(),
-  };
-}
-
 /**
  * Delete a memory.
  *
@@ -168,8 +151,16 @@ export async function deleteMemory(
         identity.via,
       ],
     );
-  } catch {
-    // Intentionally swallowed — see above.
+  } catch (error) {
+    // Swallowed on purpose — see above — but not silently. The comment above
+    // promised "a missing audit row is visible in the log" while this block was
+    // an empty catch containing only a comment, so nothing was ever written
+    // anywhere. Deleting a memory is irreversible; losing the record of who did
+    // it, without a trace, is the one outcome this whole path exists to prevent.
+    console.warn(
+      `[evestack] memory ${row.id} was deleted but its audit row could not be written: ` +
+        `${describeDbError(error)}`,
+    );
   }
 
   return row;
@@ -185,6 +176,15 @@ export interface MemoryDeletionRow {
   readonly actorVia: string;
 }
 
+/**
+ * Kept deliberately, despite having no caller.
+ *
+ * Every other zero-consumer export in this dashboard was deleted; this one is
+ * the only way to read an audit trail for an irreversible action, and removing
+ * it would leave `evestack.memory_deletions` write-only and reachable solely
+ * through `psql`. The honest fix is a screen that calls this, not a smaller
+ * surface — so it stays until that exists.
+ */
 export async function listMemoryDeletions(limit = 100): Promise<MemoryDeletionRow[]> {
   await ensureMemoryAuditSchema();
   const rows = await query<Record<string, unknown>>(
