@@ -454,7 +454,26 @@ function buildPlan({
 
   // ---- package.json --------------------------------------------------------
   const deps = { ...project.pkg.dependencies };
-  const wantsPostgres = Boolean(plan.composeFile) || Boolean(existingUrl);
+  // Read off the plan, not off who wrote the compose file.
+  //
+  // This was `Boolean(plan.composeFile) || Boolean(existingUrl)`, which is false
+  // in exactly one branch: both compose files already exist, so attach writes
+  // neither and prints the service block for the reader to add. That branch
+  // still rewrites agent.ts to select @workflow/world-postgres — every branch
+  // does — so the project came out importing a package it did not depend on,
+  // and with no db:bootstrap to create the schema either. Both failures land
+  // long after a command that finished by saying "Attached."
+  //
+  // Fixed this way round rather than by dropping the rewrite, because the
+  // branch is nothing BUT instructions for putting this project on Postgres by
+  // hand: it prints the service, the port, the password and the env lines. An
+  // attach that handed all of that over and quietly left the agent on the
+  // on-disk world would be doing half the job and reporting the whole one.
+  //
+  // plan.dbUrl is set on every path that means Postgres — the one attach wrote,
+  // the one already in the env file, and the one it is asking for — so it is
+  // the fact worth reading.
+  const wantsPostgres = Boolean(plan.dbUrl);
   const newDeps = [];
   if (wantsPostgres && !deps["@workflow/world-postgres"]) newDeps.push(["@workflow/world-postgres", WORLD_TAG]);
   if (wantTraces && !existingInstrumentation && !deps["@vercel/otel"]) newDeps.push(["@vercel/otel", OTEL_RANGE]);
@@ -665,6 +684,12 @@ function printSummary(plan) {
       dim(`on the moment WORKFLOW_POSTGRES_URL exists, so writing it into ${plan.envFileName}`);
       dim("before that Postgres is up would only buy an agent that boots into a database");
       dim("it cannot reach.");
+      say();
+      // Printed here because this branch writes no compose service of ours, so
+      // the Next: list above has nothing to hang this off — and the schema is
+      // not optional. Without it every session write fails on a missing table.
+      dim(`Then start it and run ${pm} run db:bootstrap once: that creates the workflow`);
+      dim("schema, and nothing else does.");
     }
     say();
   }
