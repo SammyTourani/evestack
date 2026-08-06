@@ -222,3 +222,37 @@ test("font-sans asks for Geist first, and the layout is what supplies it", () =>
   assert.match(layout, /GeistMono\.variable/);
   assert.match(layout, /<html[^>]*className=/);
 });
+
+/**
+ * "Nothing happened" and "I cannot see" must not render the same.
+ *
+ * Caught live: Postgres went down while five real turns sat on disk, and the
+ * overview drew six em dashes. An em dash means "no value here", so the front
+ * door reported that the agent had done nothing — the opposite of the truth, on
+ * the one screen someone opens to find out whether anything is wrong.
+ *
+ * `Promise.allSettled` is what made it silent. It is the right tool for keeping
+ * one dead tile from taking the page down, and the wrong tool for deciding what
+ * a dead tile MEANS, so `Headline` now carries the reason alongside the value.
+ */
+test("a headline distinguishes an empty window from a failed query", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { fileURLToPath } = await import("node:url");
+  const { dirname, join } = await import("node:path");
+  const here = dirname(fileURLToPath(import.meta.url));
+
+  const overview = readFileSync(join(here, "..", "app", "overview.ts"), "utf8");
+  const page = readFileSync(join(here, "..", "app", "page.tsx"), "utf8");
+
+  assert.match(overview, /readonly failed: boolean/, "Headline must carry why the value is absent");
+  assert.match(
+    overview,
+    /const failed = current\.status === "rejected"/,
+    "only a failed CURRENT window counts as blind; a missing previous one is ordinary",
+  );
+  assert.match(
+    page,
+    /blind\.every\(\(h\) => h\.failed\)/,
+    "the page must surface an error when every measure failed, not six em dashes",
+  );
+});

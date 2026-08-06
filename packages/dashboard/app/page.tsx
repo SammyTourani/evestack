@@ -91,6 +91,25 @@ export default async function OverviewPage(props: PageProps<"/">) {
     return <DatabaseError error={error} />;
   }
 
+  /*
+   * If every tile's current-window query failed, the database is unreachable and
+   * the honest answer is to say so. Without this the page renders six em dashes,
+   * which reads as "your agent did nothing" — the opposite of the truth, on the
+   * screen someone opens to find out whether anything is wrong. Caught live with
+   * Postgres down and five real turns sitting on disk.
+   */
+  const blind = [data.runs, data.failureRate, data.latency, data.spend, data.tokens, data.ttft];
+  if (blind.every((h) => h.failed)) {
+    return (
+      <>
+        <h1>Overview</h1>
+        <DatabaseError
+          error={new Error("Every measure on this page failed to read from Postgres.")}
+        />
+      </>
+    );
+  }
+
   const previousLabel = `previous ${label}`;
 
   return (

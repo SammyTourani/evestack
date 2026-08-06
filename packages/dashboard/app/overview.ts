@@ -91,9 +91,21 @@ export interface Headline {
   readonly previous: number | null;
   readonly spark: readonly (number | null)[];
   readonly coverage: { readonly rows: number; readonly of: number };
+  /**
+   * Why `value` is null, when it is.
+   *
+   * `null` is ambiguous and the ambiguity is the whole problem: it means "the
+   * window is empty" and "the query failed" equally well, and those are
+   * opposite facts. Caught live — with Postgres down and five real turns on
+   * disk, every tile rendered an em dash, which reads as "your agent did
+   * nothing" rather than "this dashboard cannot see". Exactly the class of
+   * defect this project has spent forty commits removing from other people's
+   * code, built here by me.
+   */
+  readonly failed: boolean;
 }
 
-const EMPTY: Headline = { value: null, previous: null, spark: [], coverage: { rows: 0, of: 0 } };
+const EMPTY: Headline = { value: null, previous: null, spark: [], coverage: { rows: 0, of: 0 }, failed: false };
 
 /** Ask `headline` for the row count rather than an aggregate. See its body. */
 export const ROWS = "__rows__";
@@ -145,6 +157,9 @@ export async function headline(
     r.status === "fulfilled" ? r.value : null;
 
   const cur = one(current);
+  // Only the CURRENT window decides this. A missing previous window is an
+  // ordinary fact about a new install; a missing current one means we are blind.
+  const failed = current.status === "rejected";
   const row = cur?.data[0];
   const cov = cur?.coverage.byMeasure[key];
 
@@ -155,6 +170,7 @@ export async function headline(
       return p === undefined ? null : num(p[key]);
     })(),
     spark: (one(series)?.data ?? []).map((r) => num(r[key])),
+    failed,
     /*
      * `{rows, of}` is the shape lib/metrics.ts returns, and reading the wrong
      * key here is not a cosmetic bug: the fallback is `matchedRows`, so a
