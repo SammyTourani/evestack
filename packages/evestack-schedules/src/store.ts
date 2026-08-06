@@ -137,8 +137,13 @@ export async function finishRun(
          error = $3,
          session_id = COALESCE($4, session_id),
          finished_at = now(),
-         duration_ms = EXTRACT(MILLISECONDS FROM (now() - started_at))::int
-                     + EXTRACT(SECONDS FROM (now() - started_at))::int * 1000
+         -- EPOCH, not MILLISECONDS + SECONDS. Both of those read the *seconds
+         -- field* of the interval, not the whole interval: MILLISECONDS is that
+         -- field times 1000, and SECONDS wraps at 59. Adding them therefore
+         -- double-counted everything under a minute and discarded whole minutes
+         -- above one — a 5.25s run recorded 10250ms, a 90.5s run recorded
+         -- 60500ms. EPOCH is the only field that carries the entire interval.
+         duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::int
      WHERE id = $1`,
     [id, outcome.status, outcome.error ?? null, outcome.sessionId ?? null],
   );
