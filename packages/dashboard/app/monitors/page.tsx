@@ -124,7 +124,11 @@ export default async function MonitorsPage({
   }
 
   const { turns, sessions } = summary;
-  const failing = turns.errored + turns.noModelCall;
+  // `turns.failed`, not `errored + noModelCall`: a turn can be both, so the sum
+  // reports one failure twice. Only used to decide whether to colour the rate,
+  // so the old bug was invisible here — but it is the same bug lib/monitors.ts
+  // carried in the rate itself, and leaving one copy behind is how it comes back.
+  const failing = turns.failed;
 
   return (
     <>
