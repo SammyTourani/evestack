@@ -679,7 +679,16 @@ function emitSpans({ rng, spans, sessionId, title, turns, model }) {
       "ai.settings.context.eve.turn.id": turn.turnId,
     };
 
-    const root = push("ai.eve.turn", null, 0n, durNs, { ...identity, "operation.name": "ai.eve.turn" });
+    // eve's own root turn span (dist/src/harness/tool-loop.js) sets exactly these
+    // three, plus an optional ai.telemetry.functionId. Note `eve.session.id`, which is
+    // a different key from the AI SDK's `ai.settings.context.eve.session.id` — both
+    // appear on a real trace and neither is a rename of the other.
+    const root = push("ai.eve.turn", null, 0n, durNs, {
+      ...identity,
+      "eve.session.id": sessionId,
+      "eve.version": EVE_VERSION,
+      "eve.environment": "development",
+    });
 
     const agentSpan = push(
       `invoke_agent ${model.id.split("/")[1]}`,
@@ -688,16 +697,13 @@ function emitSpans({ rng, spans, sessionId, title, turns, model }) {
       durNs - 2_000_000n,
       {
         ...identity,
-        "operation.name": "gen_ai.invoke_agent",
         "gen_ai.provider.name": model.provider,
         "gen_ai.request.model": model.id.split("/")[1],
+        "gen_ai.agent.name": model.id.split("/")[1],
       },
     );
 
-    const stepSpan = push(`step 1`, agentSpan, 2_000_000n, durNs - 4_000_000n, {
-      ...identity,
-      "operation.name": "ai.eve.step",
-    });
+    const stepSpan = push(`step 1`, agentSpan, 2_000_000n, durNs - 4_000_000n, identity);
 
     // The model call. NO identity attributes — this is the whole point.
     if (!turn.noModelCall) {
@@ -709,7 +715,11 @@ function emitSpans({ rng, spans, sessionId, title, turns, model }) {
         3_000_000n,
         chatNs,
         {
-          "operation.name": "gen_ai.client",
+          // No `operation.name` here. A real chat span does carry one — the value
+          // `gen_ai.client` was observed on a live span — but the AI SDK builds it as
+          // `${operationId}${functionId}`, so it exists as a literal nowhere in eve's
+          // dist and contract 14 cannot verify it. Nothing reads it, so the fixture
+          // omits what it cannot prove rather than asserting a value from memory.
           "gen_ai.provider.name": model.provider,
           "gen_ai.request.model": model.id.split("/")[1],
           "gen_ai.response.id": `aitxt-${hex(rng, 8)}`,
@@ -737,10 +747,14 @@ function emitSpans({ rng, spans, sessionId, title, turns, model }) {
         BigInt(Math.round(turn.durationMs * 0.65 + i * toolMs)) * 1_000_000n,
         BigInt(Math.round(toolMs)) * 1_000_000n,
         {
-          "operation.name": "gen_ai.execute_tool",
           "gen_ai.tool.name": tool.name,
           "gen_ai.tool.type": "function",
-          "gen_ai.client.operation.execute_tool.duration": toolMs / 1000,
+          // The key is `gen_ai.execute_tool.duration`. An earlier draft of this file
+          // wrote `gen_ai.client.operation.execute_tool.duration` by pattern-matching
+          // the model-call keys, which is not a name the AI SDK emits — every one of
+          // the literals above is checked against eve's dist by
+          // contract/contracts/14-telemetry.contract.mjs, which is how that was caught.
+          "gen_ai.execute_tool.duration": toolMs / 1000,
         },
         failed,
       );

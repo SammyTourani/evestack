@@ -1,5 +1,6 @@
 import { formatUsd, isPriced } from "@/lib/pricing";
 import { getSession, getSessionTree, type TurnRow } from "@/lib/queries";
+import { duration, stamp as utcStamp } from "@/lib/time";
 import { ForkPanel } from "./fork-client";
 import styles from "./session.module.css";
 import { DatabaseError } from "@/app/db-error";
@@ -48,34 +49,14 @@ function buildTree(rows: TurnRow[], sessionId: string): TreeNode[] {
 
 const fmt = (n: number) => n.toLocaleString("en-US");
 
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const pad = (n: number) => String(n).padStart(2, "0");
-
 /**
- * Wall-clock stamp for a run, not "3h ago".
- *
- * A drill-down wants the actual clock time of each turn, and relative time is
- * unreliable here: workflow_runs stores UTC in `timestamp without time zone`
- * columns, so pg hands back a bare string that `new Date()` reads as host-local.
- * Every timestamp therefore lands one UTC offset in the future and "ago" math
- * goes negative. Formatting the local components reverses that shift and prints
- * exactly what the database holds. See the note in the handoff — the fix belongs
- * in lib/queries.ts, which this page does not own.
+ * A drill-down wants the actual clock time of each turn, not "3h ago", and to
+ * the second because sequential turns are seconds apart. lib/time.ts prints it
+ * in UTC and labels it; the local-component formatting this replaces was a
+ * second correction on top of the UTC parser lib/db.ts already installs, and
+ * was wrong by the host offset anywhere but the container.
  */
-function stamp(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  return `${MONTHS[d.getMonth()]} ${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-}
-
-function duration(ms: number | null): string {
-  if (ms === null || !Number.isFinite(ms) || ms < 0) return "—";
-  if (ms < 1000) return `${ms}ms`;
-  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
-  const minutes = Math.floor(ms / 60_000);
-  const seconds = Math.round((ms % 60_000) / 1000);
-  return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
-}
+const stamp = (iso: string): string => utcStamp(iso, "second");
 
 function Metric({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -144,7 +125,25 @@ function RunNode({ node, seq }: { node: TreeNode; seq?: number }) {
               <span className="dim">{fmt(run.cacheWriteTokens)}</span>
             </Metric>
           )}
-          <Metric label="Tools">{fmt(run.toolCount)}</Metric>
+          {/*
+            Two different facts, never one. `Tools offered` is the size of the
+            registry eve handed the model — capacity, not activity, and it read
+            as activity while it was labelled `TOOLS` beside duration and cost.
+            `Tools called` is absent, not zero, when the turn has no trace to
+            count from; see TurnRow in lib/queries.ts.
+          */}
+          <Metric label="Tools offered">
+            {run.toolsOffered === null ? <span className="dim">—</span> : fmt(run.toolsOffered)}
+          </Metric>
+          <Metric label="Tools called">
+            {run.toolInvocations === null ? (
+              <span className="dim" title="No exported trace for this turn, so tool calls are unknown">
+                —
+              </span>
+            ) : (
+              fmt(run.toolInvocations)
+            )}
+          </Metric>
           <Metric label="Cost">
             {/* An unpriced model must never render as $0.00 — that reads as free. */}
             {priced ? formatUsd(run.costUsd) : <span className="unpriced">—</span>}

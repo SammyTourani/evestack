@@ -1,5 +1,6 @@
 import { DatabaseUnavailableError, describeDbError } from "@/lib/db";
 import { WINDOWS, getMonitorSummary, type MonitorSummary } from "@/lib/monitors";
+import { clock, duration, stamp } from "@/lib/time";
 import styles from "./monitors.module.css";
 
 export const dynamic = "force-dynamic";
@@ -18,17 +19,7 @@ export const dynamic = "force-dynamic";
  * lib/monitors.ts explains why they must not be averaged together.
  */
 
-function ms(value: number): string {
-  if (value < 1000) return `${Math.round(value)}ms`;
-  if (value < 60_000) return `${(value / 1000).toFixed(value < 10_000 ? 2 : 1)}s`;
-  const minutes = Math.floor(value / 60_000);
-  return `${minutes}m ${Math.round((value % 60_000) / 1000)}s`;
-}
-
 const pct = (fraction: number): string => `${(fraction * 100).toFixed(fraction === 0 ? 0 : 1)}%`;
-
-const clock = (iso: string): string =>
-  new Date(iso).toLocaleTimeString("en-US", { timeZone: "UTC", hour12: false, timeStyle: "short" });
 
 function windowLabel(hours: number): string {
   if (hours < 24) return `${hours}h`;
@@ -62,7 +53,7 @@ function Percentiles({ title, note, data }: {
         {rows.map((row) => (
           <div className="stat" key={row.label}>
             <div className="stat-label">{row.label}</div>
-            <div className="stat-value">{ms(row.value)}</div>
+            <div className="stat-value">{duration(row.value)}</div>
           </div>
         ))}
       </div>
@@ -92,7 +83,7 @@ function Series({ summary }: { summary: MonitorSummary }) {
               <div
                 className={styles.bar}
                 style={{ height: `${height}%` }}
-                title={`${clock(bucket.start)} UTC — ${bucket.turns} turn${bucket.turns === 1 ? "" : "s"}, ${bucket.failed} failed${bucket.p95Ms === null ? "" : `, p95 ${ms(bucket.p95Ms)}`}`}
+                title={`${stamp(bucket.start)} — ${bucket.turns} turn${bucket.turns === 1 ? "" : "s"}, ${bucket.failed} failed${bucket.p95Ms === null ? "" : `, p95 ${duration(bucket.p95Ms)}`}`}
               >
                 <div className={styles.barFailed} style={{ height: `${failedShare}%` }} />
               </div>
@@ -103,7 +94,8 @@ function Series({ summary }: { summary: MonitorSummary }) {
       </div>
       <p className={styles.note}>
         Turns per bucket, with the failed share in red. An empty bucket is a real zero and is drawn
-        as one — skipping it would redraw a quiet hour as continuous load.
+        as one — skipping it would redraw a quiet hour as continuous load. Tick labels are each
+        bucket&rsquo;s start time in UTC.
       </p>
     </section>
   );

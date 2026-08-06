@@ -2,21 +2,9 @@
 
 import { useState } from "react";
 import type { ScheduleRun, ScheduleSummary } from "@/lib/schedules";
+import { ago, stamp } from "@/lib/time";
 import { describeCron, nextFire } from "@evestack/schedules/cron";
 import styles from "./schedules.module.css";
-
-function stamp(iso: string): string {
-  return new Date(iso).toLocaleString("en-US", { timeZone: "UTC", hour12: false });
-}
-
-function ago(iso: string): string {
-  const seconds = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-  if (!Number.isFinite(seconds)) return "—";
-  if (seconds < 60) return `${seconds}s ago`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-  return `${Math.floor(seconds / 86400)}d ago`;
-}
 
 function statusClass(status: string): string {
   switch (status) {
@@ -115,7 +103,7 @@ export function ScheduleList({
                 {schedule.lastRun && (
                   <>
                     <span className={styles.dot}>•</span>
-                    <span title={stamp(schedule.lastRun.fireAt)}>
+                    <span title={stamp(schedule.lastRun.fireAt, "second")}>
                       last {ago(schedule.lastRun.fireAt)}
                     </span>
                   </>
@@ -123,7 +111,9 @@ export function ScheduleList({
                 {next && (
                   <>
                     <span className={styles.dot}>•</span>
-                    <span title={next.toISOString()}>next {stamp(next.toISOString())} UTC</span>
+                    <span title={next.toISOString()}>
+                      next {stamp(next.toISOString(), "second")}
+                    </span>
                   </>
                 )}
                 {paused && schedule.pausedBy && (
@@ -147,7 +137,7 @@ export function ScheduleList({
                 <table className={styles.history}>
                   <thead>
                     <tr>
-                      <th>Fire (UTC)</th>
+                      <th>Fire</th>
                       <th>Status</th>
                       <th>Took</th>
                       <th>Detail</th>
@@ -157,7 +147,7 @@ export function ScheduleList({
                     {runs.map((run) => (
                       <tr key={run.id}>
                         <td className="mono">
-                          {stamp(run.fireAt)}
+                          {stamp(run.fireAt, "second")}
                           {run.caughtUp && (
                             <span
                               className={styles.caught}

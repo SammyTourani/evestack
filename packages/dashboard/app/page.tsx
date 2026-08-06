@@ -3,18 +3,10 @@ import { agentUrlForHumans } from "@/lib/agent-client";
 import { isPriced } from "@/lib/pricing";
 import { formatUsd } from "@/lib/pricing";
 import { getTotals, listSessions } from "@/lib/queries";
+import { ago } from "@/lib/time";
 import { DatabaseError } from "@/app/db-error";
 
 export const dynamic = "force-dynamic";
-
-function ago(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const s = Math.floor(diff / 1000);
-  if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-  return `${Math.floor(s / 86400)}d ago`;
-}
 
 const fmt = (n: number) => n.toLocaleString("en-US");
 
