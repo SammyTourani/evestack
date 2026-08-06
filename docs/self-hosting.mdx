@@ -329,8 +329,8 @@ export, so the symptom is an empty Traces tab rather than an error. See
   the audit log names an *installation*, not a person. There is no lockout, no rate limit and no
   second factor in front of it. It is sent as Basic over whatever transport you provide, so
   without TLS it is on the wire in base64. And it protects HTTP routes, not the database — the
-  compose file publishes Postgres on `5433` on **every** interface with the credentials from
-  `.env.example`.
+  compose file publishes Postgres on `5433` on **every** interface, with the password its own
+  `${POSTGRES_PASSWORD:-evestack}` default supplies.
 
   So: still put the dashboard behind something you already trust before it leaves loopback — a
   reverse proxy doing OAuth, Cloudflare Access, Tailscale, a VPN. The difference from before is

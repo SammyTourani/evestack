@@ -56,23 +56,30 @@ asks why the agent deleted the thing it deleted.
 
 ## Running it
 
-The dashboard is not part of a `create-evestack` project — clone the repository for it. It only
-needs to reach the same Postgres your agent uses, so it can live anywhere:
+The dashboard is not part of a `create-evestack` project — clone the repository for it. It needs
+to reach the same Postgres your agent uses and to be given the same credential, so it can live
+anywhere:
 
 ```bash
 git clone https://github.com/SammyTourani/evestack
 cd evestack/packages/dashboard
-cp .env.example .env.local   # WORKFLOW_POSTGRES_URL, optionally COMPOSIO_API_KEY
+cp .env.example .env.local   # WORKFLOW_POSTGRES_URL + EVESTACK_AUTH_USER/PASSWORD
 pnpm install
 pnpm run dev                 # http://localhost:4000
 ```
 
+Both halves of `EVESTACK_AUTH_*` are required and neither is defaulted: with either missing the
+dashboard answers `503` on every route, sign-in page included. Use the same pair your agent has
+in `.env.local` — it is one secret per deployment, which the dashboard signs you in with and
+then presents to the agent.
+
 Or as part of the full stack: `docker compose --profile full up -d` brings up Postgres and the
-dashboard together. The dashboard container runs as a non-root user and binds to `127.0.0.1`
-by default — see [Self-hosting](/docs/self-hosting) before exposing it beyond your own machine.
+dashboard together. The container runs as a non-root user; the process inside it binds `0.0.0.0`
+and what keeps it off your network is the compose port mapping, `127.0.0.1:4000:4000`. See
+[Self-hosting](/docs/self-hosting) before exposing it beyond your own machine.
 
 ## It reads your database, nothing else
 
-No API calls to evestack, no telemetry, no external service in the loop. The dashboard's only
-required environment variable is `WORKFLOW_POSTGRES_URL` — point it at your Postgres and it
-works.
+No API calls to evestack, no telemetry, no external service in the loop. Its required
+environment variables are `WORKFLOW_POSTGRES_URL` and the `EVESTACK_AUTH_*` pair — point the
+first at your Postgres and everything on the observe side is a SQL read.

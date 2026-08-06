@@ -21,11 +21,14 @@ disclosure.
 
 - The dashboard's control API (`packages/dashboard/app/api/control/**`) — it can start, message,
   and cancel agent sessions, so an auth bypass there is high severity
-- The OTLP ingest endpoint — it's unauthenticated by design (an exporter has nowhere to put a
-  credential), so the relevant risk is data it should never accept, not auth
+- The trace-ingest endpoint (`/api/ingest/v1/traces`) — it takes `EVESTACK_INGEST_TOKEN` in an
+  `x-evestack-ingest-token` header, and with that variable unset falls back to ordinary session
+  auth rather than to open (`ingestAuthorized()` in `packages/dashboard/lib/auth.ts`). A bypass
+  is in scope, and so is data it should never accept: stored spans carry system prompts and tool
+  arguments, and anything accepted here is rendered as a real conversation
 - Anything that could exfiltrate `.env.local` contents, a Composio token, or a model API key
-- The `create-evestack` scaffolder — it generates a route-auth password; a weak or predictable
-  generator is in scope
+- The `create-evestack` scaffolder — it generates the route-auth password and the trace-ingest
+  token; a weak or predictable generator for either is in scope
 
 ## What's out of scope
 
@@ -35,9 +38,23 @@ disclosure.
 
 ## Known posture, not bugs
 
-- **The dashboard binds to `127.0.0.1` by default** and has no authentication of its own. It is
-  a control plane that can start and cancel agent runs — do not expose it to a network without
-  putting real auth in front of it (a reverse proxy, a VPN, `httpBasic`).
+- **The dashboard fails closed, and its reachability is decided by the port mapping — two
+  separate controls.** Every route requires `EVESTACK_AUTH_USER` and `EVESTACK_AUTH_PASSWORD`;
+  with either unset it answers 503 on everything including the sign-in page, and there is no
+  bypass flag (`packages/dashboard/proxy.ts`). The process *inside* the container binds
+  `0.0.0.0` — it has to, or nothing outside its network namespace could reach it, Docker's own
+  `HEALTHCHECK` included — so what keeps it off the network is `docker-compose.yml` publishing
+  `127.0.0.1:4000:4000`. `docker run -p 4000:4000` on the image by hand puts the control plane
+  on every interface the host has. And one shared secret per deployment is not per-person auth:
+  there is no lockout, no rate limit and no second factor, so still put something you already
+  trust (reverse-proxy OAuth, Tailscale, a VPN) in front before it leaves loopback.
+- **Postgres is the surface that is still published on every interface.** Both the repo's
+  `docker-compose.yml` and the one `create-evestack` generates map `5433:5432` with no host
+  address, and both default the password to `evestack` (`${POSTGRES_PASSWORD:-evestack}` and a
+  literal, respectively). That database holds every prompt, tool call and result the agent has
+  produced. `create-evestack attach` is the one path that gets this right — it generates a
+  password and publishes on `127.0.0.1` — so on the other two, set `POSTGRES_PASSWORD` and
+  narrow the mapping before running anywhere but a laptop.
 - **Composio's managed OAuth** shows users a Composio-branded consent screen and shares rate
   limits across all Composio customers. Fine for personal use and prototypes; read Composio's
   own docs on registering your own OAuth app before onboarding other people's accounts in

@@ -66,17 +66,21 @@ would guess. The message names the limit and how long to wait.
 
 ## "I denied a tool approval and the whole session died"
 
-You are running a template from before 2026-08-05, or you removed the model middleware from
-`agent/agent.ts`. eve records a denied call with `output.type = "execution-denied"`, which is
-not part of the AI SDK's tool-output contract — so on the next turn `@ai-sdk/openai` serializes
-it as `output: undefined`, OpenAI answers 400 (`Missing required parameter: 'input[N].output'`),
-and the session fails permanently. Approving never triggers it; only denial does, on every eve
-version we tested (0.30.2 and 0.30.6).
+You are on `@ai-sdk/openai` v2. Under v2 the `output.type = "execution-denied"` that eve records
+for a denied call was outside the SDK's tool-output contract, so on the next turn the converter
+fell through and serialized it as `output: undefined`, OpenAI answered 400 (`Missing required
+parameter: 'input[N].output'`), and the session failed permanently. Approving never triggered
+it; only denial did, on both eve versions we tested (0.30.2 and 0.30.6).
 
-The template's `surviveDeniedToolResults` middleware normalizes the denied result to
-`error-json` before the provider sees it, and the model then answers the denial normally. If
-you built your agent without our template, copy that middleware from
-`templates/default/agent/agent.ts` — it is a no-op once eve emits a conforming type.
+**Upgrade to `@ai-sdk/openai` v4, which is what the template pins.** In `@ai-sdk/provider`
+4.0.5 `execution-denied` is a first-class member of `LanguageModelV4ToolResultOutput`, and
+`@ai-sdk/openai` 4.0.30 has an explicit case in both converters that sends
+`output.reason ?? "Tool call execution denied."`. The template's `surviveDeniedToolResults`
+middleware deliberately does **not** touch a denial any more — intercepting it on v4 would
+replace eve's prose reason with a JSON blob and defeat the SDK's own double-send guards. What
+the middleware still catches is an output type new to both eve and its list: v4's
+`function_call_output` switch has no default branch, so an unrecognized type still serializes
+to `output: undefined` and still 400s exactly as v2 did.
 
 ## "A turn shows as completed but the agent produced nothing"
 

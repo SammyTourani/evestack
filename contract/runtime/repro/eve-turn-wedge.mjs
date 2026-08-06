@@ -3,17 +3,39 @@
  * Tier 2 of the vercel/eve#535 repro: show the wedge on the REAL stack.
  *
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ STATUS: WRITTEN BUT NOT YET EXECUTED.                                    │
+ * │ STATUS: STILL NOT EXECUTED — attempted 2026-08-05, blocked twice.        │
  * │                                                                          │
  * │ `graphile-crash-wedge.mjs` — tier 1, in this directory — HAS been run    │
- * │ and reproduces the mechanism end to end. This file has NOT been run: it  │
- * │ was authored on a machine whose swap was 4757M used of 5120M, where      │
- * │ booting `eve dev` plus its per-session Docker sandbox was not a safe     │
- * │ thing to do. Treat every claim below as a prediction derived from tier 1 │
- * │ plus the compiled sources, NOT as an observation.                        │
+ * │ and reproduces the mechanism end to end. This file has NOT been run.     │
+ * │ Treat every claim below as a prediction derived from tier 1 plus the     │
+ * │ compiled sources, NOT as an observation.                                 │
+ * │                                                                          │
+ * │ BLOCKER 1, since fixed: running this unchanged would have produced a     │
+ * │ false NEGATIVE. It sent `message` as a chat-style {role, content}        │
+ * │ object; the route takes a string or an array of parts and answers 400    │
+ * │ to anything else. The 400 was discarded (`.catch(() => {})`, no status   │
+ * │ check), so nothing would have been enqueued, the poll would have timed   │
+ * │ out, and the script would have printed "the turn may not be job-backed"  │
+ * │ and exited 1 — which reads as a disproof of tier 1 while never having    │
+ * │ started a turn at all. Measured by running the shipped parser            │
+ * │ (eve 0.30.8, dist/src/public/channels/eve.js, parseMessageField) on all  │
+ * │ three shapes: object -> 400, "hello" -> accepted, part array ->          │
+ * │ accepted. The body and the missing status check are both fixed below.    │
+ * │                                                                          │
+ * │ BLOCKER 2, still open: no headroom. Measured at the attempt — 47% of     │
+ * │ memory free, swap 5465M used of 7168M, load 5.0, 36 concurrent node      │
+ * │ processes, Docker daemon down (the colima VM is stopped, and its profile │
+ * │ asks for 4 vCPU / 8 GiB on an 8 GB host). Booting this stack is what     │
+ * │ powered the machine off earlier the same day. The swap preflight below   │
+ * │ would have PASSED throughout, which is why it is necessary and nowhere   │
+ * │ near sufficient: it printed `swap: 763M free of 6144M` on the attempt,   │
+ * │ over its 512M floor, having read 1703M free of 7168M minutes earlier.    │
+ * │ Both the free figure and the total drift by the gigabyte under other     │
+ * │ load, so a single reading of it is not evidence of headroom.             │
  * │                                                                          │
  * │ Do not cite this file's output as evidence until it has actually run     │
- * │ green somewhere with headroom.                                           │
+ * │ green somewhere with headroom. A GitHub-hosted runner is the intended    │
+ * │ home: 4 vCPU / 16 GB, Docker preinstalled, free for public repos.        │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
  * ── What tier 1 already settled ──────────────────────────────────────────────
@@ -54,11 +76,21 @@
  * stdout; here we watch the row, because the process we kill is eve's).
  *
  * Prompt choice matters: the mock model emits tool calls when the user text
- * name-matches an available tool. "hello" avoids that, which keeps the Docker
- * sandbox and the real OpenAI embeddings behind `remember`/`recall` out of it.
- * Those embeddings are a direct AI SDK call in templates/default/lib/memory.ts
- * and are NOT covered by the mock seam — a prompt that triggers them would cost
- * money and need a key.
+ * name-matches an available tool. "hello" avoids that, which keeps the real
+ * OpenAI embeddings behind `remember`/`recall` out of it. Those embeddings are
+ * a direct AI SDK call in templates/default/lib/memory.ts and are NOT covered
+ * by the mock seam — a prompt that triggers them would cost money and need a
+ * key.
+ *
+ * What the prompt does NOT do — an earlier version of this note claimed
+ * otherwise — is keep Docker out of the run. It only governs turn-time session
+ * containers. `eve dev` kicks off a sandbox prewarm in the background at boot
+ * whatever the prompt is (execution/sandbox/development-prewarm.js into
+ * execution/sandbox/prewarm.js, dispatching to the docker backend's `prewarm`):
+ * it asserts the daemon is up, pulls the pinned base image when no cached
+ * template image matches, and runs a template-build container to commit one. So
+ * a daemon and the image budget have to be there before the first turn is sent,
+ * and the machine this runs on has to be sized for that, not for `hello`.
  *
  * Usage:
  *   WORKFLOW_POSTGRES_URL=postgres://evestack:evestack@localhost:5433/evestack \
@@ -69,7 +101,9 @@
  *
  * Exit codes: 0 the wedge reproduced on the real stack
  *             1 it did not — read the output before believing tier 1 transfers
- *             2 could not run (no database, no headroom, server would not boot)
+ *             2 could not run (no database, no headroom, server would not boot,
+ *               or create-session refused the turn — see BLOCKER 1: a run that
+ *               never started a turn must not be able to exit 1)
  */
 import { spawn } from "node:child_process";
 import { execFileSync } from "node:child_process";
@@ -179,6 +213,24 @@ function startEve() {
   return child;
 }
 
+/**
+ * True when something already answers on PORT.
+ *
+ * Worth checking before spawning, because `waitForServer` treats any response
+ * as proof that eve came up — and on the machine this was last attempted on, a
+ * stray `node fakeagent.mjs` from unrelated work was already holding the
+ * default 2999. eve would have lost the bind, the stranger would have answered
+ * the poll, and the script would have gone on to post a turn at it.
+ */
+async function portAlreadyAnswers() {
+  try {
+    await fetch(`http://127.0.0.1:${PORT}/eve/v1/session/does-not-exist`, { method: "GET" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function waitForServer(timeoutMs = 120_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -243,9 +295,19 @@ async function main() {
   note("self-isolating as tier 1 — run it against a scratch database.");
 
   let eve = null;
+  // Set when the run could not be carried out at all. Kept separate from
+  // `failures` so a broken run can never be read as a result.
+  let abortReason = null;
   try {
     for (let cycle = 1; cycle <= MAX_ATTEMPTS; cycle++) {
       section(`CYCLE ${cycle} of ${MAX_ATTEMPTS} — start a turn, kill eve while the job is held`);
+
+      if (await portAlreadyAnswers()) {
+        abortReason =
+          `port ${PORT} is already answering before eve was started. Whatever ` +
+          "owns it would have answered the poll and taken the turn. Free it, or pass --port=.";
+        break;
+      }
 
       eve = startEve();
       if (!(await waitForServer())) {
@@ -254,16 +316,43 @@ async function main() {
       }
       note(`eve dev up on :${PORT} (pid ${eve.pid}) with EVE_MOCK_AUTHORED_MODELS=1`);
 
-      // Kick off a turn. A benign prompt: no tool-name match, so no sandbox
-      // container and no embedding calls.
-      fetch(`http://127.0.0.1:${PORT}/eve/v1/session`, {
+      // Kick off a turn. A benign prompt: no tool-name match, so no turn-time
+      // sandbox container and no embedding calls.
+      //
+      // `message` is a bare string. This route takes a string or an array of
+      // text/file parts and answers 400 to anything else — the chat-style
+      // `{role, content}` object this used to send was rejected every time.
+      // Measured by running the shipped parser (eve 0.30.8,
+      // dist/src/public/channels/eve.js, parseMessageField) on all three
+      // shapes: object -> 400, "hello" -> accepted, [{type:"text"}] ->
+      // accepted.
+      const turn = fetch(`http://127.0.0.1:${PORT}/eve/v1/session`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ message: { role: "user", content: "hello" } }),
-      }).catch(() => {});
+        body: JSON.stringify({ message: "hello" }),
+      }).then(
+        async (response) => ({
+          status: response.status,
+          body: await response.text().catch(() => ""),
+        }),
+        (error) => ({ status: 0, body: String(error?.message ?? error) }),
+      );
 
       const held = await waitForAHeldJob(client);
       if (!held) {
+        // Distinguishing "no turn was ever accepted" from "a turn ran and was
+        // not job-backed" is the whole difference between a run that could not
+        // happen and a disproof of tier 1. The old code could not tell them
+        // apart: it discarded this response, so a rejected body reported as
+        // evidence against tier 1 and exited 1.
+        const response = await turn;
+        if (response.status !== 202) {
+          abortReason =
+            `cycle ${cycle}: create-session did not accept the turn ` +
+            `(HTTP ${response.status || "no response"}): ${response.body.slice(0, 400)}\n` +
+            "Nothing was enqueued, so this run says NOTHING about tier 1 either way.";
+          break;
+        }
         ok(false, `cycle ${cycle}: no job was ever held — the turn may not be job-backed`);
         break;
       }
@@ -310,17 +399,23 @@ async function main() {
       }
     }
 
-    section("VERDICT");
-    process.stdout.write(
-      failures === 0
-        ? "The tier-1 mechanism transfers to the real stack.\n"
-        : `${failures} check(s) failed — tier 1 may NOT transfer. Do not publish this as-is.\n`,
-    );
+    if (abortReason === null) {
+      section("VERDICT");
+      process.stdout.write(
+        failures === 0
+          ? "The tier-1 mechanism transfers to the real stack.\n"
+          : `${failures} check(s) failed — tier 1 may NOT transfer. Do not publish this as-is.\n`,
+      );
+    }
   } finally {
     if (eve) eve.kill("SIGKILL");
     if (client) await client.end().catch(() => {});
   }
 
+  if (abortReason !== null) {
+    process.stderr.write(`\nCOULD NOT RUN — this is not a result.\n${abortReason}\n`);
+    process.exit(2);
+  }
   process.exit(failures === 0 ? 0 : 1);
 }
 

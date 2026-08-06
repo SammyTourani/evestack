@@ -138,6 +138,7 @@ a live fire.
 - **Channels need a public HTTPS URL.** None of Slack, Discord or Telegram has a polling mode in
   eve, so a laptop needs a tunnel. See [Channels](/docs/channels).
 - **A denied approval used to kill the session.** That was a real eve bug, [reported
-  upstream](https://github.com/vercel/eve/issues/1658) and worked around in the template's model
-  middleware. It matters more here than anywhere: an unattended agent hitting a denial at 3am
-  should still be alive in the morning.
+  upstream](https://github.com/vercel/eve/issues/1658) and first worked around in the template's
+  model middleware; `@ai-sdk/openai` v4 handles the denied output type natively, which is what
+  the template pins. It matters more here than anywhere: an unattended agent hitting a denial at
+  3am should still be alive in the morning.

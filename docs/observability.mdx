@@ -327,8 +327,8 @@ spans in the first place.
 
 Leaving traces off entirely is also a supported configuration: unset `EVESTACK_DASHBOARD_URL`
 and the dashboard's sessions, turns, tokens, cost and approvals all still work. Neither tier
-reports anything to evestack or to any third party, and the dashboard's only required variable
-is `WORKFLOW_POSTGRES_URL`.
+reports anything to evestack or to any third party. Dropping tier 2 drops `EVESTACK_INGEST_TOKEN`
+with it; `WORKFLOW_POSTGRES_URL` and the `EVESTACK_AUTH_*` pair are required either way.
 
 ## Two failure modes worth knowing before you trust a badge
 
