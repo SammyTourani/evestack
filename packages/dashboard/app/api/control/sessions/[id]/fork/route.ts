@@ -2,6 +2,7 @@ import {
   continueSession,
   createSession,
   getSessionSnapshot,
+  parkedSince,
   readRecentEvents,
 } from "@/lib/agent-client";
 import { recoverTurns } from "@/lib/promote-eval";
@@ -241,15 +242,20 @@ export async function POST(
     const deadline = Date.now() + FORK_BUDGET_MS;
     let delivered = 1;
     let stopped: { atTurn: number; code: string; message: string } | undefined;
-    // The token we last spent. Carried between iterations because "the session
-    // is waiting" is not by itself "the session is waiting for the NEXT turn" —
-    // see waitUntilReady.
-    let spentToken: string | undefined;
+    // The stream position of the park we last spent. Carried between
+    // iterations because "the session is waiting" is not by itself "the
+    // session is waiting for the NEXT turn" — see waitUntilReady.
+    let spentAtTailIndex = -1;
 
     for (const [index, message] of script.slice(1).entries()) {
       const turnNumber = index + 2;
 
-      const ready = await waitUntilReady(created.sessionId, deadline, request.signal, spentToken);
+      const ready = await waitUntilReady(
+        created.sessionId,
+        deadline,
+        request.signal,
+        spentAtTailIndex,
+      );
       if (ready.code !== "ready") {
         stopped = { atTurn: turnNumber, code: ready.code, message: ready.message };
         break;
@@ -261,7 +267,7 @@ export async function POST(
           message,
           signal: request.signal,
         });
-        spentToken = ready.continuationToken;
+        spentAtTailIndex = ready.tailIndex;
 
         // eve answers an unknown session id by starting a NEW session and
         // returning its id rather than failing — see the same guard in
@@ -311,7 +317,7 @@ export async function POST(
 }
 
 type Readiness =
-  | { code: "ready"; continuationToken: string }
+  | { code: "ready"; continuationToken: string; tailIndex: number }
   | { code: "session_ended" | "awaiting_human" | "timeout"; message: string };
 
 /**
@@ -330,22 +336,29 @@ type Readiness =
  *    the replay cannot reproduce the decision. It stops and hands the fork back.
  *  - `timeout` — the budget above.
  *
- * `spentToken` closes a race that re-reading the token alone does not. eve
- * answers the follow-up POST as soon as it accepts the message, which is before
- * `turn.started` reaches the durable stream — so for a moment after sending turn
- * N the snapshot still shows the PREVIOUS `session.waiting`, with the token we
- * just consumed. Taking that at face value would send turn N+1 with a spent
- * token and get it rejected, which is a slower version of the bug this function
- * was written to fix. Since tokens rotate every turn, "the token differs from
- * the one I spent" is exactly the signal that a new boundary was published.
- * `turnId` would work as well; the token is preferable only because it is the
- * value actually being used.
+ * `spentAtTailIndex` closes a race that "the session is waiting" alone does
+ * not. eve answers the follow-up POST as soon as it accepts the message, which
+ * is before `turn.started` reaches the durable stream — so for a moment after
+ * sending turn N the snapshot still shows the PREVIOUS `session.waiting`.
+ * Taking that at face value would fire turn N+1 before turn N had run. So
+ * readiness is "parked at a boundary FURTHER ALONG the stream than the one I
+ * spent", which is what `parkedSince` tests.
+ *
+ * It used to test `snapshot.continuationToken !== spentToken`, on the
+ * documented belief that eve rotates the token every turn. It does not. On eve
+ * 0.30.8 over @workflow/world-postgres the continuation token is the session's
+ * command-hook token and never changes for the life of the session. Measured
+ * on a real 3-turn fork: turns 1 and 2 landed, then this function spun for its
+ * full 90s timeout against a fork that was already parked and ready, and the
+ * route answered `{turnsDelivered: 2, stopped: {atTurn: 3, code: "timeout"}}` —
+ * the same "3-turn fork reports itself a partial success" symptom that
+ * re-reading the token was introduced to fix, reached a different way.
  */
 async function waitUntilReady(
   sessionId: string,
   deadline: number,
   signal: AbortSignal,
-  spentToken?: string,
+  spentAtTailIndex: number,
 ): Promise<Readiness> {
   const turnDeadline = Math.min(deadline, Date.now() + TURN_READY_TIMEOUT_MS);
 
@@ -376,8 +389,12 @@ async function waitUntilReady(
             `fork's own page, then send the remaining turns yourself.`,
         };
       }
-      if (snapshot.continuationToken && snapshot.continuationToken !== spentToken) {
-        return { code: "ready", continuationToken: snapshot.continuationToken };
+      if (parkedSince(snapshot, spentAtTailIndex)) {
+        return {
+          code: "ready",
+          continuationToken: snapshot.continuationToken!,
+          tailIndex: snapshot.tailIndex,
+        };
       }
     }
 
