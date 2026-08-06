@@ -1,5 +1,8 @@
 import { query } from "@/lib/db";
 
+/** The three the hook enforces; anything else is treated as "fail" there. */
+const BUDGET_MODES = new Set(["fail", "cancel", "observe"]);
+
 export const dynamic = "force-dynamic";
 
 /**
@@ -71,11 +74,18 @@ export async function GET(request: Request) {
           LIMIT 50`,
         [sessionId],
       ),
+      /* The sessionId filter is the same shape as the budget_events query directly
+         above, and its absence here was the bug. `?sessionId=X` returned other
+         sessions' stop rows, and because the LIMIT is global it could omit X's own
+         row entirely once 50 newer stops existed elsewhere — which is precisely the
+         row you open this endpoint to find: "was this session stopped, and why". */
       query(
         `SELECT scope, scope_key, session_id, reason, limit_usd, spent_usd, created_at
            FROM evestack.budget_stops
+          WHERE $1::text IS NULL OR session_id = $1
           ORDER BY created_at DESC
           LIMIT 50`,
+        [sessionId],
       ),
       sessionId
         ? query<UsageRow>(
@@ -104,7 +114,16 @@ export async function GET(request: Request) {
       limits: {
         sessionUsd: disabled ? false : parseCap(process.env.EVESTACK_BUDGET_SESSION_USD, 2),
         dailyUsd: disabled ? false : parseCap(process.env.EVESTACK_BUDGET_DAILY_USD, 10),
-        mode: process.env.EVESTACK_BUDGET_MODE ?? "fail",
+        // Validated, not echoed. The hook that actually enforces this falls back to
+        // "fail" for anything outside these three (envMode in
+        // packages/evestack-budget/src/config.ts), so passing the raw variable
+        // through meant a typo like EVESTACK_BUDGET_MODE=observ reported a mode
+        // nothing was enforcing. The dashboard is not a dependency of that package,
+        // so this is the same list rather than the same code — if that list ever
+        // grows, this is the second place to change.
+        mode: BUDGET_MODES.has(process.env.EVESTACK_BUDGET_MODE ?? "")
+          ? (process.env.EVESTACK_BUDGET_MODE as string)
+          : "fail",
         timeZone,
       },
       ...(first ? { session: { id: sessionId, ...usage(first) } } : {}),
