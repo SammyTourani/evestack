@@ -40,6 +40,11 @@ on:
         required: false
         default: "^4.0.0"
         type: string
+      model:
+        description: "EVESTACK_MODEL for both arms — a stronger model is far less likely to answer in prose and produce a vacuous arm"
+        required: false
+        default: "gpt-5"
+        type: string
 
 permissions:
   contents: read
@@ -68,6 +73,11 @@ jobs:
     env:
       WORKFLOW_POSTGRES_URL: postgres://evestack:evestack@localhost:5433/evestack
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      # Both arms, so the model is held still alongside eve while only the
+      # provider moves. Vacuity is the dominant failure here — the eval needs
+      # the model to actually call the gated tool, and with two arms per run the
+      # odds of at least one refusing are high on a weaker model.
+      EVESTACK_MODEL: ${{ inputs.model }}
       TZ: America/New_York
     steps:
       - uses: actions/checkout@v4
