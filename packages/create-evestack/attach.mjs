@@ -22,7 +22,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import {
-  basename, C, DASHBOARD_IMAGE, DASHBOARD_IMAGE_PUBLISHED, detectPm, dim, freePort, makePrompter,
+  basename, C, DASHBOARD_IMAGE, detectPm, dim, freePort, makePrompter,
   ok, REPO, say, step, templateDir, warn,
 } from "./shared.mjs";
 
@@ -633,20 +633,6 @@ function printSummary(plan) {
     dim(`That token is the same one written to ${plan.envFileName}. Both sides need it byte for`);
     dim("byte: the agent sends it as `x-evestack-ingest-token`, and a mismatch is a 401 on");
     dim('every span that shows up only as a Traces tab stuck on "no traces yet".');
-  }
-  if (!DASHBOARD_IMAGE_PUBLISHED) {
-    say();
-    warn(`${DASHBOARD_IMAGE} is not published yet, so that`);
-    warn("pull fails with `manifest unknown`. Until the first release, build that exact");
-    warn("tag once and docker will find it locally:");
-    say();
-    say(`    git clone ${REPO}`);
-    say(`    docker build -t ${DASHBOARD_IMAGE} \\`);
-    say("      -f evestack/packages/dashboard/Dockerfile evestack");
-    say();
-    dim("The context is the repo ROOT, not packages/dashboard — the dashboard resolves a");
-    dim("pnpm `workspace:*` dependency that only exists against the root lockfile. Delete");
-    dim("the clone afterwards if you like; the image stays.");
   }
   say();
 

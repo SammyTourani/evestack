@@ -27,7 +27,7 @@ import {
 } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
-  basename, C, DASHBOARD_IMAGE, DASHBOARD_IMAGE_PUBLISHED, detectPm, dim, freePort, makePrompter,
+  basename, C, DASHBOARD_IMAGE, detectPm, dim, freePort, makePrompter,
   ok, REPO, say, step, templateDir, warn,
 } from "./shared.mjs";
 import {
@@ -554,27 +554,6 @@ export async function create(argv) {
   say(`  ${C.dim}Sign in at${C.reset} ${dashboardUrl} ${C.dim}with${C.reset} evestack ${C.dim}/${C.reset} ${password}`);
   dim("(it is in .env.local, which the dashboard container reads too — nothing to copy)");
   say();
-  if (!DASHBOARD_IMAGE_PUBLISHED) {
-    // Honesty over polish. The compose file points at a registry tag that does
-    // not exist yet, so `--profile dashboard` ends at `manifest unknown` — and
-    // a next-steps block that does not say so is worse than one that prints a
-    // build. Build ONTO the same tag rather than telling the reader to set
-    // EVESTACK_DASHBOARD_IMAGE: compose then finds the image locally, and the
-    // day the registry tag lands nothing in the project needs changing.
-    warn(`${DASHBOARD_IMAGE} is not published yet, so that last`);
-    warn("line fails with `manifest unknown`. Until the first release, build it once:");
-    say();
-    say(`    git clone ${REPO}`);
-    say(`    docker build -t ${DASHBOARD_IMAGE} \\`);
-    say("      -f evestack/packages/dashboard/Dockerfile evestack");
-    say();
-    dim("The context is the repo ROOT, not packages/dashboard — the dashboard resolves a");
-    dim("pnpm `workspace:*` dependency that only exists against the root lockfile. The");
-    dim("clone is only needed for that build; delete it afterwards. Tagging it with the");
-    dim("name above is what makes `--profile dashboard` find it without any further");
-    dim("configuration.");
-    say();
-  }
   say(`  ${C.dim}Nothing here bills you. No Vercel account, no metered compute.${C.reset}`);
   // Keyed off the line actually written, not off a substring of a key format:
   // "sk-" is an OpenAI shape, and an Anthropic key that did not start with it
@@ -664,21 +643,6 @@ export function composeFile(projectName, dbPassword, { pgPort = 5433, dashboardP
   // Postgres alone — the agent is useful without the dashboard, and pulling a
   // ~400 MB image is not something to do to someone who only asked for a
   // database.
-  const notPublishedYet = DASHBOARD_IMAGE_PUBLISHED
-    ? ""
-    : `#
-# NOT PUBLISHED YET. ${DASHBOARD_IMAGE} does not
-# exist in the registry until evestack's first dashboard release, so the second
-# command above ends at \`manifest unknown\`. Build that exact tag once and
-# compose finds it locally, with nothing here to change:
-#
-#   git clone ${REPO}
-#   docker build -t ${DASHBOARD_IMAGE} \\
-#     -f evestack/packages/dashboard/Dockerfile evestack
-#
-# (The context is the repo ROOT, not packages/dashboard: the dashboard resolves
-# a pnpm \`workspace:*\` dependency that only exists against the root lockfile.)
-`;
   return `# evestack — your whole stack, on your machine, for $0.
 #
 # The "name:" line below is this directory's identity to Docker Compose, and it
@@ -693,7 +657,7 @@ export function composeFile(projectName, dbPassword, { pgPort = 5433, dashboardP
 # The dashboard is a pull, not a build. To run your own image instead — a local
 # build, a fork, a private registry — set EVESTACK_DASHBOARD_IMAGE in a .env
 # beside this file, or export it in your shell.
-${notPublishedYet}name: ${projectName}
+name: ${projectName}
 
 services:
   postgres:

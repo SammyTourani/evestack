@@ -207,14 +207,34 @@ export const architecture = {
 /* §8 observability — the span tree verbatim from a live run (FINDINGS.md), and
    two REAL captures of the shipped dashboard.
 
-   This section used to render a fabricated "Observability / Monitors" screen:
+   This section once rendered a fabricated "Observability / Monitors" screen:
    p50/p75/p95/p99 chips, error and timeout rates, a runs-over-time chart,
-   session search and pagination, inside a tilted <figure> captioned "read
-   straight from your own postgres". None of it exists.
-   `grep -rniE "p95|percentile|Monitors" packages/dashboard/{app,lib,components}`
-   returns nothing, and the real nav (packages/dashboard/app/layout.tsx:19-27) is
-   Sessions, Chat, Schedules, Memory, Skills, Approvals, Integrations — no
-   Monitors route, no Traces route, no percentile code anywhere.
+   session search and pagination, captioned "read straight from your own
+   postgres" while none of it existed.
+
+   THAT NOTE THEN WENT STALE IN BOTH DIRECTIONS, which is worth recording
+   because a stale honesty note is its own honesty defect — it is read as
+   current and it is not.
+
+   First it under-claimed. `cfbff14` built app/monitors/page.tsx and
+   lib/monitors.ts and made most of the picture true: percentile_cont
+   p50/p75/p95/p99, an error rate that counts turns carrying an error_code
+   separately from finished turns that never reached a provider, a width_bucket
+   runs-over-time series, and a 1h/6h/12h/24h/7d window. Monitors and Traces are
+   both in the nav. Search and pagination exist. The grep the old note told you
+   to run now returns matches, so run it rather than trusting this paragraph.
+
+   Then it over-claimed. The two things the artwork advertised that were never
+   built — a TIMEOUT rate, and per-row activity sparklines on the sessions table
+   — are gone from components/sections/monitors-panel.tsx rather than added to
+   the dashboard, on the same grounds the comparison table lost its Passport row.
+   eve does not distinguish a timeout in error_code, so that figure could only
+   have been invented; the sparkline series was `s.tokensOut % 37`, shaped like
+   data and derived from nothing.
+
+   So the mock and the product now agree, and the honest way to keep them that
+   way is the order cfbff14 used: build it in packages/dashboard first, then
+   draw it here.
 
    It is replaced by packages/website/public/screenshots/*, captured from the
    dashboard in this repo. Every claim below names a file that renders it. */
