@@ -13,14 +13,9 @@ export function SiteHeader() {
       id="site-header"
       className="sticky top-0 z-50 border-b border-transparent bg-background-100/70 backdrop-blur-md transition-colors duration-300 data-scrolled:border-border-subtle"
     >
-      {/* Trademark notice sits HERE, above the fold, not in the footer. This
-          site is named after and built on someone else's trademark; a visitor
-          should learn that in the first viewport, not after scrolling past
-          every claim we make. */}
-      <p className="border-b border-border-subtle bg-background-200/60 py-1.5 text-center text-label-12 text-gray-700">
-        {site.trademark}
-      </p>
-
+      {/* No trademark bar here. It ran as a full-width strip above the fold and
+          was the first thing on the page; the attribution still runs in the
+          footer, which is where this kind of notice normally lives. */}
       <div className="site-container flex h-16 items-center justify-between gap-4">
         <a href="#hero" className="flex items-center gap-2 text-copy-16 font-medium">
           <span aria-hidden className="text-blue-700">
