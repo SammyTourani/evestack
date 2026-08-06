@@ -21,7 +21,7 @@
  * writes files and credentials.
  */
 import { spawnSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync,
 } from "node:fs";
@@ -400,9 +400,24 @@ export async function create(argv) {
   // Compose only accepts [a-z0-9][a-z0-9_-]* as a project name, and a directory
   // name is not constrained to that — so normalise rather than emit a file that
   // fails to parse.
-  const composeProject =
-    basename(target).toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^[^a-z0-9]+/, "") ||
-    "evestack";
+  //
+  // THE SUFFIX IS THE POINT. Compose treats `name:` as the project identity, so
+  // two directories that normalise to the same name are ONE project: the second
+  // `docker compose up` recreates the first one's containers and both agents
+  // then read one database, with nothing anywhere saying so.
+  //
+  // This used to be the bare basename, which fixed an earlier collision against
+  // the literal string "evestack" and left the far likelier one wide open —
+  // `my-agent` is the DEFAULT name, so two default scaffolds collide by default.
+  // Observed on this machine: ~/evestack-trial/my-agent and
+  // ~/evestack-stranger/my-agent, with the surviving container reporting
+  // `com.docker.compose.project.working_dir` pointing at the second directory.
+  // One agent's sessions, memories and traces were in the other's database.
+  //
+  // Hashing the ABSOLUTE PATH rather than counting upwards keeps the name stable
+  // for a given directory — it has to be, or every `docker compose` in that
+  // project would address a different stack than the last one did.
+  const composeProject = projectNameFor(target);
   writeFileSync(join(target, "docker-compose.yml"), composeFile(composeProject, dbPassword, { pgPort, dashboardPort, agentPort }));
   ok("Wrote docker-compose.yml — Postgres, and the dashboard behind a profile");
 
@@ -570,6 +585,20 @@ function readdirSafe(p) {
   } catch {
     return [];
   }
+}
+
+/**
+ * The Compose project name for a scaffolded directory.
+ *
+ * Exported so test/compose.test.mjs asserts THIS derivation rather than its own
+ * copy of it — a collision test that re-implements the hashing would keep
+ * passing after the real one changed.
+ */
+export function projectNameFor(target) {
+  const slug =
+    basename(target).toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^[^a-z0-9]+/, "") ||
+    "evestack";
+  return `${slug}-${createHash("sha256").update(target).digest("hex").slice(0, 6)}`;
 }
 
 export function composeFile(projectName, dbPassword, { pgPort = 5433, dashboardPort = 4000, agentPort = 2000 } = {}) {

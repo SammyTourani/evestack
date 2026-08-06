@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { composeFile } from "../create.mjs";
+import { composeFile, projectNameFor } from "../create.mjs";
 
 /**
  * The compose file a stranger actually gets.
@@ -114,4 +114,34 @@ test("omitting the ports keeps the documented defaults", () => {
   const text = composeFile("my-agent", PASSWORD);
   assert.match(text, /- "127\.0\.0\.1:5433:5432"/);
   assert.match(text, /- "127\.0\.0\.1:\$\{DASHBOARD_PORT:-4000\}:4000"/);
+});
+
+/* -------------------------------------------------------------------------- */
+/* project identity                                                            */
+/* -------------------------------------------------------------------------- */
+
+test("two directories with the same name are not the same Compose project", () => {
+  // The bug this prevents, observed live: ~/evestack-trial/my-agent and
+  // ~/evestack-stranger/my-agent both emitted `name: my-agent`, so Compose
+  // treated them as one project — the second `up` recreated the first's
+  // containers and both agents read one database. `my-agent` is the DEFAULT
+  // name, so this was the common case, not the exotic one.
+  const a = projectNameFor("/Users/someone/evestack-trial/my-agent");
+  const b = projectNameFor("/Users/someone/evestack-stranger/my-agent");
+  assert.notEqual(a, b, "same basename in different directories must not collide");
+  assert.match(a, /^my-agent-[0-9a-f]{6}$/);
+  assert.match(b, /^my-agent-[0-9a-f]{6}$/);
+});
+
+test("the same directory always gets the same project name", () => {
+  // Load-bearing: if this varied, every `docker compose` in a project would
+  // address a different stack than the last one did.
+  const path = "/Users/someone/agents/my-agent";
+  assert.equal(projectNameFor(path), projectNameFor(path));
+});
+
+test("a directory name Compose would reject is normalised, and still unique", () => {
+  const weird = projectNameFor("/tmp/My Agent!! (v2)");
+  assert.match(weird, /^[a-z0-9][a-z0-9_-]*$/, "must satisfy Compose's project-name grammar");
+  assert.notEqual(weird, projectNameFor("/tmp/my-agent-v2"));
 });
