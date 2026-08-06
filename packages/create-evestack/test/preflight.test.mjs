@@ -21,6 +21,7 @@ import {
   probeDisk,
   preflightLines,
   probeCompose,
+  runCommand,
   wrapNote,
 } from "../preflight.mjs";
 
@@ -107,6 +108,20 @@ test("exit 0 with an empty server field is still a stopped daemon", () => {
   // Some CLI and daemon combinations do not treat an unreachable daemon as an
   // error. Same situation, same fix, so the same classification.
   assert.equal(classifyDocker(result({ stdout: "29.5.1|\n" })).state, DOCKER_STOPPED);
+});
+
+test("the timeout is a wall-clock bound, not a suggestion", () => {
+  // spawnSync sends killSignal and then keeps waiting for the child to exit, so
+  // with the default SIGTERM the bound is advisory: anything that traps the
+  // signal runs to completion. Measured before the fix — a 700ms timeout took
+  // 20s — and that is exactly the "Docker Desktop mid-start hangs the wizard"
+  // failure the whole module was written to prevent.
+  const started = Date.now();
+  const result = runCommand("/bin/sh", ["-c", "trap '' TERM; sleep 20"], { timeoutMs: 700 });
+  const elapsed = Date.now() - started;
+  assert.ok(elapsed < 10_000, `the timeout did not bound the call: ${elapsed}ms`);
+  // And the caller still gets a state it can act on rather than a hang.
+  assert.equal(classifyDocker(result).state, DOCKER_UNRESPONSIVE);
 });
 
 test("compose is absent unless the plugin answers with a version", () => {

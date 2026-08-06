@@ -79,9 +79,22 @@ export const DEFAULT_AGENT_PORT = 2000;
  * `timeout` is not optional and never was. The check this replaces ran
  * `docker info` unbounded, and a Docker Desktop mid-start answers that neither
  * quickly nor at all.
+ *
+ * `killSignal` is the other half of that, and without it the timeout is a
+ * suggestion. spawnSync's timer sends the kill signal and then goes on waiting
+ * for the child to actually exit, so a child that ignores SIGTERM — the default
+ * — blocks the whole process for as long as it likes. Measured: a child that
+ * traps TERM and sleeps 20s returned after 20s from a 700ms timeout. That is
+ * precisely the hang this module was written to prevent, so the signal is one
+ * that cannot be trapped.
  */
 export function runCommand(command, args, { timeoutMs = 6_000, stdio } = {}) {
-  const result = spawnSync(command, args, { encoding: "utf8", timeout: timeoutMs, stdio });
+  const result = spawnSync(command, args, {
+    encoding: "utf8",
+    timeout: timeoutMs,
+    killSignal: "SIGKILL",
+    stdio,
+  });
   return {
     // ENOENT is "not on PATH". spawnSync reports a timeout as ETIMEDOUT on some
     // platforms and as a bare `signal` on others, so both are read downstream.
