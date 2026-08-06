@@ -71,8 +71,30 @@ function readEmbedProvider(): EmbedProvider {
   );
 }
 
-const EMBED_PROVIDER = readEmbedProvider();
-const EMBED_MODEL = process.env.EVESTACK_EMBED_MODEL?.trim() || EMBED_DEFAULTS[EMBED_PROVIDER].model;
+/**
+ * Resolved on FIRST USE, not at module load, and that is load-bearing.
+ *
+ * `remember.ts`, `recall.ts` and `forget.ts` all import this module, and eve
+ * loads every tool at boot — so a `throw` at module scope is not "the memory
+ * tools are unavailable", it is "the agent does not start". An Anthropic
+ * project with no OPENAI_API_KEY is a perfectly ordinary configuration that
+ * simply cannot do embeddings, and the first version of this file bricked its
+ * whole agent over it. A misconfiguration that disables one optional tool has
+ * to surface as that tool failing, where the message reaches the operator and
+ * everything else keeps working.
+ *
+ * Memoized because the answer cannot change within a process, and because
+ * `ensureSchema` and `embedText` must agree on the vector width.
+ */
+let embedConfig: { provider: EmbedProvider; model: string; dimensions: number } | null = null;
+
+function embedSettings(): { provider: EmbedProvider; model: string; dimensions: number } {
+  if (embedConfig) return embedConfig;
+  const provider = readEmbedProvider();
+  const model = process.env.EVESTACK_EMBED_MODEL?.trim() || EMBED_DEFAULTS[provider].model;
+  embedConfig = { provider, model, dimensions: readDimensions(provider) };
+  return embedConfig;
+}
 
 /**
  * Trimmed and checked rather than `??`: `EVESTACK_EMBED_DIMENSIONS=` is an
@@ -80,11 +102,9 @@ const EMBED_MODEL = process.env.EVESTACK_EMBED_MODEL?.trim() || EMBED_DEFAULTS[E
  * `vector(0)` column that fails at CREATE TABLE with a message about nothing
  * the reader configured.
  */
-const DIMENSIONS = readDimensions();
-
-function readDimensions(): number {
+function readDimensions(provider: EmbedProvider): number {
   const raw = process.env.EVESTACK_EMBED_DIMENSIONS?.trim();
-  if (!raw) return EMBED_DEFAULTS[EMBED_PROVIDER].dimensions;
+  if (!raw) return EMBED_DEFAULTS[provider].dimensions;
   const value = Number(raw);
   if (!Number.isInteger(value) || value < 1 || value > 16000) {
     throw new Error(
@@ -96,14 +116,15 @@ function readDimensions(): number {
 }
 
 function embeddingModel(): EmbeddingModel {
-  if (EMBED_PROVIDER === "ollama") {
+  const { provider, model } = embedSettings();
+  if (provider === "ollama") {
     // Same base-URL rule as the chat model: host only, no `/api` suffix, or
     // every call returns `OllamaError: 404 page not found`.
     return createOllama({
       baseURL: process.env.OLLAMA_BASE_URL?.trim() || "http://127.0.0.1:11434",
-    }).textEmbeddingModel(EMBED_MODEL);
+    }).textEmbeddingModel(model);
   }
-  return openai.textEmbeddingModel(EMBED_MODEL);
+  return openai.textEmbeddingModel(model);
 }
 
 let pool: Pool | null = null;
@@ -139,7 +160,7 @@ async function ensureSchema(): Promise<void> {
         content     text NOT NULL,
         tags        text[] NOT NULL DEFAULT '{}',
         session_id  text,
-        embedding   vector(${DIMENSIONS}) NOT NULL,
+        embedding   vector(${embedSettings().dimensions}) NOT NULL,
         created_at  timestamptz NOT NULL DEFAULT now()
       )
     `);
@@ -185,10 +206,11 @@ async function ensureSchema(): Promise<void> {
         WHERE n.nspname = 'evestack' AND c.relname = 'memories' AND a.attname = 'embedding'`,
     );
     const existing = rows[0]?.dims ?? null;
-    if (existing !== null && existing > 0 && existing !== DIMENSIONS) {
+    const { provider, model, dimensions } = embedSettings();
+    if (existing !== null && existing > 0 && existing !== dimensions) {
       throw new Error(
         `evestack.memories stores ${existing}-dimensional vectors but this agent is configured for ` +
-          `${DIMENSIONS} (${EMBED_PROVIDER}/${EMBED_MODEL}). Vectors from two different models are ` +
+          `${dimensions} (${provider}/${model}). Vectors from two different models are ` +
           "not comparable, so the old rows cannot be kept. Either set " +
           `EVESTACK_EMBED_DIMENSIONS=${existing} and go back to the model that wrote them, or drop ` +
           "the table and start over:\n" +
@@ -208,10 +230,11 @@ async function embedText(text: string): Promise<number[]> {
   // the model nor the setting that produced it. It is the first thing that goes
   // wrong when someone changes EVESTACK_EMBED_MODEL on a database that already
   // has rows.
-  if (embedding.length !== DIMENSIONS) {
+  const { provider, model, dimensions } = embedSettings();
+  if (embedding.length !== dimensions) {
     throw new Error(
-      `${EMBED_PROVIDER}/${EMBED_MODEL} returns ${embedding.length}-dimensional vectors but this ` +
-        `database stores ${DIMENSIONS}. Set EVESTACK_EMBED_DIMENSIONS=${embedding.length} and drop ` +
+      `${provider}/${model} returns ${embedding.length}-dimensional vectors but this ` +
+        `database stores ${dimensions}. Set EVESTACK_EMBED_DIMENSIONS=${embedding.length} and drop ` +
         "the evestack.memories table (existing rows were embedded by the old model and cannot be " +
         "compared against the new one).",
     );
