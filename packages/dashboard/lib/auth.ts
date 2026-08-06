@@ -541,6 +541,41 @@ function expectedHosts(request: Request): string[] {
 }
 
 /**
+ * The origin a browser actually used to reach this request.
+ *
+ * For anything that must be ABSOLUTE — an OAuth callback handed to a third
+ * party, a link in a message — because `new URL(request.url).origin` is the
+ * address the server is BOUND to. The Dockerfile runs `next start --hostname
+ * 0.0.0.0`, so in the shipped container that origin is `http://0.0.0.0:4000`,
+ * which is not a place any browser can come back to. Same root cause as the
+ * Origin-comparison bug `isCrossSiteWrite` documents, and as the sign-in
+ * redirect that sent a correctly-authenticated user to 0.0.0.0 and told them
+ * they were not signed in.
+ *
+ * Precedence, and it matters: an explicit EVESTACK_PUBLIC_URL wins, because only
+ * the operator knows the name a user types when a proxy or tunnel is in front.
+ * Then the request's own host, resolved by the same rules and with the same
+ * trust boundary as `expectedHosts`. The bind address is the last resort and
+ * only when there is no Host header at all.
+ *
+ * For a redirect to a path on this same origin, prefer a relative Location and
+ * do not call this at all — the browser resolves it against the URL it dialled,
+ * which is always right and needs no configuration.
+ */
+export function publicOrigin(request: Request): string {
+  const configured = process.env.EVESTACK_PUBLIC_URL?.trim();
+  if (configured) {
+    const parsed = URL.parse(configured);
+    if (parsed) return parsed.origin;
+  }
+
+  const [host] = expectedHosts(request);
+  if (host) return `${isSecureRequest(request) ? "https" : "http"}://${host}`;
+
+  return new URL(request.url).origin;
+}
+
+/**
  * Where to send someone after they sign in.
  *
  * `//evil.example` and `/\evil.example` are both read as protocol-relative URLs

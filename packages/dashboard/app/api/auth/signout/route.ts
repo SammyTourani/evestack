@@ -19,9 +19,14 @@ export const dynamic = "force-dynamic";
  * is derived from it.
  */
 export async function POST(request: Request): Promise<Response> {
-  const response = NextResponse.redirect(new URL("/signin", request.url), {
+  // A RELATIVE Location. `request.url` is the address the server is bound to —
+  // `http://0.0.0.0:4000/` inside the shipped container — so building the target
+  // from it sent every sign-out to a host the browser never dialled. See the note
+  // on `seeOther` in ../session/route.ts; this had the same defect and the same
+  // one-line answer.
+  const response = new NextResponse(null, {
     status: 303,
-    headers: { "cache-control": "no-store" },
+    headers: { location: "/signin", "cache-control": "no-store" },
   });
 
   response.cookies.set({
