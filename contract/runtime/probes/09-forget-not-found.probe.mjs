@@ -130,9 +130,30 @@ export default {
       /* The assertion that pins the property rather than the spelling: the old code
          got this sample from `recall("")`, so it needed the embedding provider to
          answer. A list of existing ids does not. An unreachable provider proves it. */
+      /* The width has to be pinned explicitly here, and getting this wrong is how
+         this probe first failed on a FRESH database. Switching the provider to
+         ollama also switches the DEFAULT vector width to 768, while the table the
+         first child just created is 1536 (the openai default, which is what a run
+         with no EVESTACK_PROVIDER gets). memory.ts's width guard then correctly
+         refused to touch it, and the failure looked like the thing being tested
+         rather than the test's own doing. Read the width back and say it out loud. */
+      const { rows: nowRows } = await admin.query(
+        `SELECT a.atttypmod AS dims
+           FROM pg_attribute a
+           JOIN pg_class c ON c.oid = a.attrelid
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = 'evestack' AND c.relname = 'memories' AND a.attname = 'embedding'`,
+      );
+      const currentWidth = nowRows[0]?.dims ?? null;
+
       const offline = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
         encoding: "utf8",
-        env: { ...process.env, EVESTACK_PROVIDER: "ollama", OLLAMA_BASE_URL: "http://127.0.0.1:1" },
+        env: {
+          ...process.env,
+          EVESTACK_PROVIDER: "ollama",
+          OLLAMA_BASE_URL: "http://127.0.0.1:1",
+          ...(currentWidth && currentWidth > 0 ? { [DIMENSIONS_ENV]: String(currentWidth) } : {}),
+        },
       });
       let offlineAnswer = {};
       try {
