@@ -349,8 +349,7 @@ jobs:
       # Not hypothetical. Items inline templates/default/agent/sandbox/sandbox.ts
       # and templates/default/agent/agent.ts verbatim as JSON string content;
       # both changed, the committed JSON silently went stale, and it was caught
-      # by hand. compat-page.yml has done this correctly for the committed page
-      # since it was written — this is the same check for the same reason.
+      # by hand. This check is why that cannot happen again.
       - name: the committed registry matches templates/default
         run: |
           # Untracked first: git diff is blind to a registry/r/*.json that
