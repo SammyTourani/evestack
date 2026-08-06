@@ -32,6 +32,7 @@ import { spawn } from "node:child_process";
 import {
   C,
   connectPostgres,
+  dashboardTarget,
   dockerRunning,
   envValue,
   findAgent,
@@ -217,15 +218,41 @@ if (agent.health?.ok) {
 /* -------------------------------------------------------------------------- */
 
 const ingestUrl = env("EVESTACK_DASHBOARD_URL");
-const dashboardUrl = ingestUrl
-  ? new URL(ingestUrl).origin.replace("127.0.0.1", "localhost")
-  : "http://localhost:4000";
+const target = dashboardTarget(ingestUrl);
+const dashboardUrl = target.url;
+
+// Recorded or guessed, said out loud on the one line this check is allowed. A
+// dashboard found on the default port, in a project that never wrote that port
+// down, may belong to another project entirely — and on a machine where the
+// scaffolder had to move this project off 4000, it certainly does. Reporting that
+// as a bare green line is how `verify` came to certify a dashboard that was not
+// running, connected to a database this project had never written to.
+const caveat = target.recorded
+  ? ""
+  : target.malformed
+    ? ` — EVESTACK_DASHBOARD_URL is not a URL (${target.malformed}), so the default port was assumed`
+    : " — the default port, since this project records no EVESTACK_DASHBOARD_URL; set it to be sure this is yours";
 
 const health = await probeJson(new URL("/api/health", dashboardUrl));
 if (health.ok && health.body?.ok) {
-  pass("dashboard", `answering at ${dashboardUrl}, database connected`);
+  // A value that could not be parsed is a warning even though something answered,
+  // precisely because the thing that answered is not the thing that was
+  // configured.
+  if (target.malformed) {
+    warn(
+      "dashboard",
+      `answering at ${dashboardUrl}, database connected${caveat}`,
+      "it should look like http://127.0.0.1:4000/api/ingest/v1/traces",
+    );
+  } else {
+    pass("dashboard", `answering at ${dashboardUrl}, database connected${caveat}`);
+  }
 } else if (health.status === 0) {
-  fail("dashboard", `nothing is answering at ${dashboardUrl}`, "docker compose --profile dashboard up -d");
+  fail(
+    "dashboard",
+    `nothing is answering at ${dashboardUrl}${caveat}`,
+    "docker compose --profile dashboard up -d",
+  );
 } else {
   fail(
     "dashboard",

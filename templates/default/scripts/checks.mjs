@@ -190,6 +190,56 @@ export async function probeJson(url, init = {}, timeoutMs = 4000) {
 }
 
 /**
+ * Which dashboard this project's checks should talk to.
+ *
+ * The same failure as `findAgent`, reached from the other direction. The
+ * dashboard URL is derived from EVESTACK_DASHBOARD_URL, and when that was unset
+ * the caller fell back to a hardcoded `http://localhost:4000`.
+ *
+ * `create` and `attach` both write that variable, so a freshly generated project
+ * takes the recorded path and is right. But it is documented as OPTIONAL — trace
+ * export is off by default and .env.example ships the line commented — so
+ * removing it is an ordinary thing for a reader to do. Do that on a machine where
+ * 4000 was already busy, which is *precisely why the scaffolder moved this
+ * project to 4001*, and the probe lands on ANOTHER project's dashboard and
+ * reports it as this one's: "answering, database connected", against a database
+ * this project has never written a row to. Measured exactly that — a green
+ * `dashboard` line while this project's dashboard was not running at all.
+ *
+ * There is no EVESTACK_DASHBOARD_PORT to pin against the way the agent pins, so
+ * this cannot always be certain. What it can do is never present a guess as a
+ * fact: `recorded` is false when the answer came from the default port, and
+ * verify prints that on the line instead of swallowing it.
+ *
+ * `URL.parse` rather than `new URL`: a typo'd EVESTACK_DASHBOARD_URL used to
+ * throw a bare TypeError from the middle of verify, ending the run instead of
+ * reporting a failed check.
+ */
+export const DEFAULT_DASHBOARD_URL = "http://localhost:4000";
+
+export function dashboardTarget(ingestUrl) {
+  const trimmed = ingestUrl?.trim();
+  if (!trimmed) return { url: DEFAULT_DASHBOARD_URL, recorded: false };
+
+  // The protocol check is not belt-and-braces, it is the actual bug. `URL.parse`
+  // SUCCEEDS on "localhost:4000/api/ingest/v1/traces" — the most natural way to
+  // typo this value — because it reads `localhost:` as a scheme and the rest as an
+  // opaque path. `.origin` for a non-special scheme is then the four-character
+  // string "null", so accepting it would hand verify a base of "null" to resolve
+  // /api/health against, which throws. Caught by the test for this function, which
+  // is the only reason it is not in the shipped file.
+  const parsed = URL.parse(trimmed);
+  if (!parsed || (parsed.protocol !== "http:" && parsed.protocol !== "https:")) {
+    return { url: DEFAULT_DASHBOARD_URL, recorded: false, malformed: trimmed };
+  }
+
+  // 127.0.0.1 -> localhost only for what gets printed and clicked. They are the
+  // same host, and `localhost` is the spelling browsers and OS keychains treat
+  // as the more trustworthy origin of the pair.
+  return { url: parsed.origin.replace("127.0.0.1", "localhost"), recorded: true };
+}
+
+/**
  * Where the agent is listening.
  *
  * `eve dev` takes 2000 but **auto-increments if it is taken**, so a fixed guess
