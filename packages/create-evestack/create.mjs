@@ -30,6 +30,12 @@ import {
   basename, C, DASHBOARD_IMAGE, DASHBOARD_IMAGE_PUBLISHED, detectPm, dim, freePort, makePrompter,
   ok, REPO, say, step, templateDir, warn,
 } from "./shared.mjs";
+import {
+  DOCKER_RUNNING,
+  dockerStatusLines,
+  inspectDocker,
+  probeDocker,
+} from "./preflight.mjs";
 
 /* -------------------------------------------------------------------------- */
 /* bringing it up                                                              */
@@ -94,9 +100,26 @@ async function bringUp(target, pm, dashboardPort) {
   return true;
 }
 
-function hasDocker() {
-  const r = spawnSync("docker", ["info"], { stdio: "ignore" });
-  return r.status === 0;
+/**
+ * Docker's state, and the sentences that go with it.
+ *
+ * This used to be `spawnSync("docker", ["info"])` reduced to a boolean, so "no
+ * docker binary at all", "the daemon is not running" and "the socket refused
+ * us" all produced the same next line: start Docker Desktop. That is the wrong
+ * instruction two thirds of the time, and on Linux or Colima three times out of
+ * three. `docker info` cannot tell those apart; `docker version` can, because
+ * the client half of its output survives a daemon that is down.
+ *
+ * Returns the boolean the caller already used, plus the lines to print when it
+ * is false, so the decision and the explanation cannot drift apart.
+ */
+function inspectDockerState() {
+  const report = inspectDocker({ probe: probeDocker });
+  return {
+    up: report.docker.state === DOCKER_RUNNING,
+    report,
+    lines: dockerStatusLines(report),
+  };
 }
 
 function hasOllama() {
@@ -435,7 +458,8 @@ export async function create(argv) {
   }
 
   // ---- next steps -----------------------------------------------------------
-  const dockerUp = hasDocker();
+  const docker = inspectDockerState();
+  const dockerUp = docker.up;
   // localhost, not 127.0.0.1, because this one is for a human to click.
   const dashboardUrl = `http://localhost:${dashboardPort}`;
   say();
@@ -455,7 +479,11 @@ export async function create(argv) {
   say(`${C.green}${C.bold}  Done.${C.reset}`);
   say();
   if (!dockerUp) {
-    warn("Docker isn't running. Start Docker Desktop first — Postgres and the sandbox need it.");
+    // The single sentence this replaced — "Docker isn't running. Start Docker
+    // Desktop first" — was correct only on a Mac that already has Docker
+    // Desktop installed and merely stopped. These lines name which of the
+    // three states this machine is actually in, and what to do about that one.
+    for (const line of docker.lines) say(line);
     say();
   }
   // Five lines, one of them the dashboard. This used to be five lines plus a
