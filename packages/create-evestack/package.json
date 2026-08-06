@@ -2,7 +2,7 @@
   "name": "create-evestack",
   "version": "0.4.0",
   "type": "module",
-  "description": "Self-hosted eve, with a dashboard that drives your agents — not just watches them. Durable Postgres sessions, a Docker sandbox, and one command. No Vercel account.",
+  "description": "The whole eve stack, on your machine. Durable Postgres sessions, a Docker sandbox, memory, approvals, schedules, 1,070 tool integrations, and a dashboard that drives the agent.",
   "license": "Apache-2.0",
   "keywords": [
     "eve",

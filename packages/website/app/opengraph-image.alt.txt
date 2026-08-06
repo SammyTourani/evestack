@@ -1,1 +1,1 @@
-evestack — everything you need to run eve agents in production. Self-hosted eve with durable sessions, sandboxing, 1,070 tool integrations, memory, approvals, schedules, and a dashboard that drives the agent. One command.
+evestack — the whole eve stack, on your machine. Durable sessions, sandboxing, memory, approvals, schedules, 1,070 tool integrations, and a dashboard that drives the agent.

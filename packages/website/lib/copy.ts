@@ -15,9 +15,9 @@ export const site = {
      and npm. It was four different sentences across those four surfaces, so
      anyone arriving via npm → GitHub → here got re-pitched three times and
      never landed on one idea. Change it in all four or in none. */
-  tagline: "Self-hosted eve, with a dashboard that drives your agents — not just watches them.",
+  tagline: "The whole eve stack, on your machine.",
   subhead:
-    "Self-hosted eve with durable sessions, sandboxing, 1,070 tool integrations, memory, approvals, schedules, and a dashboard that drives the agent. One command.",
+    "Durable sessions, sandboxing, memory, approvals, schedules, 1,070 tool integrations, and a dashboard that drives the agent. One command scaffolds it; four bring it up.",
   eyebrow: "Open source · Apache-2.0",
   command: "npx create-evestack",
   github: "https://github.com/SammyTourani/evestack",
