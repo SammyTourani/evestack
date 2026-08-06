@@ -5,6 +5,7 @@
     "attributes/run-type-discriminator": 12,
     "auth/http-basic-fails-closed": 5,
     "auth/local-dev-must-not-trust-the-request": 9,
+    "docs/every-documented-path-exists": 54,
     "hooks/observe-only-and-event-names": 11,
     "modules/imported-subpaths-resolve": 31,
     "modules/imported-values-are-exported": 20,
