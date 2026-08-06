@@ -58,14 +58,16 @@ export function Badge({ tone = "neutral", title, children }: BadgeProps) {
  * a value added to that constraint and not to this map is a type error at the
  * call site, which is the only place it can still be fixed cheaply.
  */
-export type Outcome =
-  | "ok"
-  | "failed"
-  | "no_model_call"
-  | "cancelled"
-  | "budget_stopped"
-  | "wedged"
-  | "running";
+export const OUTCOMES = [
+  "ok",
+  "failed",
+  "no_model_call",
+  "cancelled",
+  "budget_stopped",
+  "wedged",
+  "running",
+] as const;
+export type Outcome = (typeof OUTCOMES)[number];
 
 const OUTCOME: Readonly<Record<Outcome, { label: string; tone: Tone; title: string }>> = {
   ok: { label: "ok", tone: "ok", title: "Finished, recorded a model call, no error." },

@@ -388,3 +388,44 @@ test("a badge is never colour alone — the state is its text", () => {
   }
   contains(render(Badge, { tone: "warn" }, "unpriced"), "text-warn");
 });
+
+/**
+ * The outcome vocabulary lives in two places that cannot see each other: a
+ * CHECK constraint in `sql/facts.sql` and a TypeScript union in
+ * `components/ui/badge.tsx`. `tsc` reads one of them.
+ *
+ * If the SQL gains a state the badge does not know, `OUTCOME[outcome]` is
+ * `undefined` and the row renders a blank pill — the same silent failure the
+ * badge's own header says it exists to prevent, one level up. If the badge
+ * gains one the SQL rejects, the refresh fails at 3am instead.
+ *
+ * Wave 2 shipped two incompatible unit vocabularies at exactly this kind of
+ * seam, because two agents each declared their own copy and nothing compared
+ * them. This is that comparison, for the vocabulary Wave 3 is about to build
+ * two pages on.
+ */
+test("the badge knows exactly the outcomes the database can store", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { fileURLToPath } = await import("node:url");
+  const { dirname, join } = await import("node:path");
+
+  const here = dirname(fileURLToPath(import.meta.url));
+  const sql = readFileSync(join(here, "..", "sql", "facts.sql"), "utf8");
+
+  const match = sql.match(/outcome IN \(([^)]*)\)/);
+  assert.ok(match, "could not find the outcome CHECK constraint in sql/facts.sql");
+  const fromSql = [...match[1].matchAll(/'([a-z_]+)'/g)].map((m) => m[1]).sort();
+
+  // Read from source rather than imported: the test loader does not handle
+  // .tsx, and parsing the file that ships is the stronger check anyway.
+  const badge = readFileSync(join(here, "..", "components", "ui", "badge.tsx"), "utf8");
+  const list = badge.match(/export const OUTCOMES = \[([^\]]*)\]/);
+  assert.ok(list, "could not find the OUTCOMES array in components/ui/badge.tsx");
+  const fromBadge = [...list[1].matchAll(/"([a-z_]+)"/g)].map((m) => m[1]).sort();
+
+  assert.deepEqual(
+    fromBadge,
+    fromSql,
+    `badge.tsx and facts.sql disagree.\n  badge: ${fromBadge.join(", ")}\n  sql:   ${fromSql.join(", ")}`,
+  );
+});
