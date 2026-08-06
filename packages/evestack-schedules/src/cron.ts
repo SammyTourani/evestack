@@ -223,13 +223,46 @@ export function missedFires(
   return { fires, truncated: false };
 }
 
+/**
+ * Whether the date fields restrict which days this runs on at all.
+ *
+ * Load-bearing, because the two broadest summaries below used to ignore them. A
+ * schedule of `* * 1 * *` was described as "every minute" when it runs every
+ * minute *on the first of the month* — 1440 fires a month reported as 44,640 —
+ * and `0 * * * 1` was "hourly at :00" when it only fires on Mondays. Both read
+ * as far more often than the truth, on the page a user checks to find out how
+ * often something runs.
+ */
+function everyDay(fields: CronFields): boolean {
+  return fields.daysOfMonth.size === 31 && fields.daysOfWeek.size === 7 && fields.months.size === 12;
+}
+
+/** "on Mon, Tue", "on day 1", "in Jan" — whichever fields are actually narrowed. */
+function dayQualifier(fields: CronFields): string {
+  const parts: string[] = [];
+  if (fields.daysOfWeek.size < 7) {
+    parts.push(`on ${[...fields.daysOfWeek].sort((a, b) => a - b).map((d) => DAY_NAMES[d]).join(", ")}`);
+  }
+  if (fields.daysOfMonth.size < 31) {
+    parts.push(`on day ${[...fields.daysOfMonth].sort((a, b) => a - b).join(", ")}`);
+  }
+  if (fields.months.size < 12) {
+    parts.push(`in month ${[...fields.months].sort((a, b) => a - b).join(", ")}`);
+  }
+  return parts.join(" ");
+}
+
 /** Human-readable summary for the dashboard, falling back to the raw expression. */
 export function describeCron(expression: string): string {
   try {
     const fields = parseCron(expression);
-    if (fields.minutes.size === 60) return "every minute";
+    // The two broad claims are only true when nothing narrows the days.
+    if (fields.minutes.size === 60 && fields.hours.size === 24) {
+      return everyDay(fields) ? "every minute" : `every minute ${dayQualifier(fields)}`;
+    }
     if (fields.minutes.size === 1 && fields.hours.size === 24) {
-      return `hourly at :${String([...fields.minutes][0]).padStart(2, "0")}`;
+      const hourly = `hourly at :${String([...fields.minutes][0]).padStart(2, "0")}`;
+      return everyDay(fields) ? hourly : `${hourly} ${dayQualifier(fields)}`;
     }
     if (fields.minutes.size === 1 && fields.hours.size === 1) {
       const time = `${String([...fields.hours][0]).padStart(2, "0")}:${String([...fields.minutes][0]).padStart(2, "0")}`;

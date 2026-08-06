@@ -151,3 +151,27 @@ test("describeCron is readable, and falls back rather than throwing", () => {
   assert.match(describeCron("0 9 * * 1-5"), /mon/);
   assert.equal(describeCron("not a cron"), "not a cron");
 });
+
+test("describeCron never claims a broader schedule than the day fields allow", () => {
+  // The bug this pins: the "every minute" and "hourly" branches read only the
+  // minute and hour fields, so a schedule restricted to one day of the month was
+  // described as if it ran every day. `* * 1 * *` fires 1,440 times a month and was
+  // reported as "every minute" — 44,640 — on the page a user checks to find out how
+  // often something runs. Same for `0 * * * 1`, which only fires on Mondays.
+  assert.equal(describeCron("* * 1 * *"), "every minute on day 1");
+  assert.equal(describeCron("* * * * 1"), "every minute on mon");
+  assert.equal(describeCron("0 * 1 * *"), "hourly at :00 on day 1");
+  assert.equal(describeCron("0 * * * 1"), "hourly at :00 on mon");
+  assert.equal(describeCron("* * * 6 *"), "every minute in month 6");
+
+  // And the unrestricted forms must not have grown a qualifier.
+  assert.equal(describeCron("* * * * *"), "every minute");
+  assert.equal(describeCron("0 * * * *"), "hourly at :00");
+});
+
+test("describeCron still answers the cases it already got right", () => {
+  // Guarding against a fix that improves one branch by breaking another.
+  assert.equal(describeCron("0 9 * * *"), "daily at 09:00");
+  assert.equal(describeCron("*/15 * * * *"), "every 15 minutes");
+  assert.equal(describeCron("not a cron expression"), "not a cron expression");
+});
