@@ -125,6 +125,21 @@ jobs:
             # first would still be holding a database connection.
             lsof -ti:"$port" 2>/dev/null | xargs -r kill -9 2>/dev/null || true
 
+            # To stderr, so it lands in the job log while stdout stays the
+            # single-word verdict this function returns. The first version wrote
+            # the eval output only to the step summary, which meant the one run
+            # that produced a surprising answer could not be read at all — the
+            # same "the report went somewhere nobody looks" bug this repo already
+            # fixed once in eve-watch.
+            {
+              echo "── $label arm (@ai-sdk/openai $range) ─────────────────────"
+              cat "/tmp/$label-eval.log" 2>/dev/null || echo "(no eval output)"
+              echo "── $label arm: last of the agent log ──────────────────────"
+              tail -c 2000 "/tmp/$label-agent.log" 2>/dev/null || echo "(none)"
+              echo "── $label arm: resolved versions ──────────────────────────"
+              node -p "['@ai-sdk/openai','ai'].map((p)=>{try{return p+' '+require('$dir/node_modules/'+p+'/package.json').version}catch{return p+' unresolved'}}).join('\n')" 2>/dev/null || true
+            } >&2
+
             if [ $result -eq 0 ]; then echo "survived"; else echo "died"; fi
           }
 
