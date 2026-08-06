@@ -488,6 +488,45 @@ async function recallOnce(
     .filter((r) => r.similarity >= floor);
 }
 
+/**
+ * The most recent memories, without embedding anything.
+ *
+ * `forget` needs this for its not-found branch, and used to get it by calling
+ * `recall("")` — a vector search for whatever is nearest to the empty string.
+ * That throws. Measured on the local path: `Empty embeddings array returned`.
+ * OpenAI rejects empty input too, with a 400 on `'$.input'`.
+ *
+ * So the branch written to explain a hallucinated id was the one branch that
+ * could not run, and it failed inside a tool call, where per the header of this
+ * file the model tends to report success anyway.
+ *
+ * A plain ordered SELECT is also the more honest answer to the question being
+ * asked. "Show the model some real ids" is not a similarity query, and ranking by
+ * distance from a degenerate vector would be an arbitrary order dressed as
+ * relevance even on a provider that tolerated the empty input.
+ */
+export async function recent(limit = 5): Promise<Recalled[]> {
+  return readable(async () => {
+    await ensureSchema();
+    const { rows } = await getPool().query<MemoryRow>(
+      `SELECT id, content, tags, created_at, 1 AS similarity
+         FROM evestack.memories
+        ORDER BY created_at DESC, id DESC
+        LIMIT $1`,
+      [Math.max(1, Math.min(limit, 50))],
+    );
+    return rows.map((r) => ({
+      id: Number(r.id),
+      content: r.content,
+      tags: r.tags ?? [],
+      // Not a similarity — nothing was compared. Reported as 1 so the shape
+      // matches Recalled, and callers that show a score show a truthful "exact".
+      similarity: 1,
+      createdAt: new Date(r.created_at).toISOString(),
+    }));
+  });
+}
+
 export async function forget(id: number): Promise<boolean> {
   return readable(async () => {
     await ensureSchema();
