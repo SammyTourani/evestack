@@ -16,16 +16,31 @@ project can take exactly the piece they want.
 
 | Item | Adds |
 | --- | --- |
-| `@evestack/memory` | Semantic long-term memory via pgvector — `remember`/`recall` tools |
+| `@evestack/memory` | Semantic long-term memory via pgvector — `remember`/`recall`/`forget` tools |
 | `@evestack/instrumentation` | OTLP trace export to an evestack dashboard |
 | `@evestack/docker-sandbox` | Local Docker sandbox instead of hosted Vercel Sandbox |
 | `@evestack/basic-auth` | HTTP Basic route auth, for agents running off Vercel |
+| `@evestack/channel-slack` | Slack channel wiring |
+| `@evestack/channel-telegram` | Telegram channel wiring |
+| `@evestack/channel-discord` | Discord channel wiring |
 
-Verified end to end against a stock `eve init` project (eve 0.29.5): `eve add @evestack/memory`
-installs all three files at their correct targets, the installed content is byte-identical to
-what ships in `templates/default` — the build script inlines from the real, tested source rather
-than a maintained copy — and `tsc --noEmit` passes with **no edits to `package.json` or
-`tsconfig.json`**.
+Seven items, which is what `registry/r/` contains. This table listed four for long enough that
+three shipped items were reachable only by guessing their names — derive it rather than trust it:
+
+```bash
+ls registry/r/          # every item, plus registry.json (the index)
+```
+
+Verified end to end against a stock `eve init` project: `eve add @evestack/memory` installs all
+**four** files at their correct targets — `lib/memory.ts` plus the `remember`, `recall` and
+`forget` tools — the installed content is byte-identical to what ships in `templates/default`
+(the build script inlines from the real, tested source rather than a maintained copy), and
+`tsc --noEmit` passes with **no edits to `package.json` or `tsconfig.json`**.
+
+That verification was run against eve 0.29.5. `templates/default` now pins `^0.30.8`, and
+`@evestack/basic-auth` requires `>=0.30`, so the recorded run is older than the code it
+describes. The CI gate below keeps the *content* honest; nobody has re-run the end-to-end
+install since.
 
 That last part is the part that is easy to get wrong. A stock eve project maps only
 `"#*": "./agent/*"` and carries no tsconfig `paths`, and TypeScript's `bundler` module
@@ -34,10 +49,20 @@ through a `#`-subpath cannot be made to typecheck there without the user editing
 The memory tools therefore import `lib/memory.ts` by relative path, in `templates/default` too,
 so the tested code and the shipped item are the same code.
 
-Dependencies are pinned to the ranges `templates/default` is tested against, generated from
-that manifest at build time — `pg@^8.20.3`, `ai@^7.0.38`, `@ai-sdk/openai@^2.0.0`. A bare,
-unversioned name would resolve to whatever npm calls latest on the day you run it, which is
-how you end up with `@ai-sdk/openai@4` next to code only ever exercised against v2.
+Dependencies are pinned to the ranges `templates/default` is tested against, generated from that
+manifest at build time. `@evestack/memory` carries `pg@^8.20.3` and `@ai-sdk/openai@^4.0.0` —
+only what its own files import, not the template's whole dependency list. A bare, unversioned
+name would resolve to whatever npm calls latest on the day you run it, and the pin is what stops
+an item installing a major version the code was never exercised against.
+
+This paragraph used to read `@ai-sdk/openai@^2.0.0` and warn against ending up on v4. The repo
+moved to v4 deliberately (`@ai-sdk/openai@4.0.30` made `execution-denied` a first-class tool
+result), so the warning had inverted into a caution against the current, tested state. Read the
+pin out of the item rather than out of this sentence:
+
+```bash
+node -e "console.log(require('./registry/r/memory.json').dependencies)"
+```
 
 ## Where the registry is hosted
 

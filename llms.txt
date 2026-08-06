@@ -77,9 +77,10 @@ These docs cover only the seam self-hosting creates. The framework itself is doc
 eve, and for an installed project `node_modules/eve/docs/` matches the pinned version exactly
 while eve.dev tracks latest — prefer the local copy.
 
-The eve compatibility matrix — every published eve release run through the contract suite, with
-the reds kept in — is rendered at https://evestack.vercel.app/compat and generated from
-`contract/history/*.json`.
+The contract suite that pins evestack's assumptions about eve lives in `contract/` and runs in
+CI on every push. It has no published page: the rendered matrix at `/compat` and the recorded
+per-release reports in `contract/history/` were both removed on 2026-08-05, and this file went
+on advertising them.
 
 - [Introduction](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/index.mdx)
 - [Quickstart](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/quickstart.mdx)
@@ -90,8 +91,8 @@ the reds kept in — is rendered at https://evestack.vercel.app/compat and gener
 - [Composio auth](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/composio-auth.mdx)
 - [Memory](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/memory.mdx)
 - [Self-hosting](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/self-hosting.mdx)
-- [Supported versions](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/compatibility.mdx)
 - [Upgrading eve](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/upgrading.mdx)
+- [Proactive agents](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/proactive.mdx)
 - [Upstream eve](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/upstream.mdx)
 - [Registry](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/registry.mdx)
 - [CLI](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/cli.mdx)

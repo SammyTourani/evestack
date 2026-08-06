@@ -1,15 +1,21 @@
 /**
- * The sandbox backend interface, which nothing in this repo typechecks.
+ * The sandbox backend interface, at run time.
  *
  * `@evestack/sandbox-opensandbox` is published to npm and implements eve's
  * `SandboxBackend` *structurally* — it declares its own `SandboxBackendLike`
  * interface rather than importing eve's types, so that eve stays a peer
- * dependency and one package build works across a range of eve versions. The
- * cost of that decision is that `tsc` has literally nothing to compare the two
- * against. eve can rename `prewarm`, and our package compiles, publishes, and
- * fails at the user's first `eve build`.
+ * dependency and one package build works across a range of eve versions.
  *
- * This is the only check anywhere that the duck still quacks.
+ * That used to mean `tsc` had nothing to compare the two against, and it cost
+ * us: `captureState()` shipped through 0.2.0 without the `sessionKey` eve
+ * requires, so no sandbox ever reattached and every turn silently leaked the
+ * previous one. The package now carries type-only conformance assertions
+ * against eve's real declarations (src/index.ts), so a renamed or added field
+ * fails `pnpm -r typecheck`.
+ *
+ * This contract is still worth running, because those assertions check the
+ * *declarations* and this checks the object eve's runtime actually hands over —
+ * a .d.ts and a shipped implementation can disagree.
  */
 
 const BACKEND_METHODS = ["create", "prewarm"];
