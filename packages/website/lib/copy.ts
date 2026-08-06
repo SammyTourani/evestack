@@ -82,69 +82,31 @@ export const terminal = {
    eve.dev's own docs frame managed and self-hosted as two deployment targets
    for the same framework; this table mirrors that framing and stays on it.
 
-   Every managed-column cell is a number or a quote from Vercel's current docs,
-   with the URL in `footnotes` below and rendered under the table. Two rows were
-   wrong and have been dealt with:
+   DELIBERATELY ABSENT, and it must stay that way: retention tiers, per-GB
+   prices, and footnote citations for them. A table that quotes someone's price
+   list is arguing that they cost money, which is not the axis and reads as
+   hostile to the audience this page is for. "As long as you keep the rows" says
+   the same true thing without the invoice.
 
-   - "Tool approvals | Vercel Passport" is DELETED. Passport is deployment
-     access control against your own IdP over OIDC and is Enterprise-only
-     (vercel.com/docs/passport) — it has nothing to do with tool approvals. eve's
-     HITL approvals are Apache-2.0 framework functionality that behaves the same
-     off Vercel, so there was never a row here: it is a dashboard-surface
-     difference, which the Dashboard row already carries.
-   - "Run history | Retained by the platform" was vague where the real facts are
-     both specific and stronger. They are quoted now. */
+   Every row states a fact about BOTH columns. No empty cell in the managed
+   column, ever — an em-dash there implies the hosted product has nothing.
+
+   One row is gone rather than restored: "Tool approvals | Vercel Passport" was
+   wrong. Passport is deployment access control against your own IdP over OIDC
+   (vercel.com/docs/passport); it has nothing to do with tool approvals, and
+   eve's HITL approvals are Apache-2.0 framework functionality that behaves the
+   same off Vercel. The Dashboard row already carries the real difference. */
 export const comparison = {
   heading: "Same framework. Your infrastructure.",
-  sub: "eve is Apache-2.0 and Vercel documents self-hosting it. evestack ships that path end to end — the durable store, the sandbox, and the dashboard, wired together and tested against every eve release since 0.29.5.",
+  sub: "eve is Apache-2.0 and Vercel documents self-hosting it. evestack ships that path end to end: the durable store, the sandbox, and the dashboard, wired together and tested against every eve release since 0.29.5.",
   columns: ["", "Managed", "Self-hosted with evestack"],
   rows: [
     ["Runs on", "Vercel's infrastructure", "Your machine, VPS, or cluster"],
     ["Session state", "Vercel Workflows", "Your Postgres on :5433"],
-    [
-      "Run-state retention",
-      "Purged 1 day (Hobby) / 7 (Pro) / 30 (Enterprise) after a run completes¹",
-      "As long as you keep the rows",
-    ],
-    [
-      "Observability retention",
-      "12 hours (Hobby) / 1 day (Pro) / 3 days (Enterprise); 30 days with Observability Plus²",
-      "Your retention policy, on your disk",
-    ],
-    ["Retained run data", "Billed at $0.50 per GB-month¹", "Your disk"],
-    ["Getting run history out", "No agent-runs or workflow-runs Drains schema³", "It is a table — SELECT it"],
-    ["Dashboard", "Agent Runs, hosted", "Included — observes and drives"],
+    ["Run history", "Retained by the platform", "As long as you keep the rows"],
+    ["Dashboard", "Agent Runs, hosted", "Included, and it drives the agent"],
     ["Where your data sits", "Vercel's platform", "Inside your network, always"],
     ["Setup", "Deploy to Vercel", "npx create-evestack, then four commands"],
-  ],
-  /* Rendered under the table. Verified 2026-08-05 against the pages named. */
-  footnotes: [
-    {
-      marker: "1",
-      /* Verbatim: "Storage retention is not configurable by default. You can
-         request a custom retention period by contacting support." The meter is
-         listed in the same page's pricing table as "Workflow Data Retained". */
-      text: "Workflow storage retention and the Workflow Data Retained meter — Vercel, Workflow Pricing and Limits. Retention is “not configurable by default”; a custom period is a support request.",
-      href: "https://vercel.com/docs/workflows/pricing",
-    },
-    {
-      marker: "2",
-      /* Agent Runs is a surface inside Vercel Observability (the dashboard route
-         is /[team]/[project]/observability/agent-runs, per
-         vercel.com/docs/eve/observability), so this is the retention table that
-         governs it. Stated as Observability retention, which is what the doc
-         says, rather than as an Agent-Runs-specific number it does not state. */
-      text: "Observability data retention — Vercel, Observability Plus “Limitations”. Agent Runs is a surface inside Observability.",
-      href: "https://vercel.com/docs/observability/observability-plus#limitations",
-    },
-    {
-      marker: "3",
-      /* The schemas table lists exactly: log, trace, analytics, speed_insights,
-         audit_log. No agent-runs or workflow-runs schema exists, so agent run
-         history is not a thing Drains can export. */
-      text: "Drains ships five schemas — log, trace, analytics, speed_insights, audit_log — and none of them carry agent runs or workflow runs.",
-      href: "https://vercel.com/docs/drains",
-    },
   ],
 } as const;
 
