@@ -1,0 +1,54 @@
+# The build context for packages/dashboard/Dockerfile is this directory — the
+# repository root — because the dashboard depends on `@evestack/schedules` over
+# the `workspace:*` protocol and only pnpm, running against the root lockfile,
+# can resolve that. See the header of packages/dashboard/Dockerfile.
+#
+# That makes this file load-bearing rather than tidy: without it the daemon is
+# handed ~3 GB of node_modules, .next and .git before the first instruction runs.
+#
+# What must NOT be excluded: pnpm-lock.yaml, pnpm-workspace.yaml, and every
+# workspace member's package.json. `pnpm install --frozen-lockfile` reads all of
+# them to verify the lockfile, so hiding one package's manifest fails the whole
+# install with ERR_PNPM_OUTDATED_LOCKFILE — including packages the dashboard
+# never touches.
+
+# Dependencies and build output — reinstalled and rebuilt inside the image.
+**/node_modules
+**/.next
+**/dist
+**/*.tsbuildinfo
+
+# Generated on prepack from templates/default; not an input to any build.
+packages/create-evestack/template
+
+# eve and Nitro runtime artifacts.
+**/.eve
+**/.output
+**/.nitro
+
+# Secrets. A build context is not a secret store: anything here lands in a layer
+# and in `docker history`. The dashboard's credentials arrive as environment at
+# run time, never baked in.
+**/.env
+**/.env.*
+!**/.env.example
+
+# History, CI, and editor/tooling state.
+.git
+.github
+.claude
+.vercel
+.firecrawl
+
+# Test and QA artifacts. qa-shots alone is 20 MB of screenshots.
+**/qa-shots
+**/test-results
+**/playwright-report
+**/blob-report
+
+# Docs site scaffolding — the dashboard build reads none of it.
+docs-site
+
+**/.DS_Store
+**/Thumbs.db
+**/*.log

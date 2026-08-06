@@ -1,7 +1,9 @@
-node_modules
-.next
-.env
-.env.*
-*.log
-Dockerfile
-.dockerignore
+# Intentionally inert.
+#
+# The build context for this package's Dockerfile is the REPOSITORY ROOT, not
+# this directory — `"@evestack/schedules": "workspace:*"` only resolves against
+# the root pnpm lockfile. Docker therefore reads /.dockerignore and never this
+# file, and the rules live there.
+#
+# Kept as a signpost rather than deleted: a .dockerignore sitting next to a
+# Dockerfile reads as authoritative, and this one is not.

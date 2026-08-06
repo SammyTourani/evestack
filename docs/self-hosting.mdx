@@ -270,20 +270,89 @@ Linux with KVM). For kernel-boundary isolation of code you did not write, there 
 The one-line swap is also a [registry](/docs/registry) item, `@evestack/docker-sandbox`, if you
 are adding it to an existing eve project rather than starting from the template.
 
+## The dashboard container
+
+There is **no published image**. Build one from a checkout — the context is the repository
+**root**, not `packages/dashboard`:
+
+```bash
+docker build -t evestack-dashboard:local -f packages/dashboard/Dockerfile .
+```
+
+That is not a style preference. `packages/dashboard/package.json` declares
+`"@evestack/schedules": "workspace:*"`, and `workspace:` is a pnpm protocol npm does not
+implement; a build scoped to the package directory ends at `EUNSUPPORTEDPROTOCOL` before it
+installs anything. The Dockerfile therefore runs `pnpm install --filter @evestack/dashboard...`
+at the root, against the real lockfile, and builds `@evestack/schedules` first because its
+`dist/` is gitignored and a cold clone has none.
+
+From this repository the whole thing is one command, which builds that image for you:
+
+```bash
+docker compose --profile full up -d
+```
+
+Publishing an image later is a one-step follow-up: `docker build` as above, tag it for a
+registry, `docker push`. The compose service that `create-evestack` generates already reads
+`${EVESTACK_DASHBOARD_IMAGE:-evestack-dashboard:local}`, so a published tag becomes a default
+change rather than a topology change.
+
 ## Expose the dashboard last
 
-The dashboard binds to `127.0.0.1` in `docker-compose.yml`, deliberately. It is not a viewer: it
-can start sessions, send follow-ups, resolve pending tool approvals, and cancel runs. It also
-ships no identity provider of its own, on purpose — it reads the approver's identity from the
-request (`EVESTACK_APPROVER_HEADER`, `X-Forwarded-User`, `X-Forwarded-Email`, or the Basic user)
-and records how that identity was established, so it is designed to sit behind something you
-already trust: a reverse proxy doing OAuth, Cloudflare Access, a VPN. Publishing port 4000 without
-one of those in front publishes an unauthenticated button that can approve a shell command.
+The dashboard is not a viewer: it can start sessions, send follow-ups, resolve pending tool
+approvals, and cancel runs. Two independent controls stand in front of that, and it is worth
+being precise about which one does what.
+
+**The port mapping.** `docker-compose.yml` publishes `127.0.0.1:4000:4000`, so the container is
+reachable from the host and from nowhere else. The process *inside* the container binds
+`0.0.0.0` — it has to, or nothing outside the container's own network namespace could reach it,
+including Docker's own `HEALTHCHECK`. Exposure is decided by the mapping, not by the bind
+address, and `docker run -p 4000:4000` on the image by hand puts the control plane on every
+interface the host has.
+
+**The credential.** Every route requires `EVESTACK_AUTH_USER` and `EVESTACK_AUTH_PASSWORD`, and
+with either missing the dashboard serves nothing: `503` on every route, `/api/health` unhealthy,
+and a sign-in page that says why. There is no bypass flag. Browsers get a signed `HttpOnly`
+session cookie from `/signin`; scripts send HTTP Basic. Details in
+[`packages/dashboard/README.md`](https://github.com/SammyTourani/evestack/tree/main/packages/dashboard#auth).
+
+The one exception is trace ingest, whose caller is a program. `/api/ingest/v1/traces` takes
+`EVESTACK_INGEST_TOKEN` in an `x-evestack-ingest-token` header, and the agent must hold the same
+value — `create-evestack` generates it into the `.env.local` that both the host agent and the
+dashboard container read. Split them across hosts and you have to copy it yourself; get it wrong
+and every span is refused with a `401` that the agent's OTLP exporter records as a successful
+export, so the symptom is an empty Traces tab rather than an error. See
+[Observability](/docs/observability).
+
+<Warning>
+  **What the credential does not buy.** It is one shared secret per deployment, so `approver` in
+  the audit log names an *installation*, not a person. There is no lockout, no rate limit and no
+  second factor in front of it. It is sent as Basic over whatever transport you provide, so
+  without TLS it is on the wire in base64. And it protects HTTP routes, not the database — the
+  compose file publishes Postgres on `5433` on **every** interface with the credentials from
+  `.env.example`.
+
+  So: still put the dashboard behind something you already trust before it leaves loopback — a
+  reverse proxy doing OAuth, Cloudflare Access, Tailscale, a VPN. The difference from before is
+  that a slip in that layer is no longer immediately an unauthenticated button that can approve
+  a shell command.
+</Warning>
+
+For per-person attribution rather than per-installation, put a proxy that authenticates people
+in front and set `EVESTACK_TRUSTED_PROXY`. Until that is set, `X-Forwarded-User`,
+`X-Forwarded-Email` and `EVESTACK_APPROVER_HEADER` are **not read at all** — they are three
+words of `curl` away from anyone who can reach the port, and an audit log that can be dictated to
+is worse than one that admits it knows nothing.
+
+Serve it over TLS if it is reachable from anywhere but your own machine. The session cookie is
+`Secure` when the request is https, when `EVESTACK_PUBLIC_URL` is https, or when a trusted proxy
+reports `X-Forwarded-Proto: https`.
 
 If the dashboard is not on the same host as the agent, give it `EVESTACK_AGENT_URL` plus the
-agent's own `EVESTACK_AUTH_USER` / `EVESTACK_AUTH_PASSWORD` — it attaches Basic credentials only
-when both are set. Its one required variable remains `WORKFLOW_POSTGRES_URL`; everything on the
-observe side is a SQL read. See [The dashboard](/docs/dashboard).
+agent's own `EVESTACK_AUTH_USER` / `EVESTACK_AUTH_PASSWORD` — it attaches Basic credentials to
+agent calls only when both are set, which is the same pair it signs you in with. Its required
+variables are now `WORKFLOW_POSTGRES_URL` *and* that credential; everything on the observe side
+is still a SQL read. See [The dashboard](/docs/dashboard).
 
 ## Operations
 

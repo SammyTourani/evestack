@@ -1,8 +1,22 @@
 # evestack — the whole stack, on your own machine, for $0.
 #
-#   docker compose up
+#   docker compose up -d                    # Postgres only
+#   docker compose --profile full up -d     # Postgres + the dashboard on :4000
 #
 # Nothing here phones home. No Vercel account, no metered compute, no gateway.
+#
+# The dashboard REFUSES EVERY REQUEST without a credential — it starts agent
+# runs, approves gated shell commands and deletes memories, so it fails closed
+# by design (packages/dashboard/lib/auth.ts). Give it one before the first
+# `--profile full` run. A `.env` beside this file is where compose looks:
+#
+#   printf 'EVESTACK_AUTH_USER=evestack\nEVESTACK_AUTH_PASSWORD=%s\n' \
+#     "$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9')" >> .env
+#
+# Use the SAME pair your agent has in its .env.local. It is one secret per
+# deployment: the dashboard signs you in with it and presents it to the agent.
+# Without it the container comes up, answers 503 to everything, and reports
+# unhealthy in `docker ps` — which is the intended, visible failure, not a bug.
 name: evestack
 
 services:
@@ -29,11 +43,19 @@ services:
 
   # The dashboard reads the same Postgres the agent writes to — no ingest
   # pipeline, no second source of truth. Bound to localhost by default: it is a
-  # control plane that can start and cancel agent runs, so it must not be
-  # reachable from the network without auth in front of it.
+  # control plane that can start and cancel agent runs, so the published port
+  # stays on the loopback interface even though the process inside the container
+  # binds 0.0.0.0 (it has to; nothing could reach it otherwise).
   dashboard:
     build:
-      context: ./packages/dashboard
+      # The REPOSITORY ROOT, not packages/dashboard. The dashboard depends on
+      # @evestack/schedules over pnpm's `workspace:*` protocol, which only
+      # resolves against the root lockfile — building from the package directory
+      # is what made `npm install` die on EUNSUPPORTEDPROTOCOL and meant this
+      # image had never been built successfully by anyone. See the Dockerfile
+      # header and /.dockerignore.
+      context: .
+      dockerfile: packages/dashboard/Dockerfile
     restart: unless-stopped
     depends_on:
       postgres:
@@ -41,7 +63,44 @@ services:
     environment:
       WORKFLOW_POSTGRES_URL: postgres://${POSTGRES_USER:-evestack}:${POSTGRES_PASSWORD:-evestack}@postgres:5432/${POSTGRES_DB:-evestack}
       EVESTACK_AGENT_URL: ${EVESTACK_AGENT_URL:-http://host.docker.internal:2000}
+
+      # Required. Both halves, or the dashboard serves nothing — and the user is
+      # deliberately not defaulted here either: lib/agent-client.ts attaches
+      # Basic to agent calls only when BOTH are set, so a deployment with just a
+      # password would sign in happily and then 401 against the agent with
+      # nothing in the UI able to explain it.
+      EVESTACK_AUTH_USER: ${EVESTACK_AUTH_USER:-}
+      EVESTACK_AUTH_PASSWORD: ${EVESTACK_AUTH_PASSWORD:-}
+
+      # Cookie signing key. Defaults inside the app to a value derived from the
+      # password, so changing the password invalidates outstanding cookies. Set
+      # it to rotate sessions without rotating the shared credential.
+      EVESTACK_SESSION_SECRET: ${EVESTACK_SESSION_SECRET:-}
+      EVESTACK_SESSION_TTL_HOURS: ${EVESTACK_SESSION_TTL_HOURS:-}
+
+      # The shared secret POST /api/ingest/v1/traces expects, sent by the agent
+      # as `x-evestack-ingest-token`. The agent needs the SAME value beside its
+      # EVESTACK_DASHBOARD_URL. Unset, that route falls back to session auth —
+      # never to open.
+      EVESTACK_INGEST_TOKEN: ${EVESTACK_INGEST_TOKEN:-}
+
+      # Until this is set, X-Forwarded-User / X-Forwarded-Email / your own
+      # EVESTACK_APPROVER_HEADER are not read at all, and the audit log records
+      # the installation rather than a person. Set it only when a proxy you
+      # control terminates every request AND strips inbound X-Forwarded-*.
+      EVESTACK_TRUSTED_PROXY: ${EVESTACK_TRUSTED_PROXY:-}
+      EVESTACK_APPROVER_HEADER: ${EVESTACK_APPROVER_HEADER:-}
+      EVESTACK_REQUIRE_APPROVER: ${EVESTACK_REQUIRE_APPROVER:-}
+
+      # Set when the dashboard sits behind a different hostname than it sees on
+      # the request: OAuth callback URLs, the `Secure` cookie decision, and the
+      # cross-site write check all read it.
+      EVESTACK_PUBLIC_URL: ${EVESTACK_PUBLIC_URL:-}
+
+      # Use the same key and user id as the agent, or the dashboard connects
+      # accounts the agent cannot see.
       COMPOSIO_API_KEY: ${COMPOSIO_API_KEY:-}
+      EVESTACK_COMPOSIO_USER_ID: ${EVESTACK_COMPOSIO_USER_ID:-}
     ports:
       - "127.0.0.1:${DASHBOARD_PORT:-4000}:4000"
     extra_hosts:
