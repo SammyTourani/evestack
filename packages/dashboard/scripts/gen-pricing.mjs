@@ -42,7 +42,7 @@
  * not be, because it would rewrite itself on every run and make the hash useless.
  *
  * No clock, no locale, no network in the output. Same rule as
- * scripts/gen-compatibility.mjs, for the same reason.
+ * the same reason the contract table is generated rather than hand-edited.
  */
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
