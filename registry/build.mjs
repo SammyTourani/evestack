@@ -126,8 +126,19 @@ const ITEMS = [
     description:
       "Replace vercelOidc()/placeholderAuth() with HTTP Basic, for agents that run off Vercel.",
     files: [{ source: "agent/channels/eve.ts", target: "agent/channels/eve.ts" }],
+    /* The docs below lead with the file collision, because this item's single file
+       targets agent/channels/eve.ts — which EVERY `eve init` project already has,
+       since that is where eve puts its own auth chain. So this is the one registry
+       item that cannot land on a clean install without replacing an existing file,
+       and `eve add` will not silently do that for you. Saying it here matters more
+       than usual: `docs` is the only text `eve add` prints, so anything not in this
+       string is something the user never sees. */
     docs:
-      "Set EVESTACK_AUTH_USER and EVESTACK_AUTH_PASSWORD. Requires eve >= 0.30, where " +
+      "REPLACES agent/channels/eve.ts, which your project already has — that is where " +
+      "eve puts its own auth chain. Pass `-o` / `--overwrite` to let it, and diff the " +
+      "result: anything you had added to that file (extra channels, a custom " +
+      "authenticator) is in the file being replaced. " +
+      "Then set EVESTACK_AUTH_USER and EVESTACK_AUTH_PASSWORD. Requires eve >= 0.30, where " +
       "localDev() grants on the deployment being a dev process rather than on the request " +
       "Host header — on 0.29.x that header was attacker-controlled and `127.evil.com` could " +
       "obtain an unauthenticated local-dev principal. In production nothing is granted " +
