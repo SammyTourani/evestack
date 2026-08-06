@@ -28,12 +28,25 @@ It silently broke memory.
 
 IVFFlat assigns vectors to `lists` centroids **at index-build time**. Build it on an empty
 table — which any bootstrap migration must, since memory starts with nothing in it — and the
-centroids are meaningless. The planner switches to the index once a query looks selective
-enough, probes a near-empty list, and returns **zero rows** for a query that plainly should
-match.
+centroids are meaningless. Postgres reads a small table sequentially and gets the right
+answer; the moment the planner decides the index is worth using it probes one near-empty list
+and answers out of whatever happens to be sitting in it.
 
-We reproduced this exactly: the same `recall()` call returned **2 results at `LIMIT 3`** and
-**0 results at `LIMIT 20`**, purely because the query plan flipped between them.
+Measured on PostgreSQL 17.10 with pgvector 0.8.6, a `vector(1536)` column, the index created
+before a single row was inserted, and the planner left to choose for itself:
+
+```
+    200 rows, LIMIT 1    IVFFlat index scan   0 rows
+    200 rows, LIMIT 3    seq scan + sort      3 rows, correct
+    800 rows, LIMIT 1    IVFFlat index scan   1 row, and it is the WRONG row: similarity
+                                              0.0125, while the true nearest scores 0.0801
+    800 rows, LIMIT 3    IVFFlat index scan   2 rows
+    800 rows, LIMIT 20   seq scan + sort      20 rows, correct
+```
+
+Note the 800-row `LIMIT 1` line. A short answer at least looks odd; that one looks perfectly
+healthy and is simply the wrong memory. The same tables rebuilt with HNSW, same data and same
+query vectors, returned the full requested count and the true nearest row every time.
 
 ```sql
 -- lib/memory.ts uses this, not ivfflat:
@@ -43,6 +56,24 @@ ON evestack.memories USING hnsw (embedding vector_cosine_ops)
 
 HNSW builds a navigable graph incrementally and needs no training data — it's correct from the
 first row, which is what an empty-by-definition memory table needs.
+
+### Correction: an earlier version of this page had the example backwards
+
+This page used to say the same `recall()` call returned "2 results at `LIMIT 3`" and "0 results
+at `LIMIT 20`". The first half reproduces exactly. The second half does not, and it cannot: we
+ran 1,440 measured queries — 60 fresh query vectors against each of four table sizes (50, 200,
+800 and 5,000 rows) at six limits — and **not once** did a larger `LIMIT` return fewer rows
+than a smaller one.
+
+The direction is fixed by the cost model. A single IVFFlat scan returns
+`min(limit, rows in the probed list)`, which never shrinks as the limit grows, so the only way
+to get less by asking for more is for the plan to flip. And the plan can only flip one way:
+the cost Postgres charges an ordered index path grows *linearly* with the limit, while a
+top-N sort's grows *logarithmically*, so raising the limit can move the planner **off** the
+vector index but never onto it. The short and wrong answers therefore land on the small
+limits, which is where a memory tool spends most of its time — `recall` defaults to 5.
+
+The defect is real, the fix is unchanged, and the numbers above are what was actually measured.
 
 ## Tags and filtering
 

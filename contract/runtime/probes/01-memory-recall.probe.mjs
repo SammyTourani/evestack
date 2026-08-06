@@ -9,9 +9,20 @@
  * decides the index is worth using, it probes one near-empty list and returns
  * NOTHING for a query that plainly matches.
  *
- * That is why the symptom was so confusing: the same query returned 2 rows at
- * `LIMIT 3` and **0 rows at `LIMIT 20`**. Asking for more returned less. The
- * query did not change. The *plan* changed.
+ * That is why the symptom was so confusing: the query did not change, the
+ * *plan* changed, and nothing errored. Measured on 17.10 / pgvector 0.8.6 with
+ * the index built before the first insert: a 200-row table answered `LIMIT 1`
+ * with **0 rows** off the IVFFlat index and `LIMIT 3` with the correct 3 off a
+ * seq scan; an 800-row table answered `LIMIT 3` with **2 rows** and `LIMIT 1`
+ * with one row that was simply the WRONG memory.
+ *
+ * An earlier version of this comment said 2 rows at `LIMIT 3` and 0 at
+ * `LIMIT 20`. The first half is real; the second is backwards. Raising the
+ * limit can only move the planner OFF an ordered index path (its cost grows
+ * linearly in the limit, a top-N sort's logarithmically), and one IVFFlat scan
+ * returns min(limit, rows in the probed list) — so a larger limit cannot return
+ * fewer rows, and in 1,440 measured queries it never did. The damage lands on
+ * SMALL limits, which is where `recall` lives: its default is 5.
  *
  * So the invariant this probe asserts is not "recall returns rows" — a
  * sequential scan would satisfy that forever while the index was broken. It is
@@ -80,9 +91,10 @@ export default {
   needs: ["postgres"],
   why:
     "Memory recall returned zero rows for queries that plainly matched, because an approximate " +
-    "index built on an empty table could not answer. Nothing errored: the same query returned " +
-    "2 rows at LIMIT 3 and 0 at LIMIT 20, purely because the plan flipped. The agent simply " +
-    "behaved as though it had never remembered anything.",
+    "index built on an empty table could not answer. Nothing errored: measured, a 200-row table " +
+    "answered LIMIT 1 with 0 rows off the IVFFlat index and LIMIT 3 with the correct 3 off a " +
+    "seq scan, purely because the plan flipped. The agent simply behaved as though it had " +
+    "never remembered anything.",
 
   async available() {
     if (!process.env.WORKFLOW_POSTGRES_URL) return ["WORKFLOW_POSTGRES_URL is not set"];
