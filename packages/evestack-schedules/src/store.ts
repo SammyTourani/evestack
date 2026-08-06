@@ -31,6 +31,14 @@ function getPool(): Pool {
     );
   }
   pool = new Pool({ connectionString: url, max: 4 });
+  // pg-pool re-emits an idle client's socket error on the pool, and
+  // `emit("error")` with nothing listening throws — so a Postgres restart while
+  // a client sat idle here was an uncaughtException that took the agent down,
+  // not a failed query. packages/dashboard/lib/db.ts has always had this
+  // listener; the pools inside the agent did not.
+  pool.on("error", (error) => {
+    console.warn(`[evestack:schedules] idle Postgres client error: ${error.message}`);
+  });
   return pool;
 }
 

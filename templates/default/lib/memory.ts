@@ -127,6 +127,110 @@ function embeddingModel(): EmbeddingModel {
   return openai.textEmbeddingModel(model);
 }
 
+/**
+ * `pg`'s connection failures, made readable.
+ *
+ * A refused connection to a host that resolves to BOTH ::1 and 127.0.0.1 arrives
+ * as an `AggregateError` whose own `message` is the EMPTY STRING — every detail
+ * is one level down in `.errors`. So `remember` failed with literally
+ * "AggregateError" and nothing else: no host, no port, no reason. That string
+ * goes into a tool result, which the model then paraphrases to the user, and per
+ * the header of this file it tends to paraphrase it as success.
+ *
+ * scripts/checks.mjs already had to solve this for `npm run verify`. An error the
+ * agent relays to a person needs it at least as much.
+ *
+ * Only NETWORK failures are rewritten. A Postgres error carrying a SQLSTATE — a
+ * missing privilege, a bad column — is passed through untouched, because calling
+ * that "cannot reach Postgres" would send the reader at the wrong problem.
+ */
+const NETWORK_CODES = new Set([
+  "ECONNREFUSED",
+  "ENOTFOUND",
+  "ETIMEDOUT",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "ECONNRESET",
+  "EPIPE",
+  "EAI_AGAIN",
+]);
+
+/**
+ * The connection failures `pg` reports as plain Errors with NO `code`.
+ *
+ * A syscall error carries ECONNREFUSED and friends, but a connection that drops
+ * once established does not: `pg` throws its own Error, and matching on `code`
+ * alone let it through unannotated. CI caught this — the probe destroys a socket,
+ * which on Linux surfaces as "Connection terminated unexpectedly" rather than the
+ * ECONNRESET macOS produced, so the check for a named host and port failed on a
+ * platform I had not run it on.
+ *
+ * That is the laptop-resume case named in ensureSchema's note, so it is the case
+ * this most needs to read well. Matching on message text is fragile by nature, so
+ * these are copied verbatim from pg 8 (`lib/client.js`, `lib/connection.js`) and
+ * pg-pool, and a string that stops matching costs context in an error message
+ * rather than correctness anywhere.
+ */
+const PG_CONNECTION_FAILURES = new Set([
+  "Connection terminated unexpectedly",
+  "Connection terminated",
+  "Client has encountered a connection error and is not queryable",
+  "timeout expired",
+  "timeout exceeded when trying to connect",
+]);
+
+function networkReason(error: unknown): string | null {
+  if (error instanceof AggregateError) {
+    const parts = (Array.isArray(error.errors) ? error.errors : [])
+      .map(networkReason)
+      .filter((part): part is string => Boolean(part));
+    const unique = [...new Set(parts)];
+    return unique.length > 0 ? unique.join("; ") : null;
+  }
+  if (error instanceof Error) {
+    const { code, address, port } = error as Error & {
+      code?: string;
+      address?: string;
+      port?: number;
+    };
+    if (code && NETWORK_CODES.has(code)) {
+      const where = address ? ` (${address}${port ? `:${port}` : ""})` : "";
+      return `${code}${where}`;
+    }
+    // A SQLSTATE is a real answer from a reachable server, so it is never one of
+    // these and must keep its own message.
+    if (!code && PG_CONNECTION_FAILURES.has(error.message.trim())) return error.message.trim();
+  }
+  return null;
+}
+
+/** Host and port only — never the connection string, which carries the password. */
+function postgresTarget(): string {
+  const parsed = URL.parse(process.env.WORKFLOW_POSTGRES_URL ?? "");
+  return parsed ? `${parsed.hostname}:${parsed.port || "5432"}` : "the configured WORKFLOW_POSTGRES_URL";
+}
+
+function withPostgresContext(error: unknown): unknown {
+  const reason = networkReason(error);
+  if (!reason) return error;
+  return new Error(
+    `Long-term memory cannot reach Postgres at ${postgresTarget()} — ${reason}. Start it with ` +
+      "`docker compose up -d postgres`. Nothing was saved, and no restart of the agent is " +
+      "needed: the next call tries again.",
+    { cause: error },
+  );
+}
+
+/** Wraps the three tool entry points, so a dead database reads the same from all
+ *  of them however far into the call it is noticed. */
+async function readable<T>(work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
+  } catch (error) {
+    throw withPostgresContext(error);
+  }
+}
+
 let pool: Pool | null = null;
 let ready: Promise<void> | null = null;
 
@@ -137,7 +241,28 @@ function getPool(): Pool {
       "Memory needs WORKFLOW_POSTGRES_URL. Start Postgres with `docker compose up postgres`.",
     );
   }
-  pool ??= new Pool({ connectionString: url, max: 4 });
+  if (!pool) {
+    pool = new Pool({ connectionString: url, max: 4 });
+    // WITHOUT THIS LISTENER A POSTGRES RESTART KILLS THE AGENT.
+    //
+    // pg-pool attaches its own handler to idle clients and re-emits their socket
+    // errors on the pool. `EventEmitter.emit("error")` with nothing listening
+    // throws, so the failure is not a rejected query — it is an
+    // uncaughtException that takes down the whole process: every session, every
+    // channel, because an optional memory tool once left a client idle.
+    //
+    // Measured with a proxy that drops an established connection while the
+    // client sat idle in the pool: `UNCAUGHT EXCEPTION -> Connection terminated
+    // unexpectedly`, exit code 9. packages/dashboard/lib/db.ts already carried
+    // this listener and the reason for it; the three pools inside the agent did
+    // not.
+    //
+    // Nothing to do but say so. pg has already discarded the dead client, and
+    // the next call gets a fresh one.
+    pool.on("error", (error) => {
+      console.warn(`[evestack] idle Postgres client error: ${networkReason(error) ?? error.message}`);
+    });
+  }
   return pool;
 }
 
@@ -150,6 +275,7 @@ function getPool(): Pool {
  * inferred: a silent mismatch would fail at insert time with a confusing error.
  */
 async function ensureSchema(): Promise<void> {
+  // The `.catch` on the end of this is load-bearing; see the note there.
   ready ??= (async () => {
     const db = getPool();
     await db.query("CREATE EXTENSION IF NOT EXISTS vector");
@@ -217,7 +343,28 @@ async function ensureSchema(): Promise<void> {
           "    docker compose exec postgres psql -U evestack -d evestack -c 'DROP TABLE evestack.memories'",
       );
     }
-  })();
+  })().catch((error: unknown) => {
+    // `ready` memoizes the PROMISE, and a rejected promise is still a memoized
+    // one: without this, every later call is handed the same rejection back
+    // forever. Postgres becoming ready a few seconds after the agent — the
+    // normal order under `docker compose up`, and what happens on every laptop
+    // resume — therefore disabled long-term memory for the entire life of the
+    // process, and went on reporting the original "connection refused" long
+    // after the connection worked.
+    //
+    // Measured, not theorised: stop Postgres, call `remember` (fails,
+    // correctly), start Postgres, wait for pg_isready, call `remember` again —
+    // still the stale error. `eve dev` runs for hours, so "the life of the
+    // process" means the rest of the working day, and the model reports the save
+    // as successful anyway.
+    //
+    // So the memo is kept on success and dropped on failure. A retry costs a
+    // handful of catalog queries, and the deliberate error above (a vector-width
+    // mismatch) simply throws again unchanged — which is the right outcome for a
+    // condition that really is permanent.
+    ready = null;
+    throw error;
+  });
   return ready;
 }
 
@@ -246,14 +393,16 @@ export async function remember(
   content: string,
   options: { tags?: string[]; sessionId?: string } = {},
 ): Promise<{ id: number }> {
-  await ensureSchema();
-  const embedding = await embedText(content);
-  const { rows } = await getPool().query<{ id: string }>(
-    `INSERT INTO evestack.memories (content, tags, session_id, embedding)
-     VALUES ($1, $2, $3, $4::vector) RETURNING id`,
-    [content, options.tags ?? [], options.sessionId ?? null, JSON.stringify(embedding)],
-  );
-  return { id: Number(rows[0].id) };
+  return readable(async () => {
+    await ensureSchema();
+    const embedding = await embedText(content);
+    const { rows } = await getPool().query<{ id: string }>(
+      `INSERT INTO evestack.memories (content, tags, session_id, embedding)
+       VALUES ($1, $2, $3, $4::vector) RETURNING id`,
+      [content, options.tags ?? [], options.sessionId ?? null, JSON.stringify(embedding)],
+    );
+    return { id: Number(rows[0].id) };
+  });
 }
 
 interface MemoryRow {
@@ -275,6 +424,15 @@ export interface Recalled {
 export async function recall(
   queryText: string,
   options: { limit?: number; tags?: string[]; minSimilarity?: number } = {},
+): Promise<Recalled[]> {
+  return readable(() => recallOnce(queryText, options));
+}
+
+/** Split out only so `recall` can wrap it whole; the transaction below already
+ *  has a catch of its own, and a dead database is noticed before it. */
+async function recallOnce(
+  queryText: string,
+  options: { limit?: number; tags?: string[]; minSimilarity?: number },
 ): Promise<Recalled[]> {
   await ensureSchema();
   const embedding = await embedText(queryText);
@@ -331,7 +489,9 @@ export async function recall(
 }
 
 export async function forget(id: number): Promise<boolean> {
-  await ensureSchema();
-  const { rowCount } = await getPool().query("DELETE FROM evestack.memories WHERE id = $1", [id]);
-  return (rowCount ?? 0) > 0;
+  return readable(async () => {
+    await ensureSchema();
+    const { rowCount } = await getPool().query("DELETE FROM evestack.memories WHERE id = $1", [id]);
+    return (rowCount ?? 0) > 0;
+  });
 }

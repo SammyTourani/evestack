@@ -148,6 +148,11 @@ export async function connect({ connectionString, timeoutMs = 15_000 }) {
 
   try {
     await client.connect();
+    // Without this, Postgres dying between two of doctor's queries is an
+    // uncaughtException rather than a failed check — pg emits 'error' on an idle
+    // client, and an unlistened 'error' throws. A no-op is the right handler: the
+    // next query rejects with pg's own "not queryable" and is reported normally.
+    client.on("error", () => {});
   } catch (cause) {
     throw new DoctorError(
       `Cannot reach Postgres at ${redact(connectionString)}\n  ${cause.message}\n\n` +
