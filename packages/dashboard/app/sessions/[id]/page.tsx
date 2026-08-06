@@ -1,5 +1,6 @@
 import { formatUsd, isPriced } from "@/lib/pricing";
 import { getSession, getSessionTree, type TurnRow } from "@/lib/queries";
+import { ForkPanel } from "./fork-client";
 import styles from "./session.module.css";
 
 export const dynamic = "force-dynamic";
@@ -292,6 +293,14 @@ export default async function SessionDetailPage(props: PageProps<"/sessions/[id]
             ? "This session failed — promoting it gives you the regression test for the bug."
             : "Downloads a draft evals/*.eval.ts replaying this session's real messages."}
         </span>
+      </div>
+
+      {/* Its own row, not part of .actions: promoting downloads a file, while
+          replaying starts a real run that re-executes this session's tools. The
+          two do not belong side by side as if they were the same weight of
+          decision, and the panel expands when opened. */}
+      <div className={styles.forkSlot}>
+        <ForkPanel sessionId={session.id} />
       </div>
 
       <div className={styles.sectionHead}>

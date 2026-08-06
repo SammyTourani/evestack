@@ -61,7 +61,9 @@
 .promote:disabled { opacity: 0.6; cursor: default; }
 .actionNote { font-size: 12px; }
 
-/* ---- fork and replay ---- */
+/* ---- replay into a new session ---- */
+.forkSlot { margin: 10px 0 4px; }
+
 .forkPanel {
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -70,7 +72,8 @@
   max-width: 620px;
 }
 
-/* Deliberately prominent: unlike promoting, a fork spends real money. */
+/* Deliberately prominent: unlike promoting — which downloads a file — a replay
+   re-executes the original's tool calls against the real world. */
 .forkWarn {
   font-size: 12px;
   color: var(--text-dim);
@@ -78,6 +81,106 @@
   padding-left: 10px;
   margin: 0 0 12px;
 }
+.forkWarn strong { color: var(--text); }
+
+/* ---- the replay plan ---- */
+.forkPlan {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.forkTurn {
+  display: flex;
+  gap: 9px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+/* Out-of-range turns stay visible rather than disappearing: seeing what is
+   being dropped is half of choosing where to fork. */
+.forkTurnOut { opacity: 0.4; }
+
+.forkTurnNum {
+  flex: none;
+  width: 18px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  text-align: right;
+}
+
+.forkTurnBody {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* Two lines, then ellipsis. The full text is in the title attribute — a replay
+   plan has to be skimmable, and some turns are several paragraphs. */
+.forkTurnMsg {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  color: var(--text);
+}
+.forkTurnMsg s { color: var(--text-faint); }
+.forkTurnNew { color: var(--accent); }
+
+.forkTools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+}
+.forkTool {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+/* A tool inside the replay range is the whole warning, so it is coloured like
+   one instead of reading as metadata. */
+.forkToolLive {
+  color: var(--warn, #c98a2b);
+  border-color: color-mix(in srgb, var(--warn, #c98a2b) 45%, var(--border));
+}
+
+.forkNote {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.forkAck {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.forkAck input { margin-top: 2px; flex: none; }
+.forkAck strong { font-family: var(--mono); color: var(--warn, #c98a2b); font-weight: 400; }
+
+.forkResult {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.forkResult p { margin: 0 0 6px; }
+.forkStopped { color: var(--warn, #c98a2b); }
 
 .forkRow {
   display: flex;
