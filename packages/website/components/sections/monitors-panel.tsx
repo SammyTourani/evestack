@@ -14,7 +14,27 @@ import { observability } from "@/lib/copy";
    real relative start times, percentiles are computed, the duration chart's
    peak is the genuine 41.0s essay run (crosshair tooltip kept). Color is
    demoted to accents — thin blue series, tiny status dots. SSR = settled
-   truth; arms client-side, plays once in view. */
+   truth; arms client-side, plays once in view.
+
+   TWO THINGS ARE GONE FROM THIS ARTWORK RATHER THAN ADDED TO THE DASHBOARD,
+   for the same reason the comparison table lost its Passport row and the
+   tracing card lost "the span tree is the product": a picture of a screen is a
+   claim about that screen.
+
+     - "Timeout 0%", beside the Error rate. lib/monitors.ts computes a failure
+       rate from two signals it is careful to keep separate — turns carrying an
+       error_code, and finished turns that never reached a provider — and
+       nothing anywhere derives a TIMEOUT rate. eve does not distinguish one in
+       error_code, so the number could only have been invented, and that module's
+       own header is about not flattering these figures. Error % stayed; it is
+       real.
+     - The per-row activity sparkline. No page in the dashboard draws a
+       sparkline, and the six-point series here was synthesised out of token
+       counts and tool tallies (`s.tokensOut % 37`) — shaped like data, derived
+       from nothing.
+
+   If either is wanted, the honest order is the one cfbff14 used for the
+   percentiles above: build it in packages/dashboard first, then draw it here. */
 
 const SESSIONS = [
   baseSessions[4], // race test            3.4s   ~5h ago
@@ -87,14 +107,6 @@ const P95Y = DH - DPY - (pctl(95) / MAXD) * (DH - 2 * DPY);
 
 /* table rows: the four biggest sessions */
 const ROWS = [baseSessions[0], baseSessions[1], liveSessions[0], liveSessions[2]];
-const spark = (s: (typeof ROWS)[number]) => {
-  const seq = [s.turns * 9, s.tools * 6, s.tokensOut % 37, s.tokensIn % 41, s.cached % 29, s.tools * 8];
-  const mx = Math.max(...seq, 1);
-  return seq
-    .map((v, i) => `${i ? "L" : "M"} ${(i * 56) / (seq.length - 1)} ${14 - (v / mx) * 12 + 1}`)
-    .join(" ");
-};
-
 const fmtInt = (n: number) => n.toLocaleString("en-US");
 const fmtS = (n: number) => `${n.toFixed(1)}s`;
 
@@ -229,10 +241,7 @@ export function MonitorsPanel() {
                   <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-err" />
                   Error 0%
                 </span>
-                <span className="flex items-center gap-1.5">
-                  <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-warn" />
-                  Timeout 0%
-                </span>
+
               </p>
             </div>
             <p className="mt-0.5 font-mono text-heading-20 tabular-nums text-gray-1000">
@@ -374,9 +383,8 @@ export function MonitorsPanel() {
 
         {/* sessions table */}
         <div className="bg-background-100">
-          <div className="grid grid-cols-[minmax(0,1fr)_100px_72px_64px] items-center gap-x-4 border-b border-border-subtle px-4 py-2.5 md:grid-cols-[minmax(0,1fr)_150px_100px_72px_64px_24px]">
+          <div className="grid grid-cols-[minmax(0,1fr)_100px_72px_64px] items-center gap-x-4 border-b border-border-subtle px-4 py-2.5 md:grid-cols-[minmax(0,1fr)_100px_72px_64px_24px]">
             <p className="font-mono text-label-12 uppercase text-gray-700">Session</p>
-            <p className="hidden text-right font-mono text-label-12 uppercase text-gray-700 md:block">Activity</p>
             <p className="text-right font-mono text-label-12 uppercase text-gray-700">Tokens</p>
             <p className="text-right font-mono text-label-12 uppercase text-gray-700">Duration</p>
             <p className="text-right font-mono text-label-12 uppercase text-gray-700">Cost</p>
@@ -387,17 +395,12 @@ export function MonitorsPanel() {
               key={s.id}
               data-anim="fade"
               style={{ "--d": `${0.3 + i * 0.08}s` } as React.CSSProperties}
-              className="grid grid-cols-[minmax(0,1fr)_100px_72px_64px] items-center gap-x-4 border-b border-border-subtle px-4 py-2.5 transition-colors hover:bg-gray-100/40 md:grid-cols-[minmax(0,1fr)_150px_100px_72px_64px_24px]"
+              className="grid grid-cols-[minmax(0,1fr)_100px_72px_64px] items-center gap-x-4 border-b border-border-subtle px-4 py-2.5 transition-colors hover:bg-gray-100/40 md:grid-cols-[minmax(0,1fr)_100px_72px_64px_24px]"
             >
               <p className="flex min-w-0 items-center gap-2.5">
                 <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-ok" />
                 <span className="truncate text-copy-14 text-gray-1000">{s.title}</span>
               </p>
-              <span className="hidden justify-end md:flex" aria-hidden>
-                <svg viewBox="0 0 56 16" className="h-4 w-14">
-                  <path d={spark(s)} stroke="var(--ds-gray-500)" strokeWidth="1.25" fill="none" strokeLinejoin="round" />
-                </svg>
-              </span>
               <p className="text-right font-mono text-mono-13 tabular-nums text-gray-900">
                 {fmtInt(s.tokensIn + s.tokensOut)}
               </p>
