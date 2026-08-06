@@ -10,8 +10,20 @@
 -- an audit row saying only "memory 41 was deleted" cannot answer the question
 -- anyone will actually ask.
 --
--- The agent's own `forget` tool is a different path and is gated behind
--- `approval: always()`; those land in evestack.approvals.
+-- SCOPE, and a gap worth knowing about. The agent's own `forget` tool is a
+-- different path, gated behind `approval: always()`, and it writes NOTHING
+-- here. What it leaves is a row in evestack.approvals, and that row is thinner
+-- than it sounds: the table records session, request, tool_name, the option the
+-- human picked and who they were, but NOT the tool's arguments. So an
+-- agent-initiated deletion is recoverable as "somebody approved a `forget` at
+-- 14:02" and no further -- not which memory, not what it said. The row it
+-- described is gone by then, so nothing else can answer either.
+--
+-- That is a smaller guarantee than the paragraph above asks for, and it is
+-- written down rather than fixed because closing it means the agent template
+-- writing into a table the dashboard owns. Verified 2026-08: deleting from the
+-- dashboard does record here, verbatim content and actor included; deleting
+-- through the tool does not.
 --
 -- Every statement is guarded, so this file is safe to run on every boot.
 
