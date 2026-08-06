@@ -23,7 +23,9 @@
  * upstream unchanged — the migrations are theirs and this must not fork them.
  */
 import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 
 import { C, connectPostgres, dockerRunning, envValue, readEnvFile, redact } from "./checks.mjs";
 
@@ -36,22 +38,24 @@ function fail(lines) {
   process.exit(1);
 }
 
+// `.env.local` is one way to configure this, not the only one, and an absent
+// file is not an error. CI runs this step inside templates/default with
+// WORKFLOW_POSTGRES_URL exported and no .env.local at all; so does every
+// container deployment. Requiring the file broke exactly that, which is a
+// worse failure than the stack trace this script was written to replace —
+// the reader is told to go somewhere else when they were already correct.
 const fileEnv = readEnvFile();
-if (!fileEnv) {
-  fail([
-    "There is no .env.local in this directory.",
-    "",
-    `  ${C.bold}Run this from your project directory${C.reset} — the one create-evestack made.`,
-  ]);
-}
 
 const url = envValue(fileEnv, "WORKFLOW_POSTGRES_URL");
 if (!url) {
   fail([
-    "WORKFLOW_POSTGRES_URL is not set in .env.local.",
+    "WORKFLOW_POSTGRES_URL is not set.",
     "",
     "  Without it the agent falls back to an on-disk world under .eve/ and this",
-    "  step has nothing to create. Put the line back, or copy it from .env.example.",
+    "  step has nothing to create. Set it in the environment, or put the line",
+    `  back in .env.local — ${fileEnv ? "the file is here but has no such key" : "there is no .env.local in this directory"}.`,
+    "",
+    "  .env.example has the line to copy.",
   ]);
 }
 
@@ -94,15 +98,51 @@ if (!probe.ok) {
 }
 await probe.client.end().catch(() => {});
 
-// Upstream, unchanged. Resolved through the package's own entry point rather
-// than a hardcoded `node_modules/...` path so a hoisted, pnpm-linked or
-// otherwise relocated install still finds it.
-let setup;
-try {
-  setup = require.resolve("@workflow/world-postgres/bin/setup.js");
-} catch {
+/**
+ * Where upstream's setup script actually is.
+ *
+ * NOT `require.resolve("@workflow/world-postgres/bin/setup.js")`: the package's
+ * `exports` map lists `.`, `./schema`, `./cli` and `./migrations/*.sql` and
+ * nothing else, so asking for the bin path by name throws
+ * ERR_PACKAGE_PATH_NOT_EXPORTED even on a perfectly good install. That is why
+ * this used to be a hardcoded `node_modules/...` string — which in turn broke
+ * on any layout that hoists.
+ *
+ * So: resolve an exported subpath to find where the package really lives, walk
+ * up to its root, and take the path out of its own `bin` field. The literal
+ * path stays as a first guess because it is right in the common case and costs
+ * one `existsSync`.
+ */
+function findSetupScript() {
+  const flat = join(process.cwd(), "node_modules", "@workflow", "world-postgres", "bin", "setup.js");
+  if (existsSync(flat)) return flat;
+
+  try {
+    let dir = dirname(require.resolve("@workflow/world-postgres/cli"));
+    for (let up = 0; up < 6; up += 1) {
+      const manifest = join(dir, "package.json");
+      if (existsSync(manifest)) {
+        const pkg = JSON.parse(readFileSync(manifest, "utf8"));
+        if (pkg.name === "@workflow/world-postgres") {
+          const rel = pkg.bin?.bootstrap ?? "./bin/setup.js";
+          const full = join(dir, rel);
+          if (existsSync(full)) return full;
+        }
+      }
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  } catch {
+    // Not installed, or an unexpected layout. Falls through to the message.
+  }
+  return null;
+}
+
+const setup = findSetupScript();
+if (!setup) {
   fail([
-    "@workflow/world-postgres is not installed.",
+    "@workflow/world-postgres is installed nowhere this script can find.",
     "",
     `    ${C.bold}npm install${C.reset}`,
   ]);

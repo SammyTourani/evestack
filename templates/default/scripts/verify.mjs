@@ -60,14 +60,20 @@ const env = (key) => envValue(fileEnv, key);
 /* configuration                                                               */
 /* -------------------------------------------------------------------------- */
 
-if (!fileEnv) {
+// Configuration can come from `.env.local` OR the environment; a container
+// deployment and CI both use the second and have no file at all. Only the
+// absence of BOTH is a problem, and it shows up as a failing postgres/model
+// check below rather than as a scolding about a file.
+if (fileEnv) {
+  pass("config", ".env.local");
+} else if (process.env.WORKFLOW_POSTGRES_URL || process.env.EVESTACK_AUTH_PASSWORD) {
+  pass("config", "environment variables (no .env.local, which is fine)");
+} else {
   fail(
-    "project",
-    "no .env.local in this directory",
+    "config",
+    "no .env.local here and nothing in the environment",
     "run this from the project directory create-evestack made",
   );
-} else {
-  pass("project", ".env.local found");
 }
 
 /* -------------------------------------------------------------------------- */
