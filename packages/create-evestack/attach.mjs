@@ -23,7 +23,7 @@ import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "
 import { isAbsolute, join, resolve } from "node:path";
 import {
   basename, C, DASHBOARD_IMAGE, DASHBOARD_IMAGE_PUBLISHED, detectPm, dim, freePort, makePrompter,
-  ok, portAnswers, REPO, say, step, templateDir, warn,
+  ok, REPO, say, step, templateDir, warn,
 } from "./shared.mjs";
 
 /**

@@ -183,7 +183,11 @@ export function portAnswers(port, host = "127.0.0.1") {
     socket.setTimeout(400);
     socket.once("connect", () => done(true));
     socket.once("timeout", () => done(false));
-    socket.once("error", () => done(false));
+    // `on`, not `once`. destroy() can emit a second error, and a socket error
+    // with no listener is an uncaught exception that takes the process with
+    // it — in a probe whose entire job is to fail quietly. done() is
+    // idempotent through res(), so extra calls are harmless.
+    socket.on("error", () => done(false));
   });
 }
 
