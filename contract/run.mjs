@@ -22,11 +22,15 @@
  *
  * Exit codes: 0 green · 1 a contract failed · 2 the runner could not start ·
  * 3 the suite shrank below contract/floor.json (see contract/lib/floor.mjs).
+ *
+ * 3 is only reachable when the suite is describing its own install. Under
+ * EVESTACK_CONTRACT_EVE_DIR a lower assertion count is a fact about the release
+ * being certified, not erosion here, so it is reported and does not set the code.
  */
 import { readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { FLOOR_EXIT_CODE, checkFloor, readFloor, writeFloor } from "./lib/floor.mjs";
+import { FLOOR_EXIT_CODE, describeShortfall, floorShortfalls, readFloor, writeFloor } from "./lib/floor.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -217,11 +221,40 @@ async function main() {
   // turns a routine `--only=auth` into an alarm about erosion that did not
   // happen — and an alarm that fires when nothing is wrong is how a real one
   // gets ignored.
-  const violations = only === null ? checkFloor(report, readFloor()) : [];
+  const shortfalls = only === null ? floorShortfalls(report, readFloor()) : [];
 
-  if (format === "json") process.stdout.write(`${JSON.stringify({ ...report, floorViolations: violations }, null, 2)}\n`);
+  // A contract that vanished from contract/contracts/ is erosion in either mode:
+  // nothing about the eve under test can delete a file from this checkout. A count
+  // that merely dropped is a different animal. Under EVESTACK_CONTRACT_EVE_DIR it
+  // tracks eve surface rather than ours — every published release below 0.30.8
+  // asserts once less than 0.30.8 does, purely because `action.partial` did not
+  // exist yet — so exiting 3 for it made every back-certification run non-zero and
+  // named the wrong repository as the cause.
+  const erosion = eve.isOverride ? shortfalls.filter((s) => s.absent) : shortfalls;
+  const coverageDelta = eve.isOverride ? shortfalls.filter((s) => !s.absent) : [];
+  const violations = erosion.map(describeShortfall);
+
+  if (format === "json")
+    process.stdout.write(`${JSON.stringify({ ...report, floorViolations: violations, coverageDelta }, null, 2)}\n`);
   else if (format === "markdown") process.stdout.write(renderMarkdown(report));
   else process.stdout.write(renderHuman(report, verbose));
+
+  // Same numbers as a floor violation, different meaning, and never a verdict: the
+  // release being certified simply has less surface to assert about.
+  if (coverageDelta.length > 0) {
+    const lines = [
+      "",
+      `  COVERAGE DELTA. eve ${eve.version} does not carry every surface the pinned eve does,`,
+      "  so these contracts generated fewer assertions here than they do against the pin:",
+      ...coverageDelta.map((s) => `    · ${s.id} asserted ${s.asserted} of the ${s.minimum} it asserts against the pin`),
+      "",
+      "  That is a fact about this release, not erosion here, so it does not fail the run.",
+      "  It does mean the green rows above cover less of this eve than they cover of the",
+      "  pinned one. The two runs are not equal coverage.",
+      "",
+    ];
+    process.stderr.write(`${lines.join("\n")}\n`);
+  }
 
   // Reported after the table, and before the exit, because it is a statement
   // about the table itself rather than about eve: everything above may be green

@@ -38,7 +38,12 @@ export const FLOOR_FILE = join(REPO_ROOT, "contract", "floor.json");
 /** Exit code for a floor violation. Distinct from 1 (a contract failed) and 2
  *  (the runner could not start), because it means something categorically
  *  different: the suite did not shrink because eve moved, it shrank because
- *  evestack did. */
+ *  evestack did.
+ *
+ *  Which is why run.mjs only reaches for it when the suite is describing the
+ *  install this checkout owns. Pointed at some other release, a lower count is
+ *  eve having less surface, and saying "evestack did" would be a false accusation
+ *  on every release older than the pin. */
 export const FLOOR_EXIT_CODE = 3;
 
 export function readFloor() {
@@ -68,34 +73,50 @@ export function writeFloor(report) {
 }
 
 /**
- * Returns a list of human-readable violations, empty when the report clears the
- * floor.
+ * Every contract that ran and asserted fewer times than the floor records —
+ * structured, and deliberately not worded.
  *
- * Skipped contracts are exempt but must still be PRESENT: a back-certification
- * run legitimately does not execute the repo-scoped contract, but a contract
- * that vanished from the directory entirely is erosion and must be caught in
- * either mode.
+ * The wording cannot live here, because the same shortfall means two different
+ * things depending on which eve is being interrogated. Against the install this
+ * checkout owns it means evestack eroded. Against a release supplied by
+ * EVESTACK_CONTRACT_EVE_DIR it usually means that release does not carry a surface
+ * the pinned one has: `action.partial` did not exist before eve 0.30.8, so the
+ * contract that reconciles it generates one assertion instead of two on every
+ * earlier release. Calling that "the suite shrank" sends a maintainer hunting for
+ * a deleted import that was never deleted. run.mjs picks the sentence.
+ *
+ * Skipped contracts are exempt but must still be PRESENT: a back-certification run
+ * legitimately does not execute the repo-scoped contracts, but a contract that
+ * vanished from the directory entirely is erosion and must be caught in either mode.
  */
-export function checkFloor(report, floor) {
+export function floorShortfalls(report, floor) {
   if (floor === null) return [];
-  const violations = [];
+  const shortfalls = [];
   const byId = new Map(report.contracts.map((c) => [c.id, c]));
 
   for (const [id, minimum] of Object.entries(floor.contracts ?? {})) {
     const contract = byId.get(id);
     if (contract === undefined) {
-      violations.push(`${id} is in the floor but did not run at all — was the contract file deleted?`);
+      shortfalls.push({ id, minimum, asserted: null, absent: true });
       continue;
     }
     // A skipped contract asserts nothing by design; holding it to a count would
     // make every back-certification run fail.
     if (contract.status === "skip") continue;
     if (contract.assertions.length < minimum) {
-      violations.push(
-        `${id} asserted ${contract.assertions.length}, floor is ${minimum} — ` +
-          `${minimum - contract.assertions.length} assertion(s) stopped being generated`,
-      );
+      shortfalls.push({ id, minimum, asserted: contract.assertions.length, absent: false });
     }
   }
-  return violations;
+  return shortfalls;
+}
+
+/**
+ * The erosion wording. Correct only when the suite is describing its own install;
+ * run.mjs uses the structured form above when it is not.
+ */
+export function describeShortfall(s) {
+  return s.absent
+    ? `${s.id} is in the floor but did not run at all — was the contract file deleted?`
+    : `${s.id} asserted ${s.asserted}, floor is ${s.minimum} — ` +
+      `${s.minimum - s.asserted} assertion(s) stopped being generated`;
 }
