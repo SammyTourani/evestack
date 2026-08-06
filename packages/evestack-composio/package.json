@@ -36,7 +36,7 @@
     "@composio/experimental": "0.2.1"
   },
   "peerDependencies": {
-    "eve": ">=0.30.0 <1.0.0"
+    "eve": ">=0.30.0 <0.31.0"
   },
   "devDependencies": {
     "@types/node": "24.x",

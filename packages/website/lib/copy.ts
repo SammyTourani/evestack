@@ -26,9 +26,11 @@ export const site = {
   command: "npx create-evestack",
   github: "https://github.com/SammyTourani/evestack",
   /* Was "… tested against every eve release since 0.29.5". Every package here
-     declares `eve: ">=0.30.0 <1.0.0"`, which EXCLUDES 0.29.5 — they will not
+     declares `eve: ">=0.30.0 <0.31.0"`, which EXCLUDES 0.29.5 — they will not
      install against it, so the sentence claimed testing on a version the code
-     refuses to run on. The contract suite is the real, checkable claim. */
+     refuses to run on. The contract suite is the real, checkable claim, and the
+     range above is now the measured one: every published eve inside it has been
+     run against the suite (docs/upgrading.mdx, "What has actually been run"). */
   attribution:
     "evestack is built on vercel/eve (Apache-2.0) and pinned to it by a contract suite that runs on every commit.",
   /* Footer, one line, small. Not a banner.

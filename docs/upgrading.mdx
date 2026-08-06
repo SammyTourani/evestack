@@ -126,6 +126,80 @@ the failure is still fresh. `contract/README.md` describes the shape.
 The import and attribute lists are derived from evestack's own source at run
 time, so they widen automatically as the codebase grows.
 
+## What has actually been run
+
+Every published `@evestack/*` package declares `eve: ">=0.30.0 <0.31.0"` as a
+peer range. That is a claim about which releases work, so it belongs here at the
+strength it was actually measured, with the date on it.
+
+**Method, 2026-08-06.** For each published eve in the range: a scratch copy of
+`templates/default`'s manifest with `eve` pinned to that exact version, a clean
+`npm install`, then the whole offline suite pointed at the result.
+
+```bash
+EVESTACK_CONTRACT_EVE_DIR=/path/to/scratch/node_modules/eve node contract/run.mjs
+```
+
+Every published release in the range was run. Nothing was sampled, because at
+the time of measurement the range contained nine releases in total.
+
+| eve | install | contracts run | assertions | result |
+|---|---|---|---|---|
+| **0.30.8** (pinned) | ok | 15 of 15 | 224 | green |
+| 0.30.7 | ok | 15 of 15 | 223 | green |
+| 0.30.6 | ok | 15 of 15 | 223 | green |
+| 0.30.5 | ok | 15 of 15 | 223 | green |
+| 0.30.4 | ok | 15 of 15 | 223 | green |
+| 0.30.3 | ok | 15 of 15 | 223 | green |
+| 0.30.2 | ok | 15 of 15 | 223 | green |
+| 0.30.1 | ok | 15 of 15 | 223 | green |
+| 0.30.0 | ok | 15 of 15 | 223 | green |
+
+The 223 is not a failure and not erosion: `action.partial` arrived in 0.30.8, so
+on every earlier release `protocol/action-events-promote-eval-reads` has one
+fewer thing to reconcile and asserts once less. The runner prints that as a
+coverage delta rather than a floor violation — see the note on exit code 3 in
+`contract/run.mjs`.
+
+### The controls
+
+A table on which everything passes is not evidence that anything was checked, so
+three releases below the range were run the same way:
+
+| eve | install | contracts run | assertions | result |
+|---|---|---|---|---|
+| 0.29.5 | ok | 14 of 15 pass | 223 | **red** — `auth/local-dev-must-not-trust-the-request`, 6 of 9 |
+| 0.29.0 | ok | 12 of 15 pass | 174 | **red** — auth (6 of 9) plus both telemetry contracts |
+| 0.28.0 | ok | 12 of 15 pass | 174 | **red** — the same three |
+
+The auth contract fails in both directions on 0.29.x, which is the shape of the
+bug rather than a near miss: four assertions red because `localDev()` hands
+`127.evil.com`, `127.0.0.1.nip.io` and friends a full `local-dev` principal, and
+two more red because it grants nothing inside an `eve dev` process whose request
+does not look like loopback. On 0.29.0 and 0.28.0,
+`dist/src/tracing/agent-otel-provider.js` does not exist yet, which takes both
+telemetry contracts down with it and removes 49 assertions of coverage.
+
+### What the table does not say
+
+- **Two contracts never run in this mode.** `version/…` and `docs/…` are
+  `scope: "repo"`: they describe this checkout, not eve, so a run pointed at
+  another release skips them. That is 65 of the 289 assertions, 22% of the suite.
+  A skipped contract checked nothing, and none of the rows above should be read
+  as covering it.
+- **The documented auth floor is `^0.30.2`; the measured one is 0.30.0.** The
+  auth contract is green from 0.30.0 onward. The extra two patch versions in the
+  advice are conservatism, not a measured requirement.
+- **The upper bound is where the evidence stops, not where the breakage starts.**
+  Nothing above 0.30.8 has been published. The peer range says `<0.31.0` rather
+  than `<1.0.0` for that reason: the last minor bump, 0.29 → 0.30, changed what
+  `localDev()` means and forced code out of this repository, so a 0.x minor is a
+  breaking change here and promising all of them would be promising something
+  nobody has run.
+- **This is the offline tier only.** `contract/runtime/` has no equivalent of
+  `EVESTACK_CONTRACT_EVE_DIR` — it always drives this checkout's install — so no
+  row above says anything about behaviour that needs a database or a live server.
+
 ## The `eve-watch` workflow
 
 `.github/workflows/eve-watch.yml` runs daily and on demand. It asks npm for the
