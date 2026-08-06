@@ -1,4 +1,3 @@
-import { setDefaultAutoSelectFamily } from "node:net";
 import { Pool, types as pgTypes, type CustomTypesConfig } from "pg";
 
 /**
@@ -16,26 +15,41 @@ declare global {
   var __evestackPool: Pool | undefined;
 }
 
-/**
- * Connect to one address at a time instead of racing every address a hostname
- * resolves to.
+/*
+ * ─ There used to be a `setDefaultAutoSelectFamily(false)` here ───────────────
  *
- * `localhost` resolves to both ::1 and 127.0.0.1, which sends Node down its
- * happy-eyeballs path — and when every attempt is refused, that path can build
- * its summary `AggregateError` from a list it has already cleared. The
- * constructor then throws `TypeError: object null is not iterable` from inside
- * node:net, on a socket callback, where no `await` and no page `try/catch` can
- * see it. The result was `⨯ uncaughtException` and `GET / 500 in 100s` for the
- * single most likely misconfiguration there is: Postgres not started.
+ * It turned off Node's happy-eyeballs race so that a hostname resolving to both
+ * ::1 and 127.0.0.1 produced one connection attempt instead of two. The reason
+ * was a Node bug: when every attempt was refused, node:net built its summary
+ * `AggregateError` from a list it had already cleared and threw
+ * `TypeError: object null is not iterable` out of a socket callback, past every
+ * `try/catch`, as `uncaughtException` plus a 100-second hang.
  *
- * Measured on this exact code: `…@localhost:5999` → 500 after 100s plus four
- * uncaught exceptions; `…@127.0.0.1:5999`, which resolves to one address and so
- * never enters that path → 200 in 0.3s with the intended "Can't reach the
- * database" page. Disabling the race gets the second behaviour for hostnames
- * too. The cost is the pre-Node-20 fallback speed on a broken-IPv6 network,
- * which is a fair trade against taking the process down.
+ * It is gone because it cost more than it bought, and because what it bought is
+ * no longer for sale:
+ *
+ *   - THE COST. It is a PROCESS-WIDE setting, and with the race off Node tries
+ *     only the FIRST address a name resolves to. On macOS `localhost` is ::1
+ *     first, and Docker Desktop and Colima publish on IPv4 only — so the
+ *     scaffolder's own `…@localhost:5433` reached nothing. `evestack doctor`,
+ *     which imports the sibling copy of this line, answered "Cannot reach
+ *     Postgres … docker compose up -d postgres" against a healthy, running,
+ *     already-connected database. A diagnostic tool that misdiagnoses the
+ *     default setup is worse than no diagnostic tool.
+ *
+ *   - THE BENEFIT IS GONE. Measured on 24.11.1, 24.15.0 and 26.0.0 — the whole
+ *     range `engines.node: >=24` allows — a refused `…@localhost:5999` now
+ *     rejects with a well-formed `AggregateError` (`errors.length === 2`) in
+ *     7 ms, caught by the ordinary `await`. No uncaught exception, no hang.
+ *
+ * The two defences that remain are the ones that should have been carrying this
+ * all along and are not version-dependent: `connectionTimeoutMillis` below
+ * bounds the hang, and `describeDbError` below flattens an `AggregateError`
+ * whose `errors` is null rather than iterating it blind.
+ *
+ * If this ever needs to come back, scope it to one connection — never to the
+ * process — and never in a module a CLI also imports.
  */
-setDefaultAutoSelectFamily(false);
 
 const NAIVE_TIMESTAMP = pgTypes.builtins.TIMESTAMP;
 

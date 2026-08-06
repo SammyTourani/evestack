@@ -161,7 +161,20 @@ async function reportIngestCredential(url: string, token: string | undefined): P
         "Postgres)." +
         (detail ? ` Dashboard said: ${detail}` : ""),
     );
+    return;
   }
+
+  // The only line here that reports success, and the reason it earns its place:
+  // every other message this module can print is a warning, so a correctly
+  // configured agent said nothing at all about the dashboard and the operator
+  // had no way to tell "connected" from "not attempted". eve's own boot output
+  // is a port number and three channel-idle notices; nothing in it names the
+  // thing you are actually meant to open.
+  console.log(
+    `[evestack] dashboard connected — open ${new URL(url).origin} ` +
+      "(sign in with EVESTACK_AUTH_USER / EVESTACK_AUTH_PASSWORD from .env.local). " +
+      "`npm run verify` checks every part of the stack.",
+  );
 }
 
 function describe(error: unknown): string {

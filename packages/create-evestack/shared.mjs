@@ -9,6 +9,7 @@
  * Still dependency-free, for the reason index.mjs gives.
  */
 import { existsSync } from "node:fs";
+import { createConnection } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -143,4 +144,52 @@ export async function makePrompter(nonInteractive) {
   };
 
   return { ask, confirm, close: () => rl?.close() };
+}
+
+/* -------------------------------------------------------------------------- */
+/* ports                                                                       */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Is something already listening here?
+ *
+ * A short connect probe rather than a bind test: binding would succeed against
+ * a port Docker has published but nothing is answering on, and it is Docker's
+ * publish that fails later, not ours.
+ */
+export function portAnswers(port, host = "127.0.0.1") {
+  return new Promise((res) => {
+    const socket = createConnection({ host, port });
+    const done = (answered) => {
+      socket.destroy();
+      res(answered);
+    };
+    socket.setTimeout(400);
+    socket.once("connect", () => done(true));
+    socket.once("timeout", () => done(false));
+    socket.once("error", () => done(false));
+  });
+}
+
+/**
+ * The first free port at or after `start`, or `start` if the whole window is
+ * taken.
+ *
+ * `attach` has always done this and `create` did not, which is backwards —
+ * `create` is the command a first-time user runs, and running it twice was
+ * enough to earn `Bind for 0.0.0.0:5433 failed: port is already allocated`
+ * halfway through `docker compose up`, with a half-created container left
+ * behind. Worse, `docker compose ps` then reports the container healthy while
+ * the published port is missing, so the NEXT command fails instead with a raw
+ * ECONNREFUSED from inside a migration library.
+ *
+ * Falling back to `start` rather than throwing is deliberate: 20 consecutive
+ * busy ports means something unusual is going on, and Docker's own error names
+ * the port more usefully than a guess from here would.
+ */
+export async function freePort(start, count = 20) {
+  for (let port = start; port < start + count; port += 1) {
+    if (!(await portAnswers(port))) return port;
+  }
+  return start;
 }

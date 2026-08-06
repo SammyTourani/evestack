@@ -83,12 +83,28 @@ const OTEL_NAME_RE = /["'](agent\.[a-z_.]+|ai\.[A-Za-z_.]+|gen_ai\.[a-z_.]+)["']
  * fix, not a silent one, and pinning prose here would also drag in
  * `ai.streamText`, which is not eve's literal at all (eve derives that span
  * name from the AI SDK's `operationId` at runtime).
+ *
+ * `scripts/` is excluded for the same reason the website is, and the word that
+ * decides it is CONSUMER. Everything this contract protects is the read path:
+ * a name that eve stops emitting turns a SQL projection into NULLs and a span
+ * filter into an empty timeline, with no error anywhere. A script under
+ * `scripts/` does the opposite — `seed.mjs` WRITES synthetic spans so the
+ * charts have something to draw — and a producer naming a span eve no longer
+ * emits produces obviously-wrong seed data, not a silent NULL.
+ *
+ * Without this exclusion the suite went red the moment that seed script landed,
+ * on six names it fabricates and eve has never emitted (`ai.eve.step`,
+ * `ai.eve.turn`, `gen_ai.client`, `gen_ai.execute_tool`, `gen_ai.invoke_agent`,
+ * `gen_ai.client.operation.execute_tool.duration`) — a real contract reporting
+ * a failure that is not one, which is how a suite earns being ignored.
  */
+const NON_CONSUMER_PREFIXES = ["packages/dashboard/scripts/"];
 function dashboardOtelNames() {
   const found = new Map();
   for (const file of sourceFiles()) {
     const rel = relative(REPO_ROOT, file);
     if (!rel.startsWith("packages/dashboard/")) continue;
+    if (NON_CONSUMER_PREFIXES.some((prefix) => rel.startsWith(prefix))) continue;
     for (const match of readFileSync(file, "utf8").matchAll(OTEL_NAME_RE)) {
       const origins = found.get(match[1]) ?? new Set();
       origins.add(rel);

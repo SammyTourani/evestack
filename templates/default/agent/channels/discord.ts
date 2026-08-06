@@ -59,13 +59,27 @@ const allowedGuildIds = new Set(
     .filter(Boolean),
 );
 
+// One line by default, the whole story under EVESTACK_VERBOSE. See the note in
+// agent/channels/telegram.ts for why.
 if (!publicKey) {
-  console.warn(
-    "[evestack:discord] DISCORD_PUBLIC_KEY is not set, so the Discord channel is registered " +
-      "but rejects every interaction, including Discord's endpoint-verification PING. " +
-      "See docs/channels/discord.mdx.",
-  );
+  if (verbose()) {
+    console.warn(
+      "[evestack:discord] DISCORD_PUBLIC_KEY is not set, so the Discord channel is registered " +
+        "but rejects every interaction, including Discord's endpoint-verification PING. " +
+        "See docs/channels/discord.mdx.",
+    );
+  } else {
+    console.log("[evestack] discord idle — no DISCORD_PUBLIC_KEY (docs/channels/discord.mdx)");
+  }
 }
+/** `EVESTACK_VERBOSE=1` turns the one-line boot notice below into the full
+ *  explanation. Defined per file on purpose: this module also ships as a
+ *  standalone registry item and cannot import a sibling. */
+function verbose(): boolean {
+  const value = process.env.EVESTACK_VERBOSE?.trim();
+  return Boolean(value) && value !== "0" && value !== "false";
+}
+
 
 export default discordChannel({
   onCommand: (_ctx, interaction) => {

@@ -140,6 +140,23 @@ function codeForUpstream(upstream: number): AgentErrorCode {
 /* transport                                                                   */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * The agent's URL as a HUMAN should type it, for display only.
+ *
+ * `agentBaseUrl()` is the address THIS PROCESS uses, and inside the shipped
+ * container that is `http://host.docker.internal:2001` — correct for a fetch
+ * from in here, and completely useless pasted into a terminal on the host,
+ * where that name does not resolve. Printing it is worse than printing a wrong
+ * port, because a wrong port fails immediately and a name that does not resolve
+ * reads as a network problem.
+ *
+ * Only the host is rewritten. The port is the one thing that was actually wrong
+ * before, and it stays exactly as configured.
+ */
+export function agentUrlForHumans(): string {
+  return agentBaseUrl().replace(/\/\/(host\.docker\.internal|0\.0\.0\.0)(?=[:/]|$)/, "//localhost");
+}
+
 export function agentBaseUrl(): string {
   const raw = process.env.EVESTACK_AGENT_URL?.trim();
   return (raw && raw.length > 0 ? raw : DEFAULT_AGENT_URL).replace(/\/+$/, "");
@@ -197,10 +214,17 @@ export async function agentFetch(path: string, options: AgentFetchOptions = {}):
         cause,
       });
     }
+    // `npm run dev`, not `pnpm exec eve dev --no-ui`. A scaffolded project is an
+    // npm project with that script defined, and this string is shown at the one
+    // moment the reader is looking for something to type — handing them a
+    // package manager they may not have installed, running a binary they have
+    // not heard of, with a flag whose meaning is not obvious, was the worst
+    // possible answer to "how do I start the agent". `pnpm` remains correct
+    // inside this repository and nowhere a dashboard user will ever be.
     throw new AgentError(
       "agent_unreachable",
-      `Cannot reach the eve agent at ${agentBaseUrl()}. Start it with \`pnpm exec eve dev --no-ui\` ` +
-        `or set EVESTACK_AGENT_URL to where it is listening.`,
+      `Cannot reach the eve agent at ${agentBaseUrl()}. Start it with \`npm run dev\` in your ` +
+        `project directory, or set EVESTACK_AGENT_URL to where it is listening.`,
       { status: 502, cause },
     );
   }
