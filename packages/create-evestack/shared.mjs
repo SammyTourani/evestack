@@ -36,7 +36,20 @@ export const REPO = "https://github.com/SammyTourani/evestack";
  */
 export const DASHBOARD_IMAGE_TAG = "0.1.0";
 export const DASHBOARD_IMAGE = `ghcr.io/sammytourani/evestack-dashboard:${DASHBOARD_IMAGE_TAG}`;
-export const DASHBOARD_IMAGE_PUBLISHED = false;
+/**
+ * True since 2026-08-05, when `dashboard-v0.1.0` published
+ * `ghcr.io/sammytourani/evestack-dashboard:0.1.0` as a multi-arch manifest
+ * (linux/amd64 + linux/arm64). Verified against the registry anonymously: HTTP
+ * 200, both platforms present — so it is public and a stranger can pull it.
+ *
+ * This one boolean is what stands between "one command" being a claim and being
+ * a fact. While false, the scaffolder and `attach` print a build-it-yourself
+ * apology and the generated compose file carries a NOT PUBLISHED YET comment.
+ * Flipping it before the image exists would make all of that read as true while
+ * every user's `--profile dashboard` ended in `manifest unknown`, so it moves
+ * only after the tag lands, never in the same commit that cuts the release.
+ */
+export const DASHBOARD_IMAGE_PUBLISHED = true;
 
 export const C = {
   reset: "\x1b[0m", dim: "\x1b[2m", bold: "\x1b[1m",

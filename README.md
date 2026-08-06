@@ -52,21 +52,9 @@ scaffolder generated. It prints them.
 `npx create-evestack my-agent` is the same scaffolder under the name npm's `create-*`
 convention expects — one implementation, two published names, either one.
 
-> [!IMPORTANT]
-> **The dashboard image is not published yet.** `ghcr.io/sammytourani/evestack-dashboard:0.1.0`
-> lands with evestack's first dashboard release; until then that last line fails with
-> `manifest unknown`. Build that exact tag once and Docker finds it locally, with nothing in
-> your project to change:
->
-> ```bash
-> git clone https://github.com/SammyTourani/evestack
-> docker build -t ghcr.io/sammytourani/evestack-dashboard:0.1.0 \
->   -f evestack/packages/dashboard/Dockerfile evestack
-> ```
->
-> The context is the repository **root**, not `packages/dashboard`: the dashboard resolves
-> `@evestack/schedules` over pnpm's `workspace:*` protocol, which exists only against the root
-> lockfile. Delete the clone afterwards; the image stays.
+That last line is a **pull**, not a build. `ghcr.io/sammytourani/evestack-dashboard:0.1.0` is
+published as a multi-arch manifest — `linux/amd64` and `linux/arm64`, ~204 MB compressed — so it
+runs on an Apple Silicon laptop and on an ordinary x86 server without you choosing which.
 
 To run an image of your own instead — a fork, a private registry — set
 `EVESTACK_DASHBOARD_IMAGE` in a `.env` beside the compose file. From a clone of this repository

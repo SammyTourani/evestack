@@ -97,22 +97,9 @@ That is a **pull**. The generated `docker-compose.yml` points at
 the service is already wired to this project's database and to the `.env.local` your agent
 reads — so there is no repository to clone, no image to build, and no credential to copy across.
 
-<Warning>
-  **The image is not published yet.** It lands with evestack's first dashboard release; until
-  then the command above fails with `manifest unknown`. Build that exact tag once and Docker
-  finds it locally, with nothing in your project to change:
-
-  ```bash
-  git clone https://github.com/SammyTourani/evestack
-  docker build -t ghcr.io/sammytourani/evestack-dashboard:0.1.0 \
-    -f evestack/packages/dashboard/Dockerfile evestack
-  ```
-
-  The build context is the repository **root**, not `packages/dashboard`. The dashboard depends
-  on `@evestack/schedules` through pnpm's `workspace:*` protocol, which resolves only against
-  the root lockfile — building from the package directory is what used to end at
-  `EUNSUPPORTEDPROTOCOL`. Delete the clone afterwards; the image stays.
-</Warning>
+That pull resolves a multi-arch manifest — `linux/amd64` and `linux/arm64`, ~204 MB
+compressed — so the same command works on an Apple Silicon laptop and on an x86 server
+without you choosing a platform.
 
 <Note>
   To run an image of your own — a fork, a private registry, a local build under a different name
