@@ -123,7 +123,10 @@ export default async function ApprovalsPage() {
                 const t = trust(row.approverVia);
                 return (
                   <tr key={row.id}>
-                    <td className="mono">{stamp(row.decidedAt, "second")}</td>
+                    {/* An audit log is unbounded in time, so the year is not optional here:
+                        without it a decision from last August and one from this August are
+                        the same string. See the note on `stamp`. */}
+                    <td className="mono">{stamp(row.decidedAt, "second", { year: true })}</td>
                     <td>
                       <span
                         className={

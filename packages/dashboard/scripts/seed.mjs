@@ -396,7 +396,17 @@ export function generate(opts) {
 
       const cacheRead = model.cached && t > 0 ? rng.int(1200, 14_000) : 0;
       const cacheWrite = model.cached && t === 0 ? rng.int(800, 9000) : 0;
-      const inputTokens = rng.int(900, 12_000) + cacheRead;
+      // Input tokens are a TOTAL that already contains both cache classes, not a
+      // fourth number sitting beside them. The provider computes
+      // `total: inputTokens + cacheCreationTokens + cacheReadTokens`
+      // (@ai-sdk/anthropic convert-anthropic-usage), the AI SDK forwards that total,
+      // and eve stamps it as `$eve.input_tokens`. An earlier draft here added only
+      // cacheRead, which let the fixture emit splits that cannot occur — cache reads
+      // plus cache writes exceeding the input total — on 160 of 1,860 turns. Cost code
+      // then has to clamp a negative non-cached count and either discard tokens or
+      // warn, and it was warning on the demo dataset. The fixture was wrong, not the
+      // arithmetic reading it.
+      const inputTokens = rng.int(900, 12_000) + cacheRead + cacheWrite;
       const outputTokens = errored || noModelCall ? 0 : rng.int(40, 2600);
 
       const status = lastTurnOfWedged

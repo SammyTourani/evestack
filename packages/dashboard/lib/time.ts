@@ -55,18 +55,29 @@ function timeOfDay(d: Date, precision: Precision): string {
 /**
  * An absolute instant with its date, e.g. "Aug 5 21:40 UTC".
  *
- * The year is omitted because every surface that prints one of these is a
- * rolling operational view of the last hours or days, and the callers that can
- * show a far-off instant (the next fire of a schedule) already carry the full
- * ISO string in a `title`. `day` precision keeps the year: a date with no time
- * is the one case where the reader has no other anchor.
+ * The year is omitted by default because most of these surfaces are rolling
+ * operational views of the last hours or days, where it is four characters of
+ * noise on every row. `day` precision keeps it — a date with no time has no
+ * other anchor — and so does any caller passing `{ year: true }`.
+ *
+ * Pass it on a permanent record. `/approvals` is an audit log and `/schedules`
+ * keeps run history: both are ordered by time but not bounded by it, so a
+ * decision from last August and one from this August render as the same string
+ * and the reader cannot tell the rows apart. A rolling view never hits that; a
+ * record hits it the first time a row is a year old, which is exactly when
+ * nobody is looking.
  */
-export function stamp(iso: string | null, precision: Precision = "minute"): string {
+export function stamp(
+  iso: string | null,
+  precision: Precision = "minute",
+  { year = false }: { year?: boolean } = {},
+): string {
   if (!iso) return EM_DASH;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return EM_DASH;
-  const date = `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`;
-  if (precision === "day") return `${date}, ${d.getUTCFullYear()} UTC`;
+  const day = `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`;
+  const date = year || precision === "day" ? `${day}, ${d.getUTCFullYear()}` : day;
+  if (precision === "day") return `${date} UTC`;
   return `${date} ${timeOfDay(d, precision)} UTC`;
 }
 
@@ -74,12 +85,19 @@ export function stamp(iso: string | null, precision: Precision = "minute"): stri
  * Time of day only, with no zone marker — for a chart axis or a dense column
  * where one nearby "UTC" label covers every value. Anywhere the value stands
  * on its own, use `stamp`.
+ *
+ * `day` is excluded from the signature rather than handled: a date-only axis
+ * tick is a blank axis, so the compiler refuses the call instead of a runtime
+ * fallback quietly printing something the caller did not ask for.
  */
-export function clock(iso: string | null, precision: Precision = "minute"): string {
+export function clock(
+  iso: string | null,
+  precision: Exclude<Precision, "day"> = "minute",
+): string {
   if (!iso) return EM_DASH;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return EM_DASH;
-  return timeOfDay(d, precision === "day" ? "minute" : precision);
+  return timeOfDay(d, precision);
 }
 
 /**
@@ -100,11 +118,20 @@ export function ago(iso: string | null, now: number = Date.now()): string {
   return `${Math.floor(seconds / 86_400)}d ago`;
 }
 
-/** A span of time, not a point in it — so no zone is involved. */
+/**
+ * A span of time, not a point in it — so no zone is involved.
+ *
+ * Three significant figures the whole way up: whole milliseconds below a
+ * second, hundredths below ten seconds, tenths above. The middle step is the
+ * one worth naming, because losing it is invisible in a tooltip and fatal in a
+ * percentile panel — `/monitors` reads a p50 of 4946ms and a p75 of 9598ms, and
+ * at one decimal those are "4.9s" and "9.6s", which is the resolution the page
+ * exists to show thrown away in the formatter.
+ */
 export function duration(ms: number | null): string {
   if (ms === null || !Number.isFinite(ms) || ms < 0) return EM_DASH;
   if (ms < 1000) return `${Math.round(ms)}ms`;
-  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(ms < 10_000 ? 2 : 1)}s`;
   const minutes = Math.floor(ms / 60_000);
   const seconds = Math.round((ms % 60_000) / 1000);
   return `${minutes}m ${pad(seconds)}s`;

@@ -147,7 +147,10 @@ export function ScheduleList({
                     {runs.map((run) => (
                       <tr key={run.id}>
                         <td className="mono">
-                          {stamp(run.fireAt, "second")}
+                          {/* History, not a rolling view: the last 100 runs of a nightly
+                              schedule reach back months, and a yearly one further. The year
+                              is what keeps two fires twelve months apart distinguishable. */}
+                          {stamp(run.fireAt, "second", { year: true })}
                           {run.caughtUp && (
                             <span
                               className={styles.caught}

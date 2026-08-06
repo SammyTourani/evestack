@@ -33,24 +33,51 @@
  * that a turn called no tools when the truth is that nothing recorded whether
  * it did.
  *
- * ─ 3. The partial-index predicate is one Postgres can actually prove ─
+ * The ambiguous case has two shapes and only one of them is obvious. A trace
+ * covering two turns of the SAME session is caught by anything; a trace
+ * covering one turn here and one turn in another session is caught only if the
+ * guard counts turn ids over the whole trace rather than over the spans this
+ * session's query happened to select. Both are fixtured below, because the
+ * second is the one the query got wrong.
  *
- * `sql/run-indexes.sql` uses `WHERE (attributes->>'$eve.root') IS NOT NULL`
- * rather than `WHERE attributes ? '$eve.root'`. The two select identical rows;
- * only the first is implied by the query's own `= $1`, so only the first is
- * ever used. Measured, the `?` form built fine, was never chosen, and left the
- * LATERAL a sequential scan while still costing every insert. That is a trap
- * worth a permanent assertion, because both indexes look equally healthy in
- * `\d`.
+ * ─ 3. The shipped index file applies, and its predicate is one Postgres can
+ *      actually prove ─
+ *
+ * `packages/dashboard/sql/query-indexes.sql` is executed by exactly one thing:
+ * `ensureQueryIndexes()`, at runtime, which warns once and swallows every
+ * failure by design. So a typo in that file costs every page its indexes and
+ * says so nowhere a human will look. This probe is the thing that reads it —
+ * rewritten onto a throwaway schema and run for real, so a broken statement is
+ * a red check with the Postgres error in it.
+ *
+ * Rewriting the schema names is the one thing this cannot see: the file is
+ * proven to be valid SQL against tables of the right SHAPE, not proven to be
+ * pointed at the right schemas. `contract/contracts/06-run-attributes.contract.mjs`
+ * covers the attribute names; nothing covers a wrong schema name, and a wrong
+ * schema name would at least fail loudly in psql.
+ *
+ * The predicate half: the file uses `WHERE (attributes->>'$eve.root') IS NOT
+ * NULL` rather than `WHERE attributes ? '$eve.root'`. The two select identical
+ * rows; only the first is implied by the query's own `= $1`, so only the first
+ * is ever used. Measured, the `?` form built fine, was never chosen, and left
+ * the LATERAL a sequential scan while still costing every insert. That is a
+ * trap worth a permanent assertion, because both indexes look equally healthy
+ * in `\d`.
  *
  * Fixtures mirror the shapes in packages/dashboard/scripts/seed.mjs. Drift
  * between them should be read as this probe going stale rather than as a
  * discovery.
  */
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { REPO_ROOT } from "../../lib/repo.mjs";
 
 /** Exactly the sort key the seeded database produces for a tied pair. */
 const TIED_AT = "2026-08-06 11:56:37.310418";
+
+/** The DDL the dashboard applies at boot, and that nothing else ever runs. */
+const INDEX_FILE = "packages/dashboard/sql/query-indexes.sql";
 
 async function connect() {
   const { default: pg } = await import("pg");
@@ -216,7 +243,7 @@ export default {
       );
 
       /* ---------------------------------------------------------------- */
-      /* 2. index conditions                                               */
+      /* 2. the shipped index file, and the plans it is supposed to buy    */
       /* ---------------------------------------------------------------- */
 
       // Bulk so the planner has a reason to prefer an index at all.
@@ -227,14 +254,83 @@ export default {
                jsonb_build_object('$eve.type','turn','$eve.root','wrun_tie_a','$eve.parent','wrun_tie_a')
           FROM generate_series(1, 20000) g
       `);
-      await client.query(`
-        CREATE INDEX probe_type_created_idx
-          ON ${schema}.workflow_runs ((attributes->>'$eve.type'), created_at DESC, id DESC)
-      `);
       await client.query(`ANALYZE ${schema}.workflow_runs`);
 
       const explain = async (sql, params = []) =>
         (await client.query(`EXPLAIN ${sql}`, params)).rows.map((r) => r["QUERY PLAN"]).join("\n");
+
+      const rootLookup = `SELECT id FROM ${schema}.workflow_runs WHERE attributes->>'$eve.root' = 'wrun_tie_a'`;
+
+      // The negative control runs FIRST, and alone. Once the shipped
+      // `IS NOT NULL` index exists the planner has a usable index either way,
+      // and "the `?` index was not chosen" stops meaning anything.
+      await client.query(`
+        CREATE INDEX probe_root_jsonb_exists_idx ON ${schema}.workflow_runs ((attributes->>'$eve.root'))
+          WHERE attributes ? '$eve.root'
+      `);
+      await client.query(`ANALYZE ${schema}.workflow_runs`);
+      const unprovable = await explain(rootLookup);
+      const unprovableUsed = unprovable.includes("probe_root_jsonb_exists_idx");
+      t.ok(
+        !unprovableUsed,
+        "a `WHERE attributes ? '$eve.root'` partial index is NEVER used by an `->>` equality",
+        unprovableUsed
+          ? {
+              expected: "the planner to ignore it — Postgres cannot prove `->> = $1` implies `? '$eve.root'`",
+              actual: `it was used, so ${INDEX_FILE} could safely use the cheaper predicate:\n${unprovable}`,
+            }
+          : {},
+      );
+      await client.query(`DROP INDEX ${schema}.probe_root_jsonb_exists_idx`);
+
+      // Now the file itself, rather than a hand-copy of it. Two things follow
+      // from running the real bytes: a typo is a red check here instead of a
+      // once-per-process console.warn nobody reads, and the plan assertions
+      // below are about the indexes that actually ship rather than about
+      // indexes this probe wrote to look like them.
+      const indexSql = readFileSync(join(REPO_ROOT, INDEX_FILE), "utf8");
+
+      // The file's own promise, and the entire argument for creating anything
+      // in `workflow` — someone else's schema. An index is additive and
+      // reversible; an ALTER or a data statement smuggled in here would run
+      // against eve's live table at boot with its failure swallowed.
+      const statements = indexSql
+        .replace(/^\s*--.*$/gm, "")
+        .split(";")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const notIndexes = statements.filter((s) => !/^CREATE INDEX IF NOT EXISTS /i.test(s));
+      t.ok(
+        statements.length > 0 && notIndexes.length === 0,
+        `every statement in ${INDEX_FILE} is a CREATE INDEX IF NOT EXISTS`,
+        notIndexes.length === 0
+          ? { expected: "at least one statement", actual: "the file parsed to no statements at all" }
+          : { expected: "CREATE INDEX IF NOT EXISTS only", actual: notIndexes.join("\n---\n") },
+      );
+
+      let applyError = null;
+      try {
+        // Same multi-statement, single-query application the dashboard does,
+        // pointed at this schema's copies of the two tables.
+        await client.query(
+          indexSql
+            .replaceAll("workflow.workflow_runs", `${schema}.workflow_runs`)
+            .replaceAll("evestack.spans", `${schema}.spans`),
+        );
+      } catch (error) {
+        applyError = error;
+      }
+      t.ok(
+        applyError === null,
+        `${INDEX_FILE} applies cleanly — the only place anything but a live dashboard runs it`,
+        applyError === null
+          ? {}
+          : {
+              expected: "every statement to succeed",
+              actual: `${applyError.message}\n— ensureQueryIndexes() would have warned once and swallowed this, leaving every page un-indexed`,
+            },
+      );
+      await client.query(`ANALYZE ${schema}.workflow_runs`);
 
       const keysetPlan = await explain(
         `SELECT id FROM ${schema}.workflow_runs s
@@ -245,49 +341,28 @@ export default {
       );
       // "Index Cond", not "Filter": a filter means every matching row is read
       // and discarded, which is the O(table) behaviour keyset paging replaces.
-      const isIndexCond = /Index Cond:.*ROW\(created_at/s.test(keysetPlan);
+      // The index NAME is asserted too, so the check cannot pass on some other
+      // index that happens to exist while the shipped one is doing nothing.
+      const isIndexCond =
+        /Index Cond:.*ROW\(created_at/s.test(keysetPlan) && keysetPlan.includes("evestack_runs_type_created_idx");
       t.ok(
         isIndexCond,
-        "the row comparison becomes an index condition, not a post-scan filter",
-        isIndexCond ? {} : { expected: "Index Cond containing ROW(created_at, …)", actual: keysetPlan },
+        "the row comparison becomes an index condition on the shipped evestack_runs_type_created_idx",
+        isIndexCond
+          ? {}
+          : { expected: "Index Cond containing ROW(created_at, …) on evestack_runs_type_created_idx", actual: keysetPlan },
       );
 
-      // The partial-predicate trap, both halves.
-      await client.query(`
-        CREATE INDEX probe_root_jsonb_exists_idx ON ${schema}.workflow_runs ((attributes->>'$eve.root'))
-          WHERE attributes ? '$eve.root'
-      `);
-      await client.query(`ANALYZE ${schema}.workflow_runs`);
-      const rootLookup = `SELECT id FROM ${schema}.workflow_runs WHERE attributes->>'$eve.root' = 'wrun_tie_a'`;
-      const unprovable = await explain(rootLookup);
-      const unprovableUsed = unprovable.includes("probe_root_jsonb_exists_idx");
-      t.ok(
-        !unprovableUsed,
-        "a `WHERE attributes ? '$eve.root'` partial index is NEVER used by an `->>` equality",
-        unprovableUsed
-          ? {
-              expected: "the planner to ignore it — Postgres cannot prove `->> = $1` implies `? '$eve.root'`",
-              actual: `it was used, so sql/run-indexes.sql could safely use the cheaper predicate:\n${unprovable}`,
-            }
-          : {},
-      );
-
-      await client.query(`DROP INDEX ${schema}.probe_root_jsonb_exists_idx`);
-      await client.query(`
-        CREATE INDEX probe_root_notnull_idx ON ${schema}.workflow_runs ((attributes->>'$eve.root'))
-          WHERE (attributes->>'$eve.root') IS NOT NULL
-      `);
-      await client.query(`ANALYZE ${schema}.workflow_runs`);
       const provable = await explain(rootLookup);
-      const provableUsed = provable.includes("probe_root_notnull_idx");
+      const provableUsed = provable.includes("evestack_runs_root_idx");
       t.ok(
         provableUsed,
         "the `IS NOT NULL` partial index IS used, because equality is strict and implies it",
         provableUsed
           ? {}
           : {
-              expected: "an index scan on probe_root_notnull_idx",
-              actual: `${provable}\n— sql/run-indexes.sql ships this index for exactly this lookup; if it is not used it is pure write cost`,
+              expected: "an index scan on evestack_runs_root_idx",
+              actual: `${provable}\n— ${INDEX_FILE} ships this index for exactly this lookup; if it is not used it is pure write cost`,
             },
       );
 
@@ -321,6 +396,19 @@ export default {
       await addSpan("trace_shared", "ai.eve.turn", "wrun_turn_shared_b");
       await addSpan("trace_shared", "execute_tool bash", null);
 
+      // The same ambiguity, reaching OUTSIDE the session being rendered — one
+      // turn here, one turn in a session this query never selects. It is the
+      // case a session-scoped guard cannot see: filter the spans to this
+      // session's runs before counting distinct turn ids and the second turn
+      // vanishes, the trace looks unambiguous, and its tool call is charged to
+      // whichever turn happens to be ours.
+      await addSession("wrun_other_session", "2026-08-06 08:00:00.000000");
+      await addTurn("wrun_turn_elsewhere", "wrun_other_session", "2026-08-06 08:00:01.000000");
+      await addTurn("wrun_turn_crossed", "wrun_tie_a", "2026-08-06 11:56:43.000000");
+      await addSpan("trace_crossed", "ai.eve.turn", "wrun_turn_crossed");
+      await addSpan("trace_crossed", "ai.eve.turn", "wrun_turn_elsewhere");
+      await addSpan("trace_crossed", "execute_tool bash", null);
+
       const { rows: counted } = await client.query(
         `WITH runs AS (
            SELECT id FROM ${schema}.workflow_runs
@@ -329,7 +417,10 @@ export default {
          trace_turn AS (
            SELECT s.trace_id, MIN(s.turn_id) AS turn_id
              FROM ${schema}.spans s
-            WHERE s.turn_id IN (SELECT id FROM runs)
+            WHERE s.trace_id IN (
+                    SELECT t.trace_id FROM ${schema}.spans t WHERE t.turn_id IN (SELECT id FROM runs)
+                  )
+              AND s.turn_id IS NOT NULL
             GROUP BY s.trace_id
            HAVING COUNT(DISTINCT s.turn_id) = 1
          ),
@@ -352,6 +443,11 @@ export default {
         ["wrun_turn_notrace", null, "a turn with no exported trace is absent, not zero"],
         ["wrun_turn_shared_a", null, "a trace covering two turns attributes to neither, rather than guessing"],
         ["wrun_turn_shared_b", null, "the other turn of that ambiguous trace is absent too"],
+        [
+          "wrun_turn_crossed",
+          null,
+          "a trace whose second turn belongs to ANOTHER session is ambiguous too — the guard counts turn ids over the whole trace, not over the spans this session selected",
+        ],
       ];
       for (const [id, want, detail] of cases) {
         const actual = got.get(id);

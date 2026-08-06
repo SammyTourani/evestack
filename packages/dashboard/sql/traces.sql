@@ -75,20 +75,23 @@ CREATE TABLE IF NOT EXISTS evestack.spans (
                     COALESCE(attributes ->> 'agent.turn.id',
                              attributes ->> 'ai.settings.context.eve.turn.id')) STORED,
 
-  -- The workflow engine's own id, projected verbatim. NOT folded into
-  -- session_id, and the distinction is the whole finding of the attribution
+  -- NO COLUMN FOR `workflow.run.id`, and both halves of that are deliberate.
+  --
+  -- Not folded into session_id, which is the whole finding of the attribution
   -- audit: on a live database 30,560 of the 30,564 spans carrying this key are
   -- `workflow.stream.read.complete` engine noise stamped with the all-zero
   -- placeholder `wrun_00000000000000000000000000`, which joins to no run that
   -- has ever existed. Widening session_id with it would report 97% attribution
   -- while attributing zero model calls.
   --
-  -- Where it is real it still is not a session id: it points at a *session* run
-  -- on some spans and a *turn* run on others, so it has to be resolved through
-  -- workflow.workflow_runs (`$eve.parent` / `$eve.type`) before it can be
-  -- treated as one — and some values name runs that have since been pruned, so
-  -- every join through it is a LEFT JOIN with a "run is gone" branch.
-  workflow_run_id text GENERATED ALWAYS AS (attributes ->> 'workflow.run.id') STORED,
+  -- Not projected into a column of its own either. Where the value is real it
+  -- still is not a session id: it points at a *session* run on some spans and a
+  -- *turn* run on others, so it has to be resolved through workflow.workflow_runs
+  -- (`$eve.parent` / `$eve.type`) before it can be treated as one, and some
+  -- values name runs that have since been pruned. Nothing here implements that
+  -- join, so a STORED generated column would only be a table rewrite and an index
+  -- nobody reads. `attributes ->> 'workflow.run.id'` is right there for whoever
+  -- writes the join; add the column with it, not before.
 
   -- The same ids, inherited from the nearest ancestor that declares one.
   --
@@ -165,9 +168,13 @@ CREATE INDEX IF NOT EXISTS spans_name_idx
  *     present is idempotent, and the final predicate makes an unchanged row a
  *     no-op write rather than dead tuples on every replay.
  *
- * Pruning a parent later does not un-resolve its children: their resolved ids
- * are already stored, and this only ever runs over traces that were just
- * written. That is deliberate — retention should cost history, not attribution.
+ * PRUNING IS NOT HELD HARMLESS. Nothing fires on DELETE, so pruning a parent
+ * leaves its children's stored ids alone — until the next span lands in that
+ * trace, when this recomputes from the rows still present, finds the declaring
+ * ancestor gone and writes NULL over every survivor. Retention costs attribution
+ * as well as history in that one case. No AFTER DELETE trigger defends it:
+ * prune_spans cuts on start_time, so a trace old enough to lose spans is not one
+ * an exporter is still appending to, and the guard would run on every batch.
  */
 CREATE OR REPLACE FUNCTION evestack.resolve_span_ancestry(traces text[] DEFAULT NULL)
 RETURNS bigint
@@ -229,6 +236,34 @@ $fn$;
  * in batches of up to 500 spans and the seed script arrives as one COPY of tens
  * of thousands, and a per-row recursive walk would run the same query once per
  * span in the same trace.
+ *
+ * WHAT ONE STATEMENT COSTS, since "statement-level" reads like a bound and is
+ * not one. The unit of work is not the spans that arrived, it is every span in
+ * every trace they touched — the whole trace is re-walked and re-compared for
+ * one appended span. Measured on this schema, appending to a trace of N spans:
+ *
+ *          N     1 span    100 spans    chain N deep
+ *         10       1 ms
+ *      1,000       2 ms                       2 ms
+ *      5,000      18 ms        21 ms         18 ms
+ *     10,000      24 ms                      25 ms
+ *     20,000     201 ms
+ *
+ * The batch is nearly free — 100 spans cost what 1 costs — which is the whole
+ * reason this is FOR EACH STATEMENT; FOR EACH ROW would bill the 18ms a hundred
+ * times. Depth is free too: N deep costs what N wide costs, because the CTE's
+ * per-level iterations still visit each span exactly once. Only N is not free.
+ *
+ * eve's traces are 10 spans and 4 levels at their deepest, over the 30,926
+ * traces in the seeded database, so none of this is reachable today. It becomes
+ * reachable if something emits one long-lived trace per session instead of one
+ * per turn. The fix then is to scope the walk to the subtree that changed — not
+ * FOR EACH ROW, which multiplies exactly this cost by the batch.
+ *
+ * One trap, worth more than the table: with no statistics on the table this
+ * costs 100x. That same 5,000-span append is 1.8s until something ANALYZEs and
+ * stays 1.8s — the planner, not a cold cache, so it never warms up. ANALYZE
+ * after a bulk load before believing any number measured here.
  *
  * The pg_trigger_depth() line is the loop guard and is not optional. This
  * function's own UPDATE re-enters the AFTER UPDATE trigger; without the guard
@@ -336,7 +371,7 @@ CREATE TABLE IF NOT EXISTS evestack.schema_version (
 -- current version.
 DO $mig$
 DECLARE
-  target    constant integer := 2;
+  target    constant integer := 3;
   installed integer;
   current_expr text;
 BEGIN
@@ -376,16 +411,23 @@ BEGIN
     END IF;
   END IF;
 
-  -- 2: the engine run id, and the materialized ancestor walk.
+  -- 2: the materialized ancestor walk.
   IF installed < 2 THEN
-    ALTER TABLE evestack.spans
-      ADD COLUMN IF NOT EXISTS workflow_run_id text GENERATED ALWAYS AS
-        (attributes ->> 'workflow.run.id') STORED;
     ALTER TABLE evestack.spans ADD COLUMN IF NOT EXISTS resolved_session_id text;
     ALTER TABLE evestack.spans ADD COLUMN IF NOT EXISTS resolved_turn_id    text;
 
     -- Existing rows predate the triggers. On a fresh database this is 0 rows.
     PERFORM evestack.resolve_span_ancestry();
+  END IF;
+
+  -- 3: take workflow_run_id back out.
+  --
+  -- Step 2 added it as a STORED generated column, with an index, for a join to
+  -- workflow.workflow_runs that this schema does not implement — so nothing has
+  -- ever selected it. Dropping it is metadata-only; adding it was a table
+  -- rewrite. See the note where the column used to be declared, above.
+  IF installed < 3 THEN
+    ALTER TABLE evestack.spans DROP COLUMN IF EXISTS workflow_run_id;
   END IF;
 
   INSERT INTO evestack.schema_version (component, version) VALUES ('spans', target)
@@ -413,12 +455,6 @@ CREATE INDEX IF NOT EXISTS spans_resolved_session_idx
   ON evestack.spans (resolved_session_id) WHERE resolved_session_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS spans_resolved_turn_idx
   ON evestack.spans (resolved_session_id, resolved_turn_id) WHERE resolved_turn_id IS NOT NULL;
-
--- The join to workflow.workflow_runs. Left unpartial deliberately: the value it
--- would be tempting to exclude, the all-zero placeholder, is exactly the one a
--- reader needs to be able to count.
-CREATE INDEX IF NOT EXISTS spans_workflow_run_idx
-  ON evestack.spans (workflow_run_id) WHERE workflow_run_id IS NOT NULL;
 
 -- Retention scans this, and so does anything asking for a time window.
 CREATE INDEX IF NOT EXISTS spans_start_time_idx

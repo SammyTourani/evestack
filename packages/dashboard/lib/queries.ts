@@ -80,7 +80,7 @@ export interface TurnRow {
    * error: the trace tier is a separate, optional, retention-bounded export. A
    * turn whose trace was never exported, or has aged out, has no evidence
    * either way, and `0` there would be a confident lie about a turn that may
-   * have called ten tools. On the seeded database 371 of 1,727 turns have trace
+   * have called ten tools. On the seeded database 370 of 1,726 turns have trace
    * coverage — the other 1,356 report null.
    *
    * `0` is only ever returned for a turn whose trace WAS found and contained no
@@ -129,6 +129,26 @@ const NUM_OR_NULL = (v: unknown): number | null => {
 
 let indexesReady: Promise<void> | null = null;
 let indexWarned = false;
+/** Earliest a failed attempt may be repeated. Zero until something fails. */
+let indexRetryAt = 0;
+
+/**
+ * How long to wait before trying the file again after a failure.
+ *
+ * The failure path used to clear `indexesReady` outright, so the next request
+ * re-ran the whole file, and the one after that, forever. Every attempt takes a
+ * SHARE lock on `workflow.workflow_runs` — eve's live table, the one the agent
+ * writes turns into — builds whatever it can, and rolls back. A dashboard whose
+ * role cannot create indexes would have spent the rest of its life blocking the
+ * agent's writes once per page view, and the warning that explains it prints
+ * once and never again. That is a denial of service the operator cannot even
+ * see.
+ *
+ * A minute is long enough that the retries cost nothing at any traffic level,
+ * and short enough that the case the retry exists for — Postgres simply not up
+ * yet when the first page rendered — heals without a restart.
+ */
+const INDEX_RETRY_MS = 60_000;
 
 /**
  * Apply sql/query-indexes.sql, once per process. Same read-from-disk mechanism
@@ -144,33 +164,37 @@ let indexWarned = false;
  * header of sql/query-indexes.sql for why touching `workflow` at all is allowed.
  */
 export function ensureQueryIndexes(): Promise<void> {
-  if (!indexesReady) {
-    // readQueryIndexSql throws synchronously; inside the chain so that a
-    // missing file cannot escape past the catch below and take a page down.
-    //
-    // ensureTraceSchema first because the file's last statement indexes
-    // evestack.spans, and the whole file is one multi-statement query — so on
-    // a database that has never received a span, an unqualified run would
-    // fail at that last statement and roll back the workflow_runs indexes
-    // with it.
-    indexesReady = ensureTraceSchema()
-      .then(() => query(readQueryIndexSql()))
-      .then(() => undefined)
-      .catch((error: unknown) => {
-        // Not cached as a success: a database that was merely unreachable at
-        // boot would otherwise stay un-indexed for the life of the process.
-        // The warning fires once, so a role that permanently lacks CREATE
-        // does not print on every request.
-        indexesReady = null;
-        if (indexWarned) return;
-        indexWarned = true;
-        console.warn(
-          "[evestack] could not apply sql/query-indexes.sql; every page will " +
-            "still be correct, just slower: " +
-            String(error instanceof Error ? error.message : error),
-        );
-      });
-  }
+  if (indexesReady) return indexesReady;
+  // Inside the cooldown the caller gets on with its query, un-indexed. These
+  // indexes change no answer, so a deferred retry costs latency, never truth.
+  if (Date.now() < indexRetryAt) return Promise.resolve();
+  // readQueryIndexSql throws synchronously; inside the chain so that a
+  // missing file cannot escape past the catch below and take a page down.
+  //
+  // ensureTraceSchema first because the file's last statement indexes
+  // evestack.spans, and the whole file is one multi-statement query — so on
+  // a database that has never received a span, an unqualified run would
+  // fail at that last statement and roll back the workflow_runs indexes
+  // with it.
+  indexesReady = ensureTraceSchema()
+    .then(() => query(readQueryIndexSql()))
+    .then(() => undefined)
+    .catch((error: unknown) => {
+      // Not cached as a success: a database that was merely unreachable at
+      // boot would otherwise stay un-indexed for the life of the process.
+      // Behind a cooldown, though — see INDEX_RETRY_MS for what re-running
+      // this on every request does to the agent. The warning fires once, so a
+      // role that permanently lacks CREATE does not print on every request.
+      indexesReady = null;
+      indexRetryAt = Date.now() + INDEX_RETRY_MS;
+      if (indexWarned) return;
+      indexWarned = true;
+      console.warn(
+        "[evestack] could not apply sql/query-indexes.sql; every page will " +
+          "still be correct, just slower: " +
+          String(error instanceof Error ? error.message : error),
+      );
+    });
   return indexesReady;
 }
 
@@ -225,7 +249,51 @@ export interface SessionCursor {
 }
 
 /** `YYYY-MM-DDTHH:MM:SS.ffffff`, exactly what the SELECT's `to_char` emits. */
-const CURSOR_TIMESTAMP = /^\d{4,}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}$/;
+const CURSOR_TIMESTAMP = /^(\d{4,})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.\d{6}$/;
+
+/**
+ * Shape AND calendar.
+ *
+ * The shape alone admits `2026-02-30T…`, `2026-13-01T…` and `…T25:00:00…`. They
+ * match the pattern, nothing in JavaScript objects, and the first thing that
+ * notices is Postgres — several layers down, mid-SELECT, with `date/time field
+ * value out of range`. The session list catches that the way it catches every
+ * query failure and renders "Can't reach the database — start it with docker
+ * compose up". Postgres is up. The cursor in the URL is wrong. Sending someone
+ * to restart a healthy container is worse than raising nothing, so the
+ * impossible dates are rejected here, where the message can name the cursor.
+ *
+ * The check is a round trip because the Date setters ROLL OVER rather than
+ * refuse: February 30th becomes March 2nd and hour 25 becomes tomorrow at 01:00.
+ * Only reading the fields back tells a real date from a rolled-over one. Every
+ * accessor is UTC, so the verdict does not depend on the machine's zone.
+ *
+ * Stricter than Postgres in one place, on purpose: `…:56:60` is a leap second
+ * Postgres accepts and silently reads as `…:57:00`, a DIFFERENT instant from the
+ * row the cursor claims to be. `to_char` never emits it, so it can only arrive
+ * from a hand-edited URL, and paging from the wrong instant skips rows quietly.
+ */
+function isRealTimestamp(value: string): boolean {
+  const parts = CURSOR_TIMESTAMP.exec(value);
+  if (!parts) return false;
+  const [year, month, day, hour, minute, second] = parts.slice(1).map(Number);
+  // `new Date(0)` and setUTC*, not `Date.UTC()`: the shorthand maps years 0-99
+  // onto 1900-1999, which would reject years the column can legitimately hold.
+  const at = new Date(0);
+  at.setUTCFullYear(year, month - 1, day);
+  at.setUTCHours(hour, minute, second, 0);
+  return (
+    // There is no year zero in Postgres, and JavaScript's proleptic calendar
+    // has one, so it is the single range check the round trip cannot make.
+    year >= 1 &&
+    at.getUTCFullYear() === year &&
+    at.getUTCMonth() === month - 1 &&
+    at.getUTCDate() === day &&
+    at.getUTCHours() === hour &&
+    at.getUTCMinutes() === minute &&
+    at.getUTCSeconds() === second
+  );
+}
 
 export function encodeSessionCursor(cursor: SessionCursor): string {
   return `${cursor.createdAt}|${cursor.id}`;
@@ -244,7 +312,7 @@ export function parseSessionCursor(raw: string): SessionCursor {
   const cut = raw.indexOf("|");
   const createdAt = cut === -1 ? "" : raw.slice(0, cut);
   const id = cut === -1 ? "" : raw.slice(cut + 1);
-  if (!CURSOR_TIMESTAMP.test(createdAt) || id === "") {
+  if (!isRealTimestamp(createdAt) || id === "") {
     throw new Error(`Not a session cursor: ${JSON.stringify(raw)}`);
   }
   return { createdAt, id };
@@ -324,7 +392,8 @@ export async function listSessions(
           (c.attributes->>'$eve.model') || '|' ||
           COALESCE(c.attributes->>'$eve.input_tokens','0') || '|' ||
           COALESCE(c.attributes->>'$eve.output_tokens','0') || '|' ||
-          COALESCE(c.attributes->>'$eve.cache_read_tokens','0')
+          COALESCE(c.attributes->>'$eve.cache_read_tokens','0') || '|' ||
+          COALESCE(c.attributes->>'$eve.cache_write_tokens','0')
         ) FILTER (WHERE c.attributes->>'$eve.model' IS NOT NULL)    AS cost_parts
       FROM workflow.workflow_runs c
       WHERE c.attributes->>'$eve.root' = s.id
@@ -407,11 +476,27 @@ export async function getSessionTree(sessionId: string): Promise<TurnRow[]> {
           OR id = $1)
         AND attributes->>'$eve.type' IS NOT NULL
     ),
-    -- Traces that resolve to exactly one of this session's runs.
+    -- Traces that resolve to exactly one turn. That turn is necessarily one of
+    -- this session's runs: the trace was reached from runs, and it carries only
+    -- one turn id.
+    --
+    -- Two steps, and the second is the point. The inner IN is the indexed
+    -- lookup — the traces this session's turns appear in. The outer GROUP BY
+    -- then re-reads EVERY id-carrying span of those traces, including spans
+    -- belonging to turns in other sessions, because that is the set the HAVING
+    -- has to see. Filtering the whole CTE by turn_id IN (SELECT id FROM runs)
+    -- — what this did before — hid exactly the rows the guard exists to catch:
+    -- a trace covering one turn here and one turn elsewhere passed
+    -- COUNT(DISTINCT ...) = 1 on the half it was shown, and tool_calls below
+    -- then charged the other turn's execute_tool spans to this one. The count
+    -- was always over the whole trace; now the guard is too.
     trace_turn AS (
       SELECT s.trace_id, MIN(s.turn_id) AS turn_id
       FROM evestack.spans s
-      WHERE s.turn_id IN (SELECT id FROM runs)
+      WHERE s.trace_id IN (
+              SELECT t.trace_id FROM evestack.spans t WHERE t.turn_id IN (SELECT id FROM runs)
+            )
+        AND s.turn_id IS NOT NULL
       GROUP BY s.trace_id
       HAVING COUNT(DISTINCT s.turn_id) = 1
     ),
@@ -434,45 +519,68 @@ export async function getSessionTree(sessionId: string): Promise<TurnRow[]> {
     [sessionId],
   );
 
-  return rows.map((r) => {
-    const a = (r.attributes ?? {}) as Record<string, string>;
-    const started = r.started_at ? new Date(r.started_at as string).getTime() : null;
-    const done = r.completed_at ? new Date(r.completed_at as string).getTime() : null;
-    const input = NUM(a["$eve.input_tokens"]);
-    const output = NUM(a["$eve.output_tokens"]);
-    const cacheRead = NUM(a["$eve.cache_read_tokens"]);
-    return {
-      id: String(r.id),
-      type: a["$eve.type"] ?? "unknown",
-      parent: a["$eve.parent"] ?? null,
-      root: a["$eve.root"] ?? null,
-      status: String(r.status),
-      model: a["$eve.model"] ?? null,
-      subagent: a["$eve.subagent"] ?? null,
-      createdAt: new Date(r.created_at as string).toISOString(),
-      startedAt: r.started_at ? new Date(r.started_at as string).toISOString() : null,
-      completedAt: r.completed_at ? new Date(r.completed_at as string).toISOString() : null,
-      durationMs: started !== null && done !== null ? done - started : null,
-      inputTokens: input,
-      outputTokens: output,
-      cacheReadTokens: cacheRead,
-      cacheWriteTokens: NUM(a["$eve.cache_write_tokens"]),
-      toolsOffered: NUM_OR_NULL(a["$eve.tool_count"]),
-      toolInvocations: NUM_OR_NULL(r.tool_invocations),
-      errorCode: (r.error_code as string) ?? null,
-      costUsd: costUsd(a["$eve.model"] ?? null, input, output, cacheRead),
-      noModelCall:
-        (a["$eve.type"] === "turn") &&
-        !a["$eve.model"] &&
-        r.completed_at !== null,
-    };
-  });
+  return rows.map(toTurnRow);
 }
 
-export async function getSession(sessionId: string): Promise<SessionRow | null> {
+/**
+ * One joined `workflow_runs` row as a `TurnRow`.
+ *
+ * Exported, and lifted out of the `.map()` it used to be, so the null-vs-zero
+ * rule can be asserted without a database. That rule lives in a single token —
+ * `NUM_OR_NULL(r.tool_invocations)` — and replacing it with `NUM`, which every
+ * other numeric field in this function uses, is a plausible-looking edit that
+ * turns every turn nobody traced into a confident "called no tools". The SQL
+ * half of the rule is asserted against a real server by
+ * contract/runtime/probes/06-session-keyset-and-tool-calls.probe.mjs; this
+ * function is the half that runs in JavaScript, and a seam is the only way to
+ * reach it — the suite has no Postgres.
+ */
+export function toTurnRow(r: Record<string, unknown>): TurnRow {
+  const a = (r.attributes ?? {}) as Record<string, string>;
+  const started = r.started_at ? new Date(r.started_at as string).getTime() : null;
+  const done = r.completed_at ? new Date(r.completed_at as string).getTime() : null;
+  const input = NUM(a["$eve.input_tokens"]);
+  const output = NUM(a["$eve.output_tokens"]);
+  const cacheRead = NUM(a["$eve.cache_read_tokens"]);
+  const cacheWrite = NUM(a["$eve.cache_write_tokens"]);
+  return {
+    id: String(r.id),
+    type: a["$eve.type"] ?? "unknown",
+    parent: a["$eve.parent"] ?? null,
+    root: a["$eve.root"] ?? null,
+    status: String(r.status),
+    model: a["$eve.model"] ?? null,
+    subagent: a["$eve.subagent"] ?? null,
+    createdAt: new Date(r.created_at as string).toISOString(),
+    startedAt: r.started_at ? new Date(r.started_at as string).toISOString() : null,
+    completedAt: r.completed_at ? new Date(r.completed_at as string).toISOString() : null,
+    durationMs: started !== null && done !== null ? done - started : null,
+    inputTokens: input,
+    outputTokens: output,
+    cacheReadTokens: cacheRead,
+    cacheWriteTokens: cacheWrite,
+    toolsOffered: NUM_OR_NULL(a["$eve.tool_count"]),
+    toolInvocations: NUM_OR_NULL(r.tool_invocations),
+    errorCode: (r.error_code as string) ?? null,
+    costUsd: costUsd(a["$eve.model"] ?? null, input, output, cacheRead, cacheWrite),
+    noModelCall:
+      (a["$eve.type"] === "turn") &&
+      !a["$eve.model"] &&
+      r.completed_at !== null,
+  };
+}
+
+/**
+ * One session, looked up by id and rolled up from its turns.
+ *
+ * Everything a `SessionRow` carries except `cursor`. A keyset position is a
+ * place in the session LIST; this row was fetched by id and is not being paged
+ * through, so the value would have been a number with nothing to mean. It was
+ * computed, selected an extra `to_char` for, and read by nobody.
+ */
+export async function getSession(sessionId: string): Promise<Omit<SessionRow, "cursor"> | null> {
   const [row] = await query<Record<string, unknown>>(
-    `SELECT id, status, attributes, created_at, completed_at,
-            to_char(created_at, 'YYYY-MM-DD"T"HH24:MI:SS.US') AS cursor_created_at
+    `SELECT id, status, attributes, created_at, completed_at
      FROM workflow.workflow_runs WHERE id = $1`,
     [sessionId],
   );
@@ -493,10 +601,6 @@ export async function getSession(sessionId: string): Promise<SessionRow | null> 
     cacheReadTokens: turns.reduce((s, t) => s + t.cacheReadTokens, 0),
     models: [...new Set(turns.map((t) => t.model).filter((m): m is string => !!m))],
     costUsd: turns.reduce((s, t) => s + t.costUsd, 0),
-    cursor: encodeSessionCursor({
-      createdAt: String(row.cursor_created_at),
-      id: String(row.id),
-    }),
   };
 }
 
@@ -519,7 +623,8 @@ export async function getTotals(): Promise<{
         (attributes->>'$eve.model') || '|' ||
         COALESCE(attributes->>'$eve.input_tokens','0') || '|' ||
         COALESCE(attributes->>'$eve.output_tokens','0') || '|' ||
-        COALESCE(attributes->>'$eve.cache_read_tokens','0')
+        COALESCE(attributes->>'$eve.cache_read_tokens','0') || '|' ||
+        COALESCE(attributes->>'$eve.cache_write_tokens','0')
       ) FILTER (WHERE attributes->>'$eve.model' IS NOT NULL), ARRAY[]::text[]) AS cost_parts
     FROM workflow.workflow_runs
     `,
@@ -536,8 +641,8 @@ export async function getTotals(): Promise<{
 function sumCostParts(parts: string[]): number {
   let total = 0;
   for (const part of parts) {
-    const [model, input, output, cacheRead] = part.split("|");
-    total += costUsd(model ?? null, NUM(input), NUM(output), NUM(cacheRead));
+    const [model, input, output, cacheRead, cacheWrite] = part.split("|");
+    total += costUsd(model ?? null, NUM(input), NUM(output), NUM(cacheRead), NUM(cacheWrite));
   }
   return total;
 }

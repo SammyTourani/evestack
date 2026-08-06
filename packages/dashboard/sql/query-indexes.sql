@@ -15,7 +15,9 @@
 --   * CREATE INDEX IF NOT EXISTS only. No table, no column, no constraint, no
 --     trigger, no data. An index changes no row and no query result — drop
 --     every one of these and the dashboard still answers exactly the same
---     numbers, only slower.
+--     numbers, only slower. Enforced, not just promised: the probe named at the
+--     bottom of this header parses every statement in this file and fails on
+--     anything that is not a CREATE INDEX IF NOT EXISTS.
 --   * Every name is prefixed `evestack_`, so an operator reading `\d
 --     workflow.workflow_runs` can tell at a glance which indexes are ours and
 --     `DROP INDEX workflow.evestack_*` is a complete uninstall.
@@ -51,6 +53,17 @@
 -- this file a no-op.
 --
 -- Safe to run on every boot: each statement is a no-op once its index exists.
+--
+-- ─ Who checks this file ───────────────────────────────────────────────────────
+--
+-- `ensureQueryIndexes()` in lib/queries.ts applies it at runtime and SWALLOWS
+-- every failure behind one console.warn, on purpose — a read-only role must get
+-- a slow page, not a 500. Which means a typo in here changes nothing a user or
+-- a CI run would ever see. So the thing that actually reads these bytes is
+-- contract/runtime/probes/06-session-keyset-and-tool-calls.probe.mjs: it copies
+-- the file onto a throwaway schema, runs it, and asserts the plans it is
+-- supposed to buy. CI runs that probe with --require=postgres, so it cannot
+-- skip. Edit this file and run it: `node contract/runtime/run.mjs --only=queries`.
 
 -- The session list: filter on $eve.type, then a keyset walk in (created_at DESC,
 -- id DESC). The trailing columns are what let the LIMIT apply BEFORE the LATERAL

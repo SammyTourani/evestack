@@ -511,8 +511,43 @@ export async function insertSpans(spans: readonly IngestedSpan[]): Promise<numbe
     written += chunk.length;
   }
 
-  void maybePrune();
+  const days = retentionDays();
+  warnExpiredOnArrival(spans, days);
+  void maybePrune(days);
   return written;
+}
+
+/**
+ * Say so when a batch is stored and already doomed.
+ *
+ * Nothing else can. `maybePrune` below is fire-and-forget, so the 200 goes out
+ * before the DELETE runs; OTLP has no "accepted, then discarded" to report, and
+ * `partialSuccess` would be a lie — the exporter did nothing wrong and must not
+ * retry. Without this line the write path is silent about writing nothing.
+ *
+ * Two senders land here and neither can tell from the outside. One is replaying
+ * a backlog older than the window, which is a real thing to do and worth one
+ * warning. The other is sending milliseconds in `startTimeUnixNano`, which OTLP
+ * defines as nanoseconds: every span it sends dates to 1970, every span is
+ * pruned, and it looks exactly like a dashboard that drops everything.
+ */
+function warnExpiredOnArrival(spans: readonly IngestedSpan[], days: number | null): void {
+  if (days === null) return;
+  // The window prune_spans will actually apply, not a second opinion about it.
+  const cutoffNano = (Date.now() - retentionHours(days) * 3_600_000) * 1e6;
+  let expired = 0;
+  for (const span of spans) {
+    // NaN compares false, so an unparseable start time is not counted here — it
+    // was already rejected at the door by parseOtlpTraces.
+    if (Number(span.startUnixNano) < cutoffNano) expired += 1;
+  }
+  if (expired === 0) return;
+  console.warn(
+    `[evestack] ${expired} of ${spans.length} spans arrived already older than the ` +
+      `${days}-day retention window; they were stored and the next prune deletes them. ` +
+      "A backlog replay does this. So does an exporter sending milliseconds in " +
+      "startTimeUnixNano, where OTLP specifies nanoseconds — that dates every span to 1970.",
+  );
 }
 
 /**
@@ -522,16 +557,23 @@ export async function insertSpans(spans: readonly IngestedSpan[]): Promise<numbe
  * the same thing by hand. It deletes one bounded batch per call and this loops,
  * because each call is then its own transaction — a first prune over a long
  * backlog commits as it goes instead of holding locks for the whole of it.
- *
- * In hours, not days: EVESTACK_TRACE_RETENTION_DAYS=0.5 is a legitimate answer,
- * and rounding it to zero days would turn "keep twelve hours" into "keep
- * everything", which is the opposite of what was asked for.
  */
 const PRUNE_BATCH = 20_000;
 
+/**
+ * The retention window in hours, not days: EVESTACK_TRACE_RETENTION_DAYS=0.5 is
+ * a legitimate answer, and rounding it to zero days would turn "keep twelve
+ * hours" into "keep everything", which is the opposite of what was asked for.
+ *
+ * One definition, because `warnExpiredOnArrival` predicts what this deletes. Two
+ * roundings would eventually disagree, and a warning about spans that survive is
+ * worse than no warning at all.
+ */
+const retentionHours = (days: number): number => Math.max(1, Math.round(days * 24));
+
 export async function pruneSpans(days: number): Promise<number> {
   await ensureTraceSchema();
-  const hours = Math.max(1, Math.round(days * 24));
+  const hours = retentionHours(days);
   let removed = 0;
   for (;;) {
     const [row] = await query<{ removed: string }>(
@@ -557,9 +599,12 @@ let pruning = false;
  * seconds of DELETE, and making the exporter wait for it would time out a batch
  * that had already been stored. Failures are logged and retried next hour —
  * retention falling behind must never turn into a 503 on the write path.
+ *
+ * `days` is passed in rather than read here so that one insert reads the
+ * environment once. retentionDays() warns on a malformed value, and reading it
+ * twice per batch would print that warning twice per batch.
  */
-function maybePrune(): Promise<void> {
-  const days = retentionDays();
+function maybePrune(days: number | null): Promise<void> {
   const now = Date.now();
   if (days === null || pruning || now - prunedAt < PRUNE_INTERVAL_MS) return Promise.resolve();
   pruning = true;

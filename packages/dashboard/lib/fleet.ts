@@ -45,16 +45,32 @@ import { query } from "./db";
  * 30-day database that was 166 of 174 candidates called wedged, every one of
  * which the run rows prove finished.
  *
- * So silence is not evidence, and the tables get the last word on the one
- * question they can actually answer: is any turn of this session still open.
- * `wedged` now requires BOTH — a stream that does not say waiting, AND a turn
- * row that never reached a terminal state. The stream still wins where it
- * speaks, because `waiting` is the fact SQL cannot see.
+ * SO SILENCE IS NOT EVIDENCE, AND THE TABLES CHOOSE WHO GETS ASKED. A session
+ * with no open turn row has nothing in flight, whatever its stream does or
+ * does not say, so the candidate query refuses it and no round trip is spent
+ * on it. That is not only cheaper, it is what makes the fault sweep complete
+ * instead of sampled: ordering all 174 seeded candidates by last activity and
+ * probing the first 25 reached 1 of the 8 sessions with an open turn and spent
+ * the other 24 round trips re-asking about sessions the same query had already
+ * settled. Filtering instead of paging costs 8 round trips and finds all 8.
+ *
+ * WHAT THAT GIVES UP is the parked sessions the tables cannot see. eve's turn
+ * workflow RETURNS when it parks on a human — `emitTurnEpilogue` puts
+ * `turn.completed` on the stream before `session.waiting`, and the run row
+ * completes with it — so a session sitting on an unanswered approval usually
+ * carries no open turn and is no longer asked about. `awaiting-human` still
+ * reaches the parks that sit under a turn row that never closed, which is the
+ * crashed-mid-approval shape, but a complete answer needs a fleet-wide feed of
+ * pending requests and eve exposes only per-session routes. That is the
+ * overview's reshape, not this file's. The 25-of-174 sample it replaces was
+ * never something to rely on either: at the 700 sessions this is meant to
+ * describe it would have been 3%, and "0 waiting on a person" from a 3% sample
+ * is the same cry-wolf-in-reverse this module was written to avoid.
  *
  * WHAT COUNTS AS FINISHED IS NOT THIS FILE'S TO DEFINE. lib/monitors.ts is the
  * source of truth for the workflow tables' failure vocabulary, and this file
  * uses its tests verbatim: a turn is finished when `completed_at IS NOT NULL`,
- * never when `status` says so. That distinction is the whole audit — of 1,923
+ * never when `status` says so. That distinction is the whole audit — of 1,922
  * seeded turns, 111 failed outright, 62 finished without ever reaching a
  * provider, and 37 were cancelled by a human; all 210 are FINISHED, and exactly
  * 8 turns in the database are not. A wedge test written on `status <>
@@ -89,12 +105,6 @@ export type SessionHealth =
 export interface FleetEntry {
   readonly sessionId: string;
   readonly title: string | null;
-  /**
-   * The session's name as it reads INSIDE A SENTENCE. See `sessionLabel`: the
-   * raw title is a whole instruction, and a banner that drops three of them
-   * into prose produces the line RESEARCH.md §6 recorded.
-   */
-  readonly label: string;
   readonly trigger: string | null;
   readonly createdAt: string;
   readonly idleMs: number;
@@ -105,9 +115,15 @@ export interface FleetEntry {
 }
 
 export interface FleetReport {
+  /**
+   * One per session the tables could not settle on their own. Sessions with no
+   * open turn row are absent rather than listed as idle: they are the bulk of
+   * any fleet, they are not news, and including them would mean fetching and
+   * shipping every quiet session in the database.
+   */
   readonly entries: FleetEntry[];
   readonly checked: number;
-  /** Candidates that existed but were not probed, because the probe is bounded. */
+  /** Sessions with an open turn row that the probe bound left unasked. */
   readonly unchecked: number;
 }
 
@@ -120,7 +136,15 @@ export interface FleetReport {
  */
 const IDLE_BEFORE_SUSPECT_MS = 30 * 60 * 1000;
 
-/** Probing costs a round trip each, so the sweep is bounded rather than complete. */
+/**
+ * A ceiling on round trips, not the size of the sweep.
+ *
+ * Only sessions with an open turn row are asked about, and a healthy fleet has
+ * almost none — 8 of 174 candidates in the seeded database, 0 of 57 in a live
+ * one. This bound is what stops a fleet that has genuinely fallen over from
+ * turning one banner render into hundreds of requests; `report.unchecked` says
+ * when it bit.
+ */
 const MAX_PROBES = 25;
 
 /**
@@ -134,73 +158,22 @@ const MAX_PROBES = 25;
 const STUCK_TURN_MS = 60 * 60 * 1000;
 
 /**
- * How long a label may be before it stops being a name and starts being prose.
- *
- * A `$eve.title` is whatever the first message said, so it is routinely a whole
- * instruction: "Use your bash tool to run exactly this and report back". Three
- * of those, comma-joined into a sentence, is the banner line RESEARCH.md §6
- * measured: "8 sessions wedged. … Use your bash tool to run exactly this a,
- * ping-no-origin, ping and 5 more". Short enough to read as a name, long enough
- * to tell two sessions apart.
- */
-const LABEL_MAX = 32;
-
-/**
- * A session's name, safe to drop into a sentence.
- *
- * Three things, all of which the old inline `title.slice(0, 40)` got wrong:
- * only the first line survives (a pasted stack trace is not a name), runs of
- * whitespace collapse, and the cut lands on a word boundary with an ellipsis
- * that says a cut happened. With no usable title it falls back to the tail of
- * the id, which is what the operator will paste into a URL anyway.
- *
- * Pure and exported so the truncation is unit-tested rather than eyeballed in
- * a banner nobody re-renders with a 400-character title.
- */
-export function sessionLabel(title: string | null | undefined, sessionId: string): string {
-  const firstLine = (title ?? "").split("\n", 1)[0] ?? "";
-  const clean = firstLine.replace(/\s+/g, " ").trim();
-  if (clean.length === 0) return `session ${sessionId.slice(-8)}`;
-  if (clean.length <= LABEL_MAX) return clean;
-
-  // Cut inside the budget, then back up to the last space so the label ends on
-  // a whole word. A single long word has no space to back up to, so it is cut
-  // where it is rather than thrown away.
-  const cut = clean.slice(0, LABEL_MAX);
-  const lastSpace = cut.lastIndexOf(" ");
-  const kept = lastSpace > LABEL_MAX / 2 ? cut.slice(0, lastSpace) : cut;
-  return `${kept.replace(/[\s,.;:—-]+$/, "")}…`;
-}
-
-/**
- * What the workflow tables know about one session's turns.
- *
- * This is the half of the classification that does not need the agent, and the
- * half that stops a silent stream from reading as a wedge. Its definition of
- * finished is lib/monitors.ts's — `completed_at IS NOT NULL` — so an errored,
- * a no-model-call and a cancelled turn are all finished here, exactly as they
- * are there.
- */
-export interface TurnEvidence {
-  /** Turns and subagents this session has ever had. */
-  readonly turns: number;
-  /** How many of them have no `completed_at`. */
-  readonly unfinished: number;
-  /** Age of the OLDEST unfinished turn, or null when every turn finished. */
-  readonly inFlightMs: number | null;
-}
-
-/**
- * The classification itself, kept pure so both false-positive shapes are unit
+ * The classification itself, kept pure so the false-positive shapes are unit
  * tests rather than things we hope about.
  *
+ * Only sessions the tables could not settle get here — `inspectFleet`'s query
+ * hands over nothing but sessions carrying a turn row that never closed, so
+ * "the stream says nothing" already means "and a turn really is open".
+ *
  * Decision order is deliberate: the stream's own words first, because
- * `terminal`, a pending request and `waiting` are facts SQL cannot see; then
- * the tables, which are the only witness left once the stream says nothing.
+ * `terminal`, a pending request and `waiting` are facts SQL cannot see.
+ *
+ * `inFlightMs` is the age of the OLDEST turn row this session never closed, or
+ * null when every open row was created and never picked up.
  */
 export function classifySession(
   snapshot: Pick<SessionSnapshot, "terminal" | "waiting" | "pendingRequests">,
-  evidence: TurnEvidence,
+  inFlightMs: number | null,
   idleMs: number,
 ): Pick<FleetEntry, "health" | "pendingCount" | "reason"> {
   if (snapshot.terminal) {
@@ -240,31 +213,21 @@ export function classifySession(
     };
   }
 
-  // Nothing on the stream says waiting, parked or over. That is what a turn in
-  // flight looks like — and equally what a pruned stream looks like, so ask the
-  // tables before crying wolf. No open turn row means nothing can be in flight,
-  // whatever the stream's silence suggests.
-  if (evidence.unfinished === 0) {
-    return {
-      health: "idle",
-      pendingCount: 0,
-      reason:
-        evidence.turns === 0
-          ? "no turn has ever started in this session"
-          : "every turn it started has finished — the agent's stream is silent, the run rows are not",
-    };
-  }
-
-  // A turn row that never reached a terminal state. Healthy for a few seconds,
-  // deeply suspicious after an hour: it is the shape of a turn whose process
-  // died mid-flight, which eve does not detect or retry.
+  // Nothing on the stream says waiting, parked or over. Silence alone would
+  // equally be a pruned stream, which is why it is never asked about a session
+  // whose turns all closed — but this session's turns did not, so the run rows
+  // and not the silence are what is being read here.
   //
-  // Age comes from the unfinished turn's own start where it has one, not from
-  // the session's idle time, so "started 4 hours ago" cannot be softened by a
-  // later row touching the session. `started_at` can be null on a run that was
+  // A turn row that never reached a terminal state is healthy for a few
+  // seconds and deeply suspicious after an hour: it is the shape of a turn
+  // whose process died mid-flight, which eve does not detect or retry.
+  //
+  // Age comes from the open turn's own start where it has one, not from the
+  // session's idle time, so "started 4 hours ago" cannot be softened by a later
+  // row touching the session. `started_at` can be null on a run that was
   // created and never picked up; idle time is the honest fallback there.
-  const inFlightMs = evidence.inFlightMs ?? idleMs;
-  return inFlightMs > STUCK_TURN_MS
+  const openFor = inFlightMs ?? idleMs;
+  return openFor > STUCK_TURN_MS
     ? {
         health: "wedged",
         pendingCount: 0,
@@ -279,9 +242,9 @@ export async function inspectFleet(
   const idleThreshold = options.idleMs ?? IDLE_BEFORE_SUSPECT_MS;
   const limit = Math.min(options.limit ?? MAX_PROBES, 100);
 
-  // Candidates: open sessions whose most recent child run finished a while ago
-  // (or which never had one). The join is to turns rather than to the session
-  // row because the session row's own timestamps do not move as turns run.
+  // Candidates: open sessions that have been quiet a while AND still carry a
+  // turn row nobody closed. The join is to turns rather than to the session row
+  // because the session row's own timestamps do not move as turns run.
   const rows = await query<Record<string, unknown>>(
     `
     SELECT s.id AS session_id,
@@ -296,30 +259,10 @@ export async function inspectFleet(
            -- the SQL ends the string with a parse error nowhere near the cause.)
            GREATEST(s.updated_at, COALESCE(MAX(t.updated_at), s.updated_at)) AS last_activity,
 
-           -- The wedge evidence. Two filters carry the whole audit, and neither
-           -- may grow a backtick: this is a template literal, and one inside
-           -- the SQL ends the string with a parse error nowhere near the cause.
-           --
-           -- The type filter is lib/monitors.ts's unit of work. eve writes an
-           -- untagged companion run per session that never completes — 701 of
-           -- them in the seeded database, one per session — and a single one
-           -- counted as an open turn would report the whole fleet as wedged.
-           -- Today they are excluded by the join, which needs $eve.root, and
-           -- they carry none; this filter is what keeps them harmless if that
-           -- ever changes, since they carry no $eve.type either.
-           --
-           -- completed_at IS NULL is lib/monitors.ts's test for unfinished, and
-           -- status is deliberately not consulted. A cancelled turn, a failed
-           -- turn and a turn that never reached the provider have all FINISHED;
-           -- monitors.ts counts the last two as failures and this file must not
-           -- re-count them as work in flight.
-           COUNT(t.id) FILTER (
-             WHERE t.attributes->>'$eve.type' IN ('turn', 'subagent')
-           ) AS turns,
-           COUNT(t.id) FILTER (
-             WHERE t.attributes->>'$eve.type' IN ('turn', 'subagent')
-               AND t.completed_at IS NULL
-           ) AS unfinished_turns,
+           -- How long the oldest still-open turn has been open. Same filter as
+           -- the HAVING below, so it is null only when every open row was
+           -- created and never picked up and therefore has no started_at; the
+           -- classifier falls back to idle time there.
            MIN(t.started_at) FILTER (
              WHERE t.attributes->>'$eve.type' IN ('turn', 'subagent')
                AND t.completed_at IS NULL
@@ -344,6 +287,37 @@ export async function inspectFleet(
     -- hours in the future and the sweep returned nothing.
     HAVING GREATEST(s.updated_at, COALESCE(MAX(t.updated_at), s.updated_at))
              < (now() AT TIME ZONE 'utc') - ($1 || ' milliseconds')::interval
+
+      -- AND the tables cannot settle it. This line is what makes the sweep
+      -- affordable and complete at once, and it may not grow a backtick: this
+      -- is a template literal, and one inside the SQL ends the string with a
+      -- parse error nowhere near the cause.
+      --
+      -- Dropping it does not just cost round trips. Nothing downstream
+      -- re-checks the question: a session whose turns all closed would be
+      -- probed, its pruned stream would fold to silence, and silence is what a
+      -- turn in flight looks like. That is the 166-of-174 false positive.
+      --
+      -- COUNT, not "in_flight_since IS NOT NULL": a run created and never
+      -- picked up has completed_at AND started_at null, so MIN() is null on a
+      -- turn that is genuinely open.
+      --
+      -- The type filter is lib/monitors.ts's unit of work. eve writes an
+      -- untagged companion run per session that never completes — 700 of them
+      -- in the seeded database, one per session — and a single one counted
+      -- here would report the whole fleet as wedged. Today the join drops them
+      -- because they carry no $eve.root; this filter is what keeps them
+      -- harmless if that ever changes, since they carry no $eve.type either.
+      --
+      -- completed_at IS NULL is lib/monitors.ts's test for unfinished, and
+      -- status is deliberately not consulted. A cancelled turn, a failed turn
+      -- and a turn that never reached the provider have all FINISHED;
+      -- monitors.ts counts the last two as failures and this file must not
+      -- re-count them as work in flight.
+      AND COUNT(t.id) FILTER (
+            WHERE t.attributes->>'$eve.type' IN ('turn', 'subagent')
+              AND t.completed_at IS NULL
+          ) > 0
     ORDER BY last_activity ASC
     LIMIT $2
     `,
@@ -365,20 +339,15 @@ export async function inspectFleet(
       const idleMs = Date.now() - lastActivity.getTime();
       const title = (raw.title as string) ?? null;
 
-      // `in_flight_since` is a Date for the same reason (and null when every
-      // turn finished, which is a MIN over an empty filter rather than missing
-      // data).
+      // `in_flight_since` is a Date for the same reason (and null when the open
+      // rows have no started_at at all, which is a MIN over rows that carry
+      // none rather than missing data).
       const inFlightSince = (raw.in_flight_since as Date | null) ?? null;
-      const evidence: TurnEvidence = {
-        turns: Number(raw.turns ?? 0),
-        unfinished: Number(raw.unfinished_turns ?? 0),
-        inFlightMs: inFlightSince === null ? null : Date.now() - inFlightSince.getTime(),
-      };
+      const inFlightMs = inFlightSince === null ? null : Date.now() - inFlightSince.getTime();
 
       const base = {
         sessionId,
         title,
-        label: sessionLabel(title, sessionId),
         trigger: (raw.trigger as string) ?? null,
         createdAt: (raw.created_at as Date).toISOString(),
         idleMs,
@@ -389,7 +358,7 @@ export async function inspectFleet(
           ...(options.signal ? { signal: options.signal } : {}),
         });
 
-        return { ...base, ...classifySession(snapshot, evidence, idleMs) };
+        return { ...base, ...classifySession(snapshot, inFlightMs, idleMs) };
       } catch (error) {
         return {
           ...base,

@@ -118,7 +118,7 @@ async function insert(client, schema, rows, { upsert = false } = {}) {
 
 async function resolved(client, schema, spanId) {
   const { rows } = await client.query(
-    `SELECT session_id, turn_id, resolved_session_id, resolved_turn_id, workflow_run_id
+    `SELECT session_id, turn_id, resolved_session_id, resolved_turn_id
      FROM ${schema}.spans WHERE span_id = $1`,
     [spanId],
   );
@@ -292,11 +292,6 @@ export default {
       ]);
       const noise = await resolved(client, schema, "f100000000000000");
       t.ok(
-        noise.workflow_run_id === PLACEHOLDER_RUN_ID,
-        "workflow.run.id is projected into its own column, placeholder and all",
-        { actual: noise.workflow_run_id },
-      );
-      t.ok(
         noise.resolved_session_id === null,
         "an engine-noise span carrying the all-zero run id belongs to no session — widening session_id " +
           "with workflow.run.id would have attributed 92% of the table to a run that never existed",
@@ -366,13 +361,16 @@ export default {
       /* ---------------------------------------------------------------- */
 
       // Rebuild a pre-migration database out of this one. This is exactly the
-      // state of every deployed evestack: table present, rows present, the new
-      // columns absent.
+      // state of every deployed evestack: table present, rows present, the
+      // resolved columns absent — and `workflow_run_id` present, since step 2
+      // added it before step 3 took it back out.
       await client.query(`
         ALTER TABLE ${schema}.spans
           DROP COLUMN resolved_session_id,
-          DROP COLUMN resolved_turn_id,
-          DROP COLUMN workflow_run_id;
+          DROP COLUMN resolved_turn_id;
+        ALTER TABLE ${schema}.spans
+          ADD COLUMN workflow_run_id text GENERATED ALWAYS AS
+            (attributes ->> 'workflow.run.id') STORED;
         DELETE FROM ${schema}.schema_version WHERE component = 'spans';
       `);
 
@@ -382,9 +380,22 @@ export default {
         `SELECT version FROM ${schema}.schema_version WHERE component = 'spans'`,
       );
       t.ok(
-        Number(version[0]?.version) === 2,
+        Number(version[0]?.version) === 3,
         "re-applying the file to a database that predates the migration records the new schema version",
         { actual: version[0]?.version },
+      );
+
+      // A column CREATE TABLE IF NOT EXISTS can never remove, on a table it will
+      // never touch again. Only a migration step reaches it.
+      const { rows: leftover } = await client.query(
+        `SELECT count(*)::int AS n FROM information_schema.columns
+          WHERE table_schema = $1 AND table_name = 'spans' AND column_name = 'workflow_run_id'`,
+        [schema],
+      );
+      t.ok(
+        leftover[0].n === 0,
+        "…and drops workflow_run_id, which nothing ever read and which cost a table rewrite to add",
+        { expected: 0, actual: leftover[0].n },
       );
 
       const backfilled = await resolved(client, schema, "a400000000000000");
@@ -398,13 +409,13 @@ export default {
       // Third application. Idempotence is not optional: this file runs on every boot.
       await client.query(schemaSql(schema));
       const again = await resolved(client, schema, "a400000000000000");
-      const { rows: stillTwo } = await client.query(
-        `SELECT count(*)::int AS n FROM ${schema}.schema_version WHERE component = 'spans' AND version = 2`,
+      const { rows: stillThree } = await client.query(
+        `SELECT count(*)::int AS n FROM ${schema}.schema_version WHERE component = 'spans' AND version = 3`,
       );
       t.ok(
-        again.resolved_session_id === "sess_a2" && stillTwo[0].n === 1,
+        again.resolved_session_id === "sess_a2" && stillThree[0].n === 1,
         "applying the file a third time changes nothing",
-        { actual: `${again.resolved_session_id}, ${stillTwo[0].n} version rows` },
+        { actual: `${again.resolved_session_id}, ${stillThree[0].n} version rows` },
       );
     } finally {
       await client.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(() => {});

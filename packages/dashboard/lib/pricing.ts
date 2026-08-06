@@ -336,20 +336,51 @@ export function isPriced(model: string | null): boolean {
   return findPrice(model) !== null;
 }
 
+/** Models already reported by `warnImpossibleSplit`. See it for why. */
+const warnedImpossibleSplit = new Set<string>();
+
 /**
- * The rate a cached read is billed at.
+ * Counters that cannot all be true, said out loud.
  *
- * The fallback is only reached by models the catalog states no cache read price
- * for — 66 of the 206 it prices. Among the 140 that do state one, the ratio to
- * input runs from 0.008 to 0.52 and 59 sit at exactly 0.10, so this is the
- * plurality rather than a rule, and it is never used to shadow a rate we were
- * told.
+ * `$eve.input_tokens` is the TOTAL; reads and writes are two of its parts, so
+ * the non-cached remainder cannot come out negative. When it does, one of the
+ * three numbers is wrong, and the `Math.max(0, …)` floor in `costUsd` — which
+ * has to be there, because a negative row would subtract from the session total
+ * and make an expensive session look cheap — absorbs the surplus. Absorbing it
+ * in silence is how a dashboard under-reports spend forever.
  *
- * Shared with `cacheSavingsUsd` on purpose: a saving measured against a rate
- * other than the one we charged is not a saving.
+ * This fired for real once. On 2026-08-06 the floor swallowed 382,813 input
+ * tokens across 160 turns of the seeded month, because `scripts/seed.mjs` was
+ * adding the cache-write count OUTSIDE the input total while every provider
+ * folds it in (`total: inputTokens + cacheCreationTokens + cacheReadTokens`,
+ * @ai-sdk/anthropic). The fixture was fixed; the guard stays. A provider that
+ * reports input EXCLUDING its cache classes would reproduce the same shape from
+ * live data, and the failure it produces — quietly cheap sessions — is the kind
+ * nobody notices.
+ *
+ * Once per model rather than once per row: this runs per turn row on every
+ * render, and a bad fixture would otherwise print thousands of identical lines.
+ * `model` is never null by the time we get here — `findPrice` has returned
+ * non-null for it, which it does for no falsy model — so it is only typed that
+ * way to match the caller.
  */
-function cacheReadRateOf(price: ModelPrice): number {
-  return price.cacheRead ?? price.input * 0.1;
+function warnImpossibleSplit(
+  model: string | null,
+  inputTokens: number,
+  cacheReadTokens: number,
+  cacheWriteTokens: number,
+): void {
+  const key = String(model);
+  if (warnedImpossibleSplit.has(key)) return;
+  warnedImpossibleSplit.add(key);
+  console.warn(
+    `[evestack] ${key}: cache reads (${cacheReadTokens}) plus cache writes ` +
+      `(${cacheWriteTokens}) exceed input tokens (${inputTokens}), which cannot happen — ` +
+      `both are parts of that total. One of the three counters is wrong; billing the ` +
+      `${cacheReadTokens + cacheWriteTokens - inputTokens} token surplus as nothing. ` +
+      `Which way that moves the total depends on which counter is at fault, so this ` +
+      `figure is not trustworthy either way. Warned once per model.`,
+  );
 }
 
 /**
@@ -358,10 +389,13 @@ function cacheReadRateOf(price: ModelPrice): number {
  *
  * Cache reads and cache writes both arrive INSIDE the input total, so neither
  * may also be charged at the full input rate. That is not an assumption about
- * eve: `$eve.input_tokens` is the AI SDK's `usage.inputTokens`, and the SDK
- * flattens it from `inputTokens.total`, which @ai-sdk/anthropic builds as
- * `noCache + cacheRead + cacheWrite` (convert-anthropic-usage.ts). Subtracting
- * both is what leaves the non-cached remainder.
+ * eve, it is three hops that are all readable in this repo's node_modules:
+ * `$eve.input_tokens` is `usage.inputTokens` (eve's `extractTokenUsageDelta` in
+ * harness/tool-loop.js), ai@7 sets that to `inputTokens.total` in
+ * `asLanguageModelUsage`, and @ai-sdk/anthropic builds the total as
+ * `noCache + cacheRead + cacheWrite` (convert-anthropic-usage.ts) — the same
+ * object whose `inputTokens.cacheWrite` becomes `$eve.cache_write_tokens`.
+ * Subtracting both is what leaves the non-cached remainder.
  */
 export function costUsd(
   model: string | null,
@@ -372,45 +406,37 @@ export function costUsd(
 ): number {
   const price = findPrice(model);
   if (!price) return 0;
-  // A model the catalog states no cache-write price for is charged the plain
-  // input rate. Zero is not an option — these are prompt tokens the provider
-  // read and billed, and a class quietly worth nothing is the same lie as an
-  // unpriced model rendering $0.00. Neither is assuming the premium: 29 of the
-  // 33 stated rates are exactly 1.25x input, but those 33 are precisely the
-  // providers who charge extra, and the catalog contradicts the pattern anyway
-  // — minimax/minimax-m2.5-highspeed writes at 0.625x input. The input rate is
+
+  // The two fallbacks, side by side, because they are opposite decisions.
+  //
+  // A cached read with no stated rate costs a tenth of input. 66 of the 206
+  // priced models state no rate; among the 140 that do, the ratio to input runs
+  // from 0.008 to 0.52 and 59 sit at exactly 0.10, so this is the plurality
+  // rather than a rule, and it never shadows a rate we were told.
+  //
+  // A cache write with no stated rate costs the plain input rate. Zero is not
+  // an option — these are prompt tokens the provider read and billed, and a
+  // class quietly worth nothing is the same lie as an unpriced model rendering
+  // $0.00. Neither is assuming the premium: 29 of the 33 stated rates are
+  // exactly 1.25x input, but those 33 are precisely the providers who charge
+  // extra, and the catalog contradicts the pattern anyway —
+  // minimax/minimax-m2.5-highspeed writes at 0.625x input. The input rate is
   // also the number these tokens already produced before this function took a
   // write count, so the 173 silent models do not move.
+  const cacheReadRate = price.cacheRead ?? price.input * 0.1;
   const cacheWriteRate = price.cacheWrite ?? price.input;
-  const nonCachedTokens = Math.max(0, inputTokens - cacheReadTokens - cacheWriteTokens);
+
+  const nonCachedTokens = inputTokens - cacheReadTokens - cacheWriteTokens;
+  if (nonCachedTokens < 0) {
+    warnImpossibleSplit(model, inputTokens, cacheReadTokens, cacheWriteTokens);
+  }
+
   return (
-    (nonCachedTokens / 1_000_000) * price.input +
+    (Math.max(0, nonCachedTokens) / 1_000_000) * price.input +
     (outputTokens / 1_000_000) * price.output +
-    (cacheReadTokens / 1_000_000) * cacheReadRateOf(price) +
+    (cacheReadTokens / 1_000_000) * cacheReadRate +
     (cacheWriteTokens / 1_000_000) * cacheWriteRate
   );
-}
-
-/**
- * What the prompt cache saved: the cached tokens billed at the read rate rather
- * than at the input rate they would have cost uncached.
- *
- * Null, not zero, for a model we cannot price, and the return type is the
- * enforcement. `costUsd` can return 0 for an unpriced model because every
- * caller of it already gates on `isPriced()`; this figure has no such
- * convention around it yet, and "saved $0.00" must not read the same as "we
- * have no idea what this cache was worth".
- *
- * Zero IS the right answer for `ollama/*`: nothing was spent, so nothing was
- * saved. That case is priced, so it returns a number, which is the whole
- * distinction null exists to keep.
- */
-export function cacheSavingsUsd(model: string | null, cacheReadTokens: number): number | null {
-  const price = findPrice(model);
-  if (!price) return null;
-  // Never negative: no catalog entry prices a cached read above its own input
-  // rate (checked: 0 of 140), and the 0.1 fallback cannot either.
-  return (Math.max(0, cacheReadTokens) / 1_000_000) * (price.input - cacheReadRateOf(price));
 }
 
 export function formatUsd(value: number): string {

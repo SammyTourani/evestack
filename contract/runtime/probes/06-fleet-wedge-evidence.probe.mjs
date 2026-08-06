@@ -1,14 +1,15 @@
 /**
  * The fleet banner must call a session wedged only when a turn is genuinely
- * open.
+ * open — and must not spend a round trip on a session the tables already
+ * settled.
  *
- * `packages/dashboard/lib/fleet.ts` decides that from the agent's stream where
- * the stream speaks, and from the run rows where it does not — a live agent
- * answers 200 with `x-eve-stream-tail-index: -1` for a session it has never
- * heard of, and that empty fold is indistinguishable from a turn in flight. The
- * run rows are the only witness left, so what they count has to be right.
+ * `packages/dashboard/lib/fleet.ts` asks the agent's stream about a session
+ * only when the run rows cannot answer on their own. A live agent answers 200
+ * with `x-eve-stream-tail-index: -1` for a session it has never heard of, and
+ * that empty fold is indistinguishable from a turn in flight, so the run rows
+ * decide who is worth asking. What they count has to be right.
  *
- * Four things here are PostgreSQL's semantics rather than JavaScript's, which
+ * Five things here are PostgreSQL's semantics rather than JavaScript's, which
  * is why they are asserted against a real server:
  *
  * 1. **Finished means `completed_at IS NOT NULL`, never `status`.** This is
@@ -22,11 +23,20 @@
  *    that never completes. They carry no `$eve.root` today so the join drops
  *    them; the type filter is what keeps that true if they ever gain one.
  *
- * 3. **`count(*) OVER ()` counts past the LIMIT.** The report says how many
- *    candidates went unprobed, and it used to fetch `limit + 1` rows to find
- *    out — which can only ever say "1 more" while 149 sessions went unchecked.
+ * 3. **A session whose turns all closed is not a candidate at all.** The filter
+ *    lives in HAVING rather than in the caller, so those rows are never
+ *    fetched and never probed. Paging the quiet sessions instead reached 1 of
+ *    the 8 open turns in the seeded database and spent 24 round trips
+ *    re-asking about sessions the same query had already resolved.
  *
- * 4. **`timestamp without time zone` compared to `now()` is read in the
+ * 4. **The filter counts rows; it does not test the age column.** A run created
+ *    and never picked up has `completed_at` AND `started_at` null, so
+ *    `MIN(started_at) IS NOT NULL` would drop a genuinely open turn. And
+ *    `count(*) OVER ()` still counts past the LIMIT, which is how the report
+ *    says how many open-turn sessions went unprobed; it used to fetch
+ *    `limit + 1` rows to find out, which can only ever say "1 more".
+ *
+ * 5. **`timestamp without time zone` compared to `now()` is read in the
  *    server's zone.** The idle cut is `< (now() AT TIME ZONE 'utc') - interval`
  *    for that reason: the CLI port of this file hit the bare-`now()` version
  *    for real, and a session quiet for three hours looked five hours in the
@@ -37,15 +47,16 @@
  */
 import { randomUUID } from "node:crypto";
 
-/** The evidence columns, verbatim from lib/fleet.ts's candidate query. */
-const EVIDENCE = `
-  COUNT(t.id) FILTER (
-    WHERE t.attributes->>'$eve.type' IN ('turn', 'subagent')
-  ) AS turns,
+/** The wedge test, verbatim from lib/fleet.ts's HAVING clause. */
+const OPEN_TURNS = `
   COUNT(t.id) FILTER (
     WHERE t.attributes->>'$eve.type' IN ('turn', 'subagent')
       AND t.completed_at IS NULL
-  ) AS unfinished_turns,
+  )
+`;
+
+/** The evidence the sweep actually reads, verbatim from its SELECT list. */
+const EVIDENCE = `
   MIN(t.started_at) FILTER (
     WHERE t.attributes->>'$eve.type' IN ('turn', 'subagent')
       AND t.completed_at IS NULL
@@ -77,7 +88,9 @@ export default {
     "cries wolf teaches its reader to ignore it. The seeded 30-day database has 113 errored " +
     "turns, 62 that never reached a provider and 37 a human cancelled — all finished — against " +
     "8 that are genuinely open. Counting failures as work in flight would report 166 healthy " +
-    "sessions as faults; missing the 8 would hide the only fault eve has no recovery path for.",
+    "sessions as faults; missing the 8 would hide the only fault eve has no recovery path for. " +
+    "The same count decides who is worth an HTTP round trip, so getting it wrong is now a cost " +
+    "as well as a correctness bug.",
 
   async available() {
     if (!process.env.WORKFLOW_POSTGRES_URL) return ["WORKFLOW_POSTGRES_URL is not set"];
@@ -97,7 +110,7 @@ export default {
     try {
       await client.query(`CREATE SCHEMA ${schema}`);
       // `timestamp without time zone`, because that is what the workflow schema
-      // uses and assertion 4 is about exactly that choice.
+      // uses and assertion 5 is about exactly that choice.
       await client.query(`
         CREATE TABLE ${schema}.workflow_runs (
           id           text PRIMARY KEY,
@@ -117,7 +130,7 @@ export default {
              (id, status, error_code, created_at, started_at, completed_at, updated_at, attributes)
            VALUES ($1, $2, $3,
                    (now() AT TIME ZONE 'utc') - $4::interval,
-                   (now() AT TIME ZONE 'utc') - $4::interval,
+                   CASE WHEN $8 THEN (now() AT TIME ZONE 'utc') - $4::interval END,
                    CASE WHEN $5 THEN (now() AT TIME ZONE 'utc') - $6::interval END,
                    (now() AT TIME ZONE 'utc') - $6::interval,
                    $7::jsonb)`,
@@ -129,6 +142,7 @@ export default {
             row.finished,
             row.finished ? row.endedAgo : row.startedAgo,
             JSON.stringify(row.attributes),
+            row.pickedUp ?? true,
           ],
         );
       };
@@ -207,10 +221,24 @@ export default {
         attributes: { "$eve.root": "stuck" },
       });
 
-      const evidenceFor = async (cut, { limit = 10 } = {}) => {
+      // A session whose only turn was created and never picked up: no
+      // `completed_at`, and no `started_at` either. Assertion 4 lives on it.
+      await insert({ ...session("queued"), startedAgo: "3 hours" });
+      await insert({
+        id: "queued-open",
+        status: "pending",
+        startedAgo: "2 hours",
+        pickedUp: false,
+        finished: false,
+        endedAgo: "2 hours",
+        attributes: { "$eve.type": "turn", "$eve.root": "queued" },
+      });
+
+      const evidenceFor = async (cut, { limit = 10, unsettledOnly = true } = {}) => {
         const { rows } = await client.query(`
           SELECT s.id AS session_id,
                  GREATEST(s.updated_at, COALESCE(MAX(t.updated_at), s.updated_at)) AS last_activity,
+                 ${OPEN_TURNS} AS unfinished_turns,
                  ${EVIDENCE},
                  ${BY_STATUS}
           FROM ${schema}.workflow_runs s
@@ -220,6 +248,7 @@ export default {
             AND s.status = 'running'
           GROUP BY s.id, s.attributes, s.created_at, s.updated_at
           HAVING GREATEST(s.updated_at, COALESCE(MAX(t.updated_at), s.updated_at)) < ${cut}
+            ${unsettledOnly ? `AND ${OPEN_TURNS} > 0` : ""}
           ORDER BY last_activity ASC
           LIMIT ${limit}
         `);
@@ -227,16 +256,17 @@ export default {
       };
 
       const UTC_CUT = `(now() AT TIME ZONE 'utc') - interval '30 minutes'`;
-      const rows = await evidenceFor(UTC_CUT);
-      const byId = new Map(rows.map((r) => [r.session_id, r]));
+      const everyQuietSession = await evidenceFor(UTC_CUT, { unsettledOnly: false });
+      const byId = new Map(everyQuietSession.map((r) => [r.session_id, r]));
 
       const quiet = byId.get("quiet");
       const stuck = byId.get("stuck");
 
-      t.ok(rows.length === 2, "both idle sessions are candidates", rows.length === 2 ? {} : {
-        expected: 2,
-        actual: rows.length,
-      });
+      t.ok(
+        everyQuietSession.length === 3,
+        "all three sessions are quiet enough that only the run rows separate them",
+        everyQuietSession.length === 3 ? {} : { expected: 3, actual: everyQuietSession.length },
+      );
 
       /* 1. finished is completed_at, not status ------------------------------ */
 
@@ -250,11 +280,6 @@ export default {
               expected: "0 open turns on a session whose four turns all reached completed_at",
               actual: `${quietUnfinished} — a failure is being counted as work in flight, which is how 166 healthy sessions get reported as wedged`,
             },
-      );
-      t.ok(
-        Number(quiet?.turns) === 4,
-        "all four of its turns are still counted as turns",
-        Number(quiet?.turns) === 4 ? {} : { expected: 4, actual: Number(quiet?.turns) },
       );
       t.ok(
         quiet?.in_flight_since === null,
@@ -279,19 +304,12 @@ export default {
 
       t.ok(
         Number(stuck?.unfinished_turns) === 1,
-        "the turn that never reached completed_at is the one open turn",
+        "the turn that never reached completed_at is the one open turn, and the untagged companion run is not a turn however long it stays running",
         Number(stuck?.unfinished_turns) === 1
           ? {}
-          : { expected: 1, actual: Number(stuck?.unfinished_turns) },
-      );
-      t.ok(
-        Number(stuck?.turns) === 2,
-        "the untagged companion run is not a turn, however long it stays running",
-        Number(stuck?.turns) === 2
-          ? {}
           : {
-              expected: "2 — the companion run carries no $eve.type",
-              actual: `${Number(stuck?.turns)}; counting one companion run per session reports the whole fleet as wedged`,
+              expected: "1 — the companion run carries no $eve.type, so the type filter drops it",
+              actual: `${Number(stuck?.unfinished_turns)}; counting one companion run per session reports the whole fleet as wedged`,
             },
       );
 
@@ -312,7 +330,36 @@ export default {
             },
       );
 
-      /* 3. the unchecked count survives the LIMIT ----------------------------- */
+      /* 3. the settled session is never even fetched -------------------------- */
+
+      const unsettled = await evidenceFor(UTC_CUT);
+      const asked = unsettled.map((r) => r.session_id).sort();
+      const onlyOpen = asked.length === 2 && asked[0] === "queued" && asked[1] === "stuck";
+      t.ok(
+        onlyOpen,
+        "a session whose turns all closed is not a candidate, so no round trip is spent on it",
+        onlyOpen
+          ? {}
+          : {
+              expected: "stuck and queued — the two sessions carrying a turn row that never closed",
+              actual: `${asked.join(", ") || "nothing"} — probing a settled session folds its pruned stream to silence, which is what a turn in flight looks like`,
+            },
+      );
+
+      /* 4. the filter counts rows, and counts past the LIMIT ------------------ */
+
+      const queued = unsettled.find((r) => r.session_id === "queued");
+      const queuedIsOpen = Number(queued?.unfinished_turns) === 1 && queued?.in_flight_since === null;
+      t.ok(
+        queuedIsOpen,
+        "a turn created and never picked up is open even though it has no started_at",
+        queuedIsOpen
+          ? {}
+          : {
+              expected: "1 open turn carrying a null in_flight_since",
+              actual: `${Number(queued?.unfinished_turns)} open, in_flight_since ${queued?.in_flight_since} — writing the filter as MIN(started_at) IS NOT NULL would silently drop this session`,
+            },
+      );
 
       const paged = await evidenceFor(UTC_CUT, { limit: 1 });
       const total = Number(paged[0]?.candidate_count);
@@ -327,7 +374,7 @@ export default {
             },
       );
 
-      /* 4. the zone the naive columns are read in ----------------------------- */
+      /* 5. the zone the naive columns are read in ----------------------------- */
 
       await client.query(`SET TIME ZONE 'America/Los_Angeles'`);
       const naive = await evidenceFor(`now() - interval '30 minutes'`);
@@ -340,7 +387,7 @@ export default {
           ? {}
           : {
               expected:
-                "a bare now() to find 0 of the 2 quiet sessions on a US/Pacific server, and the UTC cut to find both",
+                "a bare now() to find 0 of the 2 open-turn sessions on a US/Pacific server, and the UTC cut to find both",
               actual: `bare now(): ${naive.length}, UTC cut: ${utc.length} — if the bare version now agrees, this server is running UTC and the assertion has stopped testing anything`,
             },
       );

@@ -25,7 +25,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { cacheSavingsUsd, costUsd, findPrice, formatUsd, isPriced } from "../lib/pricing.ts";
+import { costUsd, findPrice, formatUsd, isPriced } from "../lib/pricing.ts";
 
 /**
  * The merged table is built once, lazily, on the first lookup. If the machine
@@ -116,9 +116,12 @@ test("an entirely cached turn costs the cache rate and nothing else", () => {
   assert.equal(costUsd(SONNET, 1000, 0, 1000), (1000 / M) * price.cacheRead);
 });
 
-test("more cache reads than input tokens cannot produce a negative charge", () => {
+test("more cache reads than input tokens cannot produce a negative charge", (t) => {
   // Upstream counters have disagreed before; a negative row would silently
   // subtract from the session total and make an expensive session look cheap.
+  // The floor also warns now — that is asserted on its own model below, and
+  // muted here so it does not colour the output of a test about arithmetic.
+  t.mock.method(console, "warn", () => {});
   const price = findPrice(SONNET);
   assert.equal(costUsd(SONNET, 100, 0, 1000), (1000 / M) * price.cacheRead);
   assert.ok(costUsd(SONNET, 0, 0, 1000) > 0);
@@ -172,19 +175,29 @@ test("non-cached, cache-read and cache-write are three disjoint classes", () => 
 });
 
 test("a model with no stated cache-write rate bills writes as input, never as free", () => {
-  // The decision this locks: absent is NOT zero. Charging the input rate leaves
-  // the total exactly where it was before costUsd took a write count, which is
-  // why 173 of the 206 priced models do not move.
+  // Be honest about what this one is worth: charging the input rate produces
+  // the identical number the four-argument signature produced, so no input can
+  // make it disagree with the old code. It is not here to. What it pins is the
+  // tempting `?? 0` — the one-character version of this fallback that makes a
+  // whole token class free for 173 of the 206 priced models, including the one
+  // the seeded dataset runs. Under `?? 0` the first assertion reads 600 tokens
+  // of input instead of 1000, and the last reads $0.00.
   const price = findPrice(NO_WRITE_RATE);
   assert.equal(price.cacheWrite, undefined, "fixture chosen because the catalog states no rate");
 
   assert.equal(costUsd(NO_WRITE_RATE, 1000, 0, 0, 400), (1000 / M) * price.input);
+  assert.equal(
+    costUsd(NO_WRITE_RATE, 1000, 0, 0, 400),
+    costUsd(NO_WRITE_RATE, 1000, 0, 0, 0),
+    "absent means the label changes nothing, not that the tokens were free",
+  );
   // A turn that is nothing but cache writes still costs money.
-  assert.ok(costUsd(NO_WRITE_RATE, 400, 0, 0, 400) > 0);
   assert.equal(costUsd(NO_WRITE_RATE, 400, 0, 0, 400), (400 / M) * price.input);
+  assert.ok(costUsd(NO_WRITE_RATE, 400, 0, 0, 400) > 0);
 });
 
-test("cache reads and writes together cannot drive input negative", () => {
+test("cache reads and writes together cannot drive input negative", (t) => {
+  t.mock.method(console, "warn", () => {});
   const price = findPrice(SONNET);
   assert.equal(
     costUsd(SONNET, 100, 0, 300, 200),
@@ -193,12 +206,29 @@ test("cache reads and writes together cannot drive input negative", () => {
   assert.ok(costUsd(SONNET, 0, 0, 0, 200) > 0);
 });
 
-test("the cache-write count is optional and defaults to none", () => {
-  // Callers written against the four-argument signature must keep billing the
-  // same number; "no write count supplied" is not "everything was a write".
-  const price = findPrice(SONNET);
-  assert.equal(costUsd(SONNET, 1000, 0, 400), (600 / M) * price.input + (400 / M) * price.cacheRead);
-  assert.equal(costUsd(SONNET, 1000, 0), (1000 / M) * price.input);
+test("a split that cannot be true says so instead of eating the surplus", (t) => {
+  // Reads and writes are parts of the input total, so a negative remainder is
+  // impossible from eve and means a counter is wrong. The floor that keeps the
+  // charge non-negative also drops those input tokens on the floor — 382,813 of
+  // them across 160 turns on the seeded month — and a third of a million tokens
+  // vanishing without a word is how spend gets under-reported forever.
+  //
+  // A model of this test's own, because the warning fires once per model for
+  // the life of the process and any other test that clamps would have consumed
+  // it first.
+  const model = "anthropic/claude-haiku-4.5";
+  const warnings = [];
+  t.mock.method(console, "warn", (...args) => warnings.push(args.join(" ")));
+
+  costUsd(model, 100, 0, 300, 200);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /anthropic\/claude-haiku-4\.5/);
+  assert.match(warnings[0], /400/, "the surplus it is about to discard, in tokens");
+
+  // Once per model: this runs per turn row on every render, so a bad fixture
+  // must not print one line per row.
+  costUsd(model, 0, 0, 900, 100);
+  assert.equal(warnings.length, 1);
 });
 
 /* -------------------------------------------------------------------------- */
@@ -214,56 +244,6 @@ test("the seeded free model and the seeded unpriced model do not collapse", () =
 
   assert.equal(isPriced(FREE), true, "local inference is free, and we know it");
   assert.equal(isPriced(UNPRICED), false, "no catalog entry: the cost is unknown, not zero");
-
-  assert.equal(cacheSavingsUsd(FREE, 1_000_000), 0, "nothing spent, so nothing saved");
-  assert.equal(cacheSavingsUsd(UNPRICED, 1_000_000), null, "unknown, and the type says so");
-});
-
-/* -------------------------------------------------------------------------- */
-/* cache savings                                                               */
-/* -------------------------------------------------------------------------- */
-
-test("cache savings are the cached tokens times the rate they dodged", () => {
-  const price = findPrice(SONNET);
-  assert.equal(cacheSavingsUsd(SONNET, 1_000_000), price.input - price.cacheRead);
-  assert.equal(cacheSavingsUsd(SONNET, 0), 0);
-});
-
-test("savings are exactly what the same tokens would have cost uncached", () => {
-  // The figure is only defensible if it reconciles with what we actually
-  // charged: cached cost + savings must equal the cost of the identical turn
-  // with the cache cold. Two independently computed sums, one identity.
-  for (const model of [SONNET, NO_CACHE_RATE, NO_WRITE_RATE, FREE]) {
-    const n = 250_000;
-    const cached = costUsd(model, n, 0, n);
-    const cold = costUsd(model, n, 0, 0);
-    const saved = cacheSavingsUsd(model, n);
-    assert.ok(Math.abs(cold - cached - saved) < 1e-12, model);
-  }
-});
-
-test("savings use the same cache rate the cost used, including the fallback", () => {
-  // If the two ever resolve the missing-rate case differently, the dashboard
-  // reports a saving against a rate it never charged.
-  const price = findPrice(NO_CACHE_RATE);
-  assert.equal(price.cacheRead, undefined);
-  assert.equal(cacheSavingsUsd(NO_CACHE_RATE, 1_000_000), price.input - price.input * 0.1);
-});
-
-test("savings are never negative", () => {
-  // No catalog entry prices a cached read above its input rate, so a negative
-  // here means either a bad override or an inverted subtraction — both of which
-  // would quietly credit spend back.
-  for (const model of [SONNET, NO_CACHE_RATE, NO_WRITE_RATE, FREE, "openai/gpt-4o", "openai/o1"]) {
-    assert.ok(cacheSavingsUsd(model, 1_000_000) >= 0, model);
-  }
-  assert.equal(cacheSavingsUsd(SONNET, -1000), 0);
-});
-
-test("an unpriced model saves null, not zero", () => {
-  for (const model of [UNPRICED, "openai/gpt-9", "", null]) {
-    assert.equal(cacheSavingsUsd(model, 1_000_000), null, JSON.stringify(model));
-  }
 });
 
 /* -------------------------------------------------------------------------- */
