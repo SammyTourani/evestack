@@ -738,3 +738,92 @@ test("the response describes itself, so the UI formats without guessing", () => 
   assert.equal(meta.granularity, "hour");
   assert.equal(meta.buckets, 24);
 });
+
+/* -------------------------------------------------------------------------- */
+/* absent values, and the operators that used to lose them                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Three findings from the W2 adversarial review, each of which produced a
+ * confident wrong answer rather than an error. All three are compile-time, so
+ * they are asserted against the emitted SQL rather than against a database.
+ */
+
+test("count() reports a count, whatever it counted", () => {
+  // count(cost) used to inherit unit:"cost", and the shipped formatter renders
+  // a `cost` unit with a dollar sign — five rows displayed as "$5.00".
+  const q = compileMetricQuery({
+    view: "turns",
+    measures: [
+      { measure: "cost", aggregation: "count" },
+      { measure: "cost", aggregation: "sum" },
+      { measure: "duration", aggregation: "count" },
+      { measure: "sessions", aggregation: "count_distinct" },
+    ],
+  });
+  const unitOf = (key) => q.meta.measures.find((m) => m.key === key)?.unit;
+  assert.equal(unitOf("count_cost"), "count", "count(cost) is a count, not dollars");
+  assert.equal(unitOf("count_duration"), "count", "count(duration) is a count, not ms");
+  assert.equal(unitOf("count_distinct_sessions"), "count");
+  // ...and every other aggregation still carries the measure's own unit.
+  assert.equal(unitOf("sum_cost"), "cost");
+});
+
+test("a numeric operator on a text-backed measure is a 400, not a driver 500", () => {
+  // `sessions` is a measure whose sql is `session_id`, a text column it only
+  // count_distincts. `sessions > 5` used to compile to
+  // `session_id > $n::double precision` and surface as a raw Postgres error.
+  assert.throws(
+    () =>
+      compileMetricQuery({
+        view: "turns",
+        measures: [{ measure: "duration", aggregation: "count" }],
+        filters: [{ field: "sessions", operator: "gt", value: 5 }],
+      }),
+    /not available on non-numeric measure/,
+  );
+
+  // The text operators on it still work, and so do numeric ones on real numbers.
+  assert.ok(
+    compileMetricQuery({
+      view: "turns",
+      measures: [{ measure: "duration", aggregation: "count" }],
+      filters: [{ field: "sessions", operator: "eq", value: "wrun_1" }],
+    }),
+  );
+  assert.ok(
+    compileMetricQuery({
+      view: "turns",
+      measures: [{ measure: "duration", aggregation: "count" }],
+      filters: [{ field: "duration", operator: "gt", value: 5000 }],
+    }),
+  );
+});
+
+test("'not X' keeps the rows where X is absent", () => {
+  // `NULL <> 'x'` is NULL, so a WHERE built on <> drops the row. On the seeded
+  // month "every model except acme" returned 1,651 of 1,713, silently losing
+  // the 62 turns that never called a model.
+  const ne = compileMetricQuery({
+    view: "turns",
+    measures: [{ measure: "duration", aggregation: "count" }],
+    filters: [{ field: "model", operator: "ne", value: "acme/experimental-v1" }],
+  });
+  assert.match(ne.sql, /IS DISTINCT FROM/, "ne must not use <>");
+  assert.doesNotMatch(ne.sql, /model\s*<>/);
+
+  const notIn = compileMetricQuery({
+    view: "turns",
+    measures: [{ measure: "duration", aggregation: "count" }],
+    filters: [{ field: "model", operator: "not_in", value: ["acme/experimental-v1"] }],
+  });
+  assert.match(notIn.sql, /IS NULL OR NOT/, "not_in must readmit absent rows");
+
+  // `in` is unchanged: asking FOR a value should not return rows without one.
+  const inList = compileMetricQuery({
+    view: "turns",
+    measures: [{ measure: "duration", aggregation: "count" }],
+    filters: [{ field: "model", operator: "in", value: ["acme/experimental-v1"] }],
+  });
+  assert.doesNotMatch(inList.sql, /IS NULL OR/);
+});

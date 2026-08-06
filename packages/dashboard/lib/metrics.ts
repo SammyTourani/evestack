@@ -912,14 +912,29 @@ function compileFilter(
     );
   }
   const expr = dimension ? dimension.sql : measure!.sql;
-  const numeric = !dimension;
+  /**
+   * Whether the underlying COLUMN is numeric, not whether the field is a
+   * measure. `sessions` is a measure whose `sql` is `session_id`, a text column
+   * it only ever `count_distinct`s — asking for `sessions > 5` used to compile
+   * to `session_id > $3::double precision` and come back as a 500 carrying a
+   * raw driver message, which is exactly the class of failure the route layer
+   * separates 400s from.
+   *
+   * A measure supporting only `count_distinct` is a question about identity,
+   * not magnitude, so it takes the text operators. Derived from the declared
+   * aggregations rather than a new flag on all 24 measures, because a flag can
+   * disagree with the aggregations and this cannot.
+   */
+  const numeric =
+    !dimension && measure!.aggregations.some((a) => NUMERIC_AGGREGATIONS.includes(a));
   const allowed = numeric ? NUMERIC_OPERATORS : TEXT_OPERATORS;
 
   const operator = asString(raw.operator, `filters[${index}].operator`) as FilterOperator;
   if (!allowed.has(operator)) {
     throw new MetricQueryError(
-      `Operator '${operator}' is not available on ${numeric ? "numeric measure" : "dimension"} ` +
-        `'${field}'. Available: ${known(allowed)}.`,
+      `Operator '${operator}' is not available on ${
+        numeric ? "numeric measure" : dimension ? "dimension" : "non-numeric measure"
+      } '${field}'. Available: ${known(allowed)}.`,
     );
   }
 
@@ -933,16 +948,37 @@ function compileFilter(
     }
     const items = value.map((v, i) => asString(v, `filters[${index}].value[${i}]`));
     const test = `${expr} = ANY(${bind(items)}::text[])`;
-    return operator === "in" ? test : `NOT (${test})`;
+    // `NOT (NULL = ANY(...))` is NULL, not true, so plain negation silently drops
+    // every row whose dimension is absent. Same reason as `ne` just below.
+    return operator === "in" ? test : `(${expr} IS NULL OR NOT (${test}))`;
   }
+
+  /**
+   * `ne` compiles to `IS DISTINCT FROM`, not `<>`.
+   *
+   * Three-valued logic makes `NULL <> 'x'` evaluate to NULL, so a WHERE built on
+   * `<>` excludes the row entirely. "Every model except acme" therefore returned
+   * 1,651 of the seeded month's 1,713 non-acme turns and silently lost the 62
+   * that never called a model — which is the population an error-rate question
+   * most wants, since a turn with no model is usually a turn that failed to
+   * reach one. Nothing in the response distinguished 1,651-of-1,651 from
+   * 1,651-of-1,713.
+   *
+   * That is correct SQL and the wrong answer for this catalog, whose stated rule
+   * — and `components/ui/table-filter`'s behaviour — is that an absent value is
+   * its own bucket, not a row that quietly stops existing. `IS DISTINCT FROM`
+   * treats NULL as a value differing from every non-null one, which is what
+   * "not X" means to someone reading a chart.
+   */
+  const comparison = operator === "ne" ? "IS DISTINCT FROM" : COMPARISON[operator];
 
   if (numeric) {
     if (typeof value !== "number" || !Number.isFinite(value)) {
       throw new MetricQueryError(`'${operator}' on measure '${field}' needs a finite number.`);
     }
-    return `${expr} ${COMPARISON[operator]} ${bind(value)}::double precision`;
+    return `${expr} ${comparison} ${bind(value)}::double precision`;
   }
-  return `${expr} ${COMPARISON[operator]} ${bind(asString(value, `filters[${index}].value`))}::text`;
+  return `${expr} ${comparison} ${bind(asString(value, `filters[${index}].value`))}::text`;
 }
 
 /**

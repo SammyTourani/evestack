@@ -682,6 +682,21 @@ BEGIN
       octet_length(s.attributes ->> 'gen_ai.tool.call.result')    AS result_bytes
     FROM evestack.spans s
     JOIN touched_turns t ON t.id = s.resolved_turn_id
+    -- `touched_turns` keeps this incremental, but its span arm contributes
+    -- whatever `resolved_turn_id` says and that is NOT guaranteed to be a turn:
+    -- it comes from `spans.turn_id`, a generated column over an attribute the
+    -- tracer writes, so it can be any string. The fact_turn arm 220 lines above
+    -- guards itself with `$eve.type IN ('turn','subagent')` and this one did
+    -- not, so a tool span pointing at a session id — or at nothing — was
+    -- materialized anyway, breaking this table's own stated promise that "a
+    -- tool span that resolves to no turn is not materialized at all" and making
+    -- sum(tools_called) disagree with count(fact_tool_call).
+    --
+    -- Joining fact_turn rather than repeating the type test is what makes the
+    -- promise structural: fact_turn is written earlier in this same function and
+    -- contains exactly the turns that passed the guard, so a tool call cannot
+    -- outlive the turn it belongs to.
+    JOIN evestack.fact_turn ft ON ft.run_id = t.id
     -- lib/traces.ts's TOOL_CALL_PREDICATE, and both halves of it matter: a
     -- deployment that exports emits `execute_tool <name>` and a laptop running
     -- eve's local tracer emits `ai.toolCall`.
@@ -716,6 +731,8 @@ BEGIN
   SELECT count(*) INTO v_tools_examined
   FROM evestack.spans s
   JOIN touched_turns t ON t.id = s.resolved_turn_id
+  -- Same guard as the insert above, or `examined` counts rows `changed` cannot.
+  JOIN evestack.fact_turn ft ON ft.run_id = t.id
   WHERE s.name = 'ai.toolCall' OR starts_with(s.name, 'execute_tool ');
 
   -- A tool call whose span is gone. Only reachable for turns in this refresh,
