@@ -732,7 +732,15 @@ export function compileMetricQuery(input: unknown, now = Date.now()): CompiledQu
     if (seenMeasure.has(key)) throw new MetricQueryError(`Measure '${key}' is requested twice.`);
     seenMeasure.add(key);
     measureSql.set(name, def.sql);
-    measures.push({ key, measure: name, aggregation, unit: def.unit, label: def.label });
+    // The AGGREGATION decides the unit, not only the measure. `count` answers
+    // "how many rows", which is a count whatever it counted — carrying the
+    // measure's unit through would make `count(cost)` claim to be dollars and
+    // the shipped formatter would render five rows as "$5.00". `count` is
+    // offered on 17 of the 24 measures, so this is not an edge. The same
+    // applies to `count_distinct`. Every other aggregation (sum, avg, min, max,
+    // the percentiles) returns a value in the measure's own unit and keeps it.
+    const unit = aggregation === "count" || aggregation === "count_distinct" ? "count" : def.unit;
+    measures.push({ key, measure: name, aggregation, unit, label: def.label });
   }
 
   /* ── SQL ──────────────────────────────────────────────────────────────── */

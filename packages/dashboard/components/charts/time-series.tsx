@@ -49,6 +49,7 @@ import {
   type Row,
   type SeriesInput,
 } from "./lib/series";
+import { CONTROL } from "../ui/style";
 import {
   applyView,
   canZoomIn,
@@ -381,7 +382,7 @@ export function ChartButton(props: {
       onClick={props.onClick}
       disabled={props.disabled}
       aria-pressed={props.pressed}
-      className="rounded-sm border border-border bg-bg px-2 py-1 text-micro text-text-dim hover:bg-bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-40 aria-pressed:border-accent aria-pressed:text-text"
+      className={`${CONTROL} px-2 py-1 text-micro aria-pressed:border-accent aria-pressed:text-text`}
     >
       {props.children}
     </button>

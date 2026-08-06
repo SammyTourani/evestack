@@ -26,6 +26,7 @@
 
 import { useMemo, useState } from "react";
 
+import { BARE_BUTTON } from "../ui/style";
 import { ABSENT, formatValue, type Unit } from "./lib/format";
 import {
   barFraction,
@@ -210,7 +211,7 @@ function SortHeader(props: {
       <button
         type="button"
         onClick={props.onSort}
-        className="rounded-sm px-1 hover:text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+        className={`${BARE_BUTTON} rounded-sm px-1 hover:text-text`}
       >
         {props.label}
         <span aria-hidden="true" className="ml-1">
