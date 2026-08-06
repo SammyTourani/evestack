@@ -94,6 +94,57 @@ nothing. `$eve.model` is only written once a model call reports usage, so its ab
 finished turn is the surviving evidence. evestack uses exactly that signal and labels those
 turns **"no model call — turn produced nothing"**.
 
+## "The agent's shell can't reach the network"
+
+Working as configured. `agent/sandbox/sandbox.ts` sets `networkPolicy: "deny-all"` so that code
+the model writes cannot reach your LAN, your router, a cloud instance's metadata endpoint, or
+the internet. eve's default is the opposite (`allow-all`), and eve's own docs tell you to change
+it — this template ships it already changed.
+
+Inside the sandbox the container is attached to no network at all: `lo` only, no default route.
+`/etc/resolv.conf` still names the host's resolver, so what you see is a DNS failure rather than
+anything that says "policy":
+
+| Command | What you get |
+| --- | --- |
+| `curl https://example.com` | `curl: (6) Could not resolve host: example.com` |
+| `git clone https://…` | `fatal: unable to access … Could not resolve host` |
+| `npm install <pkg>` | `getaddrinfo EAI_AGAIN registry.npmjs.org` |
+| `pip install <pkg>` | name-resolution warnings, then `No matching distribution found for <pkg>` |
+| `apt-get update` | warnings, **exit 0** |
+| `apt-get install <pkg>` | `E: Unable to locate package <pkg>` |
+
+The last two are the trap. `apt-get update` reports success, and both apt and pip end on a
+sentence that reads like the package does not exist. An agent that believes it will go looking
+for a different package name instead of telling you it has no network. If you are debugging an
+agent that keeps "not finding" packages, this is why.
+
+Loopback is not affected — `python3 -m http.server` and a `curl 127.0.0.1` at it both work — and
+neither are model calls, Postgres, Composio or any channel, all of which run in the app runtime
+rather than in the sandbox.
+
+To give the shell egress:
+
+```bash
+EVESTACK_SANDBOX_NETWORK=allow-all     # in .env.local
+```
+
+**Then start a new session.** That variable is read when a session's container is created, and
+eve keeps one container per durable session with no idle timeout, reattaching to it across
+server restarts without re-applying the policy. Changing the variable does nothing to a
+conversation that already exists — in either direction, so this is also the reason turning
+deny-all *on* does not retroactively close an old session's container. Drop them if you want the
+new setting everywhere:
+
+```bash
+docker rm -f $(docker ps -aq --filter label=eve.sandbox.role=session)
+```
+
+There is no host allow-list on this backend: the Docker backend takes `allow-all` or `deny-all`
+and nothing else. Domain-level rules need `microsandbox()`. For one step inside an authored
+tool, `sandbox.setNetworkPolicy("allow-all")` on the live handle does work on a running
+container — put it back afterwards.
+
 ## "Composio tools aren't showing up"
 
 Check `COMPOSIO_API_KEY` is set in the **agent's** `.env.local` (not just the dashboard's —
