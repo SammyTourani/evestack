@@ -28,11 +28,20 @@ export function basename(p) {
   return p.split(/[\\/]/).filter(Boolean).pop() ?? "agent";
 }
 
-export function templateDir() {
+/**
+ * Where the agent template lives.
+ *
+ * `{ optional: true }` returns null instead of exiting, for callers that only
+ * want to read something out of the template and have a sane answer without it.
+ * Scaffolding has no such answer — a create command that cannot find what it
+ * creates should stop — so the default stays fatal.
+ */
+export function templateDir({ optional = false } = {}) {
   // Published layout first, then the monorepo layout for local development.
   for (const candidate of [join(HERE, "template"), join(HERE, "..", "..", "templates", "default")]) {
     if (existsSync(join(candidate, "package.json"))) return candidate;
   }
+  if (optional) return null;
   console.error(`${C.red}Could not locate the agent template.${C.reset}`);
   process.exit(1);
 }

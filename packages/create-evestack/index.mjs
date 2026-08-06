@@ -19,9 +19,11 @@
  * and every dependency here is one more supply-chain surface for a tool that
  * writes files and credentials.
  */
-import { execSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync,
+} from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   basename, C, detectPm, dim, makePrompter, ok, say, step, templateDir, warn,
@@ -68,13 +70,33 @@ async function main() {
   // ---- model ----------------------------------------------------------------
   say();
   say(`  ${C.bold}Model provider${C.reset}`);
-  dim("1) OpenAI or Anthropic API key  — best tool-calling, costs per token");
-  dim("2) Ollama (local)               — $0, weaker tool-calling, needs RAM headroom");
-  const modelChoice = await ask("Choose 1 or 2:", "1");
-  const useOllama = modelChoice.trim() === "2";
+  dim("1) OpenAI     — gpt-5-mini, best tool-calling per dollar, costs per token");
+  dim("2) Anthropic  — claude-sonnet-5, strong tool-calling, costs per token");
+  dim("3) Ollama     — local, $0, weaker tool-calling, needs RAM headroom");
+  // Every one of these is written to .env.local as EVESTACK_PROVIDER. It is the
+  // variable agent/agent.ts branches on (defaulting to "openai"), and a model
+  // name written without it goes to whichever provider was already selected —
+  // which is how the Ollama path used to fail, with `compaction trigger model
+  // "openai/qwen3" does not have known AI Gateway context window metadata`.
+  // Choosing a provider and not writing EVESTACK_PROVIDER is not a partial
+  // configuration, it is a broken one.
+  // A Map, not an object literal, because the key is whatever the user typed:
+  // `PROVIDERS["__proto__"]` on a literal returns Object.prototype, which is
+  // truthy, so `?? default` never fires and the wizard goes on to write
+  // `EVESTACK_PROVIDER=undefined` and `undefined=` into .env.local.
+  const PROVIDERS = new Map([
+    ["1", { id: "openai", keyVar: "OPENAI_API_KEY", model: "gpt-5-mini", keyHint: "https://platform.openai.com/api-keys" }],
+    ["2", { id: "anthropic", keyVar: "ANTHROPIC_API_KEY", model: "claude-sonnet-5", keyHint: "https://console.anthropic.com/settings/keys" }],
+    ["3", { id: "ollama", keyVar: null, model: "qwen3", keyHint: null }],
+  ]);
+  const modelChoice = await ask("Choose 1, 2 or 3:", "1");
+  // Anything unrecognised falls back to the default rather than scaffolding a
+  // project configured for a provider nobody picked.
+  const chosen = PROVIDERS.get(modelChoice.trim()) ?? PROVIDERS.get("1");
+  const useOllama = chosen.id === "ollama";
 
   let apiKeyLine = "";
-  let modelLine = "";
+  let modelLine = `EVESTACK_PROVIDER=${chosen.id}\nEVESTACK_MODEL=${chosen.model}`;
   if (useOllama) {
     if (!hasOllama()) {
       warn("Ollama not found on PATH — install it from https://ollama.com, then `ollama pull qwen3`.");
@@ -86,21 +108,12 @@ async function main() {
     // Postgres, the dashboard and the agent.
     warn("qwen3 is 5.2 GB. Budget model size + 4 GB free RAM on top of Docker, Postgres");
     warn("and the dashboard, or the machine can hang. A hosted key is safer on a laptop.");
-    // EVESTACK_PROVIDER is what actually selects the local path. agent/agent.ts
-    // reads it (defaulting to "openai"), and without it the model name alone is
-    // handed to the OpenAI provider — the agent then refuses to boot with
-    // `compaction trigger model "openai/qwen3" does not have known AI Gateway
-    // context window metadata`, because modelContextWindowTokens is only set on
-    // the ollama branch. Setting the model without the provider is not a
-    // partial configuration, it is a broken one.
-    modelLine = "EVESTACK_PROVIDER=ollama\nEVESTACK_MODEL=qwen3";
     apiKeyLine = "# Local models need no API key.";
   } else {
     say();
-    dim("Paste a key now, or leave blank and add it to .env.local later.");
-    const key = await ask("OPENAI_API_KEY:", "");
-    apiKeyLine = key ? `OPENAI_API_KEY=${key}` : "OPENAI_API_KEY=";
-    modelLine = "EVESTACK_MODEL=gpt-5-mini";
+    dim(`Paste a key now, or leave blank and add it to .env.local later — ${chosen.keyHint}`);
+    const key = await ask(`${chosen.keyVar}:`, "");
+    apiKeyLine = `${chosen.keyVar}=${key}`;
   }
 
   // ---- integrations ---------------------------------------------------------
@@ -158,6 +171,28 @@ async function main() {
   // traffic, so a shipped default password would be the one thing standing
   // between a stranger and someone's agent.
   const password = randomBytes(18).toString("base64url");
+  // The trace-ingest shared secret, generated for the same reason and one step
+  // further: unlike the password, there is NO working value to fall back to.
+  // The dashboard's `ingestAuthorized()` accepts this token or a session, and an
+  // OTLP exporter cannot hold a session — so with the variable unset on both
+  // sides every span POST is a 401. Worse, @vercel/otel treats a 401 as a
+  // successful export (the fetch promise resolves), so the batch is dropped
+  // silently and the dashboard just looks empty. A generated value is the only
+  // configuration in which trace export works at all.
+  //
+  // Hex rather than the password's base64url: it is what the dashboard's own
+  // docs tell you to paste (`openssl rand -hex 32`), and it is trivially safe to
+  // carry in an HTTP header.
+  //
+  // ONE FILE FEEDS BOTH SIDES. This is what makes generating it correct even
+  // though the dashboard runs from a separate clone: the clone supplies the
+  // IMAGE, never the environment. The dashboard service in the docker-compose.yml
+  // written below reads `env_file: .env.local` — this exact file — so the agent
+  // on the host and the dashboard in the container read one variable from one
+  // place and cannot drift. Running the dashboard some other way (`pnpm dev`
+  // inside the clone) means copying the value across by hand; the next-steps
+  // below say so, and packages/dashboard/README.md documents it.
+  const ingestToken = randomBytes(32).toString("hex");
   writeFileSync(
     join(target, ".env.local"),
     [
@@ -178,13 +213,18 @@ async function main() {
       "",
       "# Dashboard trace export",
       "EVESTACK_DASHBOARD_URL=http://localhost:4000/api/ingest/v1/traces",
+      "# Read by BOTH halves: the agent sends it as the x-evestack-ingest-token",
+      "# header, and the dashboard container gets it from this same file via",
+      "# `env_file:` in docker-compose.yml. Change it in one place or neither —",
+      "# a mismatch is a 401 on every span, which looks like 'no traces yet'.",
+      `EVESTACK_INGEST_TOKEN=${ingestToken}`,
       "",
       "# Integrations",
       composioLine,
       "",
     ].join("\n"),
   );
-  ok("Generated .env.local with a unique auth password");
+  ok("Generated .env.local with a unique auth password and trace-ingest token");
 
   // Compose only accepts [a-z0-9][a-z0-9_-]* as a project name, and a directory
   // name is not constrained to that — so normalise rather than emit a file that
@@ -245,14 +285,30 @@ async function main() {
   // The dashboard is the reason to pick evestack over plain eve, and it lives
   // in the repo rather than this package — so a user who never opens the README
   // would finish this command without learning it exists.
+  //
+  // Say plainly that this is a build, not a pull. This used to print
+  // `cd evestack/packages/dashboard && pnpm install && pnpm dev`, which does not
+  // work: the install has to happen at the workspace ROOT for `workspace:*` to
+  // resolve, @evestack/schedules has to be built before Turbopack can find
+  // dist/, and since the dashboard grew route auth it refuses every request
+  // without EVESTACK_AUTH_PASSWORD. Three failures in one line. The image path
+  // below has none of them, and your docker-compose.yml already has the service
+  // wired to this project's database and credentials.
   say(`  ${C.bold}Then add the dashboard${C.reset} ${C.dim}— sessions, cost, approvals, chat:${C.reset}`);
   say(`    git clone https://github.com/SammyTourani/evestack`);
-  say(`    cd evestack/packages/dashboard && pnpm install && pnpm dev`);
-  say(`    ${C.dim}point WORKFLOW_POSTGRES_URL at the same database${C.reset}`);
+  say(`    docker build -t evestack-dashboard:local -f evestack/packages/dashboard/Dockerfile evestack`);
+  say(`    docker compose --profile dashboard up -d   ${C.dim}# :4000${C.reset}`);
+  say();
+  dim("That is a build, not a pull — evestack does not publish a dashboard image");
+  dim("yet, so `--profile dashboard` fails until the build above has run once.");
+  dim("The clone is only needed for that build; delete it afterwards if you like.");
   say();
   say(`  ${C.dim}Nothing here bills you. No Vercel account, no metered compute.${C.reset}`);
-  if (!useOllama && !apiKeyLine.includes("=sk-")) {
-    say(`  ${C.yellow}Add your API key to .env.local before starting.${C.reset}`);
+  // Keyed off the line actually written, not off a substring of a key format:
+  // "sk-" is an OpenAI shape, and an Anthropic key that did not start with it
+  // would have produced this warning to someone who had just pasted one.
+  if (!useOllama && apiKeyLine.endsWith("=")) {
+    say(`  ${C.yellow}Add ${chosen.keyVar} to .env.local before starting.${C.reset}`);
   }
   say();
 }
@@ -299,9 +355,19 @@ function usage() {
   say();
 }
 
+/**
+ * The target directory's entries, or [] if it cannot be read.
+ *
+ * `readdirSync`, not a shell. This ran `ls -A ${JSON.stringify(p)}` through
+ * execSync, and JSON.stringify is not a shell quoter: it escapes `"` and `\`
+ * and leaves `$` alone, but `$(…)` and backticks expand inside double quotes.
+ * The path comes straight from argv, so `npx create-evestack '$(touch pwned)'`
+ * executed that command before the wizard printed its first question. readdirSync
+ * takes the path as a path and cannot be talked into anything else.
+ */
 function readdirSafe(p) {
   try {
-    return execSync(`ls -A ${JSON.stringify(p)}`, { encoding: "utf8" }).split("\n").filter(Boolean);
+    return readdirSync(p);
   } catch {
     return [];
   }
@@ -315,7 +381,30 @@ function composeFile(projectName) {
   // then recreates the first one's container and both agents silently share one
   // database. Observed live: scaffolding into a new directory recreated an
   // unrelated running evestack-postgres-1.
+  //
+  // The dashboard service is real, not commented out, but sits behind a profile
+  // so `docker compose up -d` never tries to pull an image that does not exist
+  // yet. evestack publishes NO dashboard image today; the header below says so
+  // and gives the two commands that produce one locally. Publishing turns this
+  // into a one-line change — see the note on EVESTACK_DASHBOARD_IMAGE.
   return `# evestack — your whole stack, on your machine, for $0.
+#
+#   docker compose up -d postgres              durable sessions
+#   docker compose --profile dashboard up -d   + the dashboard on :4000
+#
+# THE DASHBOARD IMAGE IS NOT PUBLISHED YET. The second command fails with a pull
+# error until you build it once, from the evestack repository — clone it
+# anywhere, and delete the clone afterwards if you like:
+#
+#   git clone https://github.com/SammyTourani/evestack
+#   docker build -t evestack-dashboard:local \\
+#     -f evestack/packages/dashboard/Dockerfile evestack
+#
+# (The context is the repo ROOT, not packages/dashboard: the dashboard resolves
+# a pnpm \`workspace:*\` dependency that only exists against the root lockfile.)
+#
+# When an image is published, set EVESTACK_DASHBOARD_IMAGE in a .env beside this
+# file — or just re-scaffold, since the default below will point at the registry.
 name: ${projectName}
 
 services:
@@ -335,6 +424,48 @@ services:
       interval: 3s
       timeout: 3s
       retries: 20
+
+  dashboard:
+    image: \${EVESTACK_DASHBOARD_IMAGE:-evestack-dashboard:local}
+    profiles: ["dashboard"]
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # The generated credentials, without a second copy of them in a second file.
+    # EVESTACK_AUTH_USER and EVESTACK_AUTH_PASSWORD are what the dashboard signs
+    # you in with AND what it presents to your agent; with either missing it
+    # answers 503 to every request and reports unhealthy, by design — it starts
+    # agent runs, approves gated shell commands and deletes memories.
+    #
+    # EVESTACK_INGEST_TOKEN rides along in the same file, and that is the whole
+    # reason it can be generated once: your agent runs on the host and reads
+    # .env.local directly, this container reads the same .env.local through the
+    # line below, so both halves of the trace-ingest shared secret come from one
+    # place. Edit it there and restart both — the agent's exporter sends it as
+    # \`x-evestack-ingest-token\`, and a value that does not match is a 401 on
+    # every span that the OTLP exporter reports to the agent as a success.
+    #
+    # The model key rides along in the same file, which is a real if small cost:
+    # anyone who owns this container can already start runs that spend that key,
+    # so the marginal exposure is close to nothing and the alternative is the
+    # same secret duplicated into a .env that drifts.
+    env_file:
+      - .env.local
+    environment:
+      # .env.local says localhost:5433 because the AGENT runs on your host.
+      # Inside a container "localhost" is the container, so the same database is
+      # reached over the compose network instead.
+      WORKFLOW_POSTGRES_URL: postgres://evestack:evestack@postgres:5432/evestack
+      # \`npm run dev\` also runs on the host, not in compose.
+      EVESTACK_AGENT_URL: \${EVESTACK_AGENT_URL:-http://host.docker.internal:2000}
+    ports:
+      # 127.0.0.1 on purpose. The process inside binds 0.0.0.0 because nothing
+      # could reach it otherwise; the published mapping is where exposure is
+      # actually decided, and this one keeps the control plane on loopback.
+      - "127.0.0.1:\${DASHBOARD_PORT:-4000}:4000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
 volumes:
   evestack-pgdata:

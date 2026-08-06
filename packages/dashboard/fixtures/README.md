@@ -41,6 +41,14 @@ curl -s 'http://localhost:4000/api/skills?selftest=1' | jq '.canary.verdict, .ca
 A `clean` or `warning` verdict there means the firewall has stopped detecting
 things it used to detect — treat it as a failing test, not a quiet day.
 
-The fixture directory is not part of the production Docker image (see
-`Dockerfile`: only `.next`, `public` and the manifest are copied), so the canary
-reports itself unavailable there rather than pretending to pass.
+The fixture directory **is** part of the production Docker image — `Dockerfile`
+copies `fixtures/` into the runtime stage — so the canary answers for real in a
+container, which is where you are least able to run the test suite instead. It
+costs 12 KB and no exposure: `listSkills()` searches `agent/skills` or
+`EVESTACK_SKILLS_DIR` and never looks in `fixtures/`, and the only reader is
+`?selftest=1` with the name hard-coded, so nothing can be talked into loading
+this as a real skill.
+
+Strip it from an image if you must, and the canary reports itself unavailable
+rather than pretending to pass — but you have then disabled the check in exactly
+the deployment it was written for.

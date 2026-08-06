@@ -26,8 +26,32 @@ import {
   basename, C, detectPm, dim, makePrompter, ok, say, step, templateDir, warn,
 } from "./shared.mjs";
 
-/** The eve release this evestack is tested against — templates/default pins it. */
-const CERTIFIED_EVE = "0.30.6";
+/**
+ * The eve release this evestack is tested against.
+ *
+ * Read out of the template's own package.json rather than typed here. Hand-typed
+ * it went stale immediately and silently: the template moved to ^0.30.8 while
+ * this still said 0.30.6, so `attach` congratulated a 0.30.6 project for being
+ * "the version evestack certifies" and told a 0.30.8 one it was ahead of us.
+ * One number, one source, and the comment cannot drift from it either.
+ *
+ * The fallback is only reachable if the template is missing or its eve range is
+ * unparseable — in which case the version report is the least of the problems,
+ * and a stale number still beats a crash.
+ */
+const CERTIFIED_EVE_FALLBACK = "0.30.8";
+const CERTIFIED_EVE = readCertifiedEve();
+
+function readCertifiedEve() {
+  const dir = templateDir({ optional: true });
+  if (!dir) return CERTIFIED_EVE_FALLBACK;
+  try {
+    const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
+    return minVersion(pkg.dependencies?.eve ?? pkg.devDependencies?.eve) ?? CERTIFIED_EVE_FALLBACK;
+  } catch {
+    return CERTIFIED_EVE_FALLBACK;
+  }
+}
 /**
  * The floor for anything reachable from a network. Below 0.30.2, eve's
  * `localDev()` matched an unanchored /^127\./ against the attacker-controlled
@@ -356,14 +380,42 @@ function buildPlan({ target, project, env, envFileName, pm, wantTraces, existing
       "rm agent/instrumentation.ts",
       () => writeFileSync(join(target, "agent", "instrumentation.ts"), instrumentationFile()),
     );
+    // Generated here, and it has to be, because there is no working alternative:
+    // the dashboard's ingest route takes this shared secret or a session cookie,
+    // and an OTLP exporter cannot hold a session. Unset on both sides, every span
+    // POST is a 401 — which @vercel/otel reports to the agent as a successful
+    // export, so the only symptom is a permanently empty Traces tab.
+    //
+    // Unlike `create-evestack`, attach writes no compose file for the dashboard,
+    // so nothing carries this value across for you: the dashboard is started from
+    // a clone with its own .env.local. printSummary() therefore echoes the line to
+    // paste, which is the one manual step this secret costs.
+    plan.ingestToken = randomBytes(32).toString("hex");
     envAdditions.push(
       ["", ""],
       ["", "# Dashboard trace export — the dashboard's own ingest route, not OTLP 4318"],
       ["EVESTACK_DASHBOARD_URL", DASHBOARD_INGEST],
+      ["", "# The exporter sends this as the `x-evestack-ingest-token` header. The"],
+      ["", "# dashboard needs the SAME value in its own EVESTACK_INGEST_TOKEN, or it"],
+      ["", "# 401s every span while the rest of the dashboard keeps working."],
+      ["EVESTACK_INGEST_TOKEN", plan.ingestToken],
     );
   } else {
     plan.notes.push("Skipping trace export — the dashboard still reads sessions, cost and approvals from Postgres.");
   }
+
+  // Generated unconditionally, unlike the ingest token: trace export is optional
+  // and this is not. The dashboard fails closed — with EVESTACK_AUTH_USER or
+  // EVESTACK_AUTH_PASSWORD unset it answers 503 on every route, including the
+  // sign-in page, so the setup printed below would hand you a dashboard that
+  // cannot be opened at all.
+  //
+  // Deliberately NOT written to the agent's env file. attach never wires
+  // httpBasic into an existing project's channel — that project owns its own
+  // auth — so these two are the dashboard's credentials alone, and writing them
+  // next to the agent's config would imply a coupling that does not exist.
+  plan.dashboardUser = "evestack";
+  plan.dashboardPassword = randomBytes(18).toString("base64url");
 
   // ---- package.json --------------------------------------------------------
   const deps = { ...project.pkg.dependencies };
@@ -509,7 +561,27 @@ function printSummary(plan) {
   say(`    git clone ${REPO}`);
   say(`    cd evestack/packages/dashboard`);
   if (plan.dbUrl) say(`    echo 'WORKFLOW_POSTGRES_URL=${plan.dbUrl}' > .env.local`);
+  // The one value that MUST be copied by hand. attach writes no compose service
+  // for the dashboard, so unlike a `create-evestack` scaffold there is no shared
+  // env_file carrying it across — and a dashboard whose EVESTACK_INGEST_TOKEN
+  // differs from the agent's 401s every span without either side saying so.
+  if (plan.ingestToken) {
+    say(`    echo 'EVESTACK_INGEST_TOKEN=${plan.ingestToken}' >> .env.local`);
+  }
+  // Not optional and not a nicety: the dashboard reads these at every request
+  // and 503s the whole app — sign-in page included — when either is missing.
+  // Printed after the others because it is the pair a reader is most likely to
+  // assume has a default. It does not.
+  say(`    echo 'EVESTACK_AUTH_USER=${plan.dashboardUser}' >> .env.local`);
+  say(`    echo 'EVESTACK_AUTH_PASSWORD=${plan.dashboardPassword}' >> .env.local`);
   say(`    pnpm install && pnpm run dev          ${C.dim}# http://localhost:4000${C.reset}`);
+  dim(`    Sign in with ${plan.dashboardUser} / ${plan.dashboardPassword}`);
+  if (plan.ingestToken) {
+    say();
+    dim(`That token is the same one written to ${plan.envFileName}. Both sides need it byte for`);
+    dim("byte: the agent sends it as `x-evestack-ingest-token`, and a mismatch is a 401 on");
+    dim('every span that shows up only as a Traces tab stuck on "no traces yet".');
+  }
   say();
 
   if (plan.manual.length > 0) {

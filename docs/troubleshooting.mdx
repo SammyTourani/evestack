@@ -9,6 +9,26 @@ description: Grouped by symptom — see local-setup for the setup-time issues.
 `eve` 0.29.x requires the `5.0.0-beta` protocol line and rejects anything else outright. Pin
 the dependency to the `beta` tag.
 
+## "I changed EVESTACK_MODEL and it's still calling the old provider"
+
+It always will. `EVESTACK_MODEL` names a model; `EVESTACK_PROVIDER` picks who to ask. Set only
+the first and the new model name goes to the provider you were already on, which fails in
+whatever way that provider fails on a name it doesn't recognise. The local case is the loudest —
+
+```
+Cannot compile agent compaction because the primary compaction trigger model
+"openai/qwen3" does not have known AI Gateway context window metadata.
+```
+
+— because eve looks the context window up in the AI Gateway catalog, and `openai/qwen3` is not
+in it. Anthropic model names sent to OpenAI produce a 404 from OpenAI instead. Set both
+variables together; the table in [Local setup](/docs/local-setup#picking-a-provider) lists which
+key each provider reads.
+
+A provider value that isn't `openai`, `anthropic` or `ollama` now throws at boot naming the
+three valid ones. Older templates fell back to OpenAI silently, so `EVESTACK_PROVIDER=claude`
+looked configured and behaved as though it wasn't set at all.
+
 ## "The agent forgets everything between restarts"
 
 `WORKFLOW_POSTGRES_URL` isn't set, or Postgres isn't reachable at that URL. `eve` falls back

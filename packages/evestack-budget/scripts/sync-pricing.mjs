@@ -1,15 +1,21 @@
 // Copies the one price table into this package before it compiles.
 //
 // The table has to be reachable from two places that cannot import each other.
-// This package is published to npm and must carry its own copy in the tarball.
-// The dashboard is built by `docker compose` from an isolated context —
-// `context: ./packages/dashboard`, then a plain `npm install` — so it cannot
-// depend on a workspace package at all: `npm error EUNSUPPORTEDPROTOCOL
-// Unsupported URL Type "workspace:"`. Measured, not assumed.
+// This package is published to npm and must carry its own copy in the tarball,
+// and a published tarball cannot resolve a `workspace:` specifier at all.
 //
-// So the dashboard keeps the editable copy and this build takes it. One file
-// anyone edits, one table at runtime, and `docker compose up dashboard` still
-// works. The generated file is gitignored so it can never be edited by mistake.
+// It used to say the dashboard could not depend on a workspace package either,
+// because `docker compose` built it from `context: ./packages/dashboard` and
+// then ran `npm install`, which dies on `EUNSUPPORTEDPROTOCOL Unsupported URL
+// Type "workspace:"`. That was measured and it was true — but it was a
+// description of a broken Dockerfile, not a constraint. The image never built
+// for anyone. It now builds from the repository root with pnpm, so the
+// dashboard resolves `workspace:*` like every other package here; see the
+// header of packages/dashboard/Dockerfile.
+//
+// The copy stays, for the npm half. The dashboard keeps the editable copy and
+// this build takes it: one file anyone edits, one table at runtime. The
+// generated file is gitignored so it can never be edited by mistake.
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";

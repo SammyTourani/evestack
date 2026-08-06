@@ -95,8 +95,14 @@ const ITEMS = [
     docs:
       "Set EVESTACK_DASHBOARD_URL to your dashboard's ingest endpoint " +
       "(http://localhost:4000/api/ingest/v1/traces). Leave it unset and no exporter is " +
-      "registered. NOTE: the presence of agent/instrumentation.ts disables eve's zero-config " +
-      "local trace spool, so `eve traces` stops working — delete the file to get it back.",
+      "registered. ALSO SET EVESTACK_INGEST_TOKEN to the same value the dashboard has: the " +
+      "ingest route takes that shared secret (sent as the x-evestack-ingest-token header) or a " +
+      "session cookie, and an exporter cannot hold a session — so with it unset or mismatched " +
+      "every span is refused with a 401. Generate one with `openssl rand -hex 32`. The file " +
+      "probes the endpoint once at startup and logs loudly if the credential is refused, " +
+      "because the OTLP exporter itself treats a 401 as a successful export. NOTE: the " +
+      "presence of agent/instrumentation.ts disables eve's zero-config local trace spool, so " +
+      "`eve traces` stops working — delete the file to get it back.",
   },
   {
     name: "docker-sandbox",

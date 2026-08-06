@@ -3,6 +3,22 @@ title: Local setup & troubleshooting
 description: Docker, Postgres, and the Ollama path to a genuinely $0 stack.
 ---
 
+## Picking a provider
+
+`EVESTACK_PROVIDER` selects the branch in `agent/agent.ts`. It is the only variable that does,
+and `EVESTACK_MODEL` on its own never changes providers — it just hands a different model name
+to whichever provider is already selected.
+
+| `EVESTACK_PROVIDER` | Key it reads | Default `EVESTACK_MODEL` |
+| --- | --- | --- |
+| unset, or `openai` | `OPENAI_API_KEY` | `gpt-5-mini` |
+| `anthropic` | `ANTHROPIC_API_KEY` | `claude-sonnet-5` |
+| `ollama` | none | `qwen3` |
+
+`create-evestack` asks which one you want and writes both lines. Anything other than those three
+values is rejected at boot with the list above rather than silently treated as OpenAI — a
+misspelled provider is a mistake, not a preference.
+
 ## Ollama
 
 For zero cost, total:
@@ -27,6 +43,19 @@ Cannot compile agent compaction because the primary compaction trigger model
 ```
 
 `create-evestack` offers this as an option at scaffold time and writes both lines for you.
+
+Two more, both optional:
+
+```bash
+OLLAMA_BASE_URL=http://127.0.0.1:11434   # bare host — no /api suffix
+EVESTACK_CONTEXT_WINDOW=32768            # qwen3's native window
+```
+
+`ai-sdk-ollama` appends the API path itself, so a `OLLAMA_BASE_URL` ending in `/api` gives
+`OllamaError: 404 page not found`. `EVESTACK_CONTEXT_WINDOW` is what the template passes to
+eve's `modelContextWindowTokens` — the escape hatch that skips the catalog lookup entirely.
+Raise it for a model with a bigger window; set it too high and compaction fires too late to
+save the turn. Both are ignored on the hosted providers, whose models the catalog does know.
 
 <Warning>
   **Check your free RAM first.** qwen3 is 5.2 GB, and it loads on top of Docker, Postgres, the

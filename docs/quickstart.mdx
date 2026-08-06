@@ -7,7 +7,8 @@ description: One command to a running, durable, dashboard-observed agent.
 
 - Node 24+
 - Docker, running (for Postgres and the agent sandbox)
-- A model API key — or skip straight to [Ollama](/docs/local-setup#ollama) for $0 total
+- An `OPENAI_API_KEY` or an `ANTHROPIC_API_KEY` — or skip straight to
+  [Ollama](/docs/local-setup#ollama) for $0 total
 
 ## Create the project
 
@@ -15,10 +16,15 @@ description: One command to a running, durable, dashboard-observed agent.
 npx create-evestack my-agent
 ```
 
-You'll be asked for a model provider (OpenAI/Anthropic key, or Ollama) and whether to enable
+You'll be asked for a model provider — OpenAI, Anthropic or Ollama — and whether to enable
 Composio's one-click tool sign-in. Answer both, or pass `--yes` to skip prompts and fill in
 `.env.local` yourself afterward — the scaffolder never hangs waiting on input it isn't going
 to get.
+
+Whichever you pick, `.env.local` gets `EVESTACK_PROVIDER` *and* that provider's own key
+variable. Both matter: `EVESTACK_PROVIDER` is what `agent/agent.ts` branches on, and setting a
+model name without it leaves you on the previous provider. See
+[the provider table](/docs/local-setup#picking-a-provider) if you're switching later by hand.
 
 This generates a unique `EVESTACK_AUTH_PASSWORD` per project. `eve` fails closed by default, so
 there's no shipped default password sitting between a stranger and your agent.
@@ -75,16 +81,57 @@ process, because it never lived in the process to begin with.
 
 ## See it in the dashboard
 
-The dashboard is not part of the scaffolded project — `create-evestack` gives you the agent.
-Clone the repository once, anywhere, and point it at the same database:
+The dashboard is not part of the scaffolded project — `create-evestack` gives you the agent —
+and evestack publishes no dashboard image yet, so this is a **build, not a pull**. Once, from
+anywhere; you can delete the clone afterwards:
 
 ```bash
 git clone https://github.com/SammyTourani/evestack
-cd evestack/packages/dashboard
-echo 'WORKFLOW_POSTGRES_URL=postgres://evestack:evestack@localhost:5433/evestack' > .env.local
-pnpm install
-pnpm run dev
+docker build -t evestack-dashboard:local -f evestack/packages/dashboard/Dockerfile evestack
 ```
 
-Open `http://localhost:4000`. Every session you just created is already there, read straight
-out of the same Postgres — no ingest step required for the session list itself.
+<Note>
+  The build context is the repository **root**, not `packages/dashboard`. The dashboard depends
+  on `@evestack/schedules` through pnpm's `workspace:*` protocol, which resolves only against
+  the root lockfile — building from the package directory is what used to end at
+  `EUNSUPPORTEDPROTOCOL`.
+</Note>
+
+Then, back in your project, where the generated `docker-compose.yml` already has the service
+wired to this project's database and credentials:
+
+```bash
+docker compose --profile dashboard up -d
+```
+
+Open `http://localhost:4000` and sign in with the `EVESTACK_AUTH_USER` and
+`EVESTACK_AUTH_PASSWORD` that `create-evestack` generated into `.env.local`. Every route is
+behind that credential — the dashboard starts agent runs, approves gated shell commands and
+deletes memories, so it fails closed rather than serving a viewer to anyone who reaches the
+port. Scripts can use HTTP Basic instead:
+
+```bash
+curl -u "$EVESTACK_AUTH_USER:$EVESTACK_AUTH_PASSWORD" localhost:4000/api/fleet
+```
+
+Every session you just created is already there, read straight out of the same Postgres — no
+ingest step required for the session list itself.
+
+<Warning>
+  If the container comes up but every page answers `503` and `docker ps` shows it unhealthy, the
+  credential did not reach it. The compose service reads `.env.local`, so that is the file to
+  check — both halves are required, and a blank password counts as unset.
+</Warning>
+
+To hack on the dashboard rather than run it, install and build from the repository root — not
+from `packages/dashboard`, where `workspace:*` cannot resolve and `@evestack/schedules` has no
+`dist/` for Turbopack to find:
+
+```bash
+cd evestack
+pnpm install
+pnpm -r --if-present --filter '@evestack/dashboard^...' run build
+EVESTACK_AUTH_USER=evestack EVESTACK_AUTH_PASSWORD=dev \
+  WORKFLOW_POSTGRES_URL=postgres://evestack:evestack@localhost:5433/evestack \
+  pnpm --filter @evestack/dashboard dev
+```

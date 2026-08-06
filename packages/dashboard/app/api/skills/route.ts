@@ -51,14 +51,21 @@ export async function GET(request: Request): Promise<Response> {
     if (url.searchParams.get("selftest") !== null) {
       const fixture = await readFixtureSkill(CANARY_SKILL);
       if (!fixture) {
-        // The production image copies only .next, public and the manifest, so
-        // the fixture genuinely is not there. Say that rather than pass.
+        // Reached only by a deployment that has removed it. The Dockerfile does
+        // copy `fixtures/` into the runtime stage (see the COPY near the end of
+        // it), precisely so this check works in a container and not only in a
+        // source checkout — a proof-of-life you can only run where you are least
+        // likely to need it is not a control. Never pass here: the whole point of
+        // the canary is that a scanner reporting nothing must be distinguishable
+        // from a scanner that has stopped looking.
         return jsonOk({
           armed: null,
           canary: null,
           reason:
             `The ${CANARY_SKILL} fixture is not present in this deployment, so the firewall cannot be self-tested here. ` +
-            "It ships in the source tree under packages/dashboard/fixtures, not in the runtime image.",
+            "It lives at packages/dashboard/fixtures and the published image ships it, so this " +
+            "means the image was built without it or the process is running from a different " +
+            "working directory.",
         });
       }
       const scan = scanSkill(fixture);

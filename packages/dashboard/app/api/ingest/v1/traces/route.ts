@@ -1,4 +1,5 @@
 import { gunzipSync, inflateSync } from "node:zlib";
+import { INGEST_UNAUTHENTICATED_MESSAGE, ingestAuthorized } from "@/lib/auth";
 import {
   getTraceStats,
   insertSpans,
@@ -20,12 +21,22 @@ export const dynamic = "force-dynamic";
  *
  * gRPC OTLP (port 4317) is not served here either. Point exporters at this URL
  * over HTTP.
+ *
+ * AUTH. Its own tier: EVESTACK_INGEST_TOKEN in the `x-evestack-ingest-token`
+ * header (or as a Bearer token), falling back to ordinary session auth when
+ * that variable is unset. An exporter is a program, so it cannot sign in — but
+ * it can send a header, which is what makes a shared secret the right shape
+ * here. proxy.ts turns anonymous callers away before they reach this file; the
+ * check is repeated here so that the policy for the one route with a
+ * non-standard credential is written where the route is, not only in a file
+ * two directories up.
  */
 
 // google.rpc.Code, the status vocabulary OTLP borrows for error bodies.
 const INVALID_ARGUMENT = 3;
 const UNIMPLEMENTED = 12;
 const UNAVAILABLE = 14;
+const UNAUTHENTICATED = 16;
 
 // eve caps a single span attribute at 32 KB, and a batch is a few dozen spans.
 // A payload past this is a misconfiguration, and buffering it would be the
@@ -49,6 +60,10 @@ function status(code: number, message: string, httpStatus: number, headers?: Hea
 }
 
 export async function POST(request: Request): Promise<Response> {
+  if (!ingestAuthorized(request)) {
+    return status(UNAUTHENTICATED, INGEST_UNAUTHENTICATED_MESSAGE, 401);
+  }
+
   const contentType = (request.headers.get("content-type") ?? "").toLowerCase();
 
   // Protobuf is the default encoding for most OTLP exporters, including the
@@ -167,11 +182,17 @@ export async function POST(request: Request): Promise<Response> {
  * silent one.
  *
  * Counts only, never span contents, because spans carry prompt bodies and tool
- * arguments. Both this and POST are unauthenticated by design: an OTLP exporter
- * has nowhere to put a credential, which is exactly why the dashboard binds to
- * 127.0.0.1 and must not be exposed without auth in front of it.
+ * arguments. It used to be unauthenticated, on the stated grounds that "the
+ * dashboard binds to 127.0.0.1". It does not: the Dockerfile ends with
+ * `next start --hostname 0.0.0.0`, so that sentence was describing an intention
+ * rather than a control, and even a count of sessions and tool calls is a
+ * business metric. Same tier as POST now.
  */
-export async function GET(): Promise<Response> {
+export async function GET(request: Request): Promise<Response> {
+  if (!ingestAuthorized(request)) {
+    return status(UNAUTHENTICATED, INGEST_UNAUTHENTICATED_MESSAGE, 401);
+  }
+
   try {
     return Response.json({ ok: true, endpoint: "/api/ingest/v1/traces", ...(await getTraceStats()) });
   } catch (error) {

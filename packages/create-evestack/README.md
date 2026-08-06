@@ -45,8 +45,20 @@ and, wired up for you:
 
 - Node 24+
 - Docker, running — Postgres and the agent sandbox both need it
-- A model API key (OpenAI or Anthropic), or [Ollama](https://ollama.com) for a genuinely $0
-  stack. Check your free RAM before choosing Ollama: budget roughly *model size + 4 GB*.
+- A model API key, or [Ollama](https://ollama.com) for a genuinely $0 stack. Check your free RAM
+  before choosing Ollama: budget roughly *model size + 4 GB*.
+
+## Model providers
+
+The scaffolder asks which one you want and writes both variables to `.env.local`.
+`EVESTACK_PROVIDER` is the one `agent/agent.ts` branches on — a model name written without it
+goes to whichever provider was already selected, so change them together:
+
+| `EVESTACK_PROVIDER` | Key | Default `EVESTACK_MODEL` |
+| --- | --- | --- |
+| unset, or `openai` | `OPENAI_API_KEY` | `gpt-5-mini` |
+| `anthropic` | `ANTHROPIC_API_KEY` | `claude-sonnet-5` |
+| `ollama` | none | `qwen3` |
 
 ## The dashboard
 
