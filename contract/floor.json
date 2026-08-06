@@ -13,7 +13,7 @@
     "protocol/http-surface-the-dashboard-drives": 12,
     "sandbox/backend-interface-is-structurally-stable": 25,
     "telemetry/agent-spans-reachable-only-from-local-runtime": 11,
-    "telemetry/dashboard-span-vocabulary": 40,
+    "telemetry/dashboard-span-vocabulary": 45,
     "tools/approval-is-the-gating-field": 12,
     "tools/approval-survives-defineTool": 2,
     "tools/dynamic-sentinel-and-events": 10,
