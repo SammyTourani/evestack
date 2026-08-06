@@ -1,3 +1,5 @@
+import { publicOrigin } from "@/lib/auth";
+
 import {
   ComposioError,
   composioApiKey,
@@ -33,8 +35,15 @@ function isCrossSite(request: Request, expectedOrigin: string): boolean {
 }
 
 export async function POST(request: Request): Promise<Response> {
-  const requestOrigin = new URL(request.url).origin;
-  const origin = (process.env.EVESTACK_PUBLIC_URL?.trim() || requestOrigin).replace(/\/+$/, "");
+  // `publicOrigin` rather than `new URL(request.url).origin`. The latter is the
+  // address the server is BOUND to — `http://0.0.0.0:4000` in the shipped
+  // container — and this value does not just build a local redirect: it is handed
+  // to Composio as the OAuth `callbackUrl`. So without EVESTACK_PUBLIC_URL set, a
+  // user who authorised Gmail was returned to `http://0.0.0.0:4000/integrations`,
+  // which is not their dashboard. EVESTACK_PUBLIC_URL still wins; the difference
+  // is that the fallback is now the host the browser dialled.
+  const requestOrigin = publicOrigin(request);
+  const origin = requestOrigin.replace(/\/+$/, "");
   const back = (params: Record<string, string>) =>
     Response.redirect(`${origin}/integrations?${new URLSearchParams(params)}`, 303);
 

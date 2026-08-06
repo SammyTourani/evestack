@@ -117,10 +117,7 @@ export async function POST(request: Request): Promise<Response> {
         { ok: true, user, expiresInSeconds: issued.maxAgeSeconds },
         { headers: { "cache-control": "no-store" } },
       )
-    : NextResponse.redirect(new URL(next, request.url), {
-        status: 303,
-        headers: { "cache-control": "no-store" },
-      });
+    : seeOther(next);
 
   response.cookies.set({
     name: SESSION_COOKIE,
@@ -139,9 +136,48 @@ export async function POST(request: Request): Promise<Response> {
   return response;
 }
 
-function back(request: Request, path: string, error: string, next: string): Response {
-  const target = new URL(path, request.url);
-  target.searchParams.set("error", error);
-  if (next !== "/") target.searchParams.set("next", next);
-  return NextResponse.redirect(target, { status: 303, headers: { "cache-control": "no-store" } });
+/**
+ * A 303 to a path on THIS origin, as a relative Location.
+ *
+ * Never `NextResponse.redirect(new URL(path, request.url))`. Next builds
+ * `request.url` from the address the server is BOUND to, and the Dockerfile runs
+ * `next start --hostname 0.0.0.0`, so inside the shipped container that URL is
+ * literally `http://0.0.0.0:4000/`. Every redirect out of a route handler
+ * therefore pointed at 0.0.0.0 — and unlike the proxy, whose redirects Next
+ * rewrites to a relative Location for us, a route handler emits exactly what it
+ * is given.
+ *
+ * What that did to the one flow that matters: sign in with the CORRECT password,
+ * get a valid cookie, and get sent to `http://0.0.0.0:4000/`. Measured on the
+ * published image, following the redirect the way a browser does — final URL
+ * `http://0.0.0.0:4000/`, final status **401 Not signed in**. The cookie was
+ * issued for the host the user was actually on, 0.0.0.0 is a different origin,
+ * so it is not sent back. Correct credentials, and the answer is that you are
+ * not signed in. On any deployment whose published host port is not 4000 it is
+ * worse: 0.0.0.0:4000 is some other service, or nothing at all.
+ *
+ * The 403 fixed in #3 had been hiding this, because nobody could get far enough
+ * through sign-in to see it.
+ *
+ * A relative Location is not a workaround, it is the correct answer for a
+ * same-origin redirect: RFC 7231 allows it, the browser resolves it against the
+ * URL it actually dialled, and there is no host for us to get wrong. Anything
+ * needing an ABSOLUTE url — an OAuth callback handed to a third party — must use
+ * `publicOrigin()` from lib/auth.ts instead, which reads the request rather than
+ * the bind address.
+ *
+ * `safeNextPath` has already guaranteed the argument starts with a single "/",
+ * so this cannot be turned into a protocol-relative jump to another site.
+ */
+function seeOther(location: string): NextResponse {
+  return new NextResponse(null, {
+    status: 303,
+    headers: { location, "cache-control": "no-store" },
+  });
+}
+
+function back(_request: Request, path: string, error: string, next: string): Response {
+  const query = new URLSearchParams({ error });
+  if (next !== "/") query.set("next", next);
+  return seeOther(`${path}?${query}`);
 }
