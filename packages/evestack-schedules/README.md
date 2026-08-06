@@ -112,9 +112,13 @@ Timezone is the host's, matching cron and matching eve.
 ## Heartbeat
 
 The evestack template ships `agent/schedules/heartbeat.ts` as the worked example: the agent wakes on
-its own, reads a `HEARTBEAT.md` you can edit without a redeploy, and messages you **only when there
-is something to say** — replies that are just an acknowledgement token are dropped. An hourly
-heartbeat that always sends something is an hourly notification, and you will mute it within a day.
+its own, reads a `HEARTBEAT.md` you can edit without a redeploy, and is asked to reply with an
+acknowledgement token when there is nothing to say.
+
+**That token is not currently dropped.** The filter exists in the template but has nowhere to run,
+because eve posts the reply itself — so a quiet hour delivers `HEARTBEAT_OK` to your channel. See
+the note at the top of `templates/default/agent/schedules/heartbeat.ts`. An hourly heartbeat that
+always sends something is an hourly notification, and you will mute it within a day.
 
 Off unless `EVESTACK_HEARTBEAT_CHANNEL` and `EVESTACK_HEARTBEAT_TARGET` are set.
 
