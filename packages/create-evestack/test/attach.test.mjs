@@ -122,3 +122,51 @@ test("a free 4000 is still the port everything uses", async () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+/* -------------------------------------------------------------------------- */
+/* the manual Postgres branch                                                  */
+/* -------------------------------------------------------------------------- */
+
+/** Both compose files already present: attach writes neither, and hands over. */
+function bothComposeFiles() {
+  return eveProject({
+    "docker-compose.yml": "services: {}\n",
+    "docker-compose.evestack.yml": "services: {}\n",
+  });
+}
+
+/**
+ * The branch told the reader to "put WORKFLOW_POSTGRES_URL in .env.local" and
+ * then printed every other credential it had generated except that one. The
+ * only connection string on screen was the one inside the `docker run`, which
+ * is rewritten to host.docker.internal for the container and reaches nothing
+ * from the host — so the reader either invented a URL, or pasted the one URL
+ * that cannot work.
+ */
+test("the manual Postgres branch prints the URL it tells you to set", (t) => {
+  const dir = bothComposeFiles();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const text = runAttach(dir);
+  assert.match(text, /Add Postgres yourself/, "this fixture never reached the manual branch");
+
+  const password = /POSTGRES_PASSWORD: "([^"]+)"/.exec(text);
+  const published = /- "127\.0\.0\.1:(\d+):5432"/.exec(text);
+  assert.ok(password && published, "the compose service block was not printed");
+
+  // Same credentials as the service block above it, and the address the AGENT
+  // needs — not the host.docker.internal rewrite the dashboard container gets.
+  const line = new RegExp(
+    "^\\s*WORKFLOW_POSTGRES_URL=postgres://evestack:"
+      + password[1]
+      + "@127\\.0\\.0\\.1:"
+      + published[1]
+      + "/evestack\\s*$",
+    "m",
+  );
+  assert.match(text, line, "attach says to set WORKFLOW_POSTGRES_URL and never says to what");
+
+  // Printed, not written. The database does not exist yet, and the world
+  // selection in agent.ts switches on the moment this variable does.
+  const env = readFileSync(join(dir, ".env.local"), "utf8");
+  assert.doesNotMatch(env, /^WORKFLOW_POSTGRES_URL=/m);
+});
