@@ -27,14 +27,55 @@ import { C, dim, say } from "./shared.mjs";
 
 const argv = process.argv.slice(2);
 
-if (argv[0] === "attach") {
-  const { attach } = await import("./attach.mjs");
-  process.exitCode = (await attach(argv.slice(1))) ?? 0;
-} else if (argv.includes("--help") || argv.includes("-h")) {
-  usage();
-} else {
+/**
+ * Both wizards run inside this, and the reason is a difference nobody would
+ * predict from the code.
+ *
+ * `attach` refuses six ordinary situations by throwing — no such directory, no
+ * package.json, no `eve` dependency, no `agent/`, and so on — each with a
+ * multi-line message naming the next command to run. Through `evestack attach`
+ * those arrive as prose, because src/cli.mjs wraps the call. Through
+ * `npx create-evestack attach` they arrived as an uncaught exception:
+ *
+ *     file:///…/create-evestack/attach.mjs:214
+ *         throw new Error(
+ *               ^
+ *     Error: /path/package.json lists no "eve" dependency.
+ *       …the good message, buried…
+ *         at detectEveProject (file:///…/attach.mjs:214:11)
+ *         at attach (file:///…/attach.mjs:94:19)
+ *     Node.js v26.0.0
+ *
+ * Same code, same message, and the front door that needs no global install —
+ * the one a first-timer uses — was the one showing a stack trace for pointing at
+ * the wrong directory. Every other entry point in this repo goes out of its way
+ * not to do that: scripts/bootstrap.mjs, scripts/verify.mjs and `evestack
+ * doctor` all have long notes about it.
+ *
+ * The exit code was already 1. Only the presentation was wrong, which is exactly
+ * the kind of thing that survives a code review and does not survive being run.
+ */
+async function main() {
+  if (argv[0] === "attach") {
+    const { attach } = await import("./attach.mjs");
+    return (await attach(argv.slice(1))) ?? 0;
+  }
+  if (argv.includes("--help") || argv.includes("-h")) {
+    usage();
+    return 0;
+  }
   const { create } = await import("./create.mjs");
-  process.exitCode = await create(argv);
+  return await create(argv);
+}
+
+try {
+  process.exitCode = await main();
+} catch (error) {
+  // The wizards print their own progress to stdout as they go, so only the
+  // failure comes through here. Message only, on stderr, and the same shape the
+  // `evestack` CLI has always produced for the identical error.
+  process.stderr.write(`\n${C.red}${error?.message ?? error}${C.reset}\n\n`);
+  process.exitCode = 1;
 }
 
 function usage() {
