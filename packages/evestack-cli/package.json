@@ -1,0 +1,53 @@
+{
+  "name": "@evestack/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "evestack doctor — explains why a durable eve job is dead. Read-only forensics for the graphile-worker queue behind @workflow/world-postgres: finds jobs that can never be claimed again, tells process death apart from genuine failure, and prints the remediation SQL for a human to run.",
+  "license": "Apache-2.0",
+  "bin": {
+    "evestack": "./bin/evestack.mjs"
+  },
+  "main": "./src/doctor.mjs",
+  "exports": {
+    ".": "./src/doctor.mjs",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "eve",
+    "agent",
+    "graphile-worker",
+    "postgres",
+    "queue",
+    "diagnostics",
+    "workflow",
+    "cli"
+  ],
+  "scripts": {
+    "typecheck": "node scripts/check.mjs",
+    "test": "node scripts/check.mjs && node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "pg": "^8.20.3"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "homepage": "https://github.com/SammyTourani/evestack#readme",
+  "bugs": {
+    "url": "https://github.com/SammyTourani/evestack/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SammyTourani/evestack.git",
+    "directory": "packages/evestack-cli"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
