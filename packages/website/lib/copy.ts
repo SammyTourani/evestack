@@ -220,31 +220,49 @@ export const architecture = {
    run now returns 49 matches across two files — run it rather than trusting this
    sentence, which is exactly the mistake that made a later audit wrong.
 
-   What the mock still advertises and the product still lacks is narrow: a TIMEOUT
-   rate (zero occurrences of "timeout" anywhere in the monitors code) and per-row
-   activity sparklines on the sessions table. Search and pagination both exist.
+   UPDATE 2026-08-06, later: both remaining gaps are closed, in the honest order
+   this note asked for — built in packages/dashboard first, then claimable here.
+   Sparklines exist (components/charts/sparkline.tsx, drawn on every overview
+   tile). A timeout rate still does not, and still should not: eve does not
+   distinguish one in error_code, so it could only be invented. The artwork no
+   longer shows it.
+
+   What the site now UNDERSELLS is the larger problem. Since this note was
+   written the dashboard gained an overview, a sandboxes page, a costs page with
+   per-model cache savings, and nine default monitors — none of which the
+   capability list mentioned until it was rewritten alongside this line.
 
    It is replaced by packages/website/public/screenshots/*, captured from the
    dashboard in this repo. Every claim below names a file that renders it. */
 export const observability = {
   heading: "Every session, read straight from your own Postgres.",
-  sub: "Session list, run trees, token rollups, and a cost we compute ourselves — the same $eve.* data your agent already writes, queried from the database you own. No ingest pipeline to keep in sync.",
+  sub: "An overview that answers whether anything is wrong, a searchable session list, per-turn traces, the containers on your machine, and a bill decomposed the way providers actually charge — all from the same $eve.* data your agent already writes. No ingest pipeline to keep in sync.",
   /* Each of these is a shipped file, named so the claim is checkable. */
   capabilities: [
     {
-      title: "Session list",
-      body: "Every agent run on the machine, with status, turns, model, tokens in/out/cached, cost and age. Team totals across the top.",
+      title: "An overview, not a list",
+      body: "Turns, failure rate, p95 latency, spend, tokens and time-to-first-token, each against the window before it. Every number says what it was computed over: p95 TTFT reads \"covers 359 of 1,887 turns\" because spans are opt-in, and a figure that hides its denominator is not a measurement.",
       source: "packages/dashboard/app/page.tsx",
     },
     {
-      title: "Run tree",
-      body: "Each session expands into its turns and subagents, with duration, tokens, cache reads and writes, tool count and per-run cost.",
-      source: "packages/dashboard/app/sessions/[id]/page.tsx",
+      title: "Sessions you can actually find",
+      body: "Faceted filters over outcome, model, provider, trigger and environment, keyset pagination that stays correct at 100k rows, search and CSV export. Each session opens into its turns and subagents with the step waterfall, retry attempts included.",
+      source: "packages/dashboard/app/sessions/page.tsx",
     },
     {
-      title: "Cost we compute, labelled honestly",
-      body: "eve emits gen_ai.usage.cost only for AI-Gateway calls, and a self-hosted agent calls its provider directly — so we price token counts ourselves. A model with no configured price renders `unpriced` and an em dash, never $0.00.",
-      source: "packages/dashboard/lib/pricing.ts",
+      title: "The containers on your machine",
+      body: "Which sandbox belongs to which session, what it is using, how long it has been up, and whether any of them has network access it should not. eve keeps one container per session with no idle timeout, so they accumulate quietly. A hosted dashboard cannot see this.",
+      source: "packages/dashboard/lib/sandboxes.ts",
+    },
+    {
+      title: "Nine monitors, on by default",
+      body: "Wedged turns, failure rate, p95 latency, spend against a cap, unpriced models, trace ingest, sandbox isolation and lifetime, failing schedules. Not a builder — a monitor that cannot be evaluated reports \"not checked\" rather than passing, because reporting all-clear for something you never looked at is worse than no page.",
+      source: "packages/dashboard/lib/alerts.ts",
+    },
+    {
+      title: "Cost, in the four rates you are billed in",
+      body: "Non-cached input, output, cache reads and cache writes, each at its own rate — a cache write usually costs more than plain input, so one blended rate under-reports every cached session. Plus cache savings: what those cached tokens would have cost uncached. A model with no configured price renders `unpriced`, never $0.00.",
+      source: "packages/dashboard/app/costs/page.tsx",
     },
     {
       title: "Approvals",
