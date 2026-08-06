@@ -1,4 +1,4 @@
-import { listApprovals, type ApprovalRow } from "@/lib/approvals";
+import { listApprovals, type ApprovalRow, type ApproverIdentity } from "@/lib/approvals";
 import { DatabaseUnavailableError, describeDbError } from "@/lib/db";
 import styles from "./approvals.module.css";
 
@@ -8,6 +8,43 @@ function stamp(iso: string): string {
   return new Date(iso).toLocaleString("en-US", { timeZone: "UTC", hour12: false });
 }
 
+type Trust = { label: string; cls: string; title: string };
+
+const PROXY_TITLE =
+  "Supplied by whatever proxy fronts the dashboard — as trustworthy as that proxy.";
+
+/**
+ * Keyed by the union in lib/approvals.ts rather than by `string`, so adding a
+ * `via` there fails this file's typecheck instead of silently rendering as
+ * "unidentified". That is precisely what happened to `session`: the switch this
+ * replaces handled `basic` and the three forwarded values, and every approval
+ * made from the signed-in UI — the primary path, and the one the page exists to
+ * show — fell through to the default and was reported in red as nobody.
+ */
+const TRUST: Record<ApproverIdentity["via"], Trust> = {
+  header: { label: "header", cls: "status-completed", title: PROXY_TITLE },
+  "forwarded-user": { label: "user", cls: "status-completed", title: PROXY_TITLE },
+  "forwarded-email": { label: "email", cls: "status-completed", title: PROXY_TITLE },
+  session: {
+    label: "signed in",
+    cls: "status-running",
+    title:
+      "Signed in to this dashboard. evestack generates one shared credential, so this identifies the deployment rather than a person.",
+  },
+  basic: {
+    label: "basic",
+    cls: "status-running",
+    title:
+      "HTTP Basic user. evestack generates one shared credential, so this identifies the deployment rather than a person.",
+  },
+  unidentified: {
+    label: "unidentified",
+    cls: "status-failed",
+    title:
+      "Nothing in front of the dashboard identified the caller. Set EVESTACK_REQUIRE_APPROVER=1 to refuse these.",
+  },
+};
+
 /**
  * How much the recorded identity is actually worth.
  *
@@ -15,32 +52,13 @@ function stamp(iso: string): string {
  * and evestack's Basic credential is one shared secret for the whole
  * deployment — it names a stack, not a person. Saying so in the table beats
  * letting a reader assume every row is a proven human.
+ *
+ * `via` is widened to `string` on the way out of Postgres, so a row written by
+ * an older build can carry a value this table has never heard of. Those are
+ * genuinely unidentified and fall back accordingly.
  */
-function trust(via: string): { label: string; cls: string; title: string } {
-  switch (via) {
-    case "header":
-    case "forwarded-user":
-    case "forwarded-email":
-      return {
-        label: via === "header" ? "header" : via.replace("forwarded-", ""),
-        cls: "status-completed",
-        title: "Supplied by whatever proxy fronts the dashboard — as trustworthy as that proxy.",
-      };
-    case "basic":
-      return {
-        label: "basic",
-        cls: "status-running",
-        title:
-          "HTTP Basic user. evestack generates one shared credential, so this identifies the deployment rather than a person.",
-      };
-    default:
-      return {
-        label: "unidentified",
-        cls: "status-failed",
-        title:
-          "Nothing in front of the dashboard identified the caller. Set EVESTACK_REQUIRE_APPROVER=1 to refuse these.",
-      };
-  }
+function trust(via: string): Trust {
+  return TRUST[via as ApproverIdentity["via"]] ?? TRUST.unidentified;
 }
 
 function decision(row: ApprovalRow): string {
