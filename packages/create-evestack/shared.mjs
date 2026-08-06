@@ -37,20 +37,23 @@ export const REPO = "https://github.com/SammyTourani/evestack";
  */
 export const DASHBOARD_IMAGE_TAG = "0.1.0";
 export const DASHBOARD_IMAGE = `ghcr.io/sammytourani/evestack-dashboard:${DASHBOARD_IMAGE_TAG}`;
-/**
- * True since 2026-08-05, when `dashboard-v0.1.0` published
- * `ghcr.io/sammytourani/evestack-dashboard:0.1.0` as a multi-arch manifest
- * (linux/amd64 + linux/arm64). Verified against the registry anonymously: HTTP
- * 200, both platforms present — so it is public and a stranger can pull it.
+/*
+ * `DASHBOARD_IMAGE_PUBLISHED` lived here and is gone.
  *
- * This one boolean is what stands between "one command" being a claim and being
- * a fact. While false, the scaffolder and `attach` print a build-it-yourself
- * apology and the generated compose file carries a NOT PUBLISHED YET comment.
- * Flipping it before the image exists would make all of that read as true while
- * every user's `--profile dashboard` ended in `manifest unknown`, so it moves
- * only after the tag lands, never in the same commit that cuts the release.
+ * It gated a build-it-yourself apology in the scaffolder, the same in `attach`,
+ * and a NOT PUBLISHED YET banner in the generated compose file — all correct
+ * while the image did not exist, and all unreachable since it did. It had been
+ * a constant `true` for a release, so those forty lines were dead code that
+ * told the reader to `git clone` and `docker build` something they can now
+ * pull. Dead code that gives instructions is worse than dead code that does
+ * not: the day someone flips a flag to debug, the apology comes back wrong.
+ *
+ * Re-verified against the registry before deleting, anonymously and unauthed:
+ * `GET ghcr.io/v2/sammytourani/evestack-dashboard/manifests/0.1.0` -> 200, with
+ * linux/amd64 and linux/arm64 in the index. If a future release ever ships
+ * ahead of its image again, say so in the release notes rather than reviving a
+ * branch nobody exercises.
  */
-export const DASHBOARD_IMAGE_PUBLISHED = true;
 
 export const C = {
   reset: "\x1b[0m", dim: "\x1b[2m", bold: "\x1b[1m",
