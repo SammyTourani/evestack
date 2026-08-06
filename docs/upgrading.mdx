@@ -181,9 +181,14 @@ not a better prompt; it is not giving it commit access.
 </Note>
 
 The optional step in `eve-watch` follows exactly that. It runs only if
-`ANTHROPIC_API_KEY` is set, it reads results the deterministic steps already
+`OPENAI_API_KEY` is set, it reads results the deterministic steps already
 produced, and its single capability is `gh pr comment`. It cannot commit, push,
-merge, re-run the suite, or change what the PR reports. Its output is labelled
+merge, re-run the suite, or change what the PR reports.
+
+The model it uses is the repository variable `ADVISOR_MODEL`, defaulting to
+`gpt-5-mini` — set it under *Settings → Secrets and variables → Actions →
+Variables* to change it without touching this workflow. The same key drives the
+nightly evals, so one secret covers both jobs. Its output is labelled
 as generated and non-authoritative. If it is prompt-injected by a hostile
 changelog, the worst outcome is a misleading paragraph next to the real contract
 table — which a human is required to read anyway.
