@@ -97,6 +97,17 @@ export async function connectPostgres(connectionString, timeoutMs = 5000) {
   });
   try {
     await client.connect();
+    // An idle client whose socket dies emits 'error', and with nothing listening
+    // that is an uncaughtException — a raw stack trace out of the one tool whose
+    // entire job is to never print one. The window is not theoretical: `verify`
+    // holds this connection open from the schema check all the way past the
+    // Ollama, agent, dashboard and ingest probes before calling `end()`.
+    //
+    // Deliberately a no-op. Every question this connection is asked has already
+    // been asked by then, so there is nothing left to report; and a query that
+    // does come afterwards rejects on its own with pg's "not queryable", which
+    // the caller reports as the failed check it is.
+    client.on("error", () => {});
     return { ok: true, client };
   } catch (error) {
     await client.end().catch(() => {});
