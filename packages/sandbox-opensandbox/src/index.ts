@@ -1,4 +1,8 @@
 import { Sandbox } from "@alibaba-group/opensandbox";
+import type {
+  SandboxBackendCreateInput,
+  SandboxBackendSessionState,
+} from "eve/sandbox";
 
 /**
  * An eve `SandboxBackend` backed by Alibaba OpenSandbox.
@@ -35,9 +39,39 @@ interface PrewarmInput {
 interface BackendHandle {
   readonly session: SandboxSessionLike;
   readonly useSessionFn: () => SandboxSessionLike;
-  captureState(): Promise<{ backendName: string; metadata: Record<string, unknown> }>;
+  captureState(): Promise<{
+    backendName: string;
+    metadata: Record<string, unknown>;
+    sessionKey: string;
+  }>;
   shutdown(): Promise<void>;
 }
+
+/**
+ * The interfaces above stay structural on purpose: eve remains a peer
+ * dependency and nothing here imports it at run time.
+ *
+ * But a hand-copied interface agrees with itself by construction, so it drifts
+ * silently — and this one did. `captureState` shipped through 0.2.0 without
+ * `sessionKey`, which eve requires to match a persisted handle back to its
+ * durable session. It never matched, so every turn built a fresh sandbox and
+ * left the previous one paused on the OpenSandbox host. Nothing failed; the
+ * reconnect metadata was written correctly and then never consulted.
+ *
+ * These two assertions are type-only and erase completely, and they hand the
+ * authority back to eve's own declarations: add a required field upstream and
+ * `pnpm typecheck` fails here, in CI, instead of on someone's sandbox bill.
+ */
+type Conforms<Actual extends Expected, Expected> = Actual;
+
+/** What we hand back must satisfy what eve persists. */
+type _SessionStateConforms = Conforms<
+  Awaited<ReturnType<BackendHandle["captureState"]>>,
+  SandboxBackendSessionState
+>;
+
+/** What eve hands us must fit what `create` destructures. */
+type _CreateInputConforms = Conforms<SandboxBackendCreateInput, CreateInput>;
 
 interface RunResult {
   stdout: string;
@@ -153,7 +187,7 @@ export function opensandbox(options: OpenSandboxOptions = {}): SandboxBackendLik
     // must not collide with the built-in "vercel" or "local".
     name: "opensandbox",
 
-    async create({ existingMetadata }) {
+    async create({ existingMetadata, sessionKey }) {
       const previousId = existingMetadata?.sandboxId;
 
       // Reattach before creating. eve keys sandboxes to durable sessions, so a
@@ -205,6 +239,15 @@ export function opensandbox(options: OpenSandboxOptions = {}): SandboxBackendLik
           // The id is the whole reconnect story; without persisting it every
           // restart would orphan a running sandbox and start a fresh one.
           metadata: { sandboxId: String(live.id) },
+          // eve keys captured state to the durable session it came from, and
+          // omitting this is silent in exactly the way the reconnect ladder
+          // above was: `SandboxBackendSessionState` requires it (eve
+          // dist/src/shared/sandbox-backend.d.ts), so a handle without it never
+          // matches on the next start. The metadata was persisted correctly and
+          // then never consulted — every turn built a fresh sandbox and left the
+          // previous one paused on the OpenSandbox host, which is a leak the
+          // caller pays for. Fixing connect() was only half of it.
+          sessionKey,
         }),
         shutdown: async () => {
           // pause(), not kill(): eve reattaches by id on the next turn, and
