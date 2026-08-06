@@ -602,12 +602,19 @@ export function projectNameFor(target) {
 }
 
 export function composeFile(projectName, dbPassword, { pgPort = 5433, dashboardPort = 4000, agentPort = 2000 } = {}) {
-  // The compose project name has to be per-directory, not the literal string
-  // "evestack". Compose treats `name:` as the project identity, so two scaffolds
-  // — or one scaffold plus a cloned evestack repo — become the SAME project. The
-  // second `docker compose up` then recreates the first one's container and both
-  // agents silently share one database. Observed live: scaffolding into a new
-  // directory recreated an unrelated running evestack-postgres-1.
+  // The compose project name has to be unique to this DIRECTORY PATH, not to its
+  // name. Compose treats `name:` as the project identity, so two scaffolds — or
+  // one scaffold plus a cloned evestack repo — become the SAME project: the
+  // second `docker compose up` recreates the first one's container and both
+  // agents silently share one database. Observed twice, most recently with two
+  // directories both called `my-agent`, which is the DEFAULT name.
+  //
+  // The trade this makes, stated because the generated file says it too: the
+  // name is derived from the absolute path, so MOVING the project directory
+  // gives it a new identity and Compose no longer recognises the old containers
+  // and volume. That is visible and recoverable — `docker compose up -d` makes
+  // fresh ones, and the old volume is still there to copy out of. Sharing a
+  // database with an unrelated agent is neither.
   //
   // The dashboard sits behind a profile so a plain `docker compose up -d` starts
   // Postgres alone — the agent is useful without the dashboard, and pulling a
@@ -629,6 +636,12 @@ export function composeFile(projectName, dbPassword, { pgPort = 5433, dashboardP
 # a pnpm \`workspace:*\` dependency that only exists against the root lockfile.)
 `;
   return `# evestack — your whole stack, on your machine, for $0.
+#
+# The "name:" line below is this directory's identity to Docker Compose, and it
+# carries a hash of the directory's full path so that two projects with the same
+# folder name cannot silently share one database. Move this directory and Compose
+# will not recognise the containers and volume it made here — bring them up again
+# and copy out of the old volume if you need what was in it.
 #
 #   docker compose up -d postgres              durable sessions
 #   docker compose --profile dashboard up -d   + the dashboard on :${dashboardPort}
