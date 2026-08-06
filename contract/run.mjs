@@ -31,12 +31,8 @@
  * EVESTACK_CONTRACT_EVE_DIR a lower assertion count is a fact about the release
  * being certified, not erosion here, so it is reported and does not set the code.
  */
-import { readdirSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { loadContracts } from "./lib/contracts.mjs";
 import { FLOOR_EXIT_CODE, describeShortfall, floorShortfalls, readFloor, writeFloor } from "./lib/floor.mjs";
-
-const HERE = dirname(fileURLToPath(import.meta.url));
 
 /* -------------------------------------------------------------------------- */
 /* argv                                                                        */
@@ -110,23 +106,6 @@ function describe(value) {
 /* -------------------------------------------------------------------------- */
 /* run                                                                         */
 /* -------------------------------------------------------------------------- */
-
-async function loadContracts() {
-  const dir = join(HERE, "contracts");
-  const files = readdirSync(dir)
-    .filter((f) => f.endsWith(".contract.mjs"))
-    .sort();
-
-  const contracts = [];
-  for (const file of files) {
-    const module = await import(pathToFileURL(join(dir, file)).href);
-    const exported = module.default;
-    for (const contract of Array.isArray(exported) ? exported : [exported]) {
-      contracts.push({ ...contract, file: `contract/contracts/${file}` });
-    }
-  }
-  return contracts;
-}
 
 async function main() {
   let eve;

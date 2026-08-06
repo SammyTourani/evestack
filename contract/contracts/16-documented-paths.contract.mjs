@@ -22,6 +22,7 @@
  */
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { loadContracts } from "../lib/contracts.mjs";
 import { REPO_ROOT } from "../lib/repo.mjs";
 
 /** Documents that carry links a stranger or a crawler will follow. */
@@ -77,18 +78,45 @@ function linksIn(file) {
   );
 }
 
+/**
+ * The other kind of promise a document makes: a list that claims to be complete.
+ *
+ * docs/upgrading.mdx heads a table "What is currently pinned" and published nine
+ * rows for a seventeen-contract suite — both telemetry contracts, the action-event
+ * contract and this one were absent — so a reader deciding whether an upgrade was
+ * safe was reading a third less coverage than the suite has. Nothing caught it,
+ * for the same reason nothing caught the dead links above: prose is not compiled.
+ *
+ * Scoped to the section rather than the whole page so a contract id mentioned in
+ * passing somewhere else cannot satisfy the row it is missing.
+ */
+const PINNED_HEADING = "## What is currently pinned";
+
+function pinnedSection() {
+  const text = readFileSync(join(REPO_ROOT, "docs", "upgrading.mdx"), "utf8");
+  const start = text.indexOf(PINNED_HEADING);
+  if (start === -1) return null;
+  const rest = text.slice(start + PINNED_HEADING.length);
+  const end = rest.indexOf("\n## ");
+  return end === -1 ? rest : rest.slice(0, end);
+}
+
 export default {
   id: "docs/every-documented-path-exists",
-  title: "every repo path named in llms.txt, the READMEs and RELEASING.md is on disk",
+  title: "every repo path the docs name is on disk, and upgrading.mdx's pinned list is complete",
   scope: "repo",
   assumption:
-    "A path written into prose is a promise that the file is there. llms.txt in particular is " +
-    "consumed by machines that cannot tell a stale link from a live one.",
+    "A path written into prose is a promise that the file is there, and a list headed \"what is " +
+    "currently pinned\" is a promise that it is all of it. llms.txt in particular is consumed by " +
+    "machines that cannot tell a stale link from a live one.",
   evestackUse:
     "llms.txt advertised docs/compatibility.mdx, /compat and contract/history/*.json after all " +
     "three were deleted, and omitted docs/proactive.mdx which existed. contract/README.md, " +
     "contract/run.mjs and contract/lib/eve.mjs all pointed at contract/record.mjs, which is not " +
-    "in the repository. Each was found by a person reading carefully; none by CI.",
+    "in the repository. docs/upgrading.mdx listed nine contract families for a seventeen-contract " +
+    "suite, omitting both telemetry contracts, the action-event contract and this one, so the page " +
+    "a maintainer reads before an upgrade understated the suite by a third. Each was found by a " +
+    "person reading carefully; none by CI.",
 
   async check(_eve, t) {
     for (const source of LINK_SOURCES) {
@@ -115,5 +143,17 @@ export default {
         actual: "on disk but advertised nowhere",
       });
     }
+
+    // A section that cannot be found would make the next assertion vacuous, so it
+    // is asserted before anything is read out of it.
+    const section = pinnedSection();
+    if (!t.ok(section !== null, `docs/upgrading.mdx still has a \`${PINNED_HEADING}\` section to check`)) return;
+
+    const missing = (await loadContracts()).map((c) => c.id).filter((id) => !section.includes(`\`${id}\``));
+    t.equal(
+      missing.join(", "),
+      "",
+      "every contract in the suite has a row in upgrading.mdx's pinned table",
+    );
   },
 };

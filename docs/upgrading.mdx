@@ -111,20 +111,35 @@ the failure is still fresh. `contract/README.md` describes the shape.
 
 ## What is currently pinned
 
+One row per contract in `contract/contracts/`. This list used to be a summary
+and it rotted the way summaries do: nine rows for a seventeen-contract suite,
+with both telemetry contracts, the action-event contract and the docs contract
+missing, so the page understated the suite by a third. It is now checked — the
+`docs/every-documented-path-exists` contract fails if a contract in the suite
+has no row here.
+
 | Contract | Assumption |
 |---|---|
-| `version/…` | One eve version satisfies every range this repo declares — templates, both published packages' peer ranges, the scaffolder |
-| `modules/…` | Every `eve/*` subpath evestack imports resolves, and every value it binds is still exported |
-| `tools/approval-…` | `approval` is the gating field (not the AI SDK's `needsApproval`), and `always()` still returns `"user-approval"` |
-| `tools/dynamic-…` | `defineDynamic` still produces `kind: "eve:dynamic"`, and `step.started` is still dispatched |
-| `protocol/…` | The session/cancel/stream routes, the NDJSON content type and the stream resume headers the dashboard drives |
-| `attributes/…` | Every `$eve.*` run attribute the dashboard reads out of Postgres is still one eve writes |
-| `auth/…` | `localDev()` grants on process state and never on the request; `httpBasic()` and `routeAuth()` fail closed |
-| `hooks/…` | Hook handlers return `void` — they cannot block or park a turn |
-| `sandbox/…` | The `SandboxBackend` shape `@evestack/sandbox-opensandbox` duck-types, which nothing typechecks |
+| `version/installed-satisfies-every-declared-range` | One eve version satisfies templates/default, both publishable packages' peer ranges and the scaffolder |
+| `modules/imported-subpaths-resolve` | Every `eve/*` subpath evestack imports is in eve's exports map and resolves to a real file |
+| `modules/imported-values-are-exported` | Every value evestack binds from those subpaths still exists in the compiled module |
+| `tools/approval-is-the-gating-field` | `approval` gates tool calls, not the AI SDK's `needsApproval`, and `always()` still returns `"user-approval"` |
+| `tools/approval-survives-defineTool` | `defineTool` returns the approval function untouched and stamps the `eve:tool-brand` symbol |
+| `tools/dynamic-sentinel-and-events` | `defineDynamic` still produces `kind: "eve:dynamic"`, and `step.started` is still a tool event eve dispatches |
+| `protocol/http-surface-the-dashboard-drives` | The session, cancel and stream routes, NDJSON as the stream content type, and cancellation answering `accepted` or `no_active_turn` |
+| `protocol/action-events-promote-eval-reads` | `actions.requested` names a turn's tools and `action.result` carries the terminal verdict; `action.partial` never replaces it |
+| `attributes/queried-names-still-emitted` | Every `$eve.*` run attribute the dashboard reads out of Postgres is still one eve writes |
+| `attributes/run-type-discriminator` | `$eve.type` still separates `session`, `turn` and `subagent` runs, and internal runs stay untagged |
+| `auth/local-dev-must-not-trust-the-request` | `localDev()` decides from the running process, and no Host header or URL hostname can make it grant |
+| `auth/http-basic-fails-closed` | `httpBasic()` returns no principal without correct credentials, and eve 401s when no authenticator matches |
+| `hooks/observe-only-and-event-names` | Hook handlers return `void` — they cannot block or park a turn — and the lifecycle events evestack watches still exist |
+| `sandbox/backend-interface-is-structurally-stable` | The `SandboxBackend` shape `@evestack/sandbox-opensandbox` duck-types, which nothing typechecks |
+| `telemetry/dashboard-span-vocabulary` | Every span name and attribute key the dashboard's SQL and trace views read is still in eve's tracing code |
+| `telemetry/agent-spans-reachable-only-from-local-runtime` | eve's `agent.*` instrumentation is installable only by the local trace-spool runtime, so authored instrumentation cannot emit it |
+| `docs/every-documented-path-exists` | Every repo path named in llms.txt, the READMEs and RELEASING.md is on disk, and every docs page is advertised in llms.txt |
 
-The import and attribute lists are derived from evestack's own source at run
-time, so they widen automatically as the codebase grows.
+The import, attribute and span-name lists are derived from evestack's own
+source at run time, so they widen automatically as the codebase grows.
 
 ## What has actually been run
 
@@ -182,11 +197,12 @@ telemetry contracts down with it and removes 49 assertions of coverage.
 
 ### What the table does not say
 
-- **Two contracts never run in this mode.** `version/…` and `docs/…` are
-  `scope: "repo"`: they describe this checkout, not eve, so a run pointed at
-  another release skips them. That is 65 of the 289 assertions, 22% of the suite.
-  A skipped contract checked nothing, and none of the rows above should be read
-  as covering it.
+- **Two contracts never run in this mode.**
+  `version/installed-satisfies-every-declared-range` and
+  `docs/every-documented-path-exists` are `scope: "repo"`: they describe this
+  checkout, not eve, so a run pointed at another release skips them. That is 69
+  of the 293 assertions, 24% of the suite. A skipped contract checked nothing,
+  and none of the rows above should be read as covering it.
 - **The documented auth floor is `^0.30.2`; the measured one is 0.30.0.** The
   auth contract is green from 0.30.0 onward. The extra two patch versions in the
   advice are conservatism, not a measured requirement.
