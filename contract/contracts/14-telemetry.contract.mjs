@@ -55,7 +55,7 @@
  * defends, the assertion says so in its own text.
  */
 import { readFileSync } from "node:fs";
-import { relative } from "node:path";
+import { join, relative } from "node:path";
 import { REPO_ROOT, sourceFiles } from "../lib/repo.mjs";
 
 /* -------------------------------------------------------------------------- */
@@ -161,6 +161,53 @@ const SDK_EMITTER = "dist/src/compiled/@ai-sdk/otel/index.js";
 const CONTEXT_SOURCE = "dist/src/harness/instrumentation-runtime-context.js";
 
 /**
+ * The FOURTH file: eve's own harness, which opens the root span of every turn.
+ *
+ * `ai.eve.turn` is created here, not in either tracer —
+ * `p.startSpan(\`ai.eve.turn\`, { attributes: { "eve.version", "eve.environment",
+ * "eve.session.id" } })` — so it is the one root name in the exported trace that
+ * belongs to eve rather than to the AI SDK. It was missing from this list, which
+ * made every reader of that name fail this contract while eve was still emitting
+ * it perfectly well: a false negative, and the kind that teaches people to ignore
+ * a red suite.
+ *
+ * Note this file is also where the exported `eve.session.id` originates for the
+ * root span, distinct from CONTEXT_SOURCE's copy that the AI SDK later prefixes.
+ */
+const HARNESS_EMITTER = "dist/src/harness/tool-loop.js";
+
+/**
+ * The one span name the derivation above structurally cannot see.
+ *
+ * `getSessionTree` counts a turn's tool calls with `s.name LIKE 'execute\_tool
+ * %'`. That is not a quoted OTel identifier, it is a SQL LIKE pattern with the
+ * `_` backslash-escaped and a `%` on the end, so no widening of OTEL_NAME_RE
+ * would ever match it — and the name is not in the `agent.` / `ai.` / `gen_ai.`
+ * namespaces the regex covers either. The dependency was therefore pinned by
+ * nothing at all.
+ *
+ * The name is built by the vendored AI SDK, not by eve:
+ *
+ *   s = `execute_tool ${a.toolName}`, this.tracer.startSpan(s, …)
+ *
+ * A rename there raises nowhere. `tool_calls` counts zero matching rows, every
+ * traced turn reports `0` tool calls, and `0` is the exact value the whole
+ * null-versus-zero design exists to avoid claiming without evidence: it reads
+ * as "the model called no tools" rather than "we stopped being able to tell".
+ *
+ * Asserted from both ends on purpose. Either half alone goes vacuous — delete
+ * the LIKE from queries.ts and an emitter-only assertion keeps passing for a
+ * dependency that no longer exists, which is the failure mode contract/lib/floor.mjs
+ * exists to describe.
+ */
+const TOOL_SPAN_READER = "packages/dashboard/lib/queries.ts";
+/** The SQL literal as it appears in that file — inside a JS template, so the
+ *  LIKE escape is written `\\_` and reaches Postgres as `\_`. */
+const TOOL_SPAN_PATTERN = String.raw`'execute\\_tool %'`;
+/** The span-name template in the SDK, minus the variable the minifier renames. */
+const TOOL_SPAN_TEMPLATE = "`execute_tool ${";
+
+/**
  * Both quote styles, because eve ships minified output and its bundler
  * rewrites some double-quoted literals as template strings — `"agent.session.id"`
  * and `` `agent.session.id` `` both occur inside this one file.
@@ -206,6 +253,7 @@ const vocabulary = {
     if (!t.ok(eve.fileExists(EMITTER), `eve still ships ${EMITTER}, the module that creates these spans`)) return;
     if (!t.ok(eve.fileExists(SDK_EMITTER), `eve still vendors ${SDK_EMITTER}, the exported vocabulary`)) return;
     if (!t.ok(eve.fileExists(CONTEXT_SOURCE), `eve still ships ${CONTEXT_SOURCE}, which names the exported ids`)) return;
+    if (!t.ok(eve.fileExists(HARNESS_EMITTER), `eve still ships ${HARNESS_EMITTER}, which opens the turn root span`)) return;
 
     // A name is satisfied by EITHER emitter. Requiring both would fail on every
     // name by construction — the two vocabularies are disjoint, which is the
@@ -214,6 +262,7 @@ const vocabulary = {
       { path: EMITTER, text: eve.readFile(EMITTER) },
       { path: SDK_EMITTER, text: eve.readFile(SDK_EMITTER) },
       { path: CONTEXT_SOURCE, text: eve.readFile(CONTEXT_SOURCE) },
+      { path: HARNESS_EMITTER, text: eve.readFile(HARNESS_EMITTER) },
     ];
 
     // `ai.settings.context.*` keys exist as a literal nowhere, because they are
@@ -232,6 +281,26 @@ const vocabulary = {
         { expected: `${CONTEXT_PREFIX} appears in ${SDK_EMITTER}`, actual: "not found" },
       );
     }
+
+    // The tool-call span name, asserted from both ends — see TOOL_SPAN_READER.
+    const reader = readFileSync(join(REPO_ROOT, TOOL_SPAN_READER), "utf8");
+    t.ok(
+      reader.includes(TOOL_SPAN_PATTERN),
+      `${TOOL_SPAN_READER} still counts tool calls by matching ${TOOL_SPAN_PATTERN}`,
+      {
+        expected: `${TOOL_SPAN_PATTERN} in ${TOOL_SPAN_READER}`,
+        actual: "not found — the reader moved or changed spelling, so the assertion below now guards nothing",
+      },
+    );
+    t.ok(
+      sdk.includes(TOOL_SPAN_TEMPLATE),
+      "the AI SDK still names tool spans `execute_tool <tool>` — the prefix that query matches",
+      {
+        expected: `${TOOL_SPAN_TEMPLATE}…} in ${SDK_EMITTER}`,
+        actual:
+          "not found — every traced turn would silently report 0 tool calls, which reads as 'called none' rather than 'cannot tell'",
+      },
+    );
 
     for (const { name, origins } of names) {
       // For a composed key, assert the suffix eve controls; for everything else,

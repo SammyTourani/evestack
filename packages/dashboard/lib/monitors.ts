@@ -63,7 +63,12 @@ export interface MonitorSummary {
     readonly errored: number;
     /** Finished turns that never recorded a model call. See the header. */
     readonly noModelCall: number;
-    /** errored + noModelCall, over total. 0 when there were no turns. */
+    /**
+     * Turns failing EITHER test, counted once. Not `errored + noModelCall` —
+     * a turn can be both, and usually is when a provider rejects the call.
+     */
+    readonly failed: number;
+    /** `failed` over `total`. 0 when there were no turns. */
     readonly failureRate: number;
   };
   readonly sessions: {
@@ -131,10 +136,24 @@ function toPercentiles(row: Record<string, unknown> | undefined): Percentiles | 
  * Exported and pure so it can be tested without a database — the arithmetic is
  * where an off-by-one lands, and dividing by a zero denominator is the specific
  * way an empty dashboard would render `NaN%`.
+ *
+ * `failed` is a count of DISTINCT turns, not the sum of the two failure
+ * counters. This used to take `(errored, noModelCall, total)` and add them,
+ * which double-counts a turn that both carries an `error_code` and never
+ * reached the provider — the single most common real failure shape, since a
+ * provider that rejects the call records the error and no usage. That version
+ * returned 200% for a window where every turn was both, and its own test
+ * (`failureRate(10, 15, 25) === 1`) only passed because it assumed the two sets
+ * are disjoint. They are not, and the seeded fixture happens to contain zero
+ * overlap, which is why nothing caught it.
+ *
+ * The bucket query in this same file already used `OR` for its per-bucket
+ * `failed` count, so the summary and the chart underneath it disagreed with
+ * each other whenever an overlap existed.
  */
-export function failureRate(errored: number, noModelCall: number, total: number): number {
+export function failureRate(failed: number, total: number): number {
   if (total <= 0) return 0;
-  return (errored + noModelCall) / total;
+  return failed / total;
 }
 
 export async function getMonitorSummary(windowHours = 24): Promise<MonitorSummary> {
@@ -159,6 +178,11 @@ export async function getMonitorSummary(windowHours = 24): Promise<MonitorSummar
       (SELECT count(*) FROM turns WHERE error_code IS NOT NULL) AS errored,
       (SELECT count(*) FROM turns
         WHERE completed_at IS NOT NULL AND model IS NULL) AS no_model_call,
+      -- DISTINCT, not errored + no_model_call: a turn can be both, and adding
+      -- them reports one failure twice. Matches the bucket query's FILTER below.
+      (SELECT count(*) FROM turns
+        WHERE error_code IS NOT NULL
+           OR (completed_at IS NOT NULL AND model IS NULL)) AS failed,
       ${PERCENTILES}
     FROM turns WHERE ms IS NOT NULL
     `,
@@ -241,13 +265,14 @@ export async function getMonitorSummary(windowHours = 24): Promise<MonitorSummar
 
   const errored = num(turnStats?.errored);
   const noModelCall = num(turnStats?.no_model_call);
+  const failed = num(turnStats?.failed);
   const total = num(turnStats?.total);
 
   return {
     windowHours: hours,
     turnLatencyMs: toPercentiles(turnStats),
     sessionDurationMs: toPercentiles(sessionStats),
-    turns: { total, errored, noModelCall, failureRate: failureRate(errored, noModelCall, total) },
+    turns: { total, errored, noModelCall, failed, failureRate: failureRate(failed, total) },
     sessions: {
       total: num(sessionStats?.total),
       completed: num(sessionStats?.completed),

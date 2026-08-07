@@ -2,6 +2,7 @@ import { gunzipSync, inflateSync } from "node:zlib";
 import { INGEST_UNAUTHENTICATED_MESSAGE, ingestAuthorized } from "@/lib/auth";
 import {
   getTraceOverview,
+  ingestPolicy,
   insertSpans,
   OtlpFormatError,
   parseOtlpTraces,
@@ -170,6 +171,15 @@ export async function POST(request: Request): Promise<Response> {
   // insertSpans, which from up here is indistinguishable from a dead database,
   // so this route answered 503 + Retry-After and one span with a double-scaled
   // clock made an exporter resend the identical batch forever.
+  //
+  // `parsed.dropped` is deliberately NOT reported here. Those spans were valid
+  // and this dashboard chose not to keep them (see droppedSpanNames in
+  // lib/traces.ts); on the default policy that is 92% of what a real eve install
+  // sends, so declaring every batch a partial failure would put a warning in the
+  // exporter's log on every export, forever, for working as configured. The
+  // OpenTelemetry Collector makes the same call: filtering happens after the
+  // data is accepted. The effective policy is on GET, where an operator
+  // wondering where their spans went can read it.
   if (parsed.rejected > 0) {
     return Response.json({
       partialSuccess: {
@@ -204,6 +214,11 @@ export async function POST(request: Request): Promise<Response> {
  * `next start --hostname 0.0.0.0`, so that sentence was describing an intention
  * rather than a control, and even a count of sessions and tool calls is a
  * business metric. Same tier as POST now.
+ *
+ * `policy` is here because the counts alone cannot explain themselves. A span
+ * name on the drop list is accepted with a 200 and stored nowhere, and retention
+ * removes spans that were stored yesterday; without the policy beside the
+ * counts, both look like an exporter that has stopped working.
  */
 export async function GET(request: Request): Promise<Response> {
   if (!ingestAuthorized(request)) {
@@ -215,6 +230,7 @@ export async function GET(request: Request): Promise<Response> {
       ok: true,
       endpoint: "/api/ingest/v1/traces",
       ...(await getTraceOverview()),
+      policy: ingestPolicy(),
     });
   } catch (error) {
     return Response.json({ ok: false, error: describe(error) }, { status: 503 });

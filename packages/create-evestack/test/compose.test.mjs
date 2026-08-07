@@ -239,3 +239,27 @@ test("a directory name Compose would reject is normalised, and still unique", ()
   assert.match(weird, /^[a-z0-9][a-z0-9_-]*$/, "must satisfy Compose's project-name grammar");
   assert.notEqual(weird, projectNameFor("/tmp/my-agent-v2"));
 });
+
+/* -------------------------------------------------------------------------- */
+/* ports                                                                       */
+/* -------------------------------------------------------------------------- */
+
+// Two arguments, not three. `composeFile(name, password, ports)` was the
+// signature that put the literal password in a committed file; the password now
+// lives in composeEnvFile() and the options object moved into second place.
+test("the compose file publishes the ports it was given, not the defaults", () => {
+  const text = composeFile("my-agent", { pgPort: 5455, dashboardPort: 4044 });
+  assert.match(text, /- "127\.0\.0\.1:5455:5432"/);
+  assert.match(text, /- "127\.0\.0\.1:\$\{DASHBOARD_PORT:-4044\}:4000"/);
+  // and the header a human reads names the same port it published
+  assert.match(text, /the dashboard on :4044/);
+  // the old hardcoded values must not survive anywhere in the file
+  assert.doesNotMatch(text, /127\.0\.0\.1:5433:5432/);
+  assert.doesNotMatch(text, /DASHBOARD_PORT:-4000/);
+});
+
+test("omitting the ports keeps the documented defaults", () => {
+  const text = composeFile("my-agent");
+  assert.match(text, /- "127\.0\.0\.1:5433:5432"/);
+  assert.match(text, /- "127\.0\.0\.1:\$\{DASHBOARD_PORT:-4000\}:4000"/);
+});

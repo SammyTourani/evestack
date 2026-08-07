@@ -38,8 +38,11 @@ import {
   OtlpFormatError,
   TOOL_CALL_SPANS,
   buildSpanTree,
+  droppedSpanNames,
+  ingestPolicy,
   matchesSpanFamily,
   parseOtlpTraces,
+  retentionDays,
   selectCallSpans,
   sqlSpanFamily,
 } from "../lib/traces.ts";
@@ -94,11 +97,16 @@ test("a malformed envelope throws, so the route can answer 400", () => {
 });
 
 test("an empty but well-formed batch is a success with nothing in it", () => {
-  assert.deepEqual(parseOtlpTraces({ resourceSpans: [] }), { spans: [], rejected: 0, errors: [] });
+  assert.deepEqual(parseOtlpTraces({ resourceSpans: [] }), {
+    spans: [],
+    rejected: 0,
+    dropped: 0,
+    errors: [],
+  });
   // Junk at the resourceSpans / scopeSpans level is skipped rather than
   // counted as a rejected span: there was no span there to reject.
   const parsed = parseOtlpTraces({ resourceSpans: [null, 7, {}, { scopeSpans: "nope" }] });
-  assert.deepEqual(parsed, { spans: [], rejected: 0, errors: [] });
+  assert.deepEqual(parsed, { spans: [], rejected: 0, dropped: 0, errors: [] });
 });
 
 /* -------------------------------------------------------------------------- */
@@ -491,6 +499,109 @@ test("spans spread across several resources and scopes all come through", () => 
   assert.equal(spans[1].scopeName, "ai");
   assert.equal(spans[2].resource["service.name"], "b");
   assert.equal(spans[2].scopeName, null);
+});
+
+/* -------------------------------------------------------------------------- */
+/* ingest policy                                                               */
+/* -------------------------------------------------------------------------- */
+
+/** Run `fn` with these environment variables, whatever they were before. */
+function withEnv(vars, fn) {
+  const saved = new Map(Object.keys(vars).map((key) => [key, process.env[key]]));
+  for (const [key, value] of Object.entries(vars)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  try {
+    return fn();
+  } finally {
+    for (const [key, value] of saved) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+const NOISE = "workflow.stream.read.complete";
+
+test("the engine-noise span name is dropped by default", () => {
+  // 92.6% of a live spans table is this one name: one span per stream read, its
+  // own single-span trace, no agent identity, and a run id that joins to
+  // nothing. Nobody who never reads a doc should have to discover that.
+  withEnv({ EVESTACK_TRACE_DROP_SPANS: undefined }, () => {
+    const { spans, dropped, rejected } = parseOtlpTraces(
+      envelope([
+        span({ spanId: SPAN_HEX, name: NOISE }),
+        span({ spanId: PARENT_HEX, name: "chat gpt-5-mini" }),
+      ]),
+    );
+    assert.deepEqual(
+      spans.map((s) => s.name),
+      ["chat gpt-5-mini"],
+    );
+    assert.equal(dropped, 1);
+    assert.equal(rejected, 0);
+  });
+});
+
+test("a dropped span is not a rejected span", () => {
+  // `rejected` is what the route reports as OTLP partial success, and partial
+  // success means "we could not take this". A span we chose not to keep is a
+  // local policy, and telling the exporter its batch partly failed on every
+  // single export would be a lie it logs forever.
+  const { dropped, rejected, errors } = parseOtlpTraces(
+    envelope([span({ spanId: "not-hex-at-all", name: NOISE })]),
+    new Set([NOISE]),
+  );
+  assert.equal(dropped, 1);
+  assert.equal(rejected, 0);
+  assert.deepEqual(errors, []);
+});
+
+test("an empty drop list keeps everything, and an explicit one replaces the default", () => {
+  withEnv({ EVESTACK_TRACE_DROP_SPANS: "" }, () => {
+    const { spans, dropped } = parseOtlpTraces(envelope([span({ name: NOISE })]));
+    assert.equal(spans.length, 1);
+    assert.equal(dropped, 0);
+  });
+  // Naming other spans must not silently keep dropping the default one too:
+  // a list you set is the list, or you cannot turn any of it off.
+  withEnv({ EVESTACK_TRACE_DROP_SPANS: " workflow.stream.flush , queue.poll " }, () => {
+    assert.deepEqual([...droppedSpanNames()], ["workflow.stream.flush", "queue.poll"]);
+    const { spans } = parseOtlpTraces(envelope([span({ name: NOISE })]));
+    assert.equal(spans.length, 1);
+  });
+});
+
+test("retention has a bounded default, an explicit off, and no silent typo", () => {
+  withEnv({ EVESTACK_TRACE_RETENTION_DAYS: undefined }, () => {
+    assert.equal(retentionDays(), 30);
+  });
+  withEnv({ EVESTACK_TRACE_RETENTION_DAYS: "7" }, () => assert.equal(retentionDays(), 7));
+  // Off is a real answer — an external pipeline may own the table — but it has
+  // to be asked for.
+  withEnv({ EVESTACK_TRACE_RETENTION_DAYS: "0" }, () => assert.equal(retentionDays(), null));
+
+  const warnings = [];
+  const realWarn = console.warn;
+  console.warn = (message) => warnings.push(message);
+  try {
+    for (const bad of ["banana", "-5"]) {
+      withEnv({ EVESTACK_TRACE_RETENTION_DAYS: bad }, () => assert.equal(retentionDays(), 30));
+    }
+  } finally {
+    console.warn = realWarn;
+  }
+  assert.equal(warnings.length, 2, "a value that is not a number of days must say so");
+});
+
+test("the ingest endpoint can report the policy it is applying", () => {
+  // Spans accepted with a 200 and stored nowhere, and spans deleted by
+  // retention, both look exactly like an exporter that stopped working.
+  withEnv(
+    { EVESTACK_TRACE_DROP_SPANS: "b,a", EVESTACK_TRACE_RETENTION_DAYS: "14" },
+    () => assert.deepEqual(ingestPolicy(), { dropSpanNames: ["a", "b"], retentionDays: 14 }),
+  );
 });
 
 /* -------------------------------------------------------------------------- */

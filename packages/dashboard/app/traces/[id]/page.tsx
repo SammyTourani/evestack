@@ -9,14 +9,14 @@ import {
   type ToolCall,
 } from "@/lib/traces";
 import {
-  clockTime,
-  duration,
   fmt,
   isModelSpan,
   isToolSpan,
   spanFailed,
   spanKind,
 } from "../format";
+// Milliseconds: neighbouring spans in one step routinely start in the same second.
+import { clock, duration, stamp } from "@/lib/time";
 import styles from "../traces.module.css";
 import { Fact, MessagesBlock, PayloadBlock } from "./payload";
 import { DatabaseError } from "@/app/db-error";
@@ -173,7 +173,7 @@ export default async function TraceDetailPage(props: PageProps<"/traces/[id]">) 
             <span className={styles.dot}>•</span>
           </>
         )}
-        <span title={firstSpan.startTime}>first span {clockTime(firstSpan.startTime)}</span>
+        <span title={firstSpan.startTime}>first span {stamp(firstSpan.startTime, "millisecond")}</span>
         <span className={styles.dot}>•</span>
         <span>spanning {duration(spanWindowMs)}</span>
         <span className={styles.dot}>•</span>
@@ -328,7 +328,7 @@ export default async function TraceDetailPage(props: PageProps<"/traces/[id]">) 
 
               <div
                 className={styles.track}
-                title={`${clockTime(node.startTime)} · ${duration(node.durationMs)}`}
+                title={`${stamp(node.startTime, "millisecond")} · ${duration(node.durationMs)}`}
               >
                 <div
                   className={`${styles.bar} ${
@@ -454,8 +454,8 @@ function ToolCallCard({ call }: { call: ToolCall }) {
       </div>
 
       <div className={styles.facts}>
-        <Fact label="at">
-          <span title={call.startTime}>{clockTime(call.startTime)}</span>
+        <Fact label="at (UTC)">
+          <span title={call.startTime}>{clock(call.startTime, "millisecond")}</span>
         </Fact>
         <Fact label="took">{duration(call.durationMs)}</Fact>
         {call.stepIndex !== null && <Fact label="step">{call.stepIndex}</Fact>}
@@ -506,8 +506,8 @@ function ModelCallCard({ call }: { call: ModelCall }) {
       </div>
 
       <div className={styles.facts}>
-        <Fact label="at">
-          <span title={call.startTime}>{clockTime(call.startTime)}</span>
+        <Fact label="at (UTC)">
+          <span title={call.startTime}>{clock(call.startTime, "millisecond")}</span>
         </Fact>
         <Fact label="took">{duration(call.durationMs)}</Fact>
         {call.stepIndex !== null && <Fact label="step">{call.stepIndex}</Fact>}

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { MemoryRow } from "@/lib/memories";
+import { stamp } from "@/lib/time";
 import styles from "./memory.module.css";
 
 /**
@@ -47,12 +48,7 @@ export function MemoryList({ rows }: { rows: readonly MemoryRow[] }) {
             <div className={styles.meta}>
               <span className="mono">#{row.id}</span>
               <span className={styles.dot}>•</span>
-              <span title={row.createdAt}>
-                {new Date(row.createdAt).toLocaleString("en-US", {
-                  timeZone: "UTC",
-                  hour12: false,
-                })}
-              </span>
+              <span title={row.createdAt}>{stamp(row.createdAt, "second")}</span>
               {row.sessionId && (
                 <>
                   <span className={styles.dot}>•</span>

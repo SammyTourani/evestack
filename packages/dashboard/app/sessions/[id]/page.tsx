@@ -1,187 +1,128 @@
-import { formatUsd, isPriced } from "@/lib/pricing";
-import { getSession, getSessionTree, type TurnRow } from "@/lib/queries";
-import { ForkPanel } from "./fork-client";
-import styles from "./session.module.css";
+import { Badge, OutcomeBadge, type Outcome, type Tone } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
+import { Placeholder } from "@/components/ui/feedback";
+import { formatMetric } from "@/components/ui/format";
+import { StatTile } from "@/components/ui/stat";
+import { CONTROL } from "@/components/ui/style";
+import { getSession, getSessionTree } from "@/lib/queries";
+import { duration, stamp } from "@/lib/time";
+import { listModelCalls, listToolCalls, type ModelCall, type ToolCall } from "@/lib/traces";
 import { DatabaseError } from "@/app/db-error";
+
+import {
+  buildTimeline,
+  buildWaterfall,
+  flattenTimeline,
+  listSteps,
+  listToolCallFacts,
+  listTurnFacts,
+  type StepRow,
+  type TimelineNode,
+  type ToolCallRow,
+  type TurnFact,
+} from "./data";
+import { ForkPanel } from "./fork-client";
+import { Timeline } from "./timeline";
+import { TurnPane } from "./turn-pane";
 
 export const dynamic = "force-dynamic";
 
-interface TreeNode {
-  run: TurnRow;
-  children: TreeNode[];
+/**
+ * The page you live in.
+ *
+ * Three panes, left to right and top to bottom: the session's turns as a
+ * timeline, the selected turn's facts and waterfall, and its transcript. Which
+ * turn is selected is `?turn=`, not client state — see `timeline.tsx`.
+ *
+ * Two numbers on this page are traps, and both are handled rather than avoided.
+ * A session's wall-clock span is NOT a latency: `$eve.type = 'session'` stays
+ * `running` until eve times it out, so a session someone left open overnight
+ * measures the human. lib/monitors.ts says so at length and it is why the stat
+ * strip leads with the sum of TURN durations and the wall clock is a
+ * parenthetical in the meta line. And span-derived numbers are missing on four
+ * turns in five, so every one of them is labelled with what it was computed
+ * over rather than rendered as a confident zero.
+ */
+
+interface PageData {
+  readonly session: NonNullable<Awaited<ReturnType<typeof getSession>>>;
+  readonly tree: TimelineNode[];
+  readonly flat: TimelineNode[];
+  readonly stepsByRun: ReadonlyMap<string, StepRow[]>;
+  readonly toolsByRun: ReadonlyMap<string, ToolCallRow[]>;
+  readonly modelCallsByTurn: ReadonlyMap<string, ModelCall[]>;
+  readonly toolPayloads: ReadonlyMap<string, ToolCall>;
 }
 
-/**
- * Rebuild the run hierarchy from the flat rows getSessionTree() returns.
- *
- * The session row is in that array too (the query matches `id = $1`), but it is
- * the tree, not a node in it, so it is dropped here. Anything whose parent is
- * missing from the result set — a subagent whose caller was pruned, say — hangs
- * off the session rather than disappearing from the page.
- */
-function buildTree(rows: TurnRow[], sessionId: string): TreeNode[] {
-  const nodes = new Map<string, TreeNode>();
-  for (const run of rows) {
-    if (run.id !== sessionId) nodes.set(run.id, { run, children: [] });
+async function load(id: string): Promise<PageData | null> {
+  const [session, rows] = await Promise.all([getSession(id), getSessionTree(id)]);
+  if (!session) return null;
+
+  const facts = await listTurnFacts(session.id);
+  const tree = buildTimeline(rows, session.id, facts);
+  const flat = flattenTimeline(tree);
+  const runIds = flat.map((node) => node.run.id);
+
+  const [stepsByRun, toolsByRun] = await Promise.all([
+    listSteps(runIds),
+    listToolCallFacts(runIds),
+  ]);
+
+  // The span reads pull whole traces, so they are skipped entirely when the
+  // fact layer already says no turn in this session has a span. That is the
+  // common case — 1,552 of the seeded month's 1,922 turns — and it is the
+  // difference between one indexed lookup and a scan of every trace the
+  // session touched.
+  const anySpans = flat.some((node) => node.fact && node.fact.spanCoverage !== "none");
+  const [modelCalls, spanToolCalls] = anySpans
+    ? await Promise.all([listModelCalls(session.id), listToolCalls(session.id)])
+    : [[] as ModelCall[], [] as ToolCall[]];
+
+  const modelCallsByTurn = new Map<string, ModelCall[]>();
+  for (const call of modelCalls) {
+    if (!call.turnId) continue;
+    const list = modelCallsByTurn.get(call.turnId) ?? [];
+    list.push(call);
+    modelCallsByTurn.set(call.turnId, list);
   }
 
-  // Attaching a node whose ancestry loops back to itself would create a cycle,
-  // and the recursive render below would never terminate.
-  const parentOf = (node: TreeNode): TreeNode | undefined => {
-    const direct = node.run.parent ? nodes.get(node.run.parent) : undefined;
-    const seen = new Set<string>([node.run.id]);
-    for (let cursor = direct; cursor; cursor = cursor.run.parent ? nodes.get(cursor.run.parent) : undefined) {
-      if (seen.has(cursor.run.id)) return undefined;
-      seen.add(cursor.run.id);
-    }
-    return direct;
+  return {
+    session,
+    tree,
+    flat,
+    stepsByRun,
+    toolsByRun,
+    modelCallsByTurn,
+    toolPayloads: new Map(spanToolCalls.map((call) => [call.spanId, call])),
   };
-
-  const roots: TreeNode[] = [];
-  for (const node of nodes.values()) {
-    const parent = parentOf(node);
-    if (parent) parent.children.push(node);
-    else roots.push(node);
-  }
-  return roots;
-}
-
-const fmt = (n: number) => n.toLocaleString("en-US");
-
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const pad = (n: number) => String(n).padStart(2, "0");
-
-/**
- * Wall-clock stamp for a run, not "3h ago".
- *
- * A drill-down wants the actual clock time of each turn, and relative time is
- * unreliable here: workflow_runs stores UTC in `timestamp without time zone`
- * columns, so pg hands back a bare string that `new Date()` reads as host-local.
- * Every timestamp therefore lands one UTC offset in the future and "ago" math
- * goes negative. Formatting the local components reverses that shift and prints
- * exactly what the database holds. See the note in the handoff — the fix belongs
- * in lib/queries.ts, which this page does not own.
- */
-function stamp(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  return `${MONTHS[d.getMonth()]} ${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-}
-
-function duration(ms: number | null): string {
-  if (ms === null || !Number.isFinite(ms) || ms < 0) return "—";
-  if (ms < 1000) return `${ms}ms`;
-  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
-  const minutes = Math.floor(ms / 60_000);
-  const seconds = Math.round((ms % 60_000) / 1000);
-  return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
-}
-
-function Metric({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className={styles.metric}>
-      <div className={styles.metricLabel}>{label}</div>
-      <div className={styles.metricValue}>{children}</div>
-    </div>
-  );
 }
 
 /**
- * eve names a subagent by its compiled graph node id, and the built-in `agent`
- * tool — delegating to a copy of the current agent — is literally `__root__`.
- * That is the most common subagent there is, so showing the raw id would put a
- * meaningless token in front of most users. Named subagents keep their name.
+ * `workflow_runs.status` is the engine's word, not `fact_turn.outcome`, so it
+ * cannot go through `OutcomeBadge` — `completed` is not one of the seven
+ * outcomes and would be a type error. An explicit map with a neutral default,
+ * rather than interpolating the value into a class name, which is how an
+ * unknown status renders as an unstyled pill nobody notices.
  */
-function kindLabel(run: TurnRow): string {
-  if (run.type !== "subagent") return run.type;
-  if (!run.subagent || run.subagent === "__root__") return "subagent";
-  return run.subagent;
-}
-
-function RunNode({ node, seq }: { node: TreeNode; seq?: number }) {
-  const run = node.run;
-  const failed = run.status === "failed" || run.status === "errored" || run.errorCode !== null;
-  const priced = isPriced(run.model);
-
-  return (
-    <li>
-      <div className={failed ? `${styles.card} ${styles.cardFailed}` : styles.card}>
-        <div className={styles.cardHead}>
-          {seq !== undefined && <span className={styles.seq}>#{seq}</span>}
-          <span className={styles.kind}>{kindLabel(run)}</span>
-          <span className={`status status-${run.status}`}>{run.status}</span>
-          <span className={styles.model}>
-            {run.model ?? (
-              <span className={run.noModelCall ? "unpriced" : "faint"}>
-                {run.noModelCall ? "no model call — turn produced nothing" : "no model recorded"}
-              </span>
-            )}
-          </span>
-          {run.model && !priced && (
-            <span className="unpriced" title="No price configured for this model">
-              unpriced
-            </span>
-          )}
-          <span className={styles.cardId}>{run.id}</span>
-        </div>
-
-        {failed && (
-          <div className={styles.error}>
-            <span className={styles.errorLabel}>Error</span>
-            <span className={styles.errorCode}>{run.errorCode ?? "no error code recorded"}</span>
-          </div>
-        )}
-
-        <div className={styles.metrics}>
-          <Metric label="Duration">{duration(run.durationMs)}</Metric>
-          <Metric label="In">{fmt(run.inputTokens)}</Metric>
-          <Metric label="Out">{fmt(run.outputTokens)}</Metric>
-          <Metric label="Cached">
-            <span className="dim">{fmt(run.cacheReadTokens)}</span>
-          </Metric>
-          {run.cacheWriteTokens > 0 && (
-            <Metric label="Cache write">
-              <span className="dim">{fmt(run.cacheWriteTokens)}</span>
-            </Metric>
-          )}
-          <Metric label="Tools">{fmt(run.toolCount)}</Metric>
-          <Metric label="Cost">
-            {/* An unpriced model must never render as $0.00 — that reads as free. */}
-            {priced ? formatUsd(run.costUsd) : <span className="unpriced">—</span>}
-          </Metric>
-          <Metric label="Started">
-            <span className="dim" title={run.startedAt ?? run.createdAt}>
-              {stamp(run.startedAt ?? run.createdAt)}
-            </span>
-          </Metric>
-        </div>
-      </div>
-
-      {node.children.length > 0 && (
-        <ul className={styles.children}>
-          {node.children.map((child) => (
-            <RunNode key={child.run.id} node={child} />
-          ))}
-        </ul>
-      )}
-    </li>
-  );
-}
+const STATUS_TONE: Readonly<Record<string, Tone>> = {
+  running: "info",
+  completed: "neutral",
+  failed: "err",
+  errored: "err",
+  cancelled: "neutral",
+};
 
 export default async function SessionDetailPage(props: PageProps<"/sessions/[id]">) {
-  const { id } = await props.params;
+  const [{ id }, search] = await Promise.all([props.params, props.searchParams]);
 
-  let session: Awaited<ReturnType<typeof getSession>>;
-  let rows: TurnRow[];
+  let data: PageData | null;
   try {
-    [session, rows] = await Promise.all([getSession(id), getSessionTree(id)]);
+    data = await load(id);
   } catch (error) {
-    return (
-      <DatabaseError error={error} />
-    );
+    return <DatabaseError error={error} />;
   }
 
-  if (!session) {
+  if (!data) {
     return (
       <div className="empty">
         <h2>No such session</h2>
@@ -196,140 +137,204 @@ export default async function SessionDetailPage(props: PageProps<"/sessions/[id]
     );
   }
 
-  const roots = buildTree(rows, session.id);
-  const runs = rows.filter((r) => r.id !== session.id);
-  // A failed turn is the session most worth promoting to an eval, so the button
-  // says so rather than making the user infer it from the tree below.
-  const failedTurn = runs.find((r) => r.errorCode || r.noModelCall);
-  const subagents = runs.filter((r) => r.type === "subagent");
-  // getSession() now returns both grains, so this reads the inclusive one
-  // instead of rebuilding it from the tree. Not just tidier: the hand-rolled
-  // version added only `type === "subagent"` children, so any other child type
-  // carrying a model was left out of the total.
-  const totalCost = session.includingSubagents.costUsd;
-  const anyUnpriced = runs.some((r) => r.model !== null && !isPriced(r.model));
-  const elapsed =
+  const { session, flat, tree } = data;
+  const facts = flat.map((node) => node.fact).filter((fact): fact is TurnFact => fact !== null);
+  const turns = flat.filter((node) => node.run.type !== "subagent");
+  const subagents = flat.length - turns.length;
+
+  // Turn time, not session time. Subagents are excluded because a subagent runs
+  // INSIDE its caller's turn — adding both counts the same seconds twice.
+  const turnTimeMs = turns.reduce((sum, node) => sum + (node.fact?.durationMs ?? 0), 0);
+  const inputTokens = facts.reduce((sum, fact) => sum + (fact.inputTokens ?? 0), 0);
+  const outputTokens = facts.reduce((sum, fact) => sum + (fact.outputTokens ?? 0), 0);
+  const spend = facts.reduce((sum, fact) => sum + (fact.costUsd ?? 0), 0);
+  const unpricedTurns = facts.filter((fact) => fact.priced === false).length;
+  const spannedTurns = facts.filter((fact) => fact.spanCoverage !== "none").length;
+  const maxDurationMs = facts.reduce<number | null>(
+    (max, fact) => (fact.durationMs === null ? max : Math.max(max ?? 0, fact.durationMs)),
+    null,
+  );
+
+  const requested = typeof search.turn === "string" ? search.turn : null;
+  const selected = flat.find((node) => node.run.id === requested) ?? flat[0];
+
+  const wallClockMs =
     new Date(session.completedAt ?? Date.now()).getTime() - new Date(session.createdAt).getTime();
-  // Only trustworthy once the session closed; while it is open this measures
-  // against now(), which the timestamp skew above makes meaningless.
-  const elapsedLabel = session.completedAt
-    ? `ran ${duration(elapsed)}`
-    : elapsed >= 0
-      ? `open for ${duration(elapsed)}`
-      : "still open";
 
   return (
     <>
-      <nav className={styles.crumbs}>
-        <a href="/">Sessions</a>
+      <nav className="mb-2.5 flex items-center gap-2 text-small text-text-faint">
+        <a href="/" className="text-text-dim hover:text-text">
+          Sessions
+        </a>
         <span>/</span>
         <span>this run</span>
       </nav>
 
-      <h1>{session.title ?? <span className="faint">Untitled session</span>}</h1>
+      <h1 className="m-0 text-title font-medium text-text">
+        {session.title ?? <span className="text-text-faint">Untitled session</span>}
+      </h1>
 
-      <div className={styles.meta}>
-        <span
-          className={`status status-${session.status}`}
+      <div className="mt-2 mb-6 flex flex-wrap items-center gap-x-3.5 gap-y-2 text-small text-text-dim">
+        <Badge
+          tone={STATUS_TONE[session.status] ?? "neutral"}
           title="eve keeps the session run open until it times out, so an idle session reads as running."
         >
           {session.status}
-        </span>
+        </Badge>
         {session.trigger && (
-          <>
-            <span className={styles.dot}>•</span>
-            <span>
-              trigger <span className="mono">{session.trigger}</span>
-            </span>
-          </>
+          <span>
+            trigger <span className="font-mono">{session.trigger}</span>
+          </span>
         )}
-        <span className={styles.dot}>•</span>
-        <span title={session.createdAt}>started {stamp(session.createdAt)}</span>
-        <span className={styles.dot}>•</span>
-        <span title={session.completedAt ?? undefined}>{elapsedLabel}</span>
-        <span className={styles.dot}>•</span>
-        <span className={styles.runId}>{session.id}</span>
+        <span title={session.createdAt}>started {stamp(session.createdAt, "second")}</span>
+        {/* Wall clock, deliberately small and deliberately not called latency.
+            An open session's span is the time a person has had the tab open. */}
+        <span
+          title={
+            session.completedAt
+              ? "Wall clock between the session opening and closing, including the time it sat idle between turns."
+              : "This session has not closed. eve leaves the session run open until it times out, so this is how long the tab has been open, not how long the agent worked."
+          }
+        >
+          {session.completedAt
+            ? `open ${duration(wallClockMs)} end to end`
+            : wallClockMs >= 0
+              ? `open ${duration(wallClockMs)} so far`
+              : "still open"}
+        </span>
+        <span className="font-mono text-text-faint break-all">{session.id}</span>
       </div>
 
-      <div className="stat-row">
-        <div className="stat">
-          <div className="stat-label">Turns</div>
-          <div className="stat-value">{fmt(session.turnCount)}</div>
-        </div>
-        {subagents.length > 0 && (
-          <div className="stat">
-            <div className="stat-label">Subagents</div>
-            <div className="stat-value">{fmt(subagents.length)}</div>
-          </div>
-        )}
-        <div className="stat">
-          <div className="stat-label">Tokens in / out</div>
-          <div className="stat-value">
-            {fmt(session.inputTokens)}
-            <span className="faint"> / </span>
-            {fmt(session.outputTokens)}
-          </div>
-        </div>
-        <div className="stat">
-          <div className="stat-label">Cached reads</div>
-          <div className="stat-value">{fmt(session.cacheReadTokens)}</div>
-        </div>
-        <div className="stat">
-          <div className="stat-label">Model spend</div>
-          <div className="stat-value">{formatUsd(totalCost)}</div>
-        </div>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        <StatTile label="Turns" value={turns.length} unit="count" />
+        <StatTile label="Turn time" value={turnTimeMs} unit="duration" />
+        <StatTile label="Tokens in" value={inputTokens} unit="tokens" />
+        <StatTile label="Tokens out" value={outputTokens} unit="tokens" />
+        {/* `$0.00` on a session where nothing could be priced would read as
+            free. It is only a real zero when at least one turn WAS priced, or
+            when no turn had a model to price in the first place. */}
+        <StatTile
+          label="Spend"
+          value={spend}
+          unit="cost"
+          priced={facts.some((fact) => fact.priced === true) || unpricedTurns === 0}
+        />
       </div>
 
-      <div className={styles.actions}>
-        <a className={styles.promote} href={`/api/evals/promote/${encodeURIComponent(session.id)}`}>
+      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-small text-text-dim">
+        <OutcomeMix facts={facts} />
+        {subagents > 0 && (
+          <span>
+            {subagents} subagent run{subagents === 1 ? "" : "s"}, nested below their caller
+          </span>
+        )}
+      </div>
+
+      {unpricedTurns > 0 && (
+        <p className="mt-2 mb-0 text-small text-warn">
+          {unpricedTurns} turn{unpricedTurns === 1 ? "" : "s"} ran on a model with no configured
+          price, so {unpricedTurns === 1 ? "its" : "their"} spend is not in that total — it is
+          unknown, not zero. Set <code>EVESTACK_PRICING</code> to price{" "}
+          {unpricedTurns === 1 ? "it" : "them"}.
+        </p>
+      )}
+
+      <div className="mt-5 flex flex-wrap items-center gap-3">
+        <a className={CONTROL} href={`/api/evals/promote/${encodeURIComponent(session.id)}`}>
           Promote to eval
         </a>
-        <span className={`faint ${styles.actionNote}`}>
-          {failedTurn
-            ? "This session failed — promoting it gives you the regression test for the bug."
+        <span className="text-small text-text-faint">
+          {facts.some((fact) => fact.outcome === "failed" || fact.outcome === "no_model_call")
+            ? "This session has a failed turn — promoting it gives you the regression test for the bug."
             : "Downloads a draft evals/*.eval.ts replaying this session's real messages."}
         </span>
       </div>
 
-      {/* Its own row, not part of .actions: promoting downloads a file, while
-          replaying starts a real run that re-executes this session's tools. The
-          two do not belong side by side as if they were the same weight of
-          decision, and the panel expands when opened. */}
-      <div className={styles.forkSlot}>
+      {/* Its own row, not beside Promote: promoting downloads a file, while
+          replaying starts a real run that re-executes this session's tools. */}
+      <div className="mt-2.5 mb-6">
         <ForkPanel sessionId={session.id} />
       </div>
 
-      <div className={styles.sectionHead}>
-        <h2>Run tree</h2>
-        <span className={styles.sectionNote}>
-          {runs.length === 0
-            ? "nothing recorded yet"
-            : `${fmt(runs.length)} run${runs.length === 1 ? "" : "s"} under this session`}
-        </span>
-      </div>
-
-      {roots.length === 0 ? (
-        <div className="empty">
-          <h2>No turns recorded</h2>
-          <p>
-            The session exists but nothing ran under it yet. Send it a message and this tree will
-            fill in.
-          </p>
-        </div>
+      {flat.length === 0 || selected === undefined ? (
+        <Card title="Timeline">
+          <Placeholder
+            title="No turns recorded"
+            detail="The session exists but nothing has run under it yet. Send it a message and this fills in."
+          />
+        </Card>
       ) : (
-        <ul className={styles.tree}>
-          {roots.map((node, i) => (
-            <RunNode key={node.run.id} node={node} seq={i + 1} />
-          ))}
-        </ul>
-      )}
+        <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[20rem_minmax(0,1fr)]">
+          <Card
+            title="Timeline"
+            description={coverageCaption(spannedTurns, facts.length)}
+            className="lg:sticky lg:top-4"
+          >
+            <Timeline
+              nodes={tree}
+              selectedId={selected.run.id}
+              maxDurationMs={maxDurationMs}
+              sessionId={session.id}
+            />
+          </Card>
 
-      {anyUnpriced && (
-        <p className={`faint ${styles.footnote}`}>
-          Some models have no price configured, so their cost shows as —. Set{" "}
-          <code>EVESTACK_PRICING</code> to price them.
-        </p>
+          <TurnPane
+            node={selected}
+            total={turns.length}
+            waterfall={buildWaterfall(
+              {
+                startedAt: selected.fact?.startedAt ?? selected.run.startedAt,
+                durationMs: selected.fact?.durationMs ?? selected.run.durationMs,
+              },
+              data.stepsByRun.get(selected.run.id) ?? [],
+              data.toolsByRun.get(selected.run.id) ?? [],
+              data.modelCallsByTurn.get(selected.run.id) ?? [],
+            )}
+            toolCalls={data.toolsByRun.get(selected.run.id) ?? []}
+            modelCalls={data.modelCallsByTurn.get(selected.run.id) ?? []}
+            toolPayloads={data.toolPayloads}
+            requestedMissing={requested !== null && requested !== selected.run.id}
+          />
+        </div>
       )}
     </>
+  );
+}
+
+/**
+ * How many turns the span-derived numbers actually cover.
+ *
+ * `coverageNote()` in components/ui/format.ts is the same sentence for a
+ * metric, but this is a caption on a pane rather than a caveat under a value,
+ * and it has to say something in the full case too — "all of them" is the
+ * answer to a question the reader is about to ask about every TTFT below.
+ */
+function coverageCaption(spanned: number, total: number): string {
+  if (total === 0) return "";
+  // "Runs", not "turns": this pane lists subagent runs too, so its denominator
+  // is deliberately a different number from the `Turns` tile above it. Calling
+  // both of them turns is how a reader concludes the tile is wrong.
+  if (spanned === 0) return `No spans on any of the ${total} runs; steps and costs are complete.`;
+  if (spanned === total) return `Spans on all ${total} runs.`;
+  return `Spans on ${spanned} of ${total} runs — the rest have steps and costs only.`;
+}
+
+function OutcomeMix({ facts }: { facts: readonly TurnFact[] }) {
+  const counts = new Map<Outcome, number>();
+  for (const fact of facts) counts.set(fact.outcome, (counts.get(fact.outcome) ?? 0) + 1);
+  if (counts.size === 0) return null;
+  return (
+    <span
+      className="flex flex-wrap items-center gap-2"
+      title="Every run under this session — turns and subagent runs alike."
+    >
+      {[...counts].map(([outcome, count]) => (
+        <span key={outcome} className="flex items-baseline gap-1">
+          <OutcomeBadge outcome={outcome} />
+          <span className="tabular-nums">{formatMetric(count, "count")}</span>
+        </span>
+      ))}
+    </span>
   );
 }

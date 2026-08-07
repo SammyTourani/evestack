@@ -14,6 +14,11 @@
  * overstates every cached turn — and cached turns are the common case for an
  * agent with a long system prompt.
  *
+ * The third is a token class charged at the wrong rate, or at no rate at all.
+ * Cache writes arrive inside the input total too, and 33 models charge a
+ * premium to write a cache entry; a class that silently costs nothing is the
+ * same lie as an unpriced model rendering $0.00, just harder to see.
+ *
  * Nothing here opens a socket; the table is committed literals and the tests
  * are arithmetic over them.
  */
@@ -31,10 +36,23 @@ import { costUsd, findPrice, formatUsd, isPriced } from "../lib/pricing.ts";
  */
 delete process.env.EVESTACK_PRICING;
 
-/** A model the generated table prices, with an explicit cache-read rate. */
+/** A model the generated table prices, with explicit cache-read AND cache-write rates. */
 const SONNET = "anthropic/claude-sonnet-5";
 /** One of the 66 priced models that state no cache-read rate. */
 const NO_CACHE_RATE = "meta/llama-3.3-70b";
+/**
+ * One of the 173 priced models that state no cache-WRITE rate, while stating a
+ * cache-read one. The seeded dataset runs this model, so the fallback below is
+ * on the common path, not a corner.
+ */
+const NO_WRITE_RATE = "openai/gpt-5-mini";
+/**
+ * The two states the seeded dataset keeps distinct, and that the UI must never
+ * collapse: `ollama/qwen3` is FREE (local inference costs no API money) and
+ * `acme/experimental-v1` is UNPRICED (no catalog entry, cost unknown).
+ */
+const FREE = "ollama/qwen3";
+const UNPRICED = "acme/experimental-v1";
 
 const M = 1_000_000;
 
@@ -98,9 +116,12 @@ test("an entirely cached turn costs the cache rate and nothing else", () => {
   assert.equal(costUsd(SONNET, 1000, 0, 1000), (1000 / M) * price.cacheRead);
 });
 
-test("more cache reads than input tokens cannot produce a negative charge", () => {
+test("more cache reads than input tokens cannot produce a negative charge", (t) => {
   // Upstream counters have disagreed before; a negative row would silently
   // subtract from the session total and make an expensive session look cheap.
+  // The floor also warns now — that is asserted on its own model below, and
+  // muted here so it does not colour the output of a test about arithmetic.
+  t.mock.method(console, "warn", () => {});
   const price = findPrice(SONNET);
   assert.equal(costUsd(SONNET, 100, 0, 1000), (1000 / M) * price.cacheRead);
   assert.ok(costUsd(SONNET, 0, 0, 1000) > 0);
@@ -119,6 +140,110 @@ test("input, output and cache are each charged at their own rate", () => {
   // cacheReadTokens is optional and must default to none rather than to
   // "everything was cached".
   assert.equal(costUsd(SONNET, 1_000_000, 0), price.input);
+});
+
+/* -------------------------------------------------------------------------- */
+/* cache writes                                                                */
+/* -------------------------------------------------------------------------- */
+
+test("cache writes are charged at the cache-write rate, not the input rate", () => {
+  const price = findPrice(SONNET);
+  assert.ok(price.cacheWrite, "fixture chosen because the catalog states a write rate");
+  assert.ok(price.cacheWrite > price.input, "and because writing costs MORE than plain input");
+
+  // 1000 input tokens of which 400 wrote a cache entry: 600 non-cached and 400
+  // at the write rate. Billing all 1000 at the plain input rate — what happens
+  // when the write count is dropped on the floor — under-reports the turn.
+  const split = costUsd(SONNET, 1000, 0, 0, 400);
+  assert.equal(split, (600 / M) * price.input + (400 / M) * price.cacheWrite);
+
+  const asPlainInput = (1000 / M) * price.input;
+  assert.ok(split > asPlainInput, "the 1.25x write premium has to show up somewhere");
+});
+
+test("non-cached, cache-read and cache-write are three disjoint classes", () => {
+  // The decomposition Datadog's ml_obs model uses. All three counts live inside
+  // `$eve.input_tokens`, so each token is charged exactly once, at one rate.
+  const price = findPrice(SONNET);
+  assert.equal(
+    costUsd(SONNET, 1000, 500, 300, 200),
+    (500 / M) * price.input +
+      (500 / M) * price.output +
+      (300 / M) * price.cacheRead +
+      (200 / M) * price.cacheWrite,
+  );
+});
+
+test("a model with no stated cache-write rate bills writes as input, never as free", () => {
+  // Be honest about what this one is worth: charging the input rate produces
+  // the identical number the four-argument signature produced, so no input can
+  // make it disagree with the old code. It is not here to. What it pins is the
+  // tempting `?? 0` — the one-character version of this fallback that makes a
+  // whole token class free for 173 of the 206 priced models, including the one
+  // the seeded dataset runs. Under `?? 0` the first assertion reads 600 tokens
+  // of input instead of 1000, and the last reads $0.00.
+  const price = findPrice(NO_WRITE_RATE);
+  assert.equal(price.cacheWrite, undefined, "fixture chosen because the catalog states no rate");
+
+  assert.equal(costUsd(NO_WRITE_RATE, 1000, 0, 0, 400), (1000 / M) * price.input);
+  assert.equal(
+    costUsd(NO_WRITE_RATE, 1000, 0, 0, 400),
+    costUsd(NO_WRITE_RATE, 1000, 0, 0, 0),
+    "absent means the label changes nothing, not that the tokens were free",
+  );
+  // A turn that is nothing but cache writes still costs money.
+  assert.equal(costUsd(NO_WRITE_RATE, 400, 0, 0, 400), (400 / M) * price.input);
+  assert.ok(costUsd(NO_WRITE_RATE, 400, 0, 0, 400) > 0);
+});
+
+test("cache reads and writes together cannot drive input negative", (t) => {
+  t.mock.method(console, "warn", () => {});
+  const price = findPrice(SONNET);
+  assert.equal(
+    costUsd(SONNET, 100, 0, 300, 200),
+    (300 / M) * price.cacheRead + (200 / M) * price.cacheWrite,
+  );
+  assert.ok(costUsd(SONNET, 0, 0, 0, 200) > 0);
+});
+
+test("a split that cannot be true says so instead of eating the surplus", (t) => {
+  // Reads and writes are parts of the input total, so a negative remainder is
+  // impossible from eve and means a counter is wrong. The floor that keeps the
+  // charge non-negative also drops those input tokens on the floor — 382,813 of
+  // them across 160 turns on the seeded month — and a third of a million tokens
+  // vanishing without a word is how spend gets under-reported forever.
+  //
+  // A model of this test's own, because the warning fires once per model for
+  // the life of the process and any other test that clamps would have consumed
+  // it first.
+  const model = "anthropic/claude-haiku-4.5";
+  const warnings = [];
+  t.mock.method(console, "warn", (...args) => warnings.push(args.join(" ")));
+
+  costUsd(model, 100, 0, 300, 200);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /anthropic\/claude-haiku-4\.5/);
+  assert.match(warnings[0], /400/, "the surplus it is about to discard, in tokens");
+
+  // Once per model: this runs per turn row on every render, so a bad fixture
+  // must not print one line per row.
+  costUsd(model, 0, 0, 900, 100);
+  assert.equal(warnings.length, 1);
+});
+
+/* -------------------------------------------------------------------------- */
+/* free is not unpriced                                                        */
+/* -------------------------------------------------------------------------- */
+
+test("the seeded free model and the seeded unpriced model do not collapse", () => {
+  // Both render "$0.00" through formatUsd, which is exactly why the states have
+  // to be distinguishable some other way. Every axis below has to disagree.
+  assert.equal(costUsd(FREE, 9_000_000, 9_000_000, 1_000_000, 1_000_000), 0);
+  assert.equal(costUsd(UNPRICED, 9_000_000, 9_000_000, 1_000_000, 1_000_000), 0);
+  assert.equal(formatUsd(costUsd(FREE, 1000, 1000)), formatUsd(costUsd(UNPRICED, 1000, 1000)));
+
+  assert.equal(isPriced(FREE), true, "local inference is free, and we know it");
+  assert.equal(isPriced(UNPRICED), false, "no catalog entry: the cost is unknown, not zero");
 });
 
 /* -------------------------------------------------------------------------- */

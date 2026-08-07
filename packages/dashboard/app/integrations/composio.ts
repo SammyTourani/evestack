@@ -28,7 +28,7 @@ const API_BASE = process.env.COMPOSIO_BASE_URL ?? "https://backend.composio.dev"
  * both files and fails if they ever diverge. That catches the drift — an agent
  * signed into accounts the dashboard cannot see — without the coupling.
  */
-export const DEFAULT_COMPOSIO_USER_ID = "evestack";
+const DEFAULT_COMPOSIO_USER_ID = "evestack";
 
 export function composioApiKey(): string | undefined {
   return process.env.COMPOSIO_API_KEY?.trim() || undefined;

@@ -6,46 +6,16 @@
  * interactive element on it is a native <details>. That is not minimalism for
  * its own sake — this is the page an operator opens when the agent is
  * misbehaving, and it should render from HTML alone.
+ *
+ * Times and durations are not here: they are the whole dashboard's, not these
+ * two pages', and live in lib/time.ts. `evestack.spans` uses `timestamptz`, so
+ * these instants arrive correct either way — but printing them in the host's
+ * zone here and in UTC on every other page was two answers to one question.
  */
 
 import { MODEL_CALL_SPANS, TOOL_CALL_SPANS, matchesSpanFamily } from "@/lib/span-families";
 
 export const fmt = (n: number): string => n.toLocaleString("en-US");
-
-export function duration(ms: number | null): string {
-  if (ms === null || !Number.isFinite(ms) || ms < 0) return "—";
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
-  const minutes = Math.floor(ms / 60_000);
-  const seconds = Math.round((ms % 60_000) / 1000);
-  return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
-}
-
-const pad = (n: number, width = 2) => String(n).padStart(width, "0");
-
-/**
- * Wall-clock time of day, to the millisecond.
- *
- * Local, not UTC, and correct here without the correction lib/queries.ts needs:
- * `evestack.spans` uses `timestamptz`, so pg reads the offset off the value
- * instead of guessing it from the host. Milliseconds are shown because
- * neighbouring spans in a step routinely start in the same second.
- */
-export function clockTime(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
-}
-
-export function ago(iso: string): string {
-  const seconds = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-  if (!Number.isFinite(seconds)) return "—";
-  if (seconds < 0) return "just now";
-  if (seconds < 60) return `${seconds}s ago`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-  if (seconds < 86_400) return `${Math.floor(seconds / 3600)}h ago`;
-  return `${Math.floor(seconds / 86_400)}d ago`;
-}
 
 /**
  * eve caps a single span attribute at 32 KB, so a payload is already bounded —
@@ -53,7 +23,7 @@ export function ago(iso: string): string {
  * text in one document. Clamping per payload keeps the page navigable, and the
  * clamp is always stated rather than silently swallowing the tail of a result.
  */
-export const MAX_PAYLOAD_CHARS = 24_000;
+const MAX_PAYLOAD_CHARS = 24_000;
 
 export interface Payload {
   text: string;
