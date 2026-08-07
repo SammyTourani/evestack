@@ -202,9 +202,11 @@ export default async function SessionDetailPage(props: PageProps<"/sessions/[id]
   // says so rather than making the user infer it from the tree below.
   const failedTurn = runs.find((r) => r.errorCode || r.noModelCall);
   const subagents = runs.filter((r) => r.type === "subagent");
-  // getSession() rolls up turns only, but the session list adds every child run,
-  // so subagent spend is folded back in here to keep the two pages agreeing.
-  const totalCost = session.costUsd + subagents.reduce((sum, r) => sum + r.costUsd, 0);
+  // getSession() now returns both grains, so this reads the inclusive one
+  // instead of rebuilding it from the tree. Not just tidier: the hand-rolled
+  // version added only `type === "subagent"` children, so any other child type
+  // carrying a model was left out of the total.
+  const totalCost = session.includingSubagents.costUsd;
   const anyUnpriced = runs.some((r) => r.model !== null && !isPriced(r.model));
   const elapsed =
     new Date(session.completedAt ?? Date.now()).getTime() - new Date(session.createdAt).getTime();

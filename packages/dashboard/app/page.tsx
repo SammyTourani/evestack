@@ -123,17 +123,22 @@ export default async function SessionsPage() {
                   </td>
                   <td className="num">{s.turnCount}</td>
                   <td className="mono dim">
-                    {s.models.length ? s.models.join(", ") : "—"}
-                    {s.models.some((m) => !isPriced(m)) && (
+                    {s.includingSubagents.models.length
+                      ? s.includingSubagents.models.join(", ")
+                      : "—"}
+                    {s.includingSubagents.models.some((m) => !isPriced(m)) && (
                       <div className="unpriced" title="No price configured for this model">
                         unpriced
                       </div>
                     )}
                   </td>
-                  <td className="num">{fmt(s.inputTokens)}</td>
-                  <td className="num">{fmt(s.outputTokens)}</td>
-                  <td className="num dim">{fmt(s.cacheReadTokens)}</td>
-                  <td className="num">{formatUsd(s.costUsd)}</td>
+                  {/* Inclusive of subagents, which is what this column has always
+                      shown. The bare names are turn-only since lib/queries.ts split
+                      the two grains. */}
+                  <td className="num">{fmt(s.includingSubagents.inputTokens)}</td>
+                  <td className="num">{fmt(s.includingSubagents.outputTokens)}</td>
+                  <td className="num dim">{fmt(s.includingSubagents.cacheReadTokens)}</td>
+                  <td className="num">{formatUsd(s.includingSubagents.costUsd)}</td>
                   <td className="num dim">{ago(s.createdAt)}</td>
                 </tr>
               ))}
