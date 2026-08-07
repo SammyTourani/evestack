@@ -18,7 +18,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -93,4 +93,53 @@ test("refusing to scaffold over a non-empty directory is still exit 1, not a cra
   assert.equal(result.status, 1);
   assert.match(output, /already exists and is not empty/);
   assert.deepEqual(looksLikeACrash(output), [], output);
+});
+
+test("pointing create at a FILE is explained, not an errno", () => {
+  // The guard was `existsSync(target) && readdirSafe(target).length > 0`, and
+  // readdirSafe swallowed ENOTDIR — so a file looked empty enough to scaffold
+  // into, and mkdirSync then threw `EEXIST: file already exists, mkdir
+  // '/path/README.md'`. index.mjs prints message-only, so that errno was the
+  // entire explanation for pointing at a file.
+  const dir = mkdtempSync(join(tmpdir(), "evestack-create-"));
+  const file = join(dir, "README.md");
+  writeFileSync(file, "# not a directory\n");
+
+  const result = run([file, "--yes"]);
+  const output = `${result.stdout}${result.stderr}`;
+  assert.equal(result.status, 1);
+  assert.match(output, /is a file, not a directory/);
+  assert.doesNotMatch(output, /EEXIST/);
+  assert.deepEqual(looksLikeACrash(output), [], output);
+  assert.equal(readFileSync(file, "utf8"), "# not a directory\n", "the file was written to");
+});
+
+test("a directory that cannot be created is explained, not an errno", () => {
+  // `npx create-evestack /etc/foo`: nothing exists at the path and there is no
+  // permission to make it, so the guard passes and mkdirSync throws EACCES.
+  const result = run(["/etc/evestack-should-not-be-creatable", "--yes"]);
+  const output = `${result.stdout}${result.stderr}`;
+  assert.equal(result.status, 1);
+  assert.match(output, /Could not create/);
+  assert.match(output, /not writable by this user/);
+  assert.deepEqual(looksLikeACrash(output), [], output);
+});
+
+test("an unknown flag creates nothing, rather than a directory named after its value", () => {
+  // Verified before the fix: this created a directory called `5000`.
+  const dir = mkdtempSync(join(tmpdir(), "evestack-create-"));
+  const result = spawnSync(process.execPath, [ENTRY, "--port", "5000"], { cwd: dir, encoding: "utf8" });
+  const output = `${result.stdout}${result.stderr}`;
+  assert.equal(result.status, 1);
+  assert.match(output, /Unknown option "--port"/);
+  assert.equal(existsSync(join(dir, "5000")), false, "a directory named after the flag's value exists");
+  assert.deepEqual(looksLikeACrash(output), [], output);
+});
+
+test("--version prints one line and writes nothing", () => {
+  const dir = mkdtempSync(join(tmpdir(), "evestack-create-"));
+  const result = spawnSync(process.execPath, [ENTRY, "--version"], { cwd: dir, encoding: "utf8" });
+  assert.equal(result.status, 0);
+  assert.match(result.stdout.trim(), /^\d+\.\d+\.\d+/);
+  assert.deepEqual(readdirSync(dir), [], "--version left something behind");
 });

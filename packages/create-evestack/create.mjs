@@ -23,12 +23,12 @@
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import {
-  cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync,
+  cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync,
 } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
-  basename, C, DASHBOARD_IMAGE, detectPm, dim, freePort, makePrompter,
-  ok, REPO, say, step, templateDir, warn,
+  basename, C, DASHBOARD_IMAGE, detectPm, dim, freePort, makePrompter, ok,
+  packageVersion, REPO, say, shellQuote, step, templateDir, warn,
 } from "./shared.mjs";
 
 /* -------------------------------------------------------------------------- */
@@ -54,9 +54,25 @@ async function confirmStart() {
   return yes;
 }
 
-/** Run a command in the project, streaming its output. Returns true on exit 0. */
+/**
+ * Run a command in the project, streaming its output. Returns true on exit 0.
+ *
+ * `shell` on Windows only, and not for cosmetic consistency: `npm`, `pnpm`,
+ * `yarn` and `bun` are installed there as `.cmd` shims, which CreateProcess
+ * cannot execute, so a bare spawn fails with ENOENT before the package manager
+ * runs at all. templates/default/scripts/dev.mjs and start.mjs already pass
+ * exactly this for exactly this reason. Every argument this file passes is a
+ * literal without spaces, which is what makes the shell safe to use here.
+ *
+ * NOT VERIFIED ON WINDOWS — there is no Windows machine in this loop. The claim
+ * being matched is the one the template's own scripts already make.
+ */
 function run(cwd, command, args) {
-  const result = spawnSync(command, args, { cwd, stdio: "inherit" });
+  const result = spawnSync(command, args, {
+    cwd,
+    stdio: "inherit",
+    shell: process.platform === "win32",
+  });
   return result.status === 0;
 }
 
@@ -153,12 +169,31 @@ async function inspectOllama(chatModel, embedModel = "nomic-embed-text") {
  * library that tears the process down cannot be tested or wrapped.
  */
 export async function create(argv) {
+  // Arguments first, and nothing at all before them.
+  //
+  // Neither --help nor --version was handled here, and src/cli.mjs routes `create`
+  // before it parses anything, so `evestack create --help` fell through to the
+  // wizard with no name to use: it took the default and scaffolded a project
+  // literally called `my-agent`, then ran a package-manager install in it.
+  const args = parseCreateArgs(argv);
+  if (args.help) {
+    say(CREATE_USAGE);
+    return 0;
+  }
+  if (args.version) {
+    say(packageVersion());
+    return 0;
+  }
+  if (args.error) {
+    console.error(`\n${C.red}${args.error}${C.reset}\n`);
+    return 1;
+  }
+
   // Non-interactive when asked for, or when stdin is not a terminal (CI, a
   // piped heredoc, a Dockerfile). Without this the process would reach EOF
   // mid-prompt and exit 0 having created nothing, which looks like success.
-  const nonInteractive =
-    argv.includes("--yes") || argv.includes("-y") || !process.stdin.isTTY;
-  const positional = argv.filter((a) => !a.startsWith("-"));
+  const nonInteractive = args.yes || !process.stdin.isTTY;
+  const positional = args.positional;
 
   const { ask, confirm, close } = await makePrompter(nonInteractive);
 
@@ -169,7 +204,28 @@ export async function create(argv) {
   // ---- name & directory -----------------------------------------------------
   const name = positional[0] ?? (await ask("Project name?", "my-agent"));
   const target = isAbsolute(name) ? name : resolve(process.cwd(), name);
-  if (existsSync(target) && readdirSafe(target).length > 0) {
+  const existing = inspectTarget(target);
+  if (existing.kind === "file") {
+    close();
+    console.error(
+      `\n${C.red}${target} is a file, not a directory.${C.reset}\n` +
+        `  create makes a new directory and fills it. Give it a name that is free:\n` +
+        `    npx create-evestack ${shellQuote(`${basename(target)}-agent`)}`,
+    );
+    return 1;
+  }
+  if (existing.kind === "unreadable") {
+    close();
+    console.error(
+      `\n${C.red}${target} cannot be read — ${existing.code}.${C.reset}\n` +
+        `  ${existing.code === "EACCES" || existing.code === "EPERM"
+          ? "This user does not have permission to look inside it."
+          : "The filesystem refused the lookup."}\n` +
+        `  Scaffold somewhere you own instead, e.g. ${shellQuote(join(process.cwd(), basename(target)))}.`,
+    );
+    return 1;
+  }
+  if (existing.kind === "directory" && existing.entries.length > 0) {
     close();
     console.error(`\n${C.red}${target} already exists and is not empty.${C.reset}`);
     return 1;
@@ -268,7 +324,23 @@ export async function create(argv) {
   // ---- scaffold -------------------------------------------------------------
   say();
   step("Creating project");
-  mkdirSync(target, { recursive: true });
+  // Guarded rather than left to throw. `npx create-evestack /etc/foo` reaches
+  // here with nothing existing at the path and no permission to create it, and
+  // index.mjs prints message-only — so an unguarded mkdirSync showed the user
+  // `EACCES: permission denied, mkdir '/etc/foo'` and nothing else.
+  try {
+    mkdirSync(target, { recursive: true });
+  } catch (error) {
+    const code = error?.code ?? "unknown";
+    console.error(
+      `\n${C.red}Could not create ${target} — ${code}.${C.reset}\n` +
+        (code === "EACCES" || code === "EPERM" || code === "EROFS"
+          ? `  ${dirname(target)} is not writable by this user.\n` +
+            `  Scaffold somewhere you own, e.g. ${shellQuote(join(process.cwd(), basename(target)))}.`
+          : `  ${error?.message ?? error}`),
+    );
+    return 1;
+  }
   const source = templateDir();
   cpSync(source, target, {
     recursive: true,
@@ -295,7 +367,12 @@ export async function create(argv) {
     return 1;
   }
   const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
-  pkg.name = basename(target);
+  // Normalised, because a directory name is not an npm name. `npx
+  // create-evestack "My Agent"` wrote `"name": "My Agent"` — capitals and a
+  // space are both invalid — and npm then refused the install with
+  // `Invalid name`, from a manifest the user never typed. projectNameFor a few
+  // lines down had always normalised the same string for Compose.
+  pkg.name = packageNameFor(target);
   pkg.private = true;
   delete pkg.description;
   writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
@@ -334,7 +411,18 @@ export async function create(argv) {
   // evestack/evestack returned rows. That database holds every prompt, tool
   // result and memory the agent has ever produced.
   //
-  // base64url so it is safe both unquoted in a URL and inside the compose file.
+  // Generating it fixed half of that. The other half: the generated value was
+  // written INTO docker-compose.yml, twice — POSTGRES_PASSWORD and the
+  // dashboard's WORKFLOW_POSTGRES_URL — and docker-compose.yml is a file this
+  // scaffold means to be committed. The .gitignore it ships ignores .env and
+  // .env.* and quite deliberately not the compose file, so the credential
+  // generated because "a shipped default password would be the one thing
+  // standing between a stranger and someone's agent" went into git on the first
+  // `git add -A`, while the same password in .env.local was carefully ignored.
+  // It is now written only to .env (below) and referenced from the compose file.
+  //
+  // base64url so it is safe unquoted in a URL, in a compose interpolation and in
+  // an env file: the alphabet is [A-Za-z0-9_-] and contains no $, # or quote.
   const dbPassword = randomBytes(18).toString("base64url");
 
   // Ports are chosen against the machine, not assumed.
@@ -418,13 +506,41 @@ export async function create(argv) {
   // for a given directory — it has to be, or every `docker compose` in that
   // project would address a different stack than the last one did.
   const composeProject = projectNameFor(target);
-  writeFileSync(join(target, "docker-compose.yml"), composeFile(composeProject, dbPassword, { pgPort, dashboardPort, agentPort }));
+
+  // The database password, in the one file Compose will read it from.
+  //
+  // This is the distinction the leak turned on, so it is worth stating exactly:
+  // `env_file:` on a service sets variables INSIDE that container, while
+  // `${...}` in the compose file is INTERPOLATION, resolved on the host before
+  // the file is parsed — and interpolation reads the shell and `.env`, and never
+  // .env.local. Verified both ways against Compose v5.1.3: `${VAR:?msg}` filled
+  // from this .env initialises Postgres with that password (a wrong password
+  // over TCP from another container is refused with `password authentication
+  // failed`), and the same reference with the value only in .env.local fails the
+  // parse outright with `required variable ... is missing a value`.
+  //
+  // So POSTGRES_PASSWORD and the dashboard's in-container connection string are
+  // both interpolated from here. docker-compose.yml stays committable and
+  // carries no secret; this file and .env.local are both ignored by the
+  // .gitignore written above.
+  writeFileSync(join(target, ".env"), composeEnvFile(dbPassword));
+  ok("Generated .env with the database password — read by Compose, ignored by git");
+
+  writeFileSync(join(target, "docker-compose.yml"), composeFile(composeProject, { pgPort, dashboardPort, agentPort }));
   ok("Wrote docker-compose.yml — Postgres, and the dashboard behind a profile");
 
   // ---- install --------------------------------------------------------------
   step("Installing dependencies");
   const pm = detectPm();
-  const install = spawnSync(pm, ["install"], { cwd: target, stdio: "inherit" });
+  // `shell` on Windows for the reason run() states: npm/pnpm/yarn/bun are `.cmd`
+  // shims there and a bare spawn cannot execute them, so every Windows run ended
+  // at "Created, but dependencies are not installed" and exit 1. Not verified on
+  // Windows from here — this matches what the template's own scripts already do.
+  const install = spawnSync(pm, ["install"], {
+    cwd: target,
+    stdio: "inherit",
+    shell: process.platform === "win32",
+  });
   // A failed install leaves an empty node_modules, and the "Next:" steps below
   // would then fail one after another with unrelated-looking errors. Report it
   // as the failure it is — including the exit code, so CI and shell `&&` chains
@@ -443,7 +559,9 @@ export async function create(argv) {
     say(`${C.yellow}${C.bold}  Created, but dependencies are not installed.${C.reset}`);
     say();
     say(`  ${C.bold}Finish it:${C.reset}`);
-    say(`    cd ${basename(target)}`);
+    // Quoted: a project called "My Agent" printed `cd My Agent`, which is two
+    // arguments and a command that does not work.
+    say(`    cd ${shellQuote(basename(target))}`);
     say(`    ${pm} install`);
     say();
     dim("If the install failed on a 404 for @evestack/composio, that package is not");
@@ -477,7 +595,7 @@ export async function create(argv) {
     if (brought) {
       say();
       say(`  ${C.bold}Left to do:${C.reset}`);
-      say(`    cd ${basename(target)} && ${pm} run dev        ${C.dim}# the agent, in this terminal${C.reset}`);
+      say(`    cd ${shellQuote(basename(target))} && ${pm} run dev  ${C.dim}# the agent, in this terminal${C.reset}`);
       say(`    ${pm} run verify                    ${C.dim}# checks all of it, in another${C.reset}`);
       say();
       say(`  ${C.dim}Dashboard${C.reset} ${dashboardUrl} ${C.dim}—${C.reset} evestack ${C.dim}/${C.reset} ${password}`);
@@ -492,7 +610,7 @@ export async function create(argv) {
   }
 
   say(`  ${C.bold}Next:${C.reset}`);
-  say(`    cd ${basename(target)}`);
+  say(`    cd ${shellQuote(basename(target))}`);
   say(`    docker compose up -d postgres              ${C.dim}# durable sessions${C.reset}`);
   // `npx --package=@workflow/world-postgres bootstrap` looks equivalent and is
   // not: its CLI loads `.env` via dotenv and never reads `.env.local`, so it
@@ -509,6 +627,10 @@ export async function create(argv) {
   // a user who brings the container up and cannot get past the sign-in page.
   say(`  ${C.dim}Sign in at${C.reset} ${dashboardUrl} ${C.dim}with${C.reset} evestack ${C.dim}/${C.reset} ${password}`);
   dim("(it is in .env.local, which the dashboard container reads too — nothing to copy)");
+  // Said once, here, because the split is the reason nothing in this project has
+  // to be scrubbed before it is pushed.
+  dim("docker-compose.yml is safe to commit: the credentials are in .env and .env.local,");
+  dim("both of which the generated .gitignore ignores.");
   say();
   say(`  ${C.dim}Nothing here bills you. No Vercel account, no metered compute.${C.reset}`);
   // Keyed off the line actually written, not off a substring of a key format:
@@ -535,6 +657,12 @@ const EXCLUDED_SEGMENTS = new Set([
 /**
  * Decide whether a template path is copied.
  *
+ * Exported because scripts/sync-template.mjs needs exactly this decision when it
+ * copies templates/default into the package before publish, and had its own
+ * substring-against-the-absolute-path version of it — the bug below, one step
+ * earlier in the pipeline, where it copied nothing and then died on an ENOENT for
+ * the manifest.
+ *
  * Matched against the path *relative to the template root*, one segment at a
  * time. Testing the absolute path instead — which this did — silently copies
  * nothing under `npx`, because npm stages the package at
@@ -542,28 +670,168 @@ const EXCLUDED_SEGMENTS = new Set([
  * path therefore contains `node_modules`. Substring matching had the same class
  * of bug for anyone whose project lived under a directory named `dist`.
  */
-function isTemplateFile(templateRoot, src) {
+export function isTemplateFile(templateRoot, src) {
   const rel = relative(templateRoot, src);
   if (rel === "") return true; // the template root itself
   return !rel.split(sep).some((segment) => EXCLUDED_SEGMENTS.has(segment));
 }
 
 /**
- * The target directory's entries, or [] if it cannot be read.
+ * What is already at the target path, in the shapes that need different answers.
  *
- * `readdirSync`, not a shell. This ran `ls -A ${JSON.stringify(p)}` through
- * execSync, and JSON.stringify is not a shell quoter: it escapes `"` and `\`
- * and leaves `$` alone, but `$(…)` and backticks expand inside double quotes.
- * The path comes straight from argv, so `npx create-evestack '$(touch pwned)'`
- * executed that command before the wizard printed its first question. readdirSync
- * takes the path as a path and cannot be talked into anything else.
+ * The guard used to be `existsSync(target) && readdirSafe(target).length > 0`,
+ * and readdirSafe returned [] for anything it could not read. On a FILE that is
+ * ENOTDIR, so the guard decided the path was empty enough and mkdirSync then
+ * threw `EEXIST: file already exists, mkdir '/path/README.md'` — an errno, and
+ * index.mjs prints message-only, so that errno was the entire explanation the
+ * user got for pointing at a file. EACCES on a directory had the same shape.
+ *
+ * `readdirSync`, not a shell — the reason survives from readdirSafe: this once
+ * ran `ls -A ${JSON.stringify(p)}` through execSync, and JSON.stringify is not a
+ * shell quoter. It escapes `"` and `\` and leaves `$` alone, and `$(…)` and
+ * backticks expand inside double quotes, so `npx create-evestack '$(touch
+ * pwned)'` executed that command before the wizard printed its first question.
+ * readdirSync takes the path as a path and cannot be talked into anything else.
  */
-function readdirSafe(p) {
+function inspectTarget(path) {
+  let stats;
   try {
-    return readdirSync(p);
-  } catch {
-    return [];
+    stats = statSync(path);
+  } catch (error) {
+    if (error?.code === "ENOENT") return { kind: "missing" };
+    return { kind: "unreadable", code: error?.code ?? "unknown" };
   }
+  if (!stats.isDirectory()) return { kind: "file" };
+  try {
+    return { kind: "directory", entries: readdirSync(path) };
+  } catch (error) {
+    return { kind: "unreadable", code: error?.code ?? "unknown" };
+  }
+}
+
+/**
+ * The flags `create` accepts, and why an unknown one is now refused.
+ *
+ * The whole parser was `argv.filter((a) => !a.startsWith("-"))`. It dropped a
+ * flag it did not recognise and KEPT the value that followed it, so the value
+ * became the directory name. Verified: `npx create-evestack --port 5000` created
+ * a directory called `5000`, `--template minimal` created `minimal`, and
+ * `my-agent --dry-run` — a flag that exists on `attach` and is advertised two
+ * lines away in the shared usage — scaffolded for real and then offered to start
+ * containers. `-my-agent` was discarded entirely and the wizard asked for a name
+ * it had just been given.
+ *
+ * A name is not a place to put an argument nobody parsed, so every flag is now
+ * either known or an error, and `--` ends the options for the rare directory
+ * that really is called `--help`.
+ */
+const CREATE_FLAGS = new Map([
+  ["--yes", "yes"], ["-y", "yes"],
+  ["--help", "help"], ["-h", "help"],
+  ["--version", "version"], ["-V", "version"],
+]);
+
+/** Flags that are real somewhere else, so the error can say where. */
+const FLAGS_ELSEWHERE = new Map([
+  ["--dry-run", "attach"],
+  ["-n", "attach"],
+  ["--json", "verify"],
+  ["--open", "verify"],
+  ["--no-open", "verify and open"],
+  ["--sql", "doctor"],
+  ["--verbose", "doctor"],
+]);
+
+export const CREATE_USAGE = `evestack create — scaffold a new self-hosted eve agent
+
+  npx create-evestack [name] [--yes]
+  evestack create [name] [--yes]
+
+Creates the directory, copies the agent template into it, generates this
+project's credentials into .env.local and .env, writes a docker-compose.yml for
+Postgres plus the dashboard, and installs dependencies.
+
+Options
+  --yes, -y       take every default and ask nothing. Implied when stdin is not
+                  a terminal — CI, a heredoc, a Dockerfile
+  --help, -h      this
+  --version, -V   print create-evestack's version
+
+An existing non-empty directory is refused, never merged into. To scaffold into
+a directory whose name starts with a dash, end the options first:
+
+  npx create-evestack -- --weird-name
+`;
+
+export function parseCreateArgs(argv) {
+  const parsed = { positional: [], yes: false, help: false, version: false, error: null };
+  let endOfFlags = false;
+  for (const arg of argv) {
+    if (endOfFlags || !arg.startsWith("-")) {
+      if (!endOfFlags && arg === "-") {
+        parsed.error = unknownFlag(arg);
+        return parsed;
+      }
+      parsed.positional.push(arg);
+      continue;
+    }
+    if (arg === "--") {
+      endOfFlags = true;
+      continue;
+    }
+    const key = CREATE_FLAGS.get(arg.split("=")[0]);
+    // `--yes=true` is not a flag this takes a value for either: refuse rather
+    // than silently accept a value that changes nothing.
+    if (!key || arg.includes("=")) {
+      parsed.error = unknownFlag(arg);
+      return parsed;
+    }
+    parsed[key] = true;
+  }
+  if (parsed.positional.length > 1) {
+    parsed.error =
+      `create takes one directory name, and got ${parsed.positional.length}: ` +
+      `${parsed.positional.map((p) => JSON.stringify(p)).join(", ")}.\n` +
+      "  Nothing was created. Quote a name with spaces in it.";
+  }
+  return parsed;
+}
+
+function unknownFlag(flag) {
+  const name = flag.split("=")[0];
+  const lines = [`Unknown option ${JSON.stringify(flag)} — nothing was created.`];
+  const elsewhere = FLAGS_ELSEWHERE.get(name);
+  if (elsewhere) {
+    lines.push(`  ${name} is a flag on \`${elsewhere}\`, not on \`create\`.`);
+  }
+  // The `-my-agent` case: what was meant is almost certainly a directory name.
+  if (/^-[^-]/.test(name) && name.length > 2) {
+    lines.push(`  To scaffold into a directory called ${JSON.stringify(flag)}:`);
+    lines.push(`    npx create-evestack -- ${shellQuote(flag)}`);
+  }
+  lines.push("", "  create takes one directory name and:", "    --yes, -y      accept every default and ask nothing",
+    "    --help, -h     the full usage", "    --version, -V  print the version");
+  return lines.join("\n");
+}
+
+/**
+ * The generated project's npm manifest name.
+ *
+ * A directory name is not an npm name: capitals, spaces and a leading dot are
+ * all legal in one and rejected by the other. This was the bare basename, so
+ * `npx create-evestack "My Agent"` wrote `"name": "My Agent"` and npm refused
+ * the install it went on to run — from a manifest the user never typed, three
+ * screens after the mistake. projectNameFor below had always normalised the same
+ * string for Compose; this is the same idea against npm's rules.
+ */
+export function packageNameFor(target) {
+  const slug = basename(target)
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^[._-]+/, "")
+    .replace(/-+$/, "")
+    .slice(0, 214);
+  return slug || "agent";
 }
 
 /**
@@ -580,7 +848,48 @@ export function projectNameFor(target) {
   return `${slug}-${createHash("sha256").update(target).digest("hex").slice(0, 6)}`;
 }
 
-export function composeFile(projectName, dbPassword, { pgPort = 5433, dashboardPort = 4000, agentPort = 2000 } = {}) {
+/**
+ * The one variable the compose file reads from `.env`.
+ *
+ * Exported so a test asserts the compose file and the generated `.env` agree on
+ * the name — a compose file interpolating a variable nothing writes fails at
+ * parse time with `required variable ... is missing a value`, and a `.env`
+ * writing a variable nothing reads is a password sitting in a file for no
+ * reason.
+ */
+export const DB_PASSWORD_VAR = "EVESTACK_DB_PASSWORD";
+
+/**
+ * The `.env` beside the compose file: the database password, and nothing that is
+ * not needed to start the stack.
+ *
+ * Exported so the same string a scaffold gets is the string a test checks — a
+ * test that rebuilt this content would keep passing while the real file drifted
+ * back into the compose file.
+ */
+export function composeEnvFile(dbPassword) {
+  return [
+    "# evestack — generated. Read by `docker compose`, and never committed.",
+    "",
+    "# Compose interpolates ${...} in docker-compose.yml from this file (or the",
+    "# shell) and from nowhere else — it does not read .env.local. That is the whole",
+    "# reason this file exists: docker-compose.yml is meant to be committed, so the",
+    "# database password cannot be in it.",
+    `${DB_PASSWORD_VAR}=${dbPassword}`,
+    "",
+    "# The agent gets the same password from WORKFLOW_POSTGRES_URL in .env.local,",
+    "# because it runs on the host and connects over the published port. Rotate it in",
+    "# both files together, and remember that Postgres only applies POSTGRES_PASSWORD",
+    "# when the data volume is first created — `docker compose down -v` (which deletes",
+    "# the sessions) is what makes a new password take effect.",
+    "",
+    "# To run your own dashboard image instead of the published one:",
+    `# EVESTACK_DASHBOARD_IMAGE=${DASHBOARD_IMAGE}`,
+    "",
+  ].join("\n");
+}
+
+export function composeFile(projectName, { pgPort = 5433, dashboardPort = 4000, agentPort = 2000 } = {}) {
   // The compose project name has to be unique to this DIRECTORY PATH, not to its
   // name. Compose treats `name:` as the project identity, so two scaffolds — or
   // one scaffold plus a cloned evestack repo — become the SAME project: the
@@ -595,10 +904,23 @@ export function composeFile(projectName, dbPassword, { pgPort = 5433, dashboardP
   // fresh ones, and the old volume is still there to copy out of. Sharing a
   // database with an unrelated agent is neither.
   //
+  // NO SECRET IN THIS FILE. It used to carry the generated database password
+  // twice — POSTGRES_PASSWORD, and the dashboard's WORKFLOW_POSTGRES_URL — and
+  // this is the one generated file the scaffold means you to commit: the
+  // .gitignore it writes covers .env and .env.*, deliberately not this. So the
+  // password that exists because "a shipped default would be the one thing
+  // standing between a stranger and someone's agent" was committed by the first
+  // `git add -A`. Both references are now `${...}`, which Compose interpolates
+  // from `.env` on the host before parsing, and `.env` is ignored.
+  //
+  // `:?` rather than `:-`: a missing password must stop the command, not start a
+  // Postgres with an empty one. Compose prints the text after `?` verbatim.
+  //
   // The dashboard sits behind a profile so a plain `docker compose up -d` starts
   // Postgres alone — the agent is useful without the dashboard, and pulling a
   // ~400 MB image is not something to do to someone who only asked for a
   // database.
+  const password = `\${${DB_PASSWORD_VAR}:?missing — it belongs in the .env file beside this one}`;
   return `# evestack — your whole stack, on your machine, for $0.
 #
 # The "name:" line below is this directory's identity to Docker Compose, and it
@@ -610,9 +932,16 @@ export function composeFile(projectName, dbPassword, { pgPort = 5433, dashboardP
 #   docker compose up -d postgres              durable sessions
 #   docker compose --profile dashboard up -d   + the dashboard on :${dashboardPort}
 #
+# THIS FILE IS SAFE TO COMMIT, and that is the reason ${DB_PASSWORD_VAR} appears
+# below instead of the password itself. Compose fills those in from the .env file
+# beside this one, which the generated .gitignore ignores along with .env.local.
+# Keep it that way: a password pasted in here goes into git the next time anyone
+# runs \`git add -A\`, and the database it opens holds every prompt, tool result
+# and memory this agent has produced.
+#
 # The dashboard is a pull, not a build. To run your own image instead — a local
-# build, a fork, a private registry — set EVESTACK_DASHBOARD_IMAGE in a .env
-# beside this file, or export it in your shell.
+# build, a fork, a private registry — set EVESTACK_DASHBOARD_IMAGE in that same
+# .env, or export it in your shell.
 name: ${projectName}
 
 services:
@@ -621,11 +950,15 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: evestack
-      POSTGRES_PASSWORD: "${dbPassword}"
+      # From .env, never from here. Compose resolves this on the host before it
+      # parses the file — that is interpolation, and it reads the shell and .env
+      # and NOT .env.local. (A service's \`env_file:\` is the other mechanism, and
+      # it sets variables inside the container; the dashboard below uses it.)
+      POSTGRES_PASSWORD: "${password}"
       POSTGRES_DB: evestack
     ports:
-      # 127.0.0.1 on purpose, and this line is the whole reason the password
-      # above is generated rather than shipped. Publishing "5433:5432" binds
+      # 127.0.0.1 on purpose, and this line is the whole reason the password is
+      # generated per project rather than shipped. Publishing "${pgPort}:5432" binds
       # 0.0.0.0, and a machine on the same network could reach this database and
       # authenticate — verified, on a real LAN, against the old default
       # credentials. It holds every prompt, tool result and memory the agent has
@@ -674,10 +1007,13 @@ services:
     env_file:
       - .env.local
     environment:
-      # .env.local says localhost:5433 because the AGENT runs on your host.
-      # Inside a container "localhost" is the container, so the same database is
-      # reached over the compose network instead.
-      WORKFLOW_POSTGRES_URL: postgres://evestack:${dbPassword}@postgres:5432/evestack
+      # .env.local says 127.0.0.1:${pgPort} because the AGENT runs on your host.
+      # Inside a container "127.0.0.1" is the container, so the same database is
+      # reached over the compose network instead — and the password comes from
+      # .env by interpolation, exactly as it does for Postgres above. This line
+      # overrides the value env_file just supplied, which is the order Compose
+      # documents and the reason both halves stay consistent.
+      WORKFLOW_POSTGRES_URL: postgres://evestack:${password}@postgres:5432/evestack
       # \`npm run dev\` also runs on the host, not in compose.
       EVESTACK_AGENT_URL: \${EVESTACK_AGENT_URL:-http://host.docker.internal:${agentPort}}
     ports:

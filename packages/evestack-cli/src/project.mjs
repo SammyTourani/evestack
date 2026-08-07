@@ -27,21 +27,41 @@ const C = {
 };
 
 /**
- * The nearest directory above `from` that looks like an evestack project.
+ * The env files eve itself loads, in the order it loads them — `.env.local` last,
+ * because it wins.
+ *
+ * These two and no others: a project's credentials have to be somewhere the agent
+ * will read, so this list is the same one `attach` chooses between.
+ */
+const ENV_FILES = [".env", ".env.local"];
+
+/**
+ * The nearest directory above `from` that looks like an evestack project, and the
+ * env files it has.
  *
  * Walks up, because `npm run` is normally typed at a project root but
  * `evestack` is on PATH and gets typed from wherever the person happens to be —
  * very often one directory deeper, in `agent/`. Refusing there with "not an
  * evestack project" would be technically true and useless.
  *
- * `.env.local` is the marker rather than `package.json`: every scaffolded and
- * every attached project has one, and a bare `package.json` would match any
- * unrelated npm project on the way up.
+ * `.env.local` was the only marker, with the comment "every scaffolded and every
+ * attached project has one". That was not true: `attach` writes to `.env` when
+ * the project already has one, so an attached project could have no .env.local at
+ * all — and both of these commands then told the user "this is not an evestack
+ * project" and advised `npx evestack create my-agent`, i.e. to throw away the
+ * thing they had just attached.
+ *
+ * A bare `.env` is not enough on its own, because half the npm projects on a
+ * machine have one; paired with a package.json that depends on `eve` it is, and
+ * that pair is exactly what `attach` requires before it will touch a directory.
  */
-export function findProject(from = process.cwd()) {
+export function findProjectEnv(from = process.cwd()) {
   let dir = resolve(from);
   for (let up = 0; up < 8; up += 1) {
-    if (existsSync(join(dir, ".env.local"))) return dir;
+    const envFiles = ENV_FILES.filter((file) => existsSync(join(dir, file)));
+    if (envFiles.includes(".env.local") || (envFiles.length > 0 && dependsOnEve(dir))) {
+      return { dir, envFiles };
+    }
     const parent = dirname(dir);
     if (parent === dir) break;
     dir = parent;
@@ -49,10 +69,27 @@ export function findProject(from = process.cwd()) {
   return null;
 }
 
+/** The directory only, for callers and tests that just want the root. */
+export function findProject(from = process.cwd()) {
+  return findProjectEnv(from)?.dir ?? null;
+}
+
+/** Does this directory's package.json declare eve? */
+function dependsOnEve(dir) {
+  try {
+    const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
+    return Boolean(pkg.dependencies?.eve ?? pkg.devDependencies?.eve);
+  } catch {
+    return false;
+  }
+}
+
 function notAProject(stderr) {
   stderr.write(
-    `${C.red}evestack: this is not an evestack project${C.reset} — no .env.local here or above.\n\n` +
-      `  ${C.bold}cd${C.reset} into the directory ${C.bold}evestack create${C.reset} made, or make one:\n\n` +
+    `${C.red}evestack: this is not an evestack project${C.reset} — no .env.local here or above,\n` +
+      `  and no .env beside a package.json that depends on eve.\n\n` +
+      `  ${C.bold}cd${C.reset} into the directory ${C.bold}evestack create${C.reset} made, or into the one you ran\n` +
+      `  ${C.bold}evestack attach${C.reset} in, or make a new one:\n\n` +
       `      ${C.bold}npx evestack create my-agent${C.reset}\n\n`,
   );
   return 2;
@@ -102,9 +139,66 @@ function findVerifyScript(projectDir) {
   }
 }
 
+export const VERIFY_USAGE = `evestack verify — check every part of the stack and say what to fix
+
+  evestack verify [--json]
+
+Runs the project's own checker: Postgres, the workflow schema, the agent, the
+dashboard, the sandbox image and the trace pipeline. Works from anywhere inside
+the project directory.
+
+Options
+  --json          machine-readable output
+  --open          open the dashboard afterwards if everything passed
+  --no-open       never open a browser
+  -h, --help      this
+
+Exit codes
+  0  everything checked out
+  1  something is broken, and it printed what
+  2  could not look — not an evestack project, or no checker to run
+`;
+
+export const OPEN_USAGE = `evestack open — print the dashboard URL and sign-in, and open it
+
+  evestack open [--no-open]
+
+The scaffolder prints the dashboard credentials once, in a terminal that then
+scrolls. This prints them again, checks whether the dashboard is answering, and
+hands the URL to your browser.
+
+Options
+  --no-open       print the URL and sign-in, and do not launch a browser
+  -h, --help      this
+
+Exit codes
+  0  the dashboard is answering
+  1  nothing is answering there yet
+  2  not an evestack project
+`;
+
+/** Was help asked for, ignoring anything after `--`? */
+function wantsHelp(argv) {
+  for (const arg of argv) {
+    if (arg === "--") return false;
+    if (arg === "--help" || arg === "-h") return true;
+  }
+  return false;
+}
+
 export async function verify(argv, { stdout = process.stdout, stderr = process.stderr } = {}) {
-  const projectDir = findProject();
-  if (!projectDir) return notAProject(stderr);
+  // First, before the project is even located. `evestack verify --help` used to
+  // run the whole verification — Docker, Postgres, HTTP probes — because the flag
+  // was passed straight through to a checker that only knows --json and
+  // --open/--no-open, and an unrecognised flag there is simply ignored.
+  if (wantsHelp(argv)) {
+    stdout.write(VERIFY_USAGE);
+    return 0;
+  }
+
+  const found = findProjectEnv();
+  if (!found) return notAProject(stderr);
+  const projectDir = found.dir;
 
   const script = findVerifyScript(projectDir);
   if (!script) {
@@ -121,9 +215,16 @@ export async function verify(argv, { stdout = process.stdout, stderr = process.s
 
   // Inherited stdio: verify prints colour, asks one question, and its exit code
   // is the answer. Capturing any of that would break all three.
+  //
+  // Both env files, in eve's own order, and only the ones that exist: an attached
+  // project may keep its configuration in `.env`, and this passed `.env.local`
+  // alone — so the checker ran with no database URL and reported a project that
+  // works as broken. Naming a file that is not there would print "not found.
+  // Continuing without it." on every run, which is noise on the happy path.
+  const envFlags = found.envFiles.map((file) => `--env-file-if-exists=${file}`);
   const result = spawnSync(
     process.execPath,
-    ["--env-file-if-exists=.env.local", script, ...argv],
+    [...envFlags, script, ...argv],
     { cwd: projectDir, stdio: "inherit" },
   );
   return result.status ?? 1;
@@ -138,10 +239,22 @@ export async function verify(argv, { stdout = process.stdout, stderr = process.s
  * that file exists and which of its keys is the password.
  */
 export async function open(argv, { stdout = process.stdout, stderr = process.stderr } = {}) {
-  const projectDir = findProject();
-  if (!projectDir) return notAProject(stderr);
+  // Before the probe and before the browser. `evestack open --help` checked only
+  // for --no-open, so it went on to fetch /api/health and then LAUNCH A BROWSER —
+  // help is a question, and the answer to it is not a new window.
+  if (wantsHelp(argv)) {
+    stdout.write(OPEN_USAGE);
+    return 0;
+  }
 
-  const env = readEnvFile(join(projectDir, ".env.local"));
+  const found = findProjectEnv();
+  if (!found) return notAProject(stderr);
+  const projectDir = found.dir;
+
+  // Merged in eve's order, so .env.local wins — and so an attached project that
+  // keeps its configuration in `.env` is read at all.
+  const env = {};
+  for (const file of found.envFiles) Object.assign(env, readEnvFile(join(projectDir, file)));
   const value = (key) => process.env[key] || env[key] || undefined;
 
   // The ingest URL is the one place the chosen dashboard port is recorded, and

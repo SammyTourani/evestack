@@ -89,6 +89,25 @@ function authHeader() {
  * quiet for three hours, because its last activity looked five hours in the
  * future. Both sides naive removes the server's zone from the answer entirely.
  */
+/**
+ * A whole number of milliseconds Postgres will accept in an interval cast.
+ *
+ * `String(idleMs)` went straight into `($1 || ' milliseconds')::interval`, and
+ * JS renders small or very large numbers in exponent form: `String(6e-7)` is
+ * `"6e-7"`, which Postgres rejects with `invalid input syntax for type
+ * interval`. That surfaced as a crash with raw SQL in the message where the
+ * honest answer is "an interval of about zero". Rounded and clamped instead, so
+ * the cast can never be handed something it cannot parse. The dashboard's
+ * lib/fleet.ts carries the same guard for the same query.
+ */
+const MAX_IDLE_MS = 30 * 24 * 60 * 60 * 1000;
+
+function intervalMilliseconds(ms) {
+  const value = Number(ms);
+  if (!Number.isFinite(value)) return String(MAX_IDLE_MS);
+  return String(Math.min(MAX_IDLE_MS, Math.max(0, Math.round(value))));
+}
+
 export async function quietSessions(client, { workflowSchema, idleMs, limit }) {
   const { rows } = await client.query(
     `
@@ -96,7 +115,10 @@ export async function quietSessions(client, { workflowSchema, idleMs, limit }) {
            s.attributes->>'$eve.title'     as title,
            s.attributes->>'$eve.trigger'   as trigger,
            s.created_at,
-           greatest(s.updated_at, coalesce(max(t.updated_at), s.updated_at)) as last_activity
+           greatest(s.updated_at, coalesce(max(t.updated_at), s.updated_at)) as last_activity,
+           -- Window functions run after GROUP BY/HAVING and before LIMIT, so this
+           -- is the true number of stale sessions while the rows stay bounded.
+           count(*) over ()                as total_candidates
       from ${workflowSchema}.workflow_runs s
       left join ${workflowSchema}.workflow_runs t
         on t.attributes->>'$eve.root' = s.id
@@ -107,10 +129,19 @@ export async function quietSessions(client, { workflowSchema, idleMs, limit }) {
            < (now() at time zone 'utc') - ($1 || ' milliseconds')::interval
      order by last_activity asc
      limit $2`,
-    [String(idleMs), limit + 1],
+    [intervalMilliseconds(idleMs), limit],
   );
 
   return {
+    // `unchecked` is the candidates this sweep did NOT probe. It used to be
+    // `rows.length - limit` against a `limit + 1` query, so it could only ever
+    // be 0 or 1: 100 stale sessions with --limit 25 reported 1 rather than 75.
+    // The same defect existed in the dashboard's lib/fleet.ts.
+    //
+    // Read from the window count rather than by dropping the LIMIT: an unbounded
+    // read would trade a wrong number for a query whose cost grows with the
+    // table, which is the other bug this sweep has been fixing all over.
+    unchecked: Math.max(0, Number(rows[0]?.total_candidates ?? rows.length) - rows.slice(0, limit).length),
     candidates: rows.slice(0, limit).map((raw) => ({
       sessionId: String(raw.session_id),
       title: raw.title ?? null,
@@ -121,7 +152,6 @@ export async function quietSessions(client, { workflowSchema, idleMs, limit }) {
       createdAt: raw.created_at,
       idleMs: Date.now() - raw.last_activity.getTime(),
     })),
-    unchecked: Math.max(0, rows.length - limit),
   };
 }
 
