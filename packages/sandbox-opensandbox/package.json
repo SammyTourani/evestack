@@ -2,7 +2,7 @@
   "name": "@evestack/sandbox-opensandbox",
   "version": "0.2.0",
   "type": "module",
-  "description": "Run an eve agent's sandbox on Alibaba OpenSandbox — gVisor isolation, sub-second cold starts, Apache-2.0.",
+  "description": "Run an eve agent's sandbox on a self-hosted Alibaba OpenSandbox server. Apache-2.0, reattaches across restarts.",
   "license": "Apache-2.0",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -30,6 +30,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs",
     "prepack": "npm run build"
   },
   "dependencies": {

@@ -4,6 +4,7 @@ import { DashboardClient, DashboardError, DashboardUnreachableError } from "./da
 import {
   INTERNAL_ERROR,
   INVALID_PARAMS,
+  INVALID_REQUEST,
   METHOD_NOT_FOUND,
   RpcError,
   paramsObject,
@@ -88,26 +89,67 @@ export class McpServer {
     const isNotification = request.id === undefined;
 
     if (isNotification) {
-      // Notifications get no response, not even for an unknown method.
-      if (request.method === "notifications/initialized") this.#initialized = true;
+      // Notifications get no response, not even for an unknown method. That
+      // includes `notifications/initialized`: there is nothing to record, because
+      // the gate below is the initialize *request* — see #assertInitialized.
       return {};
     }
 
     switch (request.method) {
-      case "initialize":
-        return { response: this.#initialize(request.params) };
+      case "initialize": {
+        const response = this.#initialize(request.params);
+        // After, not before: a malformed handshake must not count as one.
+        this.#initialized = true;
+        return { response };
+      }
       case "ping":
-        // Utilities/ping: an empty result is the entire contract.
+        // Utilities/ping: an empty result is the entire contract, and the spec
+        // exempts it from the handshake ordering rule.
         return { response: {} };
       case "tools/list":
+        this.#assertInitialized(request.method);
         return { response: this.#listTools(request.params) };
       case "tools/call":
+        this.#assertInitialized(request.method);
         return { response: await this.#callTool(request.params) };
       default:
         throw new RpcError(METHOD_NOT_FOUND, `Method not found: ${request.method}`, {
           supported: ["initialize", "ping", "tools/list", "tools/call"],
         });
     }
+  }
+
+  /**
+   * The handshake is a precondition, not bookkeeping.
+   *
+   * `#initialized` was written and never read, so `tools/call` worked before
+   * `initialize` ever arrived. That is forbidden by the lifecycle spec ("the
+   * client SHOULD NOT send requests other than pings before the server has
+   * responded to the initialize request"), and here it costs something concrete:
+   * the client's name and version arrive in that handshake and become the
+   * `User-Agent` the dashboard writes into `evestack.approvals.user_agent`. An
+   * `approve_or_deny` accepted before it would record a real tool approval
+   * against "unknown-client" — and provenance is the one thing this server can
+   * always supply honestly, even when nobody configured an approver.
+   *
+   * The gate is the initialize REQUEST, not `notifications/initialized`. The spec
+   * ties the client's constraint to the initialize *response*, and a client may
+   * legitimately pipeline its first real request behind that response without
+   * having sent the notification yet; gating on the notification would reject
+   * well-behaved clients.
+   *
+   * -32600 rather than a bespoke code, because MCP adds none below -32000 (see
+   * jsonrpc.ts). The request is well formed; it is the state that makes it
+   * invalid.
+   */
+  #assertInitialized(method: string): void {
+    if (this.#initialized) return;
+    throw new RpcError(
+      INVALID_REQUEST,
+      `Received '${method}' before 'initialize'. MCP requires the initialize handshake first, ` +
+        `and it is also where this server learns which client to name in the approval audit log.`,
+      { reason: "not_initialized", method },
+    );
   }
 
   #initialize(params: unknown): unknown {

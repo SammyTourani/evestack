@@ -42,10 +42,10 @@ is the same bet the rest of evestack makes: a few hundred lines you can read bea
 
 | Tool | Reads | Notes |
 | --- | --- | --- |
-| `list_sessions` | `/api/health` | **Five most recent only** — that route's limit, not a choice made here. |
-| `get_session` | `/api/control/sessions/:id/approve` + `/api/budget` + `/api/health` | Live waiting state, pending approval requests, usage, and the verbatim budget-stop reason. |
+| `list_sessions` | `/api/health/detail` | **Five most recent only** — that route's limit, not a choice made here. |
+| `get_session` | `/api/control/sessions/:id/approve` + `/api/budget` + `/api/health/detail` | Live waiting state, pending approval requests, usage, and the verbatim budget-stop reason. |
 | `list_approvals` | `/api/approvals` | **Route does not exist yet.** See below. |
-| `get_costs` | `/api/budget` + `/api/health` | Caps, per-principal daily spend, stops, lifetime totals. |
+| `get_costs` | `/api/budget` + `/api/health/detail` | Caps, per-principal daily spend, stops, lifetime totals. |
 | `promote_session_to_eval` | `/api/evals/promote/:id` | Generates eval source and returns it. Writes nothing. |
 
 Enabled only with `EVESTACK_MCP_ALLOW_CONTROL=1`:
@@ -99,9 +99,12 @@ know which human is at the other end of the conversation, and writing a plausibl
 audit log is worse than writing none. Set `EVESTACK_REQUIRE_APPROVER=1` on the dashboard to refuse
 unattributed decisions outright.
 
-What is *always* sent is **provenance**: `User-Agent: evestack-mcp/0.1.0 (claude-code/2.1.0)`, taken from
-the MCP `initialize` handshake and stored in `evestack.approvals.user_agent`. So even an unattributed row
-still says the decision arrived through MCP, and from which client.
+What is *always* sent is **provenance**: `User-Agent: evestack-mcp/<version> (claude-code/2.1.0)`, taken
+from the MCP `initialize` handshake and stored in `evestack.approvals.user_agent`. So even an unattributed
+row still says the decision arrived through MCP, and from which client. The version is read from
+`package.json` at run time (`src/version.ts`) and is deliberately not written down anywhere else — it was
+typed twice as a literal once, and a published bump would have put a version that was never released into
+the audit log permanently. This sentence is not the place to make that three.
 
 Be clear-eyed about the trust here, the same way the dashboard's approvals page is: `X-Forwarded-User` is
 a header a proxy is supposed to set. If your dashboard sits behind one that does OAuth, that proxy will
@@ -137,6 +140,13 @@ back on any error that is not a recognized modern one — so this server answers
 `-32601`, which is exactly the signal that triggers the fallback. Going dual-era is a real option later;
 claiming it before it is tested would be worse than not claiming it.
 
+`tools/list` and `tools/call` are refused with `-32600` until `initialize` has been answered. That check
+existed as a field that was written and never read, so tool calls worked before the handshake; it matters
+here beyond protocol tidiness, because the client's name and version arrive in that handshake and become
+the `User-Agent` recorded against an approval. The gate is the initialize *request*, not
+`notifications/initialized` — a client may legitimately pipeline its first real request behind the
+initialize response without having sent the notification yet. `ping` is exempt, as the spec requires.
+
 Two things worth knowing about the implementation:
 
 - **stdout belongs to the protocol.** Everything human-readable goes to stderr. One stray `console.log`
@@ -166,7 +176,7 @@ lands, with no change here.
 Also owed by the dashboard, and the reason for the caveats above:
 
 - `GET /api/sessions?limit=&offset=` — `lib/queries.ts` has `listSessions(limit, offset)`; only
-  `/api/health`'s hardcoded five are reachable over HTTP.
+  `/api/health/detail`'s hardcoded five are reachable over HTTP.
 - `GET /api/sessions/:id` — `getSession()` and `getSessionTree()` exist and would give `get_session` real
   per-turn detail (durations, subagent tree, per-turn cost) instead of a budget-derived approximation.
 
@@ -175,6 +185,12 @@ Also owed by the dashboard, and the reason for the caveats above:
 ```bash
 pnpm --filter @evestack/mcp build      # tsc → dist/
 pnpm --filter @evestack/mcp typecheck
+pnpm --filter @evestack/mcp test       # node:test over the framer, the validator and the safety gate
 ```
+
+The tests cover the three things here that are hand-rolled and pure: the JSON-RPC framer
+(`src/jsonrpc.ts`), the JSON Schema subset (`src/schema.ts`), and the read-only gate — both halves of it,
+because withholding a tool from `tools/list` and refusing it on call have to agree. None of them need a
+dashboard, which is the point: a policy the operator set must not depend on one being reachable.
 
 Apache-2.0.
