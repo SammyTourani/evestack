@@ -38,9 +38,12 @@ against `GET /api/v3/toolkits`: **1,070 toolkits**, including Gmail (61 tools) a
 ## How it reaches the model
 
 The agent doesn't get ten thousand individual tools. It gets a handful of meta-tools —
-`COMPOSIO_SEARCH_TOOLS`, `COMPOSIO_MANAGE_CONNECTIONS`, `COMPOSIO_EXECUTE_TOOL`,
+`COMPOSIO_SEARCH_TOOLS`, `COMPOSIO_GET_TOOL_SCHEMAS`, `COMPOSIO_MANAGE_CONNECTIONS`,
 `COMPOSIO_MULTI_EXECUTE_TOOL` — and Composio's Tool Router resolves the real set per session.
-`agent/tools/composio.ts` in the template is three lines:
+Which ones it returns is the router's decision, not a guarantee: `COMPOSIO_MULTI_EXECUTE_TOOL`
+covers both single and batch calls, and `COMPOSIO_EXECUTE_TOOL` is a legacy slug the current
+router no longer returns. `agent/tools/composio.ts` in the template is two lines of code, under a
+comment block explaining why:
 
 ```ts
 import { composioTools } from "@evestack/composio";

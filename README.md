@@ -60,7 +60,7 @@ anything, and prints an undo line for everything it writes.
 | **Traces** | OpenTelemetry spans per session: model calls, tool calls, arguments and results | [docs](docs/observability.mdx) |
 | **Control** | Start a session, stream the reply, send a follow-up, cancel a run — from the browser | [docs](docs/dashboard.mdx) |
 | **Approvals** | Gated tool calls park the session and wait for a human, with an audit log of who decided what | [docs](docs/dashboard.mdx) |
-| **Memory** | Semantic recall on the Postgres you already run, via pgvector. No vector service | [docs](docs/memory.mdx) |
+| **Memory** | Semantic recall on the Postgres you already run, via pgvector. No vector service. Needs an embeddings provider — OpenAI, or Ollama locally; Anthropic has none | [docs](docs/memory.mdx) |
 | **Schedules** | Durable cron with a history of every fire, and a pause switch that needs no redeploy | [docs](docs/proactive.mdx) |
 | **Evals** | Promote any real session — especially one that went wrong — into an `evals/*.eval.ts` | [docs](docs/dashboard.mdx) |
 | **Integrations** | One-click OAuth into ~1,000 tools via Composio | [docs](docs/composio-auth.mdx) |
@@ -98,15 +98,18 @@ and Discord channels. See [docs/registry.mdx](docs/registry.mdx).
 
 ## Local models
 
-`EVESTACK_PROVIDER=ollama` runs the whole stack for nothing. Two things are required and both
-are set for you: `modelContextWindowTokens` must be declared (eve sizes compaction from the AI
-Gateway catalog, and a local model isn't in it), and `OLLAMA_BASE_URL` takes the bare host with
-no `/api`.
+`EVESTACK_PROVIDER=ollama` runs the whole stack for nothing. Three things matter, and only two of
+them are set for you: `modelContextWindowTokens` must be declared (eve sizes compaction from the
+AI Gateway catalog, and a local model isn't in it), and `OLLAMA_BASE_URL` takes the bare host with
+no `/api`. The third is yours: **the embedding model is a second pull.** `ollama pull
+nomic-embed-text` (274 MB) is what makes `remember` and `recall` work — a chat model is not an
+embedding model — and everything else runs without it. `npm run verify` checks for it by name.
 
 **Check your RAM first.** On an 8 GB laptop already running Docker, Postgres, the dashboard and
 the agent, loading qwen3 took over three minutes to answer "say ok" and the machine eventually
-shut down. Budget **model size + 4 GB** free. evestack never picks a local model on its own —
-you have to ask for it.
+shut down. Budget **both model sizes + 4 GB** free — a `remember` call needs the chat model and
+the 274 MB embedding model, not one of them. evestack never picks a local model on its own — you
+have to ask for it.
 
 ## Requirements
 
@@ -123,7 +126,7 @@ packages/evestack-budget/      dollar spend caps               -> npm: @evestack
 packages/evestack-schedules/   durable cron with history       -> npm: @evestack/schedules
 packages/evestack-composio/    one-click tool auth             -> npm: @evestack/composio
 packages/evestack-mcp/         the dashboard as MCP tools      -> npm: @evestack/mcp
-packages/sandbox-opensandbox/  gVisor sandbox backend          -> npm: @evestack/sandbox-opensandbox
+packages/sandbox-opensandbox/  OpenSandbox sandbox backend     -> npm: @evestack/sandbox-opensandbox
 packages/website/              the landing page and docs
 contract/                      the suite that pins eve's behaviour
 registry/                      the @evestack eve registry

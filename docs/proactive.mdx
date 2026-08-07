@@ -30,7 +30,7 @@ step that is off by default.
 ## Turn it on
 
 ```bash
-# 1. a channel it can reach you on (Telegram is a two-minute setup — see /channels/telegram)
+# 1. a channel it can reach you on (Telegram is a two-minute setup — see /docs/channels/telegram)
 TELEGRAM_BOT_TOKEN=123456789:AAH...
 TELEGRAM_WEBHOOK_SECRET_TOKEN=...
 
@@ -87,10 +87,15 @@ point you have a worse product than one that never spoke.
   the feature rather than reading it, and both are written up in the note at the top of
   `agent/schedules/heartbeat.ts`.
 
-  **The token is not dropped.** `isWorthDelivering` is the filter that would drop it, and it is
-  called from nowhere — it has nowhere to be called from. The handler hands the turn to eve with
-  `receive()`, and eve posts the reply itself, so evestack never sees the text. A quiet hour
-  therefore delivers the literal string `HEARTBEAT_OK` to your channel.
+  **The token is not dropped.** Nothing filters it. The handler hands the turn to eve with
+  `receive()`, and eve posts the reply itself, so evestack never sees the text and has nowhere to
+  filter it from. A quiet hour therefore delivers the literal string `HEARTBEAT_OK` to your channel.
+
+  There used to be an exported `isWorthDelivering(reply)` predicate here, called from nowhere. It
+  has been deleted rather than shipped in a template people read and edit — a function named after
+  what it would do, wired to nothing, reads as a working feature whatever its comment says. The one
+  rule it encoded is recorded in `agent/schedules/heartbeat.ts` for whoever wires it, along with the
+  two places it could actually go.
 
   **Wake-ups are not isolated sessions.** This page said each one "runs in an isolated session with
   a light context". The `isolatedSession` that was credited for it does not exist anywhere in
@@ -147,7 +152,9 @@ a live fire.
 - **The heartbeat needs the agent running.** It is a cron inside your process, not a hosted
   scheduler. If the box is off, nothing fires — catch-up is what softens that, not a fix for it.
 - **Channels need a public HTTPS URL.** None of Slack, Discord or Telegram has a polling mode in
-  eve, so a laptop needs a tunnel. See [Channels](/docs/channels).
+  eve, so a laptop needs a tunnel. See [Telegram](/docs/channels/telegram), which spells out the
+  tunnel step; [Slack](/docs/channels/slack) and [Discord](/docs/channels/discord) are the same
+  shape.
 - **A denied approval used to kill the session.** That was a real eve bug, [reported
   upstream](https://github.com/vercel/eve/issues/1658) and first worked around in the template's
   model middleware; `@ai-sdk/openai` v4 handles the denied output type natively, which is what
