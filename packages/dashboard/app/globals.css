@@ -488,6 +488,20 @@
     text-align: center;
     padding: 72px 20px;
     color: var(--text-dim);
+    /*
+     * The same measure the page subtitle gets, for the same reason. This is the
+     * one state a reader arrives at with nothing else on screen to anchor on —
+     * an empty list, a missing schema, an agent that has never run — so it is the
+     * worst place to set a 140-character line. /integrations ran its "No Composio
+     * API key yet" explanation to 1,480px across a 1,530px column; centred text
+     * that wide has no left edge for the eye to return to.
+     *
+     * `margin-inline: auto` rather than leaving it to `text-align: center`: the
+     * text was centred, the BOX was not, so capping the width without this would
+     * have parked the whole state against the left edge.
+     */
+    max-width: 78ch;
+    margin-inline: auto;
   }
   .empty h2 {
     color: var(--text);
@@ -501,6 +515,22 @@
     border: 1px solid var(--border);
     border-radius: 5px;
     padding: 2px 7px;
+    /*
+     * A wrapped chip has to look like one chip, not two broken ones.
+     *
+     * Giving .empty a measure made these wrap for the first time, and the
+     * default `box-decoration-break: slice` draws the background, border and
+     * padding once across the whole run — so `npm run dev` breaking after "npm"
+     * rendered an open-ended box on line one and a second box missing its left
+     * border on line two. `clone` repeats the decoration on each line, which is
+     * what a reader expects a code token to look like.
+     *
+     * Not `white-space: nowrap`: these chips also carry
+     * `docker compose --profile dashboard up -d --force-recreate`, which has to
+     * be allowed to break or it overflows the column it was just constrained to.
+     */
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
   }
 
   h1 {
