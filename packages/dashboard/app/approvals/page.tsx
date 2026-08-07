@@ -78,7 +78,7 @@ export default async function ApprovalsPage() {
   return (
     <>
       <h1>Approvals</h1>
-      <p className={styles.sub}>
+      <p className="page-sub">
         Every human-in-the-loop decision this dashboard carried out. eve&apos;s protocol carries no
         identity, so this is the only place that records <em>who</em>.
       </p>

@@ -25,7 +25,7 @@ export default async function MemoryPage(props: PageProps<"/memory">) {
   return (
     <>
       <h1>Memory</h1>
-      <p className={styles.sub}>
+      <p className="page-sub">
         Everything the agent has chosen to remember, in your Postgres. An agent with persistent
         memory can be quietly wrong forever — this is where you find out, and fix it.
       </p>

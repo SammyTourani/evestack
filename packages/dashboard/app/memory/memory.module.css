@@ -1,12 +1,5 @@
 /* Scoped to this page; colors come from the same variables as everywhere else. */
 
-.sub {
-  color: var(--text-dim);
-  font-size: 13px;
-  margin: 6px 0 20px;
-  max-width: 74ch;
-}
-
 .searchRow {
   display: flex;
   align-items: center;

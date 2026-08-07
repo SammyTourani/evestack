@@ -510,6 +510,22 @@
   .page-sub {
     color: var(--text-dim);
     margin: 0 0 22px;
+    /*
+     * ONE MEASURE, because there were six.
+     *
+     * The sentence under a page title is the same element everywhere, and it was
+     * styled five more times — `.sub` in skills, schedules, evals, memory and
+     * approvals — at 70ch, 74ch and 78ch and 13px, while this shared rule set no
+     * measure at all and let seven other pages run the full 1180px of the content
+     * column. At 14px that is roughly 140 characters a line, about twice what
+     * prose is comfortable at, so the pages WITHOUT a measure were the badly set
+     * ones.
+     *
+     * 78ch is the value three of the five had already converged on. It lives here
+     * rather than in each module so the next page inherits the decision instead
+     * of guessing again.
+     */
+    max-width: 78ch;
   }
 
   /* ---- sign in ----

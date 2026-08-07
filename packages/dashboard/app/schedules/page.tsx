@@ -25,7 +25,7 @@ export default async function SchedulesPage() {
   return (
     <>
       <h1>Schedules</h1>
-      <p className={styles.sub}>
+      <p className="page-sub">
         Every cron fire the agent has recorded, and the switch to stop one. Self-hosted, eve runs
         schedules in-process and keeps no history — so this is the only record that a 3am job ran,
         failed, or never fired at all.

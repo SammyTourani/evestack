@@ -174,7 +174,7 @@ export default async function SkillsPage() {
   return (
     <>
       <h1>Skills</h1>
-      <p className={styles.sub}>
+      <p className="page-sub">
         eve advertises every skill in this directory to the model and hands it a <code>load_skill</code>{" "}
         tool. Anything here can put instructions into a live turn without a human seeing them first,
         which is why each one is scanned before it is listed.

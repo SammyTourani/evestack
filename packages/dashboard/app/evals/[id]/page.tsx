@@ -159,7 +159,7 @@ export default async function EvalPreviewPage(props: PageProps<"/evals/[id]">) {
   return (
     <>
       {header}
-      <p className={styles.sub}>
+      <p className="page-sub">
         {turns.length === 0
           ? "Nothing was recovered from this session's event log."
           : `Replays ${turns.length} real message${turns.length === 1 ? "" : "s"} from session ${session.id.slice(-10)}.`}

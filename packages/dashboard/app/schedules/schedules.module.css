@@ -1,12 +1,5 @@
 /* Scoped to this page; colors come from the same variables as everywhere else. */
 
-.sub {
-  color: var(--text-dim);
-  font-size: 13px;
-  margin: 6px 0 20px;
-  max-width: 78ch;
-}
-
 /* A failing schedule is the single thing this page exists to surface, so it
    gets the loudest treatment on it. */
 .alarm {

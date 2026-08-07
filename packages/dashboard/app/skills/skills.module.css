@@ -1,12 +1,5 @@
 /* Scoped to this page; colors come from the same variables as everywhere else. */
 
-.sub {
-  color: var(--text-dim);
-  font-size: 13px;
-  margin: 6px 0 18px;
-  max-width: 78ch;
-}
-
 /* Where the files came from. Always shown: a page listing "installed skills"
    that never says which directory it read is a page you cannot trust. */
 .source {
