@@ -31,9 +31,11 @@ export async function GET(): Promise<Response> {
           id: s.id,
           status: s.status,
           turns: s.turnCount,
-          tokens: s.inputTokens + s.outputTokens,
-          costUsd: s.costUsd,
-          models: s.models,
+          // Inclusive of subagents, unchanged from before lib/queries.ts split
+          // turn-only from total. A monitor polling this wants the whole bill.
+          tokens: s.includingSubagents.inputTokens + s.includingSubagents.outputTokens,
+          costUsd: s.includingSubagents.costUsd,
+          models: s.includingSubagents.models,
         })),
       },
       { headers },

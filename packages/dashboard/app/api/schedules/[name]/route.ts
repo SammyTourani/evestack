@@ -1,5 +1,5 @@
 import { identifyApprover } from "@/lib/approvals";
-import { setPaused } from "@/lib/schedules";
+import { UnknownScheduleError, setPaused } from "@/lib/schedules";
 import { handleRouteError, isResponse, jsonError, jsonOk, readJsonObject } from "../../control/_http";
 
 export const dynamic = "force-dynamic";
@@ -14,6 +14,12 @@ export const dynamic = "force-dynamic";
  * Who did it is recorded, using the same identity rules as the approvals log:
  * silencing an agent's scheduled work is exactly the kind of action someone
  * will later want attributed.
+ *
+ * A name that is not a tracked schedule is a 404 that lists the ones that are.
+ * It used to be a 200: see the note in setPaused() for how a typo'd name reported
+ * `{"ok":true,"paused":true}` while the schedule kept firing. An operator at 3am
+ * has no way to tell that apart from success, which makes the wrong answer worse
+ * than an error.
  */
 export async function POST(
   request: Request,
@@ -30,7 +36,16 @@ export async function POST(
     }
 
     const identity = identifyApprover(request);
-    await setPaused(name, paused, identity.approver);
+    try {
+      await setPaused(name, paused, identity.approver);
+    } catch (error) {
+      // The request was well formed and the thing it named does not exist, which
+      // is a 404. Everything else still falls through to handleRouteError.
+      if (error instanceof UnknownScheduleError) {
+        return jsonError(error.message, 404, "not_found", { known: error.known });
+      }
+      throw error;
+    }
 
     return jsonOk({ name, paused, by: identity.approver, via: identity.via });
   } catch (error) {

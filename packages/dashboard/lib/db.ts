@@ -104,6 +104,47 @@ function connectionString(): string {
   return url;
 }
 
+const DEFAULT_CONNECT_TIMEOUT_MS = 5_000;
+const DEFAULT_POOL_MAX = 8;
+
+/**
+ * A number read from the environment, or the documented default and a warning.
+ *
+ * `Number(process.env.X ?? fallback)` reads as equivalent to this and is not: it
+ * hands pg whatever `Number()` made of the string, and both ways that can go
+ * wrong produce a FALSY value. `Number("5s")` is NaN, and `Number("")` — what a
+ * docker-compose `environment:` entry passes for a variable that is listed but
+ * unset on the host — is 0.
+ *
+ * A blank value is treated as unset rather than as a typo, because that is what
+ * compose passing through an absent host variable means. Anything else
+ * non-numeric is an operator mistake and says so, the way lib/pricing.ts already
+ * reports an unparseable EVESTACK_PRICING rather than silently pricing nothing.
+ */
+function positiveNumberEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim().length === 0) return fallback;
+  const parsed = Number(raw);
+  if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  console.warn(
+    `[evestack] ${name}=${JSON.stringify(raw)} is not a positive number; using ${fallback}.`,
+  );
+  return fallback;
+}
+
+/**
+ * The pool's connect timeout.
+ *
+ * Exported because the property that matters cannot be read off the call site:
+ * pg-pool arms the timer with `if (!this.options.connectionTimeoutMillis)`, so a
+ * NaN or a 0 does not shorten the bound, it REMOVES it — and restores in full
+ * the multi-minute hang the comment in getPool() says the setting exists to
+ * prevent, on /api/health along with every page. test/db-env.test.mjs pins that.
+ */
+export function connectTimeoutMs(): number {
+  return positiveNumberEnv("EVESTACK_DB_CONNECT_TIMEOUT_MS", DEFAULT_CONNECT_TIMEOUT_MS);
+}
+
 /**
  * Built on first query, not at module load.
  *
@@ -122,12 +163,12 @@ export function getPool(): Pool {
   const created = new Pool({
     connectionString: connectionString(),
     types: utcTimestamps,
-    max: Number(process.env.EVESTACK_DB_POOL_MAX ?? 8),
+    max: positiveNumberEnv("EVESTACK_DB_POOL_MAX", DEFAULT_POOL_MAX),
     idleTimeoutMillis: 30_000,
     // Postgres being down is the common case, not the exotic one. Without a
     // bound, pg keeps retrying every address the hostname resolves to and a
     // page render hangs for minutes before anything is rendered at all.
-    connectionTimeoutMillis: Number(process.env.EVESTACK_DB_CONNECT_TIMEOUT_MS ?? 5_000),
+    connectionTimeoutMillis: connectTimeoutMs(),
   });
   // A pool with no listener turns an idle client's socket error into an
   // unhandled 'error' event, which takes the whole server process down.

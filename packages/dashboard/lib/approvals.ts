@@ -205,6 +205,17 @@ const SELECT = `
   FROM evestack.approvals
 `;
 
+/**
+ * The most rows either reader will return.
+ *
+ * The per-session reader had no LIMIT at all, while the whole-log reader beside
+ * it took one its route validated between 1 and 1000 — so `?sessionId=` was the
+ * one way to ask this table for everything in it, on the one table here designed
+ * to grow forever and never be pruned (an audit log that deletes rows is not an
+ * audit log). One shared bound, so the two cannot drift apart again.
+ */
+export const MAX_APPROVALS = 1000;
+
 export async function listApprovals(limit = 200): Promise<ApprovalRow[]> {
   await ensureApprovalSchema();
   const rows = await query<Record<string, unknown>>(
@@ -214,11 +225,20 @@ export async function listApprovals(limit = 200): Promise<ApprovalRow[]> {
   return rows.map(toRow);
 }
 
-export async function listApprovalsForSession(sessionId: string): Promise<ApprovalRow[]> {
+/**
+ * Oldest-first, because for one session the question is "what happened, in
+ * order". The cap therefore keeps the START of the story and drops the end,
+ * which is the right way round for reading it and the wrong way round to leave
+ * unsignalled — the route reports whether it hit the cap.
+ */
+export async function listApprovalsForSession(
+  sessionId: string,
+  limit = MAX_APPROVALS,
+): Promise<ApprovalRow[]> {
   await ensureApprovalSchema();
   const rows = await query<Record<string, unknown>>(
-    `${SELECT} WHERE session_id = $1 ORDER BY decided_at ASC, id ASC`,
-    [sessionId],
+    `${SELECT} WHERE session_id = $1 ORDER BY decided_at ASC, id ASC LIMIT $2`,
+    [sessionId, limit],
   );
   return rows.map(toRow);
 }

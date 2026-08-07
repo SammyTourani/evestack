@@ -30,6 +30,25 @@ const HEARTBEAT_MS = 15_000;
 const FIRST_EVENT_ATTEMPTS = 6;
 const FIRST_EVENT_DELAY_MS = 250;
 
+/**
+ * The largest startIndex this route will accept, in either direction.
+ *
+ * Resumption is only exact while each frame's `id:` differs from the last, and
+ * those ids come from `index += 1` in toServerSentEvents below. Past 2^53 that
+ * increment stops being an increment — `9007199254740993 === 9007199254740992`
+ * in a double — so `?startIndex=100000000000000000000`, which the integer regex
+ * accepts happily because it is 21 digits and nothing else, produced a stream
+ * where every frame carried the SAME id. A reconnecting EventSource then sends
+ * that id back as Last-Event-ID and resumes from a position that never advanced,
+ * which is the one property this route's header promises.
+ *
+ * A trillion is far above any real stream — it is an event count for a single
+ * session — and far enough below 2^53 that every id derived from it afterwards
+ * is still exactly representable, so the bound holds for the life of the stream
+ * rather than only at the moment of the request.
+ */
+const MAX_START_INDEX = 1_000_000_000_000;
+
 export async function GET(
   request: Request,
   context: { params: Promise<{ id: string }> },
@@ -124,9 +143,23 @@ function resolveStartIndex(param: string | null, lastEventId: string | null): nu
     if (!/^-?\d+$/.test(param)) {
       return jsonError("Expected 'startIndex' to be an integer.", 400, "bad_request");
     }
-    return Number(param);
+    const parsed = Number(param);
+    if (Math.abs(parsed) > MAX_START_INDEX) {
+      return jsonError(
+        `Expected 'startIndex' to be between -${MAX_START_INDEX} and ${MAX_START_INDEX}.`,
+        400,
+        "bad_request",
+      );
+    }
+    return parsed;
   }
-  if (lastEventId !== null && /^\d+$/.test(lastEventId)) return Number(lastEventId) + 1;
+  // A header is not something the operator typed, so an out-of-range one is
+  // treated the same way an unparseable one already was — start from the
+  // beginning — rather than failing a reconnect an EventSource will only retry.
+  if (lastEventId !== null && /^\d+$/.test(lastEventId)) {
+    const parsed = Number(lastEventId);
+    if (parsed < MAX_START_INDEX) return parsed + 1;
+  }
   return 0;
 }
 

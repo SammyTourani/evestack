@@ -98,6 +98,57 @@ const MAX_PROBES = 25;
  */
 const STUCK_TURN_MS = 60 * 60 * 1000;
 
+/** The largest threshold worth asking about, and the bound /api/fleet enforces. */
+const MAX_IDLE_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * The idle threshold as Postgres will actually read it.
+ *
+ * `($1 || ' milliseconds')::interval` below is a TEXT cast, so whatever String()
+ * makes of this number has to be valid interval input — and it is not always.
+ * JavaScript switches to exponent notation under 1e-6, so `?idleMinutes=1e-11`,
+ * which passes the route's `Number.isFinite && 0 <= x <= 43200` check untouched,
+ * arrived as "6e-7 milliseconds" and came back to the caller as a 500 carrying
+ * the failing SQL: a syntax error shown to an operator for a well-formed
+ * request. 1e21 and above does the same at the other end.
+ *
+ * A whole number of milliseconds inside the range the route allows has no
+ * exponent form, so rounding and clamping is the entire fix. A threshold under
+ * half a millisecond rounds to 0, which is what "idle for ~0 minutes" asked for;
+ * a value that is not a number at all falls back to the module's own default
+ * rather than inventing one.
+ */
+export function intervalMilliseconds(value: number): string {
+  if (!Number.isFinite(value)) return String(IDLE_BEFORE_SUSPECT_MS);
+  return String(Math.min(Math.max(Math.round(value), 0), MAX_IDLE_MS));
+}
+
+/**
+ * How many candidates existed that the sweep did not probe.
+ *
+ * WHAT THIS REPLACES. The query fetched `limit + 1` rows and the count was
+ * `Math.max(0, rows.length - limit)`, so `unchecked` was 0 or 1 and could not
+ * arithmetically be anything else — while FleetReport documents it as
+ * "candidates that existed but were not probed", which for 100 candidates and
+ * `?limit=25` is 75. A cap that reports 1 reads as "one more, no rush".
+ *
+ * The real count now travels on the rows: `COUNT(*) OVER ()` is evaluated before
+ * ORDER BY and LIMIT, so it is the total number of candidates rather than the
+ * number returned, at no extra pass. Postgres hands a bigint count to pg as a
+ * STRING, hence the coercion rather than a cast, and a fallback rather than a
+ * NaN in a field a banner prints.
+ *
+ * A caller asking for zero probes gets zero of both, since the count rides on
+ * rows that a LIMIT 0 does not return.
+ */
+export function uncheckedCandidates(rows: ReadonlyArray<Record<string, unknown>>): number {
+  const probed = rows.length;
+  if (probed === 0) return 0;
+  const total = Number(rows[0]?.candidate_count);
+  if (!Number.isFinite(total)) return 0;
+  return Math.max(0, total - probed);
+}
+
 export async function inspectFleet(
   options: { idleMs?: number; limit?: number; signal?: AbortSignal } = {},
 ): Promise<FleetReport> {
@@ -109,35 +160,42 @@ export async function inspectFleet(
   // row because the session row's own timestamps do not move as turns run.
   const rows = await query<Record<string, unknown>>(
     `
-    SELECT s.id AS session_id,
-           s.attributes->>'$eve.title'   AS title,
-           s.attributes->>'$eve.trigger' AS trigger,
-           s.created_at,
-           -- updated_at on the child turns is the truest activity signal we
-           -- have: the session row's own timestamps do not move as turns run,
-           -- so joining to children is what distinguishes "quiet for an hour"
-           -- from "created an hour ago and busy ever since".
-           -- (No backticks in here: this is a template literal, and one inside
-           -- the SQL ends the string with a parse error nowhere near the cause.)
-           GREATEST(s.updated_at, COALESCE(MAX(t.updated_at), s.updated_at)) AS last_activity
-    FROM workflow.workflow_runs s
-    LEFT JOIN workflow.workflow_runs t
-      ON t.attributes->>'$eve.root' = s.id
-    WHERE s.attributes->>'$eve.type' = 'session'
-      AND s.status = 'running'
-    GROUP BY s.id, s.attributes, s.created_at, s.updated_at
-    HAVING GREATEST(s.updated_at, COALESCE(MAX(t.updated_at), s.updated_at)) < now() - ($1 || ' milliseconds')::interval
+    WITH candidates AS (
+      SELECT s.id AS session_id,
+             s.attributes->>'$eve.title'   AS title,
+             s.attributes->>'$eve.trigger' AS trigger,
+             s.created_at,
+             -- updated_at on the child turns is the truest activity signal we
+             -- have: the session row's own timestamps do not move as turns run,
+             -- so joining to children is what distinguishes "quiet for an hour"
+             -- from "created an hour ago and busy ever since".
+             -- (No backticks in here: this is a template literal, and one inside
+             -- the SQL ends the string with a parse error nowhere near the cause.)
+             GREATEST(s.updated_at, COALESCE(MAX(t.updated_at), s.updated_at)) AS last_activity
+      FROM workflow.workflow_runs s
+      LEFT JOIN workflow.workflow_runs t
+        ON t.attributes->>'$eve.root' = s.id
+      WHERE s.attributes->>'$eve.type' = 'session'
+        AND s.status = 'running'
+      GROUP BY s.id, s.attributes, s.created_at, s.updated_at
+      HAVING GREATEST(s.updated_at, COALESCE(MAX(t.updated_at), s.updated_at)) < now() - ($1 || ' milliseconds')::interval
+    )
+    SELECT session_id, title, trigger, created_at, last_activity,
+           -- Window functions run before ORDER BY and LIMIT, so this is how many
+           -- candidates there were, not how many are being returned. See
+           -- uncheckedCandidates().
+           COUNT(*) OVER () AS candidate_count
+    FROM candidates
     ORDER BY last_activity ASC
     LIMIT $2
     `,
-    [String(idleThreshold), limit + 1],
+    [intervalMilliseconds(idleThreshold), limit],
   );
 
-  const candidates = rows.slice(0, limit);
-  const unchecked = Math.max(0, rows.length - limit);
+  const unchecked = uncheckedCandidates(rows);
 
   const entries = await Promise.all(
-    candidates.map(async (raw): Promise<FleetEntry> => {
+    rows.map(async (raw): Promise<FleetEntry> => {
       const sessionId = String(raw.session_id);
       // Already Date objects: lib/db.ts installs a type parser that reads
       // eve's zone-less `timestamp` columns as the UTC they actually are.
