@@ -1,6 +1,6 @@
 {
   "name": "@evestack/budget",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "Dollar spend caps for eve agents, per session and per principal per day. Backed by the Postgres you already run, so a cap survives the session that a new session would otherwise reset.",
   "license": "Apache-2.0",

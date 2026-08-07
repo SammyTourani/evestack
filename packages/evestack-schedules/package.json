@@ -1,6 +1,6 @@
 {
   "name": "@evestack/schedules",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "Durable, observable, pausable schedules for a self-hosted eve agent. Wraps eve's own defineSchedule so every cron fire is recorded in your Postgres, failures are visible, a schedule can be paused without a redeploy, and ticks missed while the process was down can be replayed.",
   "license": "Apache-2.0",
