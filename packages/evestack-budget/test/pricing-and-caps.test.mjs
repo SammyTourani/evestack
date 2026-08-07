@@ -178,4 +178,17 @@ test("the model key is provider-qualified, so one name on two providers prices a
     defaults({ EVESTACK_MODEL: "anthropic/claude-sonnet-5" }).model,
     "anthropic/claude-sonnet-5",
   );
+  // The case the three above missed, and the only one that was broken: the
+  // provider set and the model left unset, which is exactly what .env.example
+  // documents for anthropic. It resolved "anthropic/gpt-5-mini" — a key with no
+  // price and no wildcard behind it — so every step cost $0.00, the $2 and $10
+  // caps could never trip, and EVESTACK_BUDGET_UNPRICED=stop (which that same
+  // file recommends) instead stopped the first step of every turn. A default
+  // model that only one of the two halves knows about is not a small drift.
+  assert.equal(defaults({ EVESTACK_PROVIDER: "anthropic" }).model, "anthropic/claude-sonnet-5");
+  assert.equal(isPriced("anthropic/claude-sonnet-5"), true);
+  assert.equal(isPriced("anthropic/gpt-5-mini"), false, "which is why the drift was fatal, not cosmetic");
+  // And the cap can now see the money: priced means costUsd returns a number an
+  // accumulating total can eventually compare against a cap.
+  assert.ok(costUsd("anthropic/claude-sonnet-5", 1_000_000, 200_000, 0) > 0);
 });

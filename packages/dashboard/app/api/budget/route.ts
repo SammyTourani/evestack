@@ -41,22 +41,50 @@ function parseCap(raw: string | undefined, fallback: number): number | false {
   return Number.isFinite(value) && value >= 0 ? value : fallback;
 }
 
+/**
+ * The zone the hook cuts the day on, which is not always the one configured.
+ *
+ * `Intl.DateTimeFormat` throws `RangeError` on a zone it does not know, and a
+ * trailing space or an offset like `GMT+2` is enough — so the raw variable used
+ * to 500 this route. `validTimeZone` in packages/evestack-budget/src/config.ts
+ * warns and falls back to UTC instead, and this has to make the same choice for
+ * the same reason the mode below is validated rather than echoed: reporting a
+ * zone nothing is cutting on, or erroring on a value the hook shrugged at, both
+ * break the one promise this endpoint makes — that the row it reads is the row
+ * the hook writes. Same rule rather than same code, because this app is
+ * deliberately not a dependency of that package.
+ */
+function resolveTimeZone(raw: string | undefined): string {
+  const trimmed = raw?.trim();
+  if (!trimmed) return "UTC";
+  try {
+    new Intl.DateTimeFormat("en-CA", { timeZone: trimmed });
+    return trimmed;
+  } catch {
+    return "UTC";
+  }
+}
+
 export async function GET(request: Request) {
   const sessionId = new URL(request.url).searchParams.get("sessionId");
-  const timeZone = process.env.EVESTACK_BUDGET_TIMEZONE ?? "UTC";
+  const timeZone = resolveTimeZone(process.env.EVESTACK_BUDGET_TIMEZONE);
   const disabled =
     process.env.EVESTACK_BUDGET_DISABLED === "1" || process.env.EVESTACK_BUDGET_DISABLED === "true";
 
-  // Same zone the hook cuts the daily window on, so the row this page reads is
-  // the row the hook is writing.
-  const day = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
-
   try {
+    // Inside the try, not above it. This is the same zone the hook cuts the daily
+    // window on, so the row this page reads is the row the hook is writing — but
+    // `Intl` throws on a zone it rejects, and computing it before the try turned
+    // that into a 500 instead of the `{ ok: false }` body the catch below exists
+    // to produce. `resolveTimeZone` means the environment can no longer reach
+    // that throw; being inside the try means nothing else can either.
+    const day = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+
     const [principals, events, stops, sessionRows] = await Promise.all([
       query<{ principal_id: string | null } & UsageRow>(
         `SELECT principal_id, cost_usd, input_tokens, output_tokens, cache_read_tokens, steps, unpriced_steps
