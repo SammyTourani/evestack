@@ -48,6 +48,7 @@
 
 import { query } from "./db";
 import { getMonitorSummary } from "./monitors";
+import { getSchedules } from "./schedules";
 import { concerns, listSandboxes } from "./sandboxes";
 
 export type AlertState = "ok" | "firing" | "unknown";
@@ -370,19 +371,25 @@ async function ingestHealth(): Promise<{ activeTurns: number; spansLastHour: num
 }
 
 async function failingSchedules(): Promise<{ name: string; streak: number }[]> {
-  const rows = await query<{ name: string; streak: string }>(
-    `WITH runs AS (
-       SELECT attributes->>'$eve.schedule' AS name, error_code, created_at,
-              row_number() OVER (PARTITION BY attributes->>'$eve.schedule' ORDER BY created_at DESC) AS rn
-         FROM workflow.workflow_runs
-        WHERE attributes ? '$eve.schedule'
-     )
-     SELECT name, count(*)::text AS streak
-       FROM runs
-      WHERE rn <= $1 AND error_code IS NOT NULL
-      GROUP BY name
-     HAVING count(*) >= $1`,
-    [THRESHOLDS.scheduleFailingStreak],
-  );
-  return rows.map((r) => ({ name: r.name, streak: Number(r.streak) }));
+  /*
+   * `getSchedules()` already computes this, correctly, from
+   * `evestack.schedule_runs` — the table @evestack/schedules actually writes.
+   *
+   * The first version of this function invented its own query against a run
+   * attribute named for schedules, which eve does not write. Contract 06
+   * derives the `$eve.*` names evestack reads and asserts each one appears in
+   * eve's dist, and it caught this by finding that literal here and failing to
+   * find it upstream. The attribute exists nowhere, so the monitor
+   * matched zero rows and reported "no schedule has a failing streak" on every
+   * install forever. A monitor that cannot fire is worse than a missing one,
+   * because the page counts it among the checks that passed.
+   *
+   * It is also the exact defect this module's own header warns about, written
+   * into the module by the same commit as the warning.
+   */
+  const { schedules, tableExists } = await getSchedules();
+  if (!tableExists) throw new Error("no schedule has ever run on this install");
+  return schedules
+    .filter((x) => x.failingStreak >= THRESHOLDS.scheduleFailingStreak)
+    .map((x) => ({ name: x.name, streak: x.failingStreak }));
 }

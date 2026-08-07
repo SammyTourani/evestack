@@ -80,10 +80,18 @@ Specific instances, each verifiable from the commits:
 | Evals `failed` grade | **Structurally unreachable** — graded on a status eve never sets |
 | `/sessions` | Took **15.2 seconds** because a *healthy* agent that had never heard of a session opens a stream designed not to end |
 | Overview with DB down | Rendered six em dashes — *"your agent did nothing"* — the opposite of the truth |
+| W8's failing-schedules monitor | Queried a run attribute eve never writes, so it reported "no schedule has a failing streak" on every install, forever |
 
-**Three of those are mine**, introduced during this session: the seeder's wrong attribute
-key, its token-accounting bug, and the last row in that table, which I wrote in W6 while
-composing a module header about honest denominators.
+**Four of those are mine**, introduced during this session: the seeder's wrong attribute
+key, its token-accounting bug, the overview's blind state (written in W6 while composing
+a module header about honest denominators), and the schedules monitor — which I wrote
+into the same commit as the module header warning about monitors that cannot fire.
+
+The last one is also a process failure worth noting: I claimed "17 contracts green" in
+the W8 commit message without running them. Contract 06 had been red from that commit
+until the packet was assembled. It is fixed now, but the claim was false when made, and
+the only reason it surfaced is that assembling this packet involved re-running
+everything.
 
 To falsify the claim: find a defect in this diff that *would* have thrown, been caught by
 `tsc`, or been caught by a test written before it.
