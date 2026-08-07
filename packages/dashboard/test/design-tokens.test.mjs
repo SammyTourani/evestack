@@ -119,38 +119,67 @@ test("Tailwind is wired up at all: a stock utility compiles", () => {
   assert.equal(utility("p-4"), "padding: calc(var(--spacing) * 4);");
 });
 
-test("preflight is not imported, so no shipped page is restyled", () => {
+/*
+ * THIS TEST WAS INVERTED, and the inversion is the point of the change it
+ * belongs to.
+ *
+ * It used to assert "preflight is not imported, so no shipped page is restyled".
+ * That was correct while it stood: W3 took Tailwind's theme and utilities and
+ * deliberately not its base layer, so that introducing Tailwind changed no
+ * existing page and a port error stayed distinguishable from an intended
+ * redesign. The note in globals.css said the line "belongs to the wave that
+ * restyles the pages". This is that wave, so the guard now points the other way.
+ *
+ * What it still guards is the ORDER, which is the part that makes preflight safe
+ * here. `base` before `app` means every element rule the hand-rolled stylesheet
+ * writes — body, a, table, th, td, h1 — beats preflight's reset for that
+ * element, and preflight only reaches what `app` never had an opinion about.
+ * Import preflight into the wrong layer, or drop `app` from the order, and ten
+ * pages change appearance at once with nothing to say so.
+ */
+test("preflight is imported, into base, and base still sits before app", () => {
   const css = compiler.build(["p-4"]);
+  /*
+   * These three are read out of tailwindcss/preflight.css, not remembered.
+   *
+   * The old guard listed `-webkit-appearance: button`, and Tailwind 4 writes
+   * `appearance: button` — so that sentinel could never match, whichever way the
+   * assertion pointed. A guard with a hole is worse than no guard: it reports a
+   * pass for a string that was never going to be there.
+   */
   for (const sentinel of [
-    "-webkit-text-size-adjust", // preflight's html rule
-    "-webkit-appearance: button", // preflight's button reset
+    "-webkit-text-size-adjust: 100%", // preflight's html rule
+    "appearance: button", // preflight's button reset
+    "-webkit-tap-highlight-color: transparent", // preflight's html rule, again
     //
-    // `list-style: none` USED TO BE A THIRD SENTINEL AND IS NOT ONE.
-    //
-    // The build this scans includes the hand-authored `@layer app` block, not
-    // only what Tailwind emits — so the sentinel had to be a declaration that
-    // could ONLY have come from preflight, and that one cannot. It is ordinary
-    // CSS anybody may write. The sidebar's `.nav-list` writes it, for the plain
-    // reason that a <ul> of navigation links should not render bullets, and this
-    // test failed on it: a true statement about our own stylesheet, reported as
-    // evidence of an import that was never added.
-    //
-    // The two above are vendor-prefixed resets no hand-written rule in this
-    // project has any reason to contain. The real test is the two `@import`
-    // assertions below, which read the source and are exact.
+    // `list-style: none` was a sentinel and is not one. The build this scans
+    // includes the hand-authored `@layer app` block, not only what Tailwind
+    // emits, so a sentinel has to be something ONLY preflight could write — and
+    // that is ordinary CSS anybody may write. The sidebar's `.nav-list` writes
+    // it, because a <ul> of links should not render bullets.
   ]) {
-    assert.ok(
-      !css.includes(sentinel),
-      `compiled CSS contains ${sentinel}, which only preflight emits`,
-    );
+    assert.ok(css.includes(sentinel), `compiled CSS is missing ${sentinel}, which preflight emits`);
   }
+
+  assert.ok(
+    source.includes('@import "tailwindcss/preflight.css" layer(base);'),
+    "globals.css no longer imports preflight into the base layer",
+  );
+
+  // Still refused: the all-in-one import pulls preflight in UNLAYERED, and
+  // unlayered CSS outranks every layer — which would put the reset above `app`
+  // and silently undo the ordering this file is built on.
   assert.ok(
     !/@import\s+["']tailwindcss["']\s*;/.test(source),
-    'globals.css imports all of "tailwindcss", which pulls in preflight',
+    'globals.css imports all of "tailwindcss", which pulls preflight in unlayered',
   );
+
+  const order = source.match(/@layer\s+([^;]+);/);
+  assert.ok(order, "the @layer order declaration is gone");
+  const layers = order[1].split(",").map((s) => s.trim());
   assert.ok(
-    !source.includes('@import "tailwindcss/preflight.css"'),
-    "globals.css imports preflight directly",
+    layers.indexOf("base") < layers.indexOf("app"),
+    `base must precede app so the hand-rolled element rules win; got ${layers.join(", ")}`,
   );
 });
 

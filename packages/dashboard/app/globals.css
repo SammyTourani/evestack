@@ -3,19 +3,30 @@
    dashboard still makes zero network requests.
 
    The layer order below is the whole design of this file. Tailwind ships three
-   pieces and this commit takes two of them:
+   pieces and this file now takes all three:
 
      theme      the token layer                          taken
-     base       preflight, Tailwind's element reset      NOT taken, on purpose
+     base       preflight, Tailwind's element reset      taken — see below
      utilities  the utility classes                      taken
 
-   Preflight rewrites margins, list markers, heading sizes, form-control fonts
-   and image display on every element in the document. Ten pages are already
-   styled against browser defaults, so importing it here would restyle all of
-   them in the commit that introduces Tailwind and nobody could tell a port
-   error from an intended change. It is one line — `@import
-   "tailwindcss/preflight.css" layer(base);` — and it belongs to the wave that
-   restyles the pages, not to this one.
+   PREFLIGHT WAS DELIBERATELY LEFT OUT AND IS NOW IN. The note that used to sit
+   here was right at the time: preflight rewrites margins, list markers, heading
+   sizes, form-control fonts and image display on every element in the document,
+   ten pages were styled against browser defaults, and importing it in the commit
+   that introduced Tailwind would have restyled all of them at once with nobody
+   able to tell a port error from an intended change. It also said the line
+   "belongs to the wave that restyles the pages" — and that wave was never
+   scheduled, which is why five pages carried the design system and thirteen did
+   not, and why the seam between them was the most visible thing in the product.
+
+   This is that wave. The line is in, and the pages are restyled alongside it
+   rather than after it.
+
+   ORDER IS WHAT MAKES THIS SAFE. `base` sits BEFORE `app`, so every element rule
+   the hand-rolled stylesheet already writes — body, a, table, th, td, h1 — still
+   beats preflight's reset for that element. Preflight only reaches what `app`
+   never had an opinion about: h2–h6, ul/ol markers, fieldset, form controls,
+   img. That is the surface this wave had to look at anyway.
 
    `app` holds the hand-rolled CSS that shipped before Tailwind. It is inside a
    layer rather than loose so that a utility can beat it: unlayered CSS outranks
@@ -25,6 +36,7 @@
 @layer theme, base, components, app, utilities;
 
 @import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/preflight.css" layer(base);
 @import "tailwindcss/utilities.css" layer(utilities);
 
 /* ── raw palette ──────────────────────────────────────────────────────────
