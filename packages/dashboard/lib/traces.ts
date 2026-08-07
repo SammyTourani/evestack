@@ -1,6 +1,13 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { query } from "./db";
+import {
+  MODEL_CALL_SPANS,
+  TOOL_CALL_SPANS,
+  matchesSpanFamily,
+  sqlSpanFamily,
+  type SpanFamily,
+} from "./span-families";
 
 /**
  * Tier two: OpenTelemetry spans.
@@ -192,10 +199,70 @@ function normalizeId(raw: unknown, byteLength: number): string | null {
   return null;
 }
 
-function unixNano(raw: unknown): string | null {
-  if (raw === null || raw === undefined) return null;
+/**
+ * The widest nanosecond timestamp this schema can actually hold.
+ *
+ * `start_unix_nano` and `end_unix_nano` are `bigint` (sql/traces.sql), so 2^63-1
+ * is the hard ceiling: a 20-digit value already overflows it and Postgres
+ * answers "value ... is out of range for type bigint". Date is the other
+ * consumer and it is the looser of the two — its own ceiling is 8.64e15 ms,
+ * which is 8.64e21 nanoseconds, three orders of magnitude further out — so this
+ * one number bounds both and there is no second constant to keep in step.
+ *
+ * As a wall clock it is the year 2262. Nothing legitimate is past it; what
+ * arrives past it is a clock scaled twice, `Date.now() * 1e12`.
+ */
+export const MAX_UNIX_NANO = 9223372036854775807n;
+
+/**
+ * A nanosecond timestamp on its way in: the digits to store, or the reason
+ * there are none.
+ *
+ * Three outcomes rather than two, because "absent" and "present but unusable"
+ * mean opposite things to the caller. An absent end time is a span still
+ * running and must be kept. An end time of 10^24 is a broken clock and has to
+ * be *reported*, and the cost of not telling those apart was a permanent retry
+ * loop: an unbounded value reached isoFromUnixNano, `new Date(…).toISOString()`
+ * threw `RangeError: Invalid time value` from inside insertSpans, and route.ts
+ * cannot tell that from a dead Postgres — so it answered 503 with Retry-After,
+ * the exporter resent the identical batch forever, and the message blamed the
+ * database. One span with a double-scaled clock stalled every batch behind it.
+ */
+interface NanoField {
+  /** The value to store, or null when the field was absent or unusable. */
+  digits: string | null;
+  /** Why there are no digits despite a value arriving. Null when merely absent. */
+  problem: string | null;
+}
+
+const ABSENT_NANO: NanoField = { digits: null, problem: null };
+
+function unixNano(raw: unknown): NanoField {
+  if (raw === null || raw === undefined) return ABSENT_NANO;
+  // BigInt() throws on NaN and Infinity, and everything here is stranger-shaped
+  // JSON: a throw would 500 the whole batch instead of rejecting one span.
+  if (typeof raw === "number" && !Number.isFinite(raw)) {
+    return { digits: null, problem: `not a finite number: ${String(raw)}` };
+  }
   const text = typeof raw === "number" ? BigInt(Math.trunc(raw)).toString() : String(raw);
-  return /^\d+$/.test(text) && text !== "0" ? text : null;
+  // OTLP writes an unset timestamp as 0, which is not a span that started in 1970.
+  if (text === "" || text === "0") return ABSENT_NANO;
+  if (!/^\d+$/.test(text)) {
+    return { digits: null, problem: `not a whole number of nanoseconds: ${clip(text)}` };
+  }
+  if (BigInt(text) > MAX_UNIX_NANO) {
+    return {
+      digits: null,
+      problem:
+        `${clip(text)} is past the ${MAX_UNIX_NANO} ns bigint ceiling (about the year 2262)`,
+    };
+  }
+  return { digits: text, problem: null };
+}
+
+/** Enough of a bad value to recognise it, without pasting it whole into a response. */
+function clip(text: string): string {
+  return text.length > 32 ? `${text.slice(0, 32)}…` : text;
 }
 
 function parseEvents(raw: unknown): SpanEvent[] {
@@ -206,7 +273,10 @@ function parseEvents(raw: unknown): SpanEvent[] {
     return [
       {
         name: String(event.name ?? ""),
-        timeUnixNano: unixNano(event.timeUnixNano),
+        // An unusable event timestamp becomes null, which is already how an
+        // unset one is represented. No rejection: `events` is a jsonb column,
+        // never a bigint, so there is nothing here to overflow.
+        timeUnixNano: unixNano(event.timeUnixNano).digits,
         attributes: unwrapAttributes(event.attributes),
       },
     ];
@@ -265,13 +335,27 @@ export function parseOtlpTraces(payload: unknown): ParsedOtlp {
         const traceId = normalizeId(span.traceId, 16);
         const spanId = normalizeId(span.spanId, 8);
         const start = unixNano(span.startTimeUnixNano);
+        const end = unixNano(span.endTimeUnixNano);
+        const startNano = start.digits;
 
-        if (!traceId || !spanId || !start) {
+        // An end time that cannot be stored is a rejection, not a null. An
+        // ABSENT end is a span still running and stays — but a value that
+        // arrived and does not fit lands in the same bigint column the start
+        // time does, and nulling it would hide a broken clock behind a span
+        // that renders as "open" forever. Rejecting it tells the exporter to
+        // stop resending, which is the whole point of the partial-success path.
+        if (!traceId || !spanId || !startNano || end.problem) {
           rejected += 1;
           if (errors.length < 5) {
             errors.push(
               `span ${String(span.name ?? "<unnamed>")}: ` +
-                `${!traceId ? "bad traceId" : !spanId ? "bad spanId" : "bad startTimeUnixNano"}`,
+                (!traceId
+                  ? "bad traceId"
+                  : !spanId
+                    ? "bad spanId"
+                    : !startNano
+                      ? `bad startTimeUnixNano${start.problem ? ` — ${start.problem}` : ""}`
+                      : `bad endTimeUnixNano — ${end.problem}`),
             );
           }
           continue;
@@ -284,8 +368,8 @@ export function parseOtlpTraces(payload: unknown): ParsedOtlp {
           parentSpanId: normalizeId(span.parentSpanId, 8),
           name: String(span.name ?? ""),
           kind: Number(span.kind ?? 0) || 0,
-          startUnixNano: start,
-          endUnixNano: unixNano(span.endTimeUnixNano),
+          startUnixNano: startNano,
+          endUnixNano: end.digits,
           statusCode: Number(status.code ?? 0) || 0,
           statusMessage: status.message ? String(status.message) : null,
           attributes: unwrapAttributes(span.attributes),
@@ -423,12 +507,27 @@ export async function insertSpans(spans: readonly IngestedSpan[]): Promise<numbe
  * Nanoseconds to a timestamp Postgres can parse without losing what it can
  * store. timestamptz holds microseconds, so the last three digits are dropped
  * deliberately — `start_unix_nano` keeps the full precision alongside it.
+ *
+ * The guard here used to be `Number.isFinite(millis)`, which could never fire:
+ * `Number()` of a BigInt stays finite however large the BigInt is, so a
+ * 22-digit nanosecond value walked straight into `new Date(…).toISOString()`
+ * and threw `RangeError: Invalid time value`. parseOtlpTraces now bounds every
+ * ingested timestamp at MAX_UNIX_NANO, so this is an assertion about
+ * hand-assembled spans rather than a filter on the ingest path — and it names
+ * the bound it enforces instead of leaving the caller to read "Invalid time
+ * value" and go looking at Postgres.
  */
 function isoFromUnixNano(nano: string | null): string | null {
   if (!nano) return null;
-  const micros = BigInt(nano) / 1000n;
+  const value = BigInt(nano);
+  if (value < 0n || value > MAX_UNIX_NANO) {
+    throw new RangeError(
+      `${nano} ns is outside the storable range 0..${MAX_UNIX_NANO}. ` +
+        "Spans from parseOtlpTraces are bounded already, so this one was built by hand.",
+    );
+  }
+  const micros = value / 1000n;
   const millis = Number(micros / 1000n);
-  if (!Number.isFinite(millis)) return null;
   const remainder = Number(micros % 1000n);
   return `${new Date(millis).toISOString().slice(0, -1)}${String(remainder).padStart(3, "0")}Z`;
 }
@@ -473,9 +572,22 @@ function toSpanRow(raw: Record<string, unknown>): SpanRow {
  * `session_id` alone would silently drop every ai.* span — the prompts, the
  * responses, the tool arguments. Matching `root_session_id` as well pulls in
  * subagent sessions, which trace separately but belong to the same tree.
+ *
+ * `limit` is a RENDER BUDGET, not a correctness bound. `attributes` on an
+ * `ai.streamText.doStream` span holds a whole message history (eve caps each
+ * value at 32 KB), so an unbounded read of a pathological session would pull
+ * tens of megabytes of prompt JSON into one server render. The tail is cut, and
+ * the cut is now stated rather than swallowed: logged here, and unable to reach
+ * a count from anywhere. The model and tool call lists come from listCallSpans
+ * now, which has no window at all — which is what finally makes the detail
+ * page's own "the cut is on the timeline only" a true sentence. It was not
+ * before: a tool call past span 5,000 vanished from a page promising it was
+ * still listed below.
  */
 export async function listSpansBySession(sessionId: string, limit = 5000): Promise<SpanRow[]> {
   await ensureTraceSchema();
+  // limit + 1 to tell a full window from a truncated one, which is cheaper than
+  // a second COUNT(*) over every span in the session's traces.
   const rows = await query<Record<string, unknown>>(
     `${SELECT_SPAN}
      WHERE trace_id IN (
@@ -484,9 +596,15 @@ export async function listSpansBySession(sessionId: string, limit = 5000): Promi
      )
      ORDER BY start_unix_nano, span_id
      LIMIT $2`,
-    [sessionId, limit],
+    [sessionId, limit + 1],
   );
-  return rows.map(toSpanRow);
+  if (rows.length > limit) {
+    console.warn(
+      `[evestack] session ${sessionId} has more than ${limit} spans; the span tree shows ` +
+        "the earliest of them. Model and tool call lists are read in full, separately.",
+    );
+  }
+  return rows.slice(0, limit).map(toSpanRow);
 }
 
 /**
@@ -497,6 +615,33 @@ export async function listSpansBySession(sessionId: string, limit = 5000): Promi
  * all: the AI SDK creates it and stamps none of eve's ids on it. Its parent
  * chain is the only thing that knows where it belongs.
  */
+/**
+ * How many spans the session really has.
+ *
+ * listSpansBySession caps its window, and the detail page used to report
+ * `rows.length` from that capped window as the session's span count — so a
+ * 12,000-span session read "5,000 spans", and its "N further spans are not
+ * drawn" note subtracted the render cap from the query cap and under-reported by
+ * the difference. Both numbers looked authoritative and neither was.
+ *
+ * A COUNT(*) rather than a flag, because the page needs the total to SHOW, not
+ * just to know it was truncated. Same predicate as listSpansBySession so the two
+ * can never disagree about which spans belong to the session.
+ */
+export async function countSpansBySession(sessionId: string): Promise<number> {
+  await ensureTraceSchema();
+  const rows = await query<{ total: string }>(
+    `SELECT COUNT(*)::text AS total FROM evestack.spans
+      WHERE trace_id IN (
+        SELECT DISTINCT trace_id FROM evestack.spans
+        WHERE session_id = $1 OR root_session_id = $1
+      )`,
+    [sessionId],
+  );
+  // COUNT() is bigint, which pg hands back as a string.
+  return Number(rows[0]?.total ?? 0);
+}
+
 export async function getSpanTree(sessionId: string): Promise<SpanNode[]> {
   return buildSpanTree(await listSpansBySession(sessionId));
 }
@@ -532,14 +677,99 @@ function flatten(nodes: readonly SpanNode[]): SpanNode[] {
   return nodes.flatMap((node) => [node, ...flatten(node.children)]);
 }
 
-interface SpanIndex {
-  nodes: SpanNode[];
-  byId: Map<string, SpanNode>;
+/**
+ * The two span families, re-exported. The table lives in ./span-families, which
+ * imports nothing, so the trace pages' pure formatter can share it — see that
+ * file's header. Re-exported here because every existing caller and test
+ * reaches for these names on this module.
+ */
+export { MODEL_CALL_SPANS, TOOL_CALL_SPANS, matchesSpanFamily, sqlSpanFamily } from "./span-families";
+export type { SpanFamily } from "./span-families";
+
+const MODEL_CALL_PREDICATE = sqlSpanFamily(MODEL_CALL_SPANS);
+const TOOL_CALL_PREDICATE = sqlSpanFamily(TOOL_CALL_SPANS);
+
+export interface CallIndex {
+  /** The call spans themselves, complete — the list a page renders and counts. */
+  calls: SpanNode[];
+  /** Every span in the chain, for walking up to an ancestor's attributes. */
+  byId: ReadonlyMap<string, SpanNode>;
 }
 
-async function loadSpanIndex(sessionId: string): Promise<SpanIndex> {
-  const nodes = flatten(await getSpanTree(sessionId));
-  return { nodes, byId: new Map(nodes.map((node) => [node.spanId, node])) };
+/**
+ * The call spans out of a set of rows, with the ids they only have by virtue of
+ * their ancestors filled in.
+ *
+ * Split out of loadCallIndex, and exported, because this is where the invariant
+ * lives and it needs no database to check: `calls.length` is exactly the number
+ * of rows matching the family, which is the number `COUNT(*) FILTER` returns
+ * over those same rows. The detail page prints `toolCalls.length` above the list
+ * it renders from `toolCalls`, so the count and the list are the same array by
+ * construction — there is no second traversal to fall out of step.
+ */
+export function selectCallSpans(family: SpanFamily, rows: readonly SpanRow[]): CallIndex {
+  const byId = new Map(flatten(buildSpanTree(rows)).map((node) => [node.spanId, node]));
+  // Selected from the rows rather than from the tree: buildSpanTree drops any
+  // span caught in a cyclic parent chain, because a cycle has no root, and a
+  // call the SQL counted still has to appear in the list. The bare-row fallback
+  // gives up only the inherited ids, which are the ones a cycle made unknowable.
+  const calls = rows
+    .filter((row) => matchesSpanFamily(family, row.name))
+    .map((row) => byId.get(row.spanId) ?? { ...row, depth: 0, children: [] });
+  return { calls, byId };
+}
+
+/**
+ * Every span in the session belonging to one call family, plus the ancestors
+ * those spans inherit their ids from — and nothing else.
+ *
+ * This exists because listSpansBySession is a DISPLAY window. It takes the
+ * first `limit` spans in start order so the waterfall stays renderable, and
+ * aggregating over that window truncated the TAIL: a 12,000-span session listed
+ * the tool calls found in its first 5,000 spans, while /traces counted all of
+ * them with COUNT(*) FILTER over the same traces. The two pages disagreed, the
+ * detail page was the wrong one, and nothing on it said a cut had happened.
+ *
+ * Selecting the calls themselves is bounded by how many calls the session made
+ * rather than by how many spans it produced, so the list is complete and its
+ * length is the same number the index shows — no second COUNT(*) to keep in
+ * step, and no count that can drift from the list printed beneath it.
+ *
+ * The recursive half walks parents because an `ai.toolCall` carries none of
+ * eve's ids: its step index, tool name and call id live on the `agent.action`
+ * and `agent.step` spans above it (see ancestorAttribute). UNION rather than
+ * UNION ALL, which both collapses ancestors shared by sibling calls and
+ * terminates if a parent chain is ever cyclic — nothing upstream promises it is
+ * not, and this runs while rendering a page.
+ */
+async function listCallSpans(sessionId: string, family: SpanFamily): Promise<SpanRow[]> {
+  await ensureTraceSchema();
+  const rows = await query<Record<string, unknown>>(
+    `WITH RECURSIVE owned AS (
+       SELECT DISTINCT trace_id FROM evestack.spans
+       WHERE session_id = $1 OR root_session_id = $1
+     ),
+     chain AS (
+       SELECT c.trace_id, c.span_id, c.parent_span_id
+       FROM evestack.spans c
+       JOIN owned ON owned.trace_id = c.trace_id
+       WHERE ${sqlSpanFamily(family)}
+       UNION
+       SELECT p.trace_id, p.span_id, p.parent_span_id
+       FROM chain
+       JOIN evestack.spans p
+         ON p.trace_id = chain.trace_id AND p.span_id = chain.parent_span_id
+     )
+     ${SELECT_SPAN}
+     WHERE (trace_id, span_id) IN (SELECT trace_id, span_id FROM chain)
+     ORDER BY start_unix_nano, span_id`,
+    [sessionId],
+  );
+  return rows.map(toSpanRow);
+}
+
+async function loadCallIndex(sessionId: string, family: SpanFamily): Promise<CallIndex> {
+  return selectCallSpans(family, await listCallSpans(sessionId, family));
 }
 
 /**
@@ -578,12 +808,8 @@ const num = (value: unknown): number | null => {
  * but not one word of what they were.
  */
 export async function listModelCalls(sessionId: string): Promise<ModelCall[]> {
-  const { nodes, byId } = await loadSpanIndex(sessionId);
-  return nodes
-    // The exporter names its spans "chat <model>" / "execute_tool <tool>", so
-    // these are prefix matches, not equality. Matching exactly finds nothing and
-    // looks exactly like "no traces were ingested".
-    .filter((span) => span.name === "ai.streamText.doStream" || span.name.startsWith("chat "))
+  const { calls, byId } = await loadCallIndex(sessionId, MODEL_CALL_SPANS);
+  return calls
     .map((span) => {
       const a = span.attributes;
       return {
@@ -627,10 +853,9 @@ export async function listModelCalls(sessionId: string): Promise<ModelCall[]> {
  * `agent.action` parent to inherit from.
  */
 export async function listToolCalls(sessionId: string): Promise<ToolCall[]> {
-  const { nodes, byId } = await loadSpanIndex(sessionId);
+  const { calls, byId } = await loadCallIndex(sessionId, TOOL_CALL_SPANS);
 
-  return nodes
-    .filter((node) => node.name === "ai.toolCall" || node.name.startsWith("execute_tool "))
+  return calls
     .map((node) => {
       const a = node.attributes;
       return {
@@ -650,22 +875,6 @@ export async function listToolCalls(sessionId: string): Promise<ToolCall[]> {
       };
     });
 }
-
-/**
- * The two span families a reader came for, named in both vocabularies.
- *
- * These predicates run in Postgres rather than in JS because their callers
- * count across the whole table; pulling every row into Node to measure the
- * length of two arrays is not a query plan. `starts_with` rather than LIKE:
- * `_` is a LIKE wildcard, so `'execute_tool %'` would also match
- * `'executeXtool '`.
- *
- * These have to stay in step with the JS filters in listModelCalls and
- * listToolCalls. A span name recognised in one place and not the other shows up
- * as a page that says "3 tool calls" above a list of two.
- */
-const MODEL_CALL_PREDICATE = `(name = 'ai.streamText.doStream' OR starts_with(name, 'chat '))`;
-const TOOL_CALL_PREDICATE = `(name = 'ai.toolCall' OR starts_with(name, 'execute_tool '))`;
 
 /** One row per session that has spans, for the trace index. */
 export interface TracedSession {
@@ -742,14 +951,16 @@ export interface TraceOverview {
 }
 
 /**
- * Table-wide counts for the trace index.
+ * Table-wide counts: the trace index reads them, and so does the ingest
+ * endpoint's GET.
  *
- * Deliberately not getTraceStats(): that one counts `name = 'ai.toolCall'` and
- * `name = 'ai.streamText.doStream'` exactly, which are the *local tracer's*
- * names. A deployment that exports — the only kind that can reach this
- * dashboard at all — sends `execute_tool <name>` and `chat <model>` instead, so
- * those two fields read 0 on a table full of tool calls. The predicates above
- * cover both. See the note in docs/observability.mdx on the two vocabularies.
+ * There used to be a near-identical getTraceStats() below this one, and the
+ * ingest endpoint called that. It matched the two span names exactly, which is
+ * the local tracer's vocabulary and not the exported one, so it reported zero
+ * model and tool calls to the single caller whose whole question was whether
+ * anything had arrived. One function now, over the families above, because two
+ * spellings of the same query is how the wrong spelling keeps a caller. See the
+ * note in docs/observability.mdx on the two vocabularies.
  */
 export async function getTraceOverview(): Promise<TraceOverview> {
   await ensureTraceSchema();
@@ -770,38 +981,6 @@ export async function getTraceOverview(): Promise<TraceOverview> {
     modelCalls: Number(row?.model_calls ?? 0),
     toolCalls: Number(row?.tool_calls ?? 0),
     unattributedSpans: Number(row?.unattributed_spans ?? 0),
-    lastReceivedAt: row?.last_received_at
-      ? new Date(row.last_received_at as string).toISOString()
-      : null,
-  };
-}
-
-export interface TraceStats {
-  spans: number;
-  traces: number;
-  sessions: number;
-  toolCalls: number;
-  modelCalls: number;
-  lastReceivedAt: string | null;
-}
-
-export async function getTraceStats(): Promise<TraceStats> {
-  await ensureTraceSchema();
-  const [row] = await query<Record<string, unknown>>(
-    `SELECT COUNT(*)                                              AS spans,
-            COUNT(DISTINCT trace_id)                              AS traces,
-            COUNT(DISTINCT session_id)                            AS sessions,
-            COUNT(*) FILTER (WHERE name = 'ai.toolCall')           AS tool_calls,
-            COUNT(*) FILTER (WHERE name = 'ai.streamText.doStream') AS model_calls,
-            MAX(received_at)                                      AS last_received_at
-     FROM evestack.spans`,
-  );
-  return {
-    spans: Number(row?.spans ?? 0),
-    traces: Number(row?.traces ?? 0),
-    sessions: Number(row?.sessions ?? 0),
-    toolCalls: Number(row?.tool_calls ?? 0),
-    modelCalls: Number(row?.model_calls ?? 0),
     lastReceivedAt: row?.last_received_at
       ? new Date(row.last_received_at as string).toISOString()
       : null,

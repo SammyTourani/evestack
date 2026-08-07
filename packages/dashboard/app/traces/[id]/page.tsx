@@ -1,5 +1,6 @@
 import { getSession } from "@/lib/queries";
 import {
+  countSpansBySession,
   getSpanTree,
   listModelCalls,
   listToolCalls,
@@ -60,16 +61,20 @@ export default async function TraceDetailPage(props: PageProps<"/traces/[id]">) 
   let tree: SpanNode[];
   let modelCalls: ModelCall[];
   let toolCalls: ToolCall[];
+  let spanTotal: number;
   try {
     // Four reads, three of which re-run the same span query inside
     // lib/traces.ts. They are indexed and issued together, and the alternative
     // is changing signatures in a file this page does not own — noted in the
     // handoff as the refactor to make if this page ever feels slow.
-    [session, tree, modelCalls, toolCalls] = await Promise.all([
+    [session, tree, modelCalls, toolCalls, spanTotal] = await Promise.all([
       getSession(id),
       getSpanTree(id),
       listModelCalls(id),
       listToolCalls(id),
+      // The true total. `tree` is a capped window, so counting its rows reports
+      // the cap back as if it were the answer.
+      countSpansBySession(id),
     ]);
   } catch (error) {
     return (
@@ -182,7 +187,7 @@ export default async function TraceDetailPage(props: PageProps<"/traces/[id]">) 
       <div className="stat-row">
         <div className="stat">
           <div className="stat-label">Spans</div>
-          <div className="stat-value">{fmt(rows.length)}</div>
+          <div className="stat-value">{fmt(spanTotal)}</div>
         </div>
         <div className="stat">
           <div className="stat-label">Traces</div>
@@ -274,7 +279,7 @@ export default async function TraceDetailPage(props: PageProps<"/traces/[id]">) 
           {traces.size === 1
             ? "one trace"
             : `${fmt(traces.size)} traces, interleaved by start time`}
-          {rows.length > MAX_ROWS && ` · showing the first ${fmt(MAX_ROWS)}`}
+          {spanTotal > shown.length && ` · showing the first ${fmt(shown.length)}`}
         </span>
       </div>
 
@@ -356,9 +361,9 @@ export default async function TraceDetailPage(props: PageProps<"/traces/[id]">) 
         })}
       </div>
 
-      {rows.length > MAX_ROWS && (
+      {spanTotal > shown.length && (
         <p className={styles.truncNote}>
-          {fmt(rows.length - MAX_ROWS)} further spans are not drawn. Every model and tool call is
+          {fmt(spanTotal - shown.length)} further spans are not drawn. Every model and tool call is
           still listed below — the cut is on the timeline only.
         </p>
       )}

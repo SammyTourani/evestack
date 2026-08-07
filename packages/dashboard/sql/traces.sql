@@ -24,6 +24,18 @@ CREATE TABLE IF NOT EXISTS evestack.spans (
   -- to microseconds. Keeping the raw integers makes ordering and durations
   -- exact between sibling spans that start in the same microsecond, while the
   -- timestamptz columns keep the table legible in psql.
+  --
+  -- `bigint` and not `numeric`, and the ceiling is load-bearing: 2^63-1
+  -- nanoseconds is the year 2262, and a value past it does not round or clamp —
+  -- Postgres refuses the whole INSERT with "value ... is out of range for type
+  -- bigint". Since insertSpans batches 500 rows per statement and the ingest
+  -- route can only read a failed INSERT as "the database is unwell", one span
+  -- from a double-scaled clock (`Date.now() * 1e12`, 22 digits) used to make the
+  -- route answer 503 + Retry-After and the exporter resend that batch forever.
+  -- parseOtlpTraces bounds every timestamp at MAX_UNIX_NANO on the way in and
+  -- reports the offending span as OTLP partial success instead, so this column
+  -- stays narrow and the exporter is told to stop. Widening the type would only
+  -- move the same failure onto Date, whose own ceiling is 8.64e21 ns.
   start_unix_nano bigint      NOT NULL,
   end_unix_nano   bigint,
   start_time      timestamptz NOT NULL,
