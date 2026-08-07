@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { cache } from "react";
 import { query } from "./db";
 import {
   MODEL_CALL_SPANS,
@@ -288,7 +289,83 @@ export interface ParsedOtlp {
   /** Spans present in the payload that could not be read. Reported back to the
    *  exporter as OTLP partial success so it stops retrying them. */
   rejected: number;
+  /** Spans read fine and discarded on purpose — see `droppedSpanNames`. Not a
+   *  rejection: the exporter did nothing wrong and must not retry them. */
+  dropped: number;
   errors: string[];
+}
+
+// --- Ingest policy -----------------------------------------------------------
+
+/**
+ * Span names thrown away at the door.
+ *
+ * Measured on a live install: 30,560 of 32,991 spans — 92.6% — were
+ * `workflow.stream.read.complete`, one per stream read the workflow engine
+ * performs. Each is its own single-span trace, carries no agent identity, and
+ * stamps `workflow.run.id` with the all-zero placeholder that joins to nothing,
+ * so no page can render one and no aggregate can group by one. 38 MB for 42
+ * runs, in the same Postgres that holds durable session state, extrapolates to
+ * roughly 9 GB at ten thousand sessions.
+ *
+ * So the default is to drop it, because the alternative default — keep
+ * everything — is the one that silently fills a disk for someone who never
+ * reads this. Both directions are configurable:
+ *
+ *   EVESTACK_TRACE_DROP_SPANS unset  → the list below
+ *   EVESTACK_TRACE_DROP_SPANS="a,b"  → exactly those names, nothing else
+ *   EVESTACK_TRACE_DROP_SPANS=""     → keep every span; nothing is dropped
+ *
+ * Exact names, not prefixes: `workflow.*` would also swallow
+ * `workflow.run.start`, and a glob syntax nobody asked for is a second thing to
+ * get wrong.
+ */
+const DEFAULT_DROP_SPAN_NAMES = ["workflow.stream.read.complete"];
+
+export function droppedSpanNames(): ReadonlySet<string> {
+  const raw = process.env.EVESTACK_TRACE_DROP_SPANS;
+  if (raw === undefined) return new Set(DEFAULT_DROP_SPAN_NAMES);
+  return new Set(
+    raw
+      .split(",")
+      .map((name) => name.trim())
+      .filter((name) => name.length > 0),
+  );
+}
+
+/** Days of spans kept. `null` means retention is off. */
+const DEFAULT_RETENTION_DAYS = 30;
+
+/**
+ * How long a span survives.
+ *
+ * EVESTACK_TRACE_RETENTION_DAYS=0 turns pruning off, which is a legitimate
+ * choice (an external pipeline owning the table, a compliance hold) and an
+ * explicit one. A value that is not a positive number is a typo, not a policy:
+ * it says so and falls back to the default rather than quietly meaning "keep
+ * forever".
+ */
+export function retentionDays(): number | null {
+  const raw = process.env.EVESTACK_TRACE_RETENTION_DAYS?.trim();
+  if (raw === undefined || raw === "") return DEFAULT_RETENTION_DAYS;
+  const days = Number(raw);
+  if (days === 0) return null;
+  if (Number.isFinite(days) && days > 0) return days;
+  console.warn(
+    `[evestack] EVESTACK_TRACE_RETENTION_DAYS=${raw} is not a positive number of days; ` +
+      `keeping the ${DEFAULT_RETENTION_DAYS}-day default.`,
+  );
+  return DEFAULT_RETENTION_DAYS;
+}
+
+/** The two knobs above, as the ingest endpoint reports them. */
+export interface IngestPolicy {
+  dropSpanNames: string[];
+  retentionDays: number | null;
+}
+
+export function ingestPolicy(): IngestPolicy {
+  return { dropSpanNames: [...droppedSpanNames()].sort(), retentionDays: retentionDays() };
 }
 
 /**
@@ -297,8 +374,15 @@ export interface ParsedOtlp {
  * A malformed envelope throws — the exporter needs a 400 so it drops the batch.
  * A single unreadable span does not: it is counted and the rest are kept, which
  * is what OTLP's partial-success response exists to express.
+ *
+ * `drop` is taken once per payload rather than per span so that one request is
+ * decided by one policy, and is injectable so a test can state the policy it is
+ * testing instead of reaching for the environment.
  */
-export function parseOtlpTraces(payload: unknown): ParsedOtlp {
+export function parseOtlpTraces(
+  payload: unknown,
+  drop: ReadonlySet<string> = droppedSpanNames(),
+): ParsedOtlp {
   if (!payload || typeof payload !== "object") {
     throw new OtlpFormatError("body must be a JSON object");
   }
@@ -310,6 +394,7 @@ export function parseOtlpTraces(payload: unknown): ParsedOtlp {
   const spans: IngestedSpan[] = [];
   const errors: string[] = [];
   let rejected = 0;
+  let dropped = 0;
 
   for (const resourceSpan of resourceSpans) {
     if (!resourceSpan || typeof resourceSpan !== "object") continue;
@@ -332,6 +417,15 @@ export function parseOtlpTraces(payload: unknown): ParsedOtlp {
           continue;
         }
         const span = raw as Record<string, unknown>;
+        const name = String(span.name ?? "");
+
+        // Before the ids are even looked at: a dropped span is not being
+        // judged, it is not wanted.
+        if (drop.has(name)) {
+          dropped += 1;
+          continue;
+        }
+
         const traceId = normalizeId(span.traceId, 16);
         const spanId = normalizeId(span.spanId, 8);
         const start = unixNano(span.startTimeUnixNano);
@@ -348,7 +442,7 @@ export function parseOtlpTraces(payload: unknown): ParsedOtlp {
           rejected += 1;
           if (errors.length < 5) {
             errors.push(
-              `span ${String(span.name ?? "<unnamed>")}: ` +
+              `span ${name || "<unnamed>"}: ` +
                 (!traceId
                   ? "bad traceId"
                   : !spanId
@@ -366,7 +460,7 @@ export function parseOtlpTraces(payload: unknown): ParsedOtlp {
           traceId,
           spanId,
           parentSpanId: normalizeId(span.parentSpanId, 8),
-          name: String(span.name ?? ""),
+          name,
           kind: Number(span.kind ?? 0) || 0,
           startUnixNano: startNano,
           endUnixNano: end.digits,
@@ -382,7 +476,7 @@ export function parseOtlpTraces(payload: unknown): ParsedOtlp {
     }
   }
 
-  return { spans, rejected, errors };
+  return { spans, rejected, dropped, errors };
 }
 
 // --- Schema ------------------------------------------------------------------
@@ -500,7 +594,117 @@ export async function insertSpans(spans: readonly IngestedSpan[]): Promise<numbe
     );
     written += chunk.length;
   }
+
+  const days = retentionDays();
+  warnExpiredOnArrival(spans, days);
+  void maybePrune(days);
   return written;
+}
+
+/**
+ * Say so when a batch is stored and already doomed.
+ *
+ * Nothing else can. `maybePrune` below is fire-and-forget, so the 200 goes out
+ * before the DELETE runs; OTLP has no "accepted, then discarded" to report, and
+ * `partialSuccess` would be a lie — the exporter did nothing wrong and must not
+ * retry. Without this line the write path is silent about writing nothing.
+ *
+ * Two senders land here and neither can tell from the outside. One is replaying
+ * a backlog older than the window, which is a real thing to do and worth one
+ * warning. The other is sending milliseconds in `startTimeUnixNano`, which OTLP
+ * defines as nanoseconds: every span it sends dates to 1970, every span is
+ * pruned, and it looks exactly like a dashboard that drops everything.
+ */
+function warnExpiredOnArrival(spans: readonly IngestedSpan[], days: number | null): void {
+  if (days === null) return;
+  // The window prune_spans will actually apply, not a second opinion about it.
+  const cutoffNano = (Date.now() - retentionHours(days) * 3_600_000) * 1e6;
+  let expired = 0;
+  for (const span of spans) {
+    // NaN compares false, so an unparseable start time is not counted here — it
+    // was already rejected at the door by parseOtlpTraces.
+    if (Number(span.startUnixNano) < cutoffNano) expired += 1;
+  }
+  if (expired === 0) return;
+  console.warn(
+    `[evestack] ${expired} of ${spans.length} spans arrived already older than the ` +
+      `${days}-day retention window; they were stored and the next prune deletes them. ` +
+      "A backlog replay does this. So does an exporter sending milliseconds in " +
+      "startTimeUnixNano, where OTLP specifies nanoseconds — that dates every span to 1970.",
+  );
+}
+
+/**
+ * Apply the retention window. Returns rows deleted.
+ *
+ * The delete itself is `evestack.prune_spans`, so an operator can run exactly
+ * the same thing by hand. It deletes one bounded batch per call and this loops,
+ * because each call is then its own transaction — a first prune over a long
+ * backlog commits as it goes instead of holding locks for the whole of it.
+ */
+const PRUNE_BATCH = 20_000;
+
+/**
+ * The retention window in hours, not days: EVESTACK_TRACE_RETENTION_DAYS=0.5 is
+ * a legitimate answer, and rounding it to zero days would turn "keep twelve
+ * hours" into "keep everything", which is the opposite of what was asked for.
+ *
+ * One definition, because `warnExpiredOnArrival` predicts what this deletes. Two
+ * roundings would eventually disagree, and a warning about spans that survive is
+ * worse than no warning at all.
+ */
+const retentionHours = (days: number): number => Math.max(1, Math.round(days * 24));
+
+async function pruneSpans(days: number): Promise<number> {
+  await ensureTraceSchema();
+  const hours = retentionHours(days);
+  let removed = 0;
+  for (;;) {
+    const [row] = await query<{ removed: string }>(
+      "SELECT evestack.prune_spans(make_interval(hours => $1), $2) AS removed",
+      [hours, PRUNE_BATCH],
+    );
+    const batch = Number(row?.removed ?? 0);
+    removed += batch;
+    if (batch < PRUNE_BATCH) return removed;
+  }
+}
+
+// Once an hour per process. There is no scheduler in this dashboard and adding
+// one for a DELETE would be a second thing to operate; ingest is the only event
+// that grows the table, so it is also the only event that needs to shrink it.
+// A dashboard nobody exports to therefore never prunes, which is correct.
+const PRUNE_INTERVAL_MS = 60 * 60 * 1000;
+let prunedAt = 0;
+let pruning = false;
+
+/**
+ * Not awaited by insertSpans on purpose: the first prune over a long backlog is
+ * seconds of DELETE, and making the exporter wait for it would time out a batch
+ * that had already been stored. Failures are logged and retried next hour —
+ * retention falling behind must never turn into a 503 on the write path.
+ *
+ * `days` is passed in rather than read here so that one insert reads the
+ * environment once. retentionDays() warns on a malformed value, and reading it
+ * twice per batch would print that warning twice per batch.
+ */
+function maybePrune(days: number | null): Promise<void> {
+  const now = Date.now();
+  if (days === null || pruning || now - prunedAt < PRUNE_INTERVAL_MS) return Promise.resolve();
+  pruning = true;
+  prunedAt = now;
+  return pruneSpans(days)
+    .then(() => undefined)
+    .catch((error: unknown) => {
+      console.warn(
+        `[evestack] span retention (${days}d) failed; will retry in an hour: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    })
+    .finally(() => {
+      pruning = false;
+    });
 }
 
 /**
@@ -573,6 +777,11 @@ function toSpanRow(raw: Record<string, unknown>): SpanRow {
  * responses, the tool arguments. Matching `root_session_id` as well pulls in
  * subagent sessions, which trace separately but belong to the same tree.
  *
+ * Still whole traces rather than `resolved_session_id = $1`, even now that the
+ * resolved column exists: a span the walk could not attribute (an orphan whose
+ * parent was never exported) is still part of the trace a reader opened, and the
+ * viewer should show it rather than decide it does not exist.
+ *
  * `limit` is a RENDER BUDGET, not a correctness bound. `attributes` on an
  * `ai.streamText.doStream` span holds a whole message history (eve caps each
  * value at 32 KB), so an unbounded read of a pathological session would pull
@@ -583,29 +792,36 @@ function toSpanRow(raw: Record<string, unknown>): SpanRow {
  * page's own "the cut is on the timeline only" a true sentence. It was not
  * before: a tool call past span 5,000 vanished from a page promising it was
  * still listed below.
+ *
+ * Wrapped in React's `cache` because /traces/[id] asks for the same session
+ * three times in one render — the tree, the model calls and the tool calls — and
+ * used to issue this query three times for it. `cache` is per-request and, with
+ * no request in scope (the ingest route, a test), calls straight through.
  */
-export async function listSpansBySession(sessionId: string, limit = 5000): Promise<SpanRow[]> {
-  await ensureTraceSchema();
-  // limit + 1 to tell a full window from a truncated one, which is cheaper than
-  // a second COUNT(*) over every span in the session's traces.
-  const rows = await query<Record<string, unknown>>(
-    `${SELECT_SPAN}
+export const listSpansBySession = cache(
+  async (sessionId: string, limit = 5000): Promise<SpanRow[]> => {
+    await ensureTraceSchema();
+    // limit + 1 to tell a full window from a truncated one, which is cheaper than
+    // a second COUNT(*) over every span in the session's traces.
+    const rows = await query<Record<string, unknown>>(
+      `${SELECT_SPAN}
      WHERE trace_id IN (
        SELECT DISTINCT trace_id FROM evestack.spans
        WHERE session_id = $1 OR root_session_id = $1
      )
      ORDER BY start_unix_nano, span_id
      LIMIT $2`,
-    [sessionId, limit + 1],
-  );
-  if (rows.length > limit) {
-    console.warn(
-      `[evestack] session ${sessionId} has more than ${limit} spans; the span tree shows ` +
-        "the earliest of them. Model and tool call lists are read in full, separately.",
+      [sessionId, limit + 1],
     );
-  }
-  return rows.slice(0, limit).map(toSpanRow);
-}
+    if (rows.length > limit) {
+      console.warn(
+        `[evestack] session ${sessionId} has more than ${limit} spans; the span tree shows ` +
+          "the earliest of them. Model and tool call lists are read in full, separately.",
+      );
+    }
+    return rows.slice(0, limit).map(toSpanRow);
+  },
+);
 
 /**
  * The session's spans as a forest, with session and turn ids filled in from the
@@ -893,32 +1109,30 @@ export interface TracedSession {
 /**
  * Sessions that have spans, newest activity first.
  *
- * The CTE mirrors listSpansBySession: resolve the session to its trace ids
- * first, then count over those traces entire. Counting only the spans that
- * carry a session id would report zero tool calls for a local-tracer trace,
- * where the `ai.toolCall` span holding the payload carries none of eve's ids —
- * which is the exact failure the id columns in sql/traces.sql document.
+ * One grouped scan over `resolved_session_id`, which is what that column is
+ * for. Grouping by the *declared* `session_id` reports zero model calls and zero
+ * tool calls on every exported trace, because the `chat …` and `execute_tool …`
+ * spans declare no ids — the failure sql/traces.sql documents at length. The
+ * previous shape (find the session's traces, then count those traces entire)
+ * got the same answer by self-joining the table to itself; it also counted every
+ * span that merely shared a trace, which for an engine-noise trace is not a
+ * count of anything.
  */
 export async function listTracedSessions(limit = 200): Promise<TracedSession[]> {
   await ensureTraceSchema();
   const rows = await query<Record<string, unknown>>(
-    `WITH owned AS (
-       SELECT DISTINCT session_id, trace_id
-       FROM evestack.spans
-       WHERE session_id IS NOT NULL
-     )
-     SELECT owned.session_id,
-            COUNT(DISTINCT s.trace_id)                          AS traces,
+    `SELECT resolved_session_id                                 AS session_id,
+            COUNT(DISTINCT trace_id)                            AS traces,
             COUNT(*)                                            AS spans,
             COUNT(*) FILTER (WHERE ${MODEL_CALL_PREDICATE})     AS model_calls,
             COUNT(*) FILTER (WHERE ${TOOL_CALL_PREDICATE})      AS tool_calls,
-            MAX(s.resource ->> 'service.name')                  AS service,
-            MIN(s.start_time)                                   AS first_start,
-            MAX(s.start_time)                                   AS last_start
-     FROM owned
-     JOIN evestack.spans s ON s.trace_id = owned.trace_id
-     GROUP BY owned.session_id
-     ORDER BY MAX(s.start_unix_nano) DESC
+            MAX(resource ->> 'service.name')                    AS service,
+            MIN(start_time)                                     AS first_start,
+            MAX(start_time)                                     AS last_start
+     FROM evestack.spans
+     WHERE resolved_session_id IS NOT NULL
+     GROUP BY resolved_session_id
+     ORDER BY MAX(start_unix_nano) DESC
      LIMIT $1`,
     [limit],
   );
@@ -941,10 +1155,12 @@ export interface TraceOverview {
   modelCalls: number;
   toolCalls: number;
   /**
-   * Spans with no session id. Never zero in practice — workflow plumbing and
-   * fetch spans carry no agent identity — but *every* span landing here while
-   * `sessions` stays 0 is the signature of ids the schema does not recognise,
-   * which looks identical to "nothing was ingested" unless the number is shown.
+   * Spans that belong to no session even after the ancestor walk. Never zero in
+   * practice — workflow plumbing and fetch spans carry no agent identity, and
+   * they are their own root, so there is nothing above them to inherit from —
+   * but *every* span landing here while `sessions` stays 0 is the signature of
+   * ids the schema does not recognise, which looks identical to "nothing was
+   * ingested" unless the number is shown.
    */
   unattributedSpans: number;
   lastReceivedAt: string | null;
@@ -954,24 +1170,33 @@ export interface TraceOverview {
  * Table-wide counts: the trace index reads them, and so does the ingest
  * endpoint's GET.
  *
+ * Counts `execute_tool <name>` / `chat <model>` as well as the local tracer's
+ * `ai.toolCall` / `ai.streamText.doStream`: a deployment that exports — the only
+ * kind that can reach this dashboard at all — sends the first pair, so matching
+ * only the second reads 0 on a table full of tool calls. See the note in
+ * docs/observability.mdx on the two vocabularies.
+ *
  * There used to be a near-identical getTraceStats() below this one, and the
  * ingest endpoint called that. It matched the two span names exactly, which is
  * the local tracer's vocabulary and not the exported one, so it reported zero
  * model and tool calls to the single caller whose whole question was whether
  * anything had arrived. One function now, over the families above, because two
- * spellings of the same query is how the wrong spelling keeps a caller. See the
- * note in docs/observability.mdx on the two vocabularies.
+ * spellings of the same query is how the wrong spelling keeps a caller.
+ *
+ * `sessions` and `unattributed_spans` read the resolved column. Over the
+ * declared one they would answer a different question — "how many spans said so
+ * themselves" — and answer it as 0.1%.
  */
 export async function getTraceOverview(): Promise<TraceOverview> {
   await ensureTraceSchema();
   const [row] = await query<Record<string, unknown>>(
-    `SELECT COUNT(*)                                          AS spans,
-            COUNT(DISTINCT trace_id)                          AS traces,
-            COUNT(DISTINCT session_id)                        AS sessions,
-            COUNT(*) FILTER (WHERE ${MODEL_CALL_PREDICATE})   AS model_calls,
-            COUNT(*) FILTER (WHERE ${TOOL_CALL_PREDICATE})    AS tool_calls,
-            COUNT(*) FILTER (WHERE session_id IS NULL)        AS unattributed_spans,
-            MAX(received_at)                                  AS last_received_at
+    `SELECT COUNT(*)                                            AS spans,
+            COUNT(DISTINCT trace_id)                            AS traces,
+            COUNT(DISTINCT resolved_session_id)                 AS sessions,
+            COUNT(*) FILTER (WHERE ${MODEL_CALL_PREDICATE})     AS model_calls,
+            COUNT(*) FILTER (WHERE ${TOOL_CALL_PREDICATE})      AS tool_calls,
+            COUNT(*) FILTER (WHERE resolved_session_id IS NULL) AS unattributed_spans,
+            MAX(received_at)                                    AS last_received_at
      FROM evestack.spans`,
   );
   return {

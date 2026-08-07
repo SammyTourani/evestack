@@ -1,158 +1,219 @@
-import { FleetBanner } from "./fleet-banner";
-import { agentUrlForHumans } from "@/lib/agent-client";
-import { isPriced } from "@/lib/pricing";
-import { formatUsd } from "@/lib/pricing";
-import { getTotals, listSessions } from "@/lib/queries";
+import { Suspense } from "react";
+
 import { DatabaseError } from "@/app/db-error";
+import { FleetBanner } from "@/app/fleet-banner";
+import {
+  loadOverview,
+  makeWindow,
+  OVERVIEW_WINDOWS,
+  windowLabel,
+  type Headline,
+} from "@/app/overview";
+import { QueryValue, QueryValueRow } from "@/components/charts/query-value";
+import { TimeSeriesChart } from "@/components/charts/time-series";
+import { TopList } from "@/components/charts/top-list";
+import { CONTROL, FOCUS_RING } from "@/components/ui/style";
 
 export const dynamic = "force-dynamic";
 
-function ago(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const s = Math.floor(diff / 1000);
-  if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-  return `${Math.floor(s / 86400)}d ago`;
+/**
+ * The front door: a monitor, not a list.
+ *
+ * `/` used to be the sessions table, which answered "what has run" and left
+ * "is anything wrong right now" to be worked out by reading it. The list moved
+ * to /sessions in the same wave that built this; there is one list, and it is
+ * there.
+ *
+ * ── Every number carries its coverage ────────────────────────────────────────
+ *
+ * The tiles are not decoration over a single query — each is a measure, the
+ * same measure over the preceding window, and a bucketed trend, and each one
+ * says what it was computed over. That last part is the difference between a
+ * dashboard and a wall of confident numbers. On the seeded month p95 TTFT comes
+ * from 359 of 1,922 turns because spans are opt-in, and spend from 1,651
+ * because 209 turns ran an unpriced model and 62 never called one. A reader who
+ * cannot see those denominators is being told something false about all three.
+ *
+ * ── Why `better` differs per tile ────────────────────────────────────────────
+ *
+ * A delta is meaningless without a direction. More runs is usually good, more
+ * spend usually is not, and higher latency never is. `QueryValue` colours the
+ * arrow from `better`, and a tile that omitted it would render "+38%" in the
+ * same green whether that was throughput or a bill.
+ *
+ * ── The one thing that is not from Postgres ──────────────────────────────────
+ *
+ * `FleetBanner` talks to the live agent, and it is behind a Suspense boundary
+ * for the reason app/sessions/page.tsx spells out: before that boundary existed
+ * the sessions page took 15.2 seconds because each probe ran to its timeout
+ * against an agent that had never heard of the session. Everything else here is
+ * SQL and paints immediately.
+ */
+
+const DEFAULT_WINDOW = 24;
+
+function readWindow(raw: string | undefined): number {
+  const asked = Number(raw);
+  return (OVERVIEW_WINDOWS as readonly number[]).includes(asked) ? asked : DEFAULT_WINDOW;
 }
 
-const fmt = (n: number) => n.toLocaleString("en-US");
+function first(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
 
-export default async function SessionsPage() {
-  let sessions;
-  let totals;
+/**
+ * `Headline` is shaped for this; keeping the spread in one place.
+ *
+ * `noun` is per tile rather than global because the denominator is not always
+ * turns — "359 of 1,922 turns" and "838 of 838 tool calls" are different
+ * sentences, and a shared noun would make one of them wrong.
+ */
+function tile(h: Headline, previousLabel: string, noun = "turns") {
+  return {
+    value: h.value,
+    previous: h.previous,
+    previousLabel,
+    spark: h.spark,
+    coverage: { ...h.coverage, noun },
+  };
+}
+
+export default async function OverviewPage(props: PageProps<"/">) {
+  const params = await props.searchParams;
+  const hours = readWindow(first(params.window));
+  const label = windowLabel(hours);
+  const window = makeWindow(hours);
+
+  let data: Awaited<ReturnType<typeof loadOverview>>;
   try {
-    [sessions, totals] = await Promise.all([listSessions(100), getTotals()]);
+    data = await loadOverview(window);
   } catch (error) {
+    return <DatabaseError error={error} />;
+  }
+
+  /*
+   * If every tile's current-window query failed, the database is unreachable and
+   * the honest answer is to say so. Without this the page renders six em dashes,
+   * which reads as "your agent did nothing" — the opposite of the truth, on the
+   * screen someone opens to find out whether anything is wrong. Caught live with
+   * Postgres down and five real turns sitting on disk.
+   */
+  const blind = [data.runs, data.failureRate, data.latency, data.spend, data.tokens, data.ttft];
+  if (blind.every((h) => h.failed)) {
     return (
-      <DatabaseError error={error} />
+      <>
+        <h1>Overview</h1>
+        <DatabaseError
+          error={new Error("Every measure on this page failed to read from Postgres.")}
+        />
+      </>
     );
   }
 
-  const anyUnpriced = sessions.some((s) => s.models.some((m) => !isPriced(m)));
+  const previousLabel = `previous ${label}`;
 
   return (
     <>
-      <h1>Sessions</h1>
+      <h1>Overview</h1>
       <p className="page-sub">
-        Every agent run on this machine. Read straight from your own Postgres.
+        Every agent run on this machine over the last {label}, read straight from your own Postgres.
+        Each number says how much of the window it could actually be computed from.
       </p>
 
-      {/* Renders nothing when nothing is wrong — see fleet-banner.tsx. */}
-      <FleetBanner />
+      <nav aria-label="Time range" className="mb-4 flex flex-wrap gap-1.5">
+        {OVERVIEW_WINDOWS.map((w) => (
+          <a
+            key={w}
+            href={w === DEFAULT_WINDOW ? "/" : `/?window=${w}`}
+            aria-current={w === hours ? "page" : undefined}
+            className={`${CONTROL} aria-[current=page]:border-accent aria-[current=page]:text-text`}
+          >
+            {windowLabel(w)}
+          </a>
+        ))}
+      </nav>
 
-      <div className="stat-row">
-        <div className="stat">
-          <div className="stat-label">Sessions</div>
-          <div className="stat-value">{fmt(totals.sessions)}</div>
-        </div>
-        <div className="stat">
-          <div className="stat-label">Turns</div>
-          <div className="stat-value">{fmt(totals.turns)}</div>
-        </div>
-        <div className="stat">
-          <div className="stat-label">Tokens in / out</div>
-          <div className="stat-value">
-            {fmt(totals.inputTokens)}
-            <span className="faint"> / </span>
-            {fmt(totals.outputTokens)}
-          </div>
-        </div>
-        <div className="stat">
-          <div className="stat-label">Model spend</div>
-          <div className="stat-value">{formatUsd(totals.costUsd)}</div>
-        </div>
-        <div className="stat">
-          <div className="stat-label">Infrastructure</div>
-          <div className="stat-value free">$0.00</div>
-        </div>
+      {/* Renders nothing when nothing is wrong. Streamed — see the header. */}
+      <Suspense fallback={null}>
+        <FleetBanner />
+      </Suspense>
+
+      <QueryValueRow>
+        <QueryValue label="Turns" unit="count" better="higher" {...tile(data.runs, previousLabel)} />
+        <QueryValue
+          label="Failure rate"
+          unit="percent"
+          better="lower"
+          {...tile(data.failureRate, previousLabel)}
+        />
+        <QueryValue
+          label="p95 turn latency"
+          unit="duration"
+          better="lower"
+          {...tile(data.latency, previousLabel)}
+        />
+        <QueryValue label="Spend" unit="cost" better="lower" {...tile(data.spend, previousLabel)} />
+        <QueryValue
+          label="Tokens out"
+          unit="tokens"
+          better="higher"
+          {...tile(data.tokens, previousLabel)}
+        />
+        <QueryValue
+          label="p95 time to first token"
+          unit="duration"
+          better="lower"
+          {...tile(data.ttft, previousLabel)}
+        />
+      </QueryValueRow>
+
+      <div className="mt-6 grid gap-4 lg:grid-cols-2">
+        <TimeSeriesChart
+          title="Turns over time"
+          subtitle={`By trigger, ${label} window.`}
+          series={data.runsByTrigger.series}
+          unit="count"
+          variant="stacked-area"
+          xLabel="time"
+          xPrecision={hours <= 24 ? "time" : "date"}
+        />
+        <TimeSeriesChart
+          title="Spend over time"
+          subtitle="By model. A model with no catalog price contributes nothing here and is listed as unpriced below."
+          series={data.spendByModel.series}
+          unit="cost"
+          variant="stacked-area"
+          xLabel="time"
+          xPrecision={hours <= 24 ? "time" : "date"}
+        />
       </div>
 
-      {sessions.length === 0 ? (
-        <div className="empty">
-          <h2>No sessions yet</h2>
-          {/*
-            This used to offer a curl command and nothing else — to the one
-            reader who has, by definition, just arrived and has never used this.
-            The Chat page is one click away and does the same thing with a text
-            box, so it goes first and the curl goes second, for the people who
-            want it. The URL is read from EVESTACK_AGENT_URL rather than
-            hardcoded to :2000, because `eve dev` auto-increments when that port
-            is taken and a copy-pasteable command that quietly points at someone
-            else&apos;s agent is worse than no command. Through
-            agentUrlForHumans(), because inside the container the configured host
-            is `host.docker.internal`, which does not resolve in the terminal
-            this is meant to be pasted into.
-          */}
-          <p>
-            <a href="/chat">Open Chat</a> and send your agent a message — it will show up here.
-          </p>
-          <p className="faint">Or from a terminal:</p>
-          <p className="faint mono">
-            curl -X POST {agentUrlForHumans()}/eve/v1/session -H &apos;content-type:
-            application/json&apos; -d &apos;{"{"}&quot;message&quot;:&quot;hello&quot;{"}"}&apos;
-          </p>
-        </div>
-      ) : (
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Session</th>
-                <th>Status</th>
-                <th className="num">Turns</th>
-                <th>Model</th>
-                <th className="num">In</th>
-                <th className="num">Out</th>
-                <th className="num">Cached</th>
-                <th className="num">Cost</th>
-                <th className="num">Started</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sessions.map((s) => (
-                <tr key={s.id}>
-                  <td>
-                    <a href={`/sessions/${s.id}`}>
-                      <div>{s.title ?? <span className="faint">untitled</span>}</div>
-                      <div className="mono faint">{s.id.slice(0, 24)}…</div>
-                    </a>
-                  </td>
-                  <td>
-                    <span className={`status status-${s.status}`}>{s.status}</span>
-                  </td>
-                  <td className="num">{s.turnCount}</td>
-                  <td className="mono dim">
-                    {s.includingSubagents.models.length
-                      ? s.includingSubagents.models.join(", ")
-                      : "—"}
-                    {s.includingSubagents.models.some((m) => !isPriced(m)) && (
-                      <div className="unpriced" title="No price configured for this model">
-                        unpriced
-                      </div>
-                    )}
-                  </td>
-                  {/* Inclusive of subagents, which is what this column has always
-                      shown. The bare names are turn-only since lib/queries.ts split
-                      the two grains. */}
-                  <td className="num">{fmt(s.includingSubagents.inputTokens)}</td>
-                  <td className="num">{fmt(s.includingSubagents.outputTokens)}</td>
-                  <td className="num dim">{fmt(s.includingSubagents.cacheReadTokens)}</td>
-                  <td className="num">{formatUsd(s.includingSubagents.costUsd)}</td>
-                  <td className="num dim">{ago(s.createdAt)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <TopList
+          title="Models"
+          subtitle="Ranked by spend. Sort by error rate or latency to find the one that is expensive for the wrong reason."
+          rows={data.topModels}
+          unit="cost"
+          valueLabel="spend"
+          durationLabel="p95"
+        />
+        <TopList
+          title="Tools"
+          subtitle="Ranked by calls. A tool that is slow and frequent costs more than one that is slow and rare."
+          rows={data.topTools}
+          unit="count"
+          valueLabel="calls"
+          durationLabel="p95"
+        />
+      </div>
 
-      {anyUnpriced && (
-        <p className="faint" style={{ marginTop: 14, fontSize: 12 }}>
-          Some models have no price configured, so their cost reads $0.00. Set{" "}
-          <code>EVESTACK_PRICING</code> to price them.
-        </p>
-      )}
+      <p className="mt-6 text-small text-text-dim">
+        Looking for a specific run?{" "}
+        <a className={`text-accent hover:underline ${FOCUS_RING}`} href="/sessions">
+          Every session
+        </a>{" "}
+        is searchable and filterable.
+      </p>
     </>
   );
 }

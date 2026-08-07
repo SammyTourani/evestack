@@ -1,6 +1,36 @@
-/* evestack dashboard — dark-first, no CSS framework, no external fonts.
-   The whole point is a stack that runs with no network calls, so the styling
-   ships as one file with system fonts. */
+/* evestack dashboard — dark-first, and offline. Tailwind 4 compiles statically
+   at build time and Geist is self-hosted through next/font, so a running
+   dashboard still makes zero network requests.
+
+   The layer order below is the whole design of this file. Tailwind ships three
+   pieces and this commit takes two of them:
+
+     theme      the token layer                          taken
+     base       preflight, Tailwind's element reset      NOT taken, on purpose
+     utilities  the utility classes                      taken
+
+   Preflight rewrites margins, list markers, heading sizes, form-control fonts
+   and image display on every element in the document. Ten pages are already
+   styled against browser defaults, so importing it here would restyle all of
+   them in the commit that introduces Tailwind and nobody could tell a port
+   error from an intended change. It is one line — `@import
+   "tailwindcss/preflight.css" layer(base);` — and it belongs to the wave that
+   restyles the pages, not to this one.
+
+   `app` holds the hand-rolled CSS that shipped before Tailwind. It is inside a
+   layer rather than loose so that a utility can beat it: unlayered CSS outranks
+   every layer, so `a { text-decoration: none }` and `table { border-collapse }`
+   below would otherwise make the matching utilities silently inert. */
+
+@layer theme, base, components, app, utilities;
+
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+
+/* ── raw palette ──────────────────────────────────────────────────────────
+   Plain custom properties, not `@theme` variables, because they have to change
+   inside a media query and a `@theme` block cannot. `@theme inline` further
+   down republishes them as Tailwind tokens, which keeps one definition. */
 
 :root {
   color-scheme: dark light;
@@ -18,6 +48,32 @@
   --radius: 8px;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  /* Categorical chart slots, in fixed assignment order — slot 1 is always the
+     first series, never recycled when a filter drops a series. Values are the
+     dataviz skill's reference palette, dark column, re-validated against this
+     app's own surfaces rather than the reference's, with that skill's
+     scripts/validate_palette.js:
+
+       validate_palette.js "#3987e5,#d95926,#199e70,#c98500,#d55181,#008300"
+         --mode dark --surface "#131720"
+       → lightness band PASS · chroma floor PASS · CVD separation PASS
+         (worst adjacent #c98500↔#199e70 ΔE 8.4 protan) · normal-vision floor
+         PASS (worst 19.3) · contrast vs surface PASS (all ≥ 3:1)
+
+     8.4 clears the ≥ 8 target by four tenths, which is a pass and not a
+     comfortable one, so hue stays a supporting channel: whatever draws these
+     owes every series a direct label or a legend entry. That obligation
+     belongs to the mark, not to a variable, which is why there is no
+     `--series-dash-*` token here to go unread. The six slots are also a cap —
+     the palette was validated as six, and a seventh series folds into "other"
+     or becomes a second chart. */
+  --chart-1: #3987e5;
+  --chart-2: #d95926;
+  --chart-3: #199e70;
+  --chart-4: #c98500;
+  --chart-5: #d55181;
+  --chart-6: #008300;
 }
 
 @media (prefers-color-scheme: light) {
@@ -33,174 +89,500 @@
     --ok: #0d9488;
     --warn: #b45309;
     --err: #dc2626;
+
+    /* The reference palette's light column, re-validated against #ffffff.
+       Every check passes, and contrast lands in the documented relief band:
+       #1baf7a (2.82:1), #eda100 (2.17) and #e87ba4 (2.69) sit under 3:1 on
+       white. Relief is not a dismissal — it is the same obligation as above,
+       discharged by visible labels or a table view beside the chart, which
+       this dashboard owes anyway. */
+    --chart-1: #2a78d6;
+    --chart-2: #eb6834;
+    --chart-3: #1baf7a;
+    --chart-4: #eda100;
+    --chart-5: #e87ba4;
+    --chart-6: #008300;
   }
 }
 
-* { box-sizing: border-box; }
+/* ── Tailwind tokens ──────────────────────────────────────────────────────
+   `inline` so a utility compiles to `var(--bg)` rather than to a second
+   variable pointing at it; the media query above then still switches it. */
 
-body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--sans);
-  font-size: 14px;
-  line-height: 1.5;
-  -webkit-font-smoothing: antialiased;
+@theme inline {
+  --color-bg: var(--bg);
+  --color-bg-raised: var(--bg-raised);
+  --color-bg-hover: var(--bg-hover);
+  --color-border: var(--border);
+  --color-text: var(--text);
+  --color-text-dim: var(--text-dim);
+  --color-text-faint: var(--text-faint);
+  --color-accent: var(--accent);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-err: var(--err);
+
+  /* Focus is its own role rather than a call to `accent`, because the ring has
+     to stay legible if the accent ever moves for brand reasons. */
+  --color-focus: var(--accent);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-chart-6: var(--chart-6);
+
+  /* Geist first, the previous system stack as the fallback. Nothing sets these
+     on an element yet — this commit wires the font up without switching to it,
+     so the pages still render in the system font they were designed in. */
+  --font-sans: var(--font-geist-sans), var(--sans);
+  --font-mono: var(--font-geist-mono), var(--mono);
+
+  /* Two radii, because two are what the product draws: 5px on inline code
+     chips, and the 8px that five rules below already read out of `--radius`,
+     which stays the one place that number is written. Pills use Tailwind's
+     built-in `rounded-full`. The namespace is cleared first so `rounded-lg`
+     cannot resolve to a leftover default that collides with `rounded-md`. */
+  --radius-*: initial;
+  --radius-sm: 5px;
+  --radius-md: var(--radius);
+
+  /* Six steps, named for the job rather than a t-shirt size, and every one of
+     them is a size already on screen. The default numeric scale is cleared so
+     an off-scale `text-sm` fails visibly instead of quietly rendering 14px. */
+  --text-*: initial;
+  --text-micro: 11px; /* uppercase labels, status pills, badges */
+  --text-small: 12px; /* mono, secondary and footnote text */
+  --text-body: 14px; /* body */
+  --text-section: 17px; /* section heading */
+  --text-title: 19px; /* page title */
+  --text-metric: 22px; /* stat value */
+
+  /* Spacing is deliberately absent: Tailwind's default `--spacing: 0.25rem`
+     already is the 4pt scale, so redeclaring it would add a token that changes
+     nothing. */
 }
 
-a { color: inherit; text-decoration: none; }
+/* ── the CSS that shipped before Tailwind ────────────────────────────────── */
 
-/* ---- chrome ---- */
-.topbar {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  padding: 0 20px;
-  height: 52px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-raised);
-  position: sticky;
-  top: 0;
-  z-index: 10;
-}
-.brand { display: flex; align-items: center; gap: 8px; font-weight: 600; }
-.brand-mark { color: var(--accent); font-size: 16px; }
-.topnav { display: flex; gap: 16px; color: var(--text-dim); }
-.topnav a:hover { color: var(--text); }
-.badge-selfhosted {
-  margin-left: auto;
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--ok);
-  border: 1px solid var(--ok);
-  border-radius: 999px;
-  padding: 2px 10px;
-  opacity: 0.85;
-}
-.shell { max-width: 1180px; margin: 0 auto; padding: 28px 20px 80px; }
+@layer app {
+  * {
+    box-sizing: border-box;
+  }
 
-/* ---- stats ---- */
-.stat-row {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 12px;
-  margin-bottom: 28px;
-}
-.stat {
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 14px 16px;
-}
-.stat-label {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-faint);
-}
-.stat-value { font-size: 22px; font-weight: 600; margin-top: 4px; font-variant-numeric: tabular-nums; }
-.stat-value.free { color: var(--ok); }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
 
-/* ---- tables ---- */
-.table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); }
-table { width: 100%; border-collapse: collapse; background: var(--bg-raised); }
-th {
-  text-align: left;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-faint);
-  font-weight: 500;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border);
-  white-space: nowrap;
-}
-td { padding: 11px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
-tbody tr:last-child td { border-bottom: none; }
-tbody tr:hover { background: var(--bg-hover); }
-.num { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
-.mono { font-family: var(--mono); font-size: 12px; }
-.dim { color: var(--text-dim); }
-.faint { color: var(--text-faint); }
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
 
-/* ---- status ---- */
-.status { font-family: var(--mono); font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid; white-space: nowrap; }
-.status-completed { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
-.status-running { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
-.status-failed, .status-errored { color: var(--err); border-color: color-mix(in srgb, var(--err) 40%, transparent); }
-.status-cancelled { color: var(--text-faint); border-color: var(--border); }
+  /* ---- chrome ----
+     A two-column grid on <body> rather than a fixed sidebar plus a margin on the
+     content. The grid is what makes the content column a real column: it gets
+     `min-width: 0`, so a wide table or chart inside it scrolls within its own
+     container instead of pushing the page wider. The old horizontal nav could not
+     do that — it set a floor on the page's width (876px of links at a 768px
+     viewport, and body.scrollWidth 1155), so every page scrolled sideways. */
+  body {
+    display: grid;
+    /* One column by default. The sidebar is absent on /signin — app/nav.tsx
+       returns null there — and a two-column template with a single child would
+       drop <main> into the 220px sidebar track and render the sign-in form in a
+       ribbon down the left edge. `:has()` asks the DOM instead of assuming. */
+    grid-template-columns: minmax(0, 1fr);
+    min-height: 100vh;
+  }
+  body:has(.sidebar) {
+    grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+  }
+  /* No sidebar, so there is no column to be left-aligned within: centre it. */
+  body:not(:has(.sidebar)) .shell {
+    margin: 0 auto;
+  }
+  :root {
+    --sidebar-w: 220px;
+  }
+  .sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+    padding: 18px 12px 16px;
+    border-right: 1px solid var(--border);
+    background: var(--bg-raised);
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+    z-index: 10;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    padding: 0 8px;
+  }
+  .brand-mark {
+    color: var(--accent);
+    font-size: 16px;
+  }
+  .sidebar-groups {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .nav-group-title {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    padding: 0 8px;
+    margin: 0 0 6px;
+  }
+  .nav-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .nav-link {
+    display: block;
+    padding: 5px 8px 5px 10px;
+    border-radius: 6px;
+    color: var(--text-dim);
+    /* The rail lives on every link so the active one does not shift 2px right
+       when it lights up. */
+    border-left: 2px solid transparent;
+    font-size: 13.5px;
+  }
+  .nav-link:hover {
+    color: var(--text);
+    background: var(--bg-hover, rgb(255 255 255 / 0.04));
+  }
+  .nav-link-active {
+    color: var(--text);
+    background: var(--bg-hover, rgb(255 255 255 / 0.06));
+    border-left-color: var(--accent);
+    font-weight: 500;
+  }
+  .sidebar-foot {
+    margin-top: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    align-items: flex-start;
+    padding: 0 8px;
+  }
+  .badge-selfhosted {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ok);
+    border: 1px solid var(--ok);
+    border-radius: 999px;
+    padding: 2px 10px;
+    opacity: 0.85;
+  }
+  .shell {
+    /* Was `max-width: 1180px; margin: 0 auto`. The cap stays — long measures are
+       hard to read and the charts were designed against it — but it is no longer
+       centred on the viewport, because with a sidebar that puts the content
+       visually off-centre from its own column. `min-width: 0` is the line that
+       actually stops the overflow: without it a grid item defaults to
+       `min-width: auto` and refuses to shrink below its contents. */
+    min-width: 0;
+    max-width: 1180px;
+    padding: 28px 24px 80px;
+  }
 
-.unpriced { color: var(--warn); font-size: 11px; font-family: var(--mono); }
+  /* Below this the sidebar stops being affordable: it is 220px of a 900px
+     viewport. It becomes a horizontal strip above the content — still grouped,
+     still showing the active page, and scrollable in its own box rather than
+     widening the document. */
+  @media (max-width: 900px) {
+    /* `body:has(.sidebar)`, not `body`. A media query adds no specificity, so a
+       plain `body` rule here loses to the `body:has(.sidebar)` above it however
+       late it appears — which left the grid at `220px 548px` while the sidebar's
+       own contents had already flipped to a row. Half a layout is worse than
+       either. */
+    body:has(.sidebar) {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .sidebar {
+      position: static;
+      height: auto;
+      flex-direction: row;
+      align-items: center;
+      gap: 16px;
+      border-right: 0;
+      border-bottom: 1px solid var(--border);
+      overflow-x: auto;
+      padding: 10px 16px;
+    }
+    .sidebar-groups {
+      flex-direction: row;
+      gap: 16px;
+    }
+    .nav-group-title {
+      display: none;
+    }
+    .nav-list {
+      flex-direction: row;
+      gap: 2px;
+    }
+    .nav-link {
+      white-space: nowrap;
+      border-left: 0;
+      border-bottom: 2px solid transparent;
+      border-radius: 6px 6px 0 0;
+    }
+    .nav-link-active {
+      border-left-color: transparent;
+      border-bottom-color: var(--accent);
+    }
+    .sidebar-foot {
+      margin-top: 0;
+      margin-left: auto;
+      flex-direction: row;
+      align-items: center;
+    }
+  }
 
-/* ---- empty state ---- */
-.empty { text-align: center; padding: 72px 20px; color: var(--text-dim); }
-.empty h2 { color: var(--text); font-size: 17px; margin: 0 0 8px; }
-.empty code {
-  font-family: var(--mono);
-  font-size: 12px;
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  padding: 2px 7px;
-}
+  /* ---- stats ---- */
+  .stat-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px;
+    margin-bottom: 28px;
+  }
+  .stat {
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+  }
+  .stat-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-faint);
+  }
+  .stat-value {
+    font-size: 22px;
+    font-weight: 600;
+    margin-top: 4px;
+    font-variant-numeric: tabular-nums;
+  }
+  .stat-value.free {
+    color: var(--ok);
+  }
 
-h1 { font-size: 19px; margin: 0 0 4px; }
-.page-sub { color: var(--text-dim); margin: 0 0 22px; }
+  /* ---- tables ---- */
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--bg-raised);
+  }
+  th {
+    text-align: left;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-faint);
+    font-weight: 500;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  td {
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  tbody tr:last-child td {
+    border-bottom: none;
+  }
+  tbody tr:hover {
+    background: var(--bg-hover);
+  }
+  .num {
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    white-space: nowrap;
+  }
+  .mono {
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+  .dim {
+    color: var(--text-dim);
+  }
+  .faint {
+    color: var(--text-faint);
+  }
 
-/* ---- sign in ----
+  /* ---- status ---- */
+  .status {
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid;
+    white-space: nowrap;
+  }
+  .status-completed {
+    color: var(--ok);
+    border-color: color-mix(in srgb, var(--ok) 40%, transparent);
+  }
+  .status-running {
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  }
+  .status-failed,
+  .status-errored {
+    color: var(--err);
+    border-color: color-mix(in srgb, var(--err) 40%, transparent);
+  }
+  .status-cancelled {
+    color: var(--text-faint);
+    border-color: var(--border);
+  }
+
+  .unpriced {
+    color: var(--warn);
+    font-size: 11px;
+    font-family: var(--mono);
+  }
+
+  /* ---- empty state ---- */
+  .empty {
+    text-align: center;
+    padding: 72px 20px;
+    color: var(--text-dim);
+  }
+  .empty h2 {
+    color: var(--text);
+    font-size: 17px;
+    margin: 0 0 8px;
+  }
+  .empty code {
+    font-family: var(--mono);
+    font-size: 12px;
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 2px 7px;
+  }
+
+  h1 {
+    font-size: 19px;
+    margin: 0 0 4px;
+  }
+  .page-sub {
+    color: var(--text-dim);
+    margin: 0 0 22px;
+  }
+
+  /* ---- sign in ----
    Styled with the same variables as everything else and no framework, because
    this is the page that has to render when the rest of the app is refusing
    requests. Nothing here depends on a client bundle having loaded. */
-.signout { margin-left: 12px; display: flex; }
-.signout button {
-  font: inherit;
-  font-size: 12px;
-  color: var(--text-dim);
-  background: none;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 2px 10px;
-  cursor: pointer;
-}
-.signout button:hover { color: var(--text); background: var(--bg-hover); }
+  .signout {
+    margin-left: 12px;
+    display: flex;
+  }
+  .signout button {
+    font: inherit;
+    font-size: 12px;
+    color: var(--text-dim);
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 2px 10px;
+    cursor: pointer;
+  }
+  .signout button:hover {
+    color: var(--text);
+    background: var(--bg-hover);
+  }
 
-.signin { max-width: 380px; margin: 8vh auto 0; }
-.signin-form { display: flex; flex-direction: column; gap: 14px; }
-.signin-field { display: flex; flex-direction: column; gap: 6px; }
-.signin-field span { color: var(--text-dim); font-size: 12px; }
-.signin-field input {
-  font: inherit;
-  color: var(--text);
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 9px 11px;
-}
-.signin-field input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.signin-submit {
-  font: inherit;
-  font-weight: 600;
-  color: var(--bg);
-  background: var(--accent);
-  border: 1px solid var(--accent);
-  border-radius: var(--radius);
-  padding: 9px 11px;
-  cursor: pointer;
-}
-.signin-error {
-  margin: 0;
-  color: var(--err);
-  font-size: 13px;
-  border: 1px solid color-mix(in srgb, var(--err) 40%, transparent);
-  border-radius: var(--radius);
-  padding: 10px 12px;
-}
-.signin-hint { margin: 26px 0 0; color: var(--text-faint); font-size: 12px; line-height: 1.7; }
-.signin-hint code {
-  font-family: var(--mono);
-  font-size: 11px;
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  padding: 1px 5px;
+  .signin {
+    max-width: 380px;
+    margin: 8vh auto 0;
+  }
+  .signin-form {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .signin-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .signin-field span {
+    color: var(--text-dim);
+    font-size: 12px;
+  }
+  .signin-field input {
+    font: inherit;
+    color: var(--text);
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 9px 11px;
+  }
+  .signin-field input:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+  .signin-submit {
+    font: inherit;
+    font-weight: 600;
+    color: var(--bg);
+    background: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius);
+    padding: 9px 11px;
+    cursor: pointer;
+  }
+  .signin-error {
+    margin: 0;
+    color: var(--err);
+    font-size: 13px;
+    border: 1px solid color-mix(in srgb, var(--err) 40%, transparent);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+  }
+  .signin-hint {
+    margin: 26px 0 0;
+    color: var(--text-faint);
+    font-size: 12px;
+    line-height: 1.7;
+  }
+  .signin-hint code {
+    font-family: var(--mono);
+    font-size: 11px;
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 1px 5px;
+  }
 }

@@ -211,16 +211,15 @@ function selectPrices(models) {
       if (cacheRead !== null) entry.cacheRead = cacheRead;
     }
 
-    // Captured but not yet billed by costUsd, which takes no cache-write token
-    // count. It is recorded because the counter already exists on the other
-    // side: lib/queries.ts reads `$eve.cache_write_tokens` into `cacheWriteTokens`
-    // and the session page renders it. Those tokens are currently billed at the
-    // plain input rate, and 33 language models say that is too cheap —
-    // anthropic/claude-opus-4.8 charges 6.25/M to write a cache entry against
-    // 5/M for ordinary input. Wiring it up needs a signature change in costUsd,
-    // which is a behaviour change and not this script's to make; having the
-    // number here means that change is a change to one function, not a
-    // regeneration.
+    // Billed at its own rate by costUsd since 2026-08-06. It matters: 33 language
+    // models price a cache write above ordinary input — anthropic/claude-opus-4.8
+    // charges 6.25/M to write a cache entry against 5/M for plain input — so
+    // folding these into the input rate under-reported every cached session.
+    // Wiring it through moved the seeded month's spend from $11.78 to $12.42.
+    //
+    // This comment used to say the opposite, and stayed wrong for one commit after
+    // the behaviour changed. If costUsd's signature changes again, this is the
+    // second place to look.
     if (p.input_cache_write != null) {
       const cacheWrite = perMillionUsd(p.input_cache_write);
       if (cacheWrite !== null) entry.cacheWrite = cacheWrite;

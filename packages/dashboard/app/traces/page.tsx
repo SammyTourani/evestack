@@ -1,5 +1,6 @@
 import { getTraceOverview, listTracedSessions } from "@/lib/traces";
-import { ago, duration, fmt } from "./format";
+import { fmt } from "./format";
+import { ago, duration } from "@/lib/time";
 import styles from "./traces.module.css";
 import { DatabaseError } from "@/app/db-error";
 

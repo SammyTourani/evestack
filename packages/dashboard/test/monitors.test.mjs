@@ -14,29 +14,48 @@ import { WINDOWS, failureRate } from "../lib/monitors.ts";
  */
 
 test("an empty window reports 0%, not NaN", () => {
-  assert.equal(failureRate(0, 0, 0), 0);
-  assert.ok(Number.isFinite(failureRate(0, 0, 0)));
+  assert.equal(failureRate(0, 0), 0);
+  assert.ok(Number.isFinite(failureRate(0, 0)));
   // The page formats this with toFixed; NaN would render "NaN%".
-  assert.equal(`${(failureRate(0, 0, 0) * 100).toFixed(0)}%`, "0%");
-});
-
-test("both failure kinds count toward the rate", () => {
-  // error_code alone would report 10%, which is the direction that flatters us.
-  assert.equal(failureRate(1, 1, 10), 0.2);
-  assert.equal(failureRate(0, 3, 10), 0.3);
-  assert.equal(failureRate(3, 0, 10), 0.3);
+  assert.equal(`${(failureRate(0, 0) * 100).toFixed(0)}%`, "0%");
 });
 
 test("a clean window is zero and a fully failed window is one", () => {
-  assert.equal(failureRate(0, 0, 25), 0);
-  assert.equal(failureRate(25, 0, 25), 1);
-  assert.equal(failureRate(10, 15, 25), 1);
+  assert.equal(failureRate(0, 25), 0);
+  assert.equal(failureRate(25, 25), 1);
+  assert.equal(failureRate(3, 10), 0.3);
 });
 
-test("a nonsensical denominator cannot produce a negative or infinite rate", () => {
-  assert.equal(failureRate(5, 0, 0), 0);
-  assert.equal(failureRate(5, 0, -1), 0);
-  assert.ok(Number.isFinite(failureRate(5, 5, 0)));
+/**
+ * The regression this signature exists to prevent.
+ *
+ * `failureRate` used to take `(errored, noModelCall, total)` and add them. A
+ * turn that both carries an `error_code` and never reached the provider is in
+ * BOTH counters, and that is the ordinary shape of a provider rejection — the
+ * call errors and reports no usage. Adding them counted one failure twice.
+ *
+ * The old signature could not express this test: `failureRate(10, 10, 10)`
+ * returned 2, and a page rendering `(rate * 100).toFixed(1)` printed "200.0%".
+ */
+test("a turn that fails both ways is one failure, not two", () => {
+  // Ten turns, every one of them errored AND with no model call.
+  assert.equal(failureRate(10, 10), 1);
+  assert.ok(failureRate(10, 10) <= 1, "a failure rate can never exceed 100%");
+});
+
+test("a rate is always a fraction between zero and one", () => {
+  for (const [failed, total] of [
+    [0, 0],
+    [5, 0],
+    [5, -1],
+    [1, 1],
+    [1, 1000],
+    [999, 1000],
+  ]) {
+    const rate = failureRate(failed, total);
+    assert.ok(Number.isFinite(rate), `${failed}/${total} produced ${rate}`);
+    assert.ok(rate >= 0 && rate <= 1, `${failed}/${total} produced ${rate}`);
+  }
 });
 
 test("the offered windows are positive, ordered and unique", () => {

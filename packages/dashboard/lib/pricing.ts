@@ -39,14 +39,12 @@ export interface ModelPrice {
   /** USD per 1M cached input tokens; defaults to 10% of input when omitted. */
   cacheRead?: number;
   /**
-   * USD per 1M tokens written to the prompt cache.
+   * USD per 1M tokens written to the prompt cache; defaults to the plain input
+   * rate when omitted, never to zero. See `costUsd` for why that floor and not
+   * the 1.25x premium most of the stated rates carry.
    *
-   * Recorded by the generator, not yet charged: `costUsd` takes no cache-write
-   * token count, so those tokens are billed at the plain input rate today. That
-   * is measurably too cheap — anthropic/claude-opus-4.8 charges 6.25/M to write
-   * a cache entry against 5/M for ordinary input — and the count needed to fix
-   * it already exists upstream, since lib/queries.ts reads
-   * `$eve.cache_write_tokens` and the session page renders it.
+   * 33 of the 206 priced models state one, and every one of those also states a
+   * cache-read rate.
    */
   cacheWrite?: number;
 }
@@ -338,26 +336,106 @@ export function isPriced(model: string | null): boolean {
   return findPrice(model) !== null;
 }
 
+/** Models already reported by `warnImpossibleSplit`. See it for why. */
+const warnedImpossibleSplit = new Set<string>();
+
+/**
+ * Counters that cannot all be true, said out loud.
+ *
+ * `$eve.input_tokens` is the TOTAL; reads and writes are two of its parts, so
+ * the non-cached remainder cannot come out negative. When it does, one of the
+ * three numbers is wrong, and the `Math.max(0, …)` floor in `costUsd` — which
+ * has to be there, because a negative row would subtract from the session total
+ * and make an expensive session look cheap — absorbs the surplus. Absorbing it
+ * in silence is how a dashboard under-reports spend forever.
+ *
+ * This fired for real once. On 2026-08-06 the floor swallowed 382,813 input
+ * tokens across 160 turns of the seeded month, because `scripts/seed.mjs` was
+ * adding the cache-write count OUTSIDE the input total while every provider
+ * folds it in (`total: inputTokens + cacheCreationTokens + cacheReadTokens`,
+ * @ai-sdk/anthropic). The fixture was fixed; the guard stays. A provider that
+ * reports input EXCLUDING its cache classes would reproduce the same shape from
+ * live data, and the failure it produces — quietly cheap sessions — is the kind
+ * nobody notices.
+ *
+ * Once per model rather than once per row: this runs per turn row on every
+ * render, and a bad fixture would otherwise print thousands of identical lines.
+ * `model` is never null by the time we get here — `findPrice` has returned
+ * non-null for it, which it does for no falsy model — so it is only typed that
+ * way to match the caller.
+ */
+function warnImpossibleSplit(
+  model: string | null,
+  inputTokens: number,
+  cacheReadTokens: number,
+  cacheWriteTokens: number,
+): void {
+  const key = String(model);
+  if (warnedImpossibleSplit.has(key)) return;
+  warnedImpossibleSplit.add(key);
+  console.warn(
+    `[evestack] ${key}: cache reads (${cacheReadTokens}) plus cache writes ` +
+      `(${cacheWriteTokens}) exceed input tokens (${inputTokens}), which cannot happen — ` +
+      `both are parts of that total. One of the three counters is wrong; billing the ` +
+      `${cacheReadTokens + cacheWriteTokens - inputTokens} token surplus as nothing. ` +
+      `Which way that moves the total depends on which counter is at fault, so this ` +
+      `figure is not trustworthy either way. Warned once per model.`,
+  );
+}
+
+/**
+ * Every token class at its own rate, the way Datadog's `ml_obs` model splits a
+ * span into `input.non_cached`, `input.cache_read` and `input.cache_write`.
+ *
+ * Cache reads and cache writes both arrive INSIDE the input total, so neither
+ * may also be charged at the full input rate. That is not an assumption about
+ * eve, it is three hops that are all readable in this repo's node_modules:
+ * `$eve.input_tokens` is `usage.inputTokens` (eve's `extractTokenUsageDelta` in
+ * harness/tool-loop.js), ai@7 sets that to `inputTokens.total` in
+ * `asLanguageModelUsage`, and @ai-sdk/anthropic builds the total as
+ * `noCache + cacheRead + cacheWrite` (convert-anthropic-usage.ts) — the same
+ * object whose `inputTokens.cacheWrite` becomes `$eve.cache_write_tokens`.
+ * Subtracting both is what leaves the non-cached remainder.
+ */
 export function costUsd(
   model: string | null,
   inputTokens: number,
   outputTokens: number,
   cacheReadTokens = 0,
+  cacheWriteTokens = 0,
 ): number {
   const price = findPrice(model);
   if (!price) return 0;
-  // Only reached by models the catalog states no cache read price for — 66 of
-  // the 206 it prices. Among the 140 that do state one, the ratio to input runs
+
+  // The two fallbacks, side by side, because they are opposite decisions.
+  //
+  // A cached read with no stated rate costs a tenth of input. 66 of the 206
+  // priced models state no rate; among the 140 that do, the ratio to input runs
   // from 0.008 to 0.52 and 59 sit at exactly 0.10, so this is the plurality
-  // rather than a rule, and it is never used to shadow a rate we were told.
-  const cacheRate = price.cacheRead ?? price.input * 0.1;
-  // Cached reads are billed at the cache rate, so they must not also be billed
-  // at the full input rate. eve reports them inside the input total.
-  const billableInput = Math.max(0, inputTokens - cacheReadTokens);
+  // rather than a rule, and it never shadows a rate we were told.
+  //
+  // A cache write with no stated rate costs the plain input rate. Zero is not
+  // an option — these are prompt tokens the provider read and billed, and a
+  // class quietly worth nothing is the same lie as an unpriced model rendering
+  // $0.00. Neither is assuming the premium: 29 of the 33 stated rates are
+  // exactly 1.25x input, but those 33 are precisely the providers who charge
+  // extra, and the catalog contradicts the pattern anyway —
+  // minimax/minimax-m2.5-highspeed writes at 0.625x input. The input rate is
+  // also the number these tokens already produced before this function took a
+  // write count, so the 173 silent models do not move.
+  const cacheReadRate = price.cacheRead ?? price.input * 0.1;
+  const cacheWriteRate = price.cacheWrite ?? price.input;
+
+  const nonCachedTokens = inputTokens - cacheReadTokens - cacheWriteTokens;
+  if (nonCachedTokens < 0) {
+    warnImpossibleSplit(model, inputTokens, cacheReadTokens, cacheWriteTokens);
+  }
+
   return (
-    (billableInput / 1_000_000) * price.input +
+    (Math.max(0, nonCachedTokens) / 1_000_000) * price.input +
     (outputTokens / 1_000_000) * price.output +
-    (cacheReadTokens / 1_000_000) * cacheRate
+    (cacheReadTokens / 1_000_000) * cacheReadRate +
+    (cacheWriteTokens / 1_000_000) * cacheWriteRate
   );
 }
 

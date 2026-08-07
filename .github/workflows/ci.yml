@@ -145,9 +145,61 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r --if-present run build
 
+      # A SECOND database, seeded, that the probes read — and that the agent
+      # never touches.
+      #
+      # Most probes build a scratch schema and are indifferent to what is here.
+      # Two are not, on purpose: 07-fact-tables cross-checks every fact total
+      # against `workflow.workflow_runs` itself, and 08-metric-query runs every
+      # catalog entry against the real table rather than a paraphrase of it —
+      # which is the only way either catches drift between the shipped SQL and
+      # the shipped schema. Run against the empty database this job used to
+      # provide, 07 threw `42P01` and 08 failed four assertions that are all
+      # anti-vacuity guards:
+      #
+      #     the fixture actually exercises partial coverage      0 of 0 turns have a TTFT
+      #     failure_rate is lib/monitors.ts's failure rate       expected 0, actual null
+      #     …and the check is not vacuous                        0 of 0
+      #     a limit that cuts the result says so                 truncated=false rows=0
+      #
+      # That is the probe refusing to report a pass it did not earn, which is the
+      # same doctrine as the negative control. It needs rows, not a bug fix.
+      #
+      # SEPARATE, not the agent's, and that is the whole design. The seed
+      # contains RUNNING sessions — eve re-enqueues active runs on startup and
+      # the Docker sandbox spawns one container per durable session, so seeding
+      # the database the agent boots against would hand "boot the agent" a
+      # sandbox storm. The next step's comment already promises a fresh database
+      # for exactly that reason; this keeps that promise rather than working
+      # around it.
+      #
+      # ensure-schemas.mjs is needed because the dashboard creates evestack.spans
+      # and the four budget tables lazily, on first read or write. A seeder is a
+      # pile of INSERTs with nothing to trigger the lazy path, so without it psql
+      # stops on `relation "evestack.budget_steps" does not exist` and reads
+      # every COPY line after it as a command.
+      #
+      # seed.mjs writes its progress line to STDERR and the SQL to stdout. Do not
+      # add `2>&1` here: it puts `seed: 3322 runs, …` into the file as line one
+      # and psql fails on `syntax error at or near "seed"`.
+      - name: a seeded database for the probes, separate from the agent's
+        env:
+          PGURL: postgres://evestack:evestack@localhost:5433
+        run: |
+          set -euo pipefail
+          psql "$PGURL/evestack" -v ON_ERROR_STOP=1 -c 'CREATE DATABASE evestack_probe'
+          export WORKFLOW_POSTGRES_URL="$PGURL/evestack_probe"
+          (cd templates/default && npm run db:bootstrap)
+          (cd packages/dashboard && node --import ./test/register-ts-resolve.mjs scripts/ensure-schemas.mjs)
+          node packages/dashboard/scripts/seed.mjs > /tmp/probe-seed.sql
+          psql "$PGURL/evestack_probe" -q -v ON_ERROR_STOP=1 -f /tmp/probe-seed.sql
+          psql "$PGURL/evestack_probe" -tAc "SELECT 'seeded runs: ' || count(*) FROM workflow.workflow_runs"
+
       # Postgres-only and filesystem-only probes first. They are fast, they need
       # no agent, and if they fail there is no point booting one.
       - name: probes that need only Postgres
+        env:
+          WORKFLOW_POSTGRES_URL: postgres://evestack:evestack@localhost:5433/evestack_probe
         run: node contract/runtime/run.mjs --require=postgres,typescript
 
       # A FRESH database for the agent, created per run, so nothing is ever

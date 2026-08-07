@@ -1,12 +1,9 @@
 import { listApprovals, type ApprovalRow, type ApproverIdentity } from "@/lib/approvals";
 import { DatabaseUnavailableError, describeDbError } from "@/lib/db";
+import { stamp } from "@/lib/time";
 import styles from "./approvals.module.css";
 
 export const dynamic = "force-dynamic";
-
-function stamp(iso: string): string {
-  return new Date(iso).toLocaleString("en-US", { timeZone: "UTC", hour12: false });
-}
 
 type Trust = { label: string; cls: string; title: string };
 
@@ -113,7 +110,7 @@ export default async function ApprovalsPage() {
           <table className={styles.table}>
             <thead>
               <tr>
-                <th>When (UTC)</th>
+                <th>When</th>
                 <th>Decision</th>
                 <th>Tool</th>
                 <th>Approver</th>
@@ -126,7 +123,10 @@ export default async function ApprovalsPage() {
                 const t = trust(row.approverVia);
                 return (
                   <tr key={row.id}>
-                    <td className="mono">{stamp(row.decidedAt)}</td>
+                    {/* An audit log is unbounded in time, so the year is not optional here:
+                        without it a decision from last August and one from this August are
+                        the same string. See the note on `stamp`. */}
+                    <td className="mono">{stamp(row.decidedAt, "second", { year: true })}</td>
                     <td>
                       <span
                         className={
