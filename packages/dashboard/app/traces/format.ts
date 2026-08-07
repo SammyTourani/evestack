@@ -8,6 +8,8 @@
  * misbehaving, and it should render from HTML alone.
  */
 
+import { MODEL_CALL_SPANS, TOOL_CALL_SPANS, matchesSpanFamily } from "@/lib/span-families";
+
 export const fmt = (n: number): string => n.toLocaleString("en-US");
 
 export function duration(ms: number | null): string {
@@ -162,18 +164,16 @@ export function spanKind(name: string): string {
   if (name === "agent.turn.terminal") return "turn end";
   if (name === "agent.step") return "step";
   if (name === "agent.action") return "action";
-  if (name === "ai.toolCall" || name.startsWith("execute_tool ")) return "tool";
-  if (name === "ai.streamText.doStream" || name.startsWith("chat ")) return "model";
+  if (matchesSpanFamily(TOOL_CALL_SPANS, name)) return "tool";
+  if (matchesSpanFamily(MODEL_CALL_SPANS, name)) return "model";
   if (name.startsWith("ai.")) return "ai sdk";
   if (name.startsWith("agent.")) return "agent";
   return "span";
 }
 
-export const isToolSpan = (name: string): boolean =>
-  name === "ai.toolCall" || name.startsWith("execute_tool ");
+export const isToolSpan = (name: string): boolean => matchesSpanFamily(TOOL_CALL_SPANS, name);
 
-export const isModelSpan = (name: string): boolean =>
-  name === "ai.streamText.doStream" || name.startsWith("chat ");
+export const isModelSpan = (name: string): boolean => matchesSpanFamily(MODEL_CALL_SPANS, name);
 
 /** OTel status codes: 0 unset, 1 ok, 2 error. Only the last one is news. */
 export const spanFailed = (statusCode: number): boolean => statusCode === 2;

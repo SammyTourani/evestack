@@ -1,7 +1,7 @@
 import { gunzipSync, inflateSync } from "node:zlib";
 import { INGEST_UNAUTHENTICATED_MESSAGE, ingestAuthorized } from "@/lib/auth";
 import {
-  getTraceStats,
+  getTraceOverview,
   insertSpans,
   OtlpFormatError,
   parseOtlpTraces,
@@ -163,14 +163,21 @@ export async function POST(request: Request): Promise<Response> {
   // is `{}`, and `partialSuccess` appears only when something was actually dropped.
   // Reporting rejected spans is what stops an exporter retrying a batch it can
   // never get accepted.
+  //
+  // "unstorable" rather than "missing", because a rejection is no longer only an
+  // absent field. A timestamp too large for the `bigint` column it lands in is
+  // rejected here too, and it has to be: it used to throw from inside
+  // insertSpans, which from up here is indistinguishable from a dead database,
+  // so this route answered 503 + Retry-After and one span with a double-scaled
+  // clock made an exporter resend the identical batch forever.
   if (parsed.rejected > 0) {
     return Response.json({
       partialSuccess: {
         rejectedSpans: String(parsed.rejected),
         errorMessage:
           parsed.errors.length > 0
-            ? `spans missing a usable trace id, span id, or start time: ${parsed.errors.join("; ")}`
-            : "spans missing a usable trace id, span id, or start time",
+            ? `spans with an unstorable trace id, span id or timestamp: ${parsed.errors.join("; ")}`
+            : "spans with an unstorable trace id, span id or timestamp",
       },
     });
   }
@@ -180,6 +187,16 @@ export async function POST(request: Request): Promise<Response> {
 /**
  * What has landed so far — the quickest way to tell a wired-up exporter from a
  * silent one.
+ *
+ * getTraceOverview() and not the getTraceStats() this used to call. That one
+ * matched `ai.toolCall` and `ai.streamText.doStream` exactly, which are the
+ * names eve's LOCAL tracer emits; a deployment that exports — the only kind
+ * that can reach this endpoint — sends `execute_tool <name>` and `chat <model>`,
+ * so both counts came back 0 from a table full of tool calls and the one
+ * question this route exists to answer got the wrong answer. The overview counts
+ * both vocabularies, and it carries `unattributedSpans` besides: spans that
+ * arrived with ids the schema did not recognise, which is the other way
+ * "nothing was ingested" can be wrong.
  *
  * Counts only, never span contents, because spans carry prompt bodies and tool
  * arguments. It used to be unauthenticated, on the stated grounds that "the
@@ -194,7 +211,11 @@ export async function GET(request: Request): Promise<Response> {
   }
 
   try {
-    return Response.json({ ok: true, endpoint: "/api/ingest/v1/traces", ...(await getTraceStats()) });
+    return Response.json({
+      ok: true,
+      endpoint: "/api/ingest/v1/traces",
+      ...(await getTraceOverview()),
+    });
   } catch (error) {
     return Response.json({ ok: false, error: describe(error) }, { status: 503 });
   }
