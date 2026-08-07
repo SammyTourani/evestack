@@ -11,19 +11,25 @@ because a review that only checks the parts I am proud of is not a review.
 
 ## Scope: which commits are actually mine
 
-The branch is 48 commits ahead of `main`, but **only the last 21 are from this session**.
+Against `origin/main`, this branch is **29 commits ahead — 22 of them mine**. The other
+7 were already on the feature branch when the session started and are someone else's
+work; judging them as mine would be judging the wrong thing.
 
 | | |
 | --- | --- |
-| Pre-existing on the branch | 27 commits, everything before `d1fab73` (before 03:36) |
-| **This session** | **`d1fab73`..`HEAD` — 21 commits, 118 files, +23,472 / −1,228** |
+| Pre-existing | 7 commits, everything before `d1fab73` (before 03:36 on 08-06) |
+| **This session** | **`d1fab73`..`HEAD` — 22 commits, 118 files, +23,472 / −1,228** |
 
-`COMMITS.txt` lists mine in order. Reviewing the earlier 27 would be judging someone
-else's work as though it were mine.
+`COMMITS.txt` lists mine in order, oldest first.
+
+Note: comparing against a *local* `main` may show different totals — mine was 19 commits
+behind `origin/main` when this was written. Use `origin/main`, which is what GitHub
+shows.
 
 ```
-git log --oneline d1fab73~1..HEAD          # just this session
-git diff --stat d1fab73~1..HEAD
+git log --oneline d1fab73~1..HEAD          # just this session, 22 commits
+git diff --stat  d1fab73~1..HEAD
+git log --oneline origin/main..HEAD        # everything on the branch, 29
 ```
 
 ---
