@@ -1,0 +1,21 @@
+f525c55  2026-08-06  Lock the dashboard's new dependencies
+cc89fec  2026-08-06  "Nothing happened" and "I cannot see" must not render the same
+6b9477c  2026-08-06  Delete the flag reader I wrote for actions that do not exist
+15a7d51  2026-08-06  W11: the evals page had a category that could never fire
+2607288  2026-08-06  W10: stop the site underselling what the dashboard now does
+e3204e1  2026-08-06  W9: the money, which the hosted product does not show at all
+7528a72  2026-08-06  W8: nine monitors that ship on, and a third state that is not OK
+e92b7c1  2026-08-06  W7: the page a hosted dashboard cannot ship
+f3cec00  2026-08-06  W6: a front door that is a monitor, not a list
+295a878  2026-08-06  W4 and W5: the session page and a sessions list you can search
+83a015a  2026-08-06  Pin the outcome vocabulary before two pages are built on it
+5bb7870  2026-08-06  Narrow three exports and delete a zoom action nothing dispatches
+5c135f5  2026-08-06  Three ways the query API answered confidently and wrongly
+1dcc9f3  2026-08-06  A failure rate that can read 200% is not a failure rate
+6043533  2026-08-06  Stop count() claiming to be dollars, and give the charts the button reset
+5e9b1f7  2026-08-06  Make the charts speak the query API's units, not their own
+ecb17e3  2026-08-06  W2 and W3: fact tables, a query API, and Tailwind without a redesign
+9d31b09  2026-08-06  Remediate what the W1 reviewers found, mostly by deleting it
+b86cdfa  2026-08-06  W1: make the spans that matter resolve to a session
+efab27d  2026-08-06  Update the honesty note that had gone stale
+d1fab73  2026-08-06  Give the dashboard a database worth drawing charts against
