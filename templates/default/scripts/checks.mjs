@@ -251,6 +251,36 @@ export function dashboardTarget(ingestUrl) {
 }
 
 /**
+ * A value that can actually be used as the base for `/eve/v1/health`.
+ *
+ * `URL.parse` plus a protocol check, for exactly the reasons `dashboardTarget`
+ * above has both. This is that same bug on the other half of the stack, and
+ * `findAgent` got neither guard: `new URL("/eve/v1/health", url)` sat inside
+ * `check`, which is OUTSIDE probeJson's try/catch and outside every catch in
+ * verify, so one typo threw
+ *
+ *   TypeError [ERR_INVALID_URL]: Invalid URL
+ *     input: '/eve/v1/health', base: 'localhost:2000'
+ *
+ * out of the middle of the run. And because verify prints its report at the END,
+ * the checks that had already passed were never printed at all: a mistyped
+ * EVESTACK_AGENT_URL cost the whole report, not one line of it. Reproduced with
+ * `localhost:2000`, `127.0.0.1:2000`, `2000`, `:2000` and `//localhost:2000`.
+ *
+ * The protocol check is the load-bearing half, again just as it is there:
+ * `URL.parse("localhost:2000")` SUCCEEDS — it reads `localhost:` as the scheme —
+ * and `.origin` for a non-special scheme is the four-character string "null", so
+ * accepting it only moves the throw one line down.
+ */
+export function agentBaseUrl(url) {
+  const trimmed = url?.trim();
+  if (!trimmed) return null;
+  const parsed = URL.parse(trimmed);
+  if (!parsed || (parsed.protocol !== "http:" && parsed.protocol !== "https:")) return null;
+  return parsed;
+}
+
+/**
  * Where the agent is listening.
  *
  * `eve dev` takes 2000 but **auto-increments if it is taken**, so a fixed guess
@@ -259,12 +289,20 @@ export function dashboardTarget(ingestUrl) {
  */
 export async function findAgent(explicitUrl, pinnedPort, startPort = 2000, span = 5) {
   const check = async (url) => {
-    const probe = await probeJson(new URL("/eve/v1/health", url), {}, 2000);
+    const base = agentBaseUrl(url);
+    if (!base) return null;
+    const probe = await probeJson(new URL("/eve/v1/health", base), {}, 2000);
     return probe.ok ? { url, health: probe.body } : null;
   };
 
   if (explicitUrl) {
-    return (await check(explicitUrl)) ?? { url: explicitUrl, health: null };
+    // A malformed value is reported, not thrown, and NOT quietly replaced by a
+    // scan: adopting whatever answers on 2000 is precisely the bug the pinned
+    // branch below exists to prevent. `malformed` is what verify prints instead
+    // of "nothing is answering", which would blame the agent for a typo.
+    const explicit = explicitUrl.trim();
+    if (!agentBaseUrl(explicit)) return { url: explicit, health: null, malformed: explicit };
+    return (await check(explicit)) ?? { url: explicit, health: null };
   }
 
   // The recorded port, and ONLY the recorded port. Falling through to a scan

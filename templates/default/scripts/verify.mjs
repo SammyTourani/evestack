@@ -44,6 +44,33 @@ import {
 } from "./checks.mjs";
 
 const argv = process.argv.slice(2);
+
+/**
+ * --help, answered BEFORE anything runs.
+ *
+ * This used to be one of the flags the file did not know, and an unknown flag
+ * was simply ignored — so `npm run verify -- --help` ran the whole thing:
+ * Postgres, Docker, the agent, the dashboard, an embedding probe, and then it
+ * offered to open a browser. Asking a command what it does should never be the
+ * thing that does it. Printed here rather than in a --help branch further down
+ * because every check below has a side effect of some kind.
+ */
+if (argv.includes("--help") || argv.includes("-h")) {
+  process.stdout.write(
+    [
+      "",
+      "  npm run verify              check the stack, then offer to open the dashboard",
+      "  npm run verify -- --open    open it without asking",
+      "  npm run verify -- --no-open never open it (implied when not a terminal)",
+      "  npm run verify -- --json    machine-readable, opens nothing",
+      "",
+      "  Exit code is 1 if anything required failed, so CI can run it too.",
+      "",
+    ].join("\n"),
+  );
+  process.exit(0);
+}
+
 const asJson = argv.includes("--json");
 const openFlag = argv.includes("--open");
 const noOpen = argv.includes("--no-open") || asJson;
@@ -145,30 +172,57 @@ if (client) {
 const provider = (env("EVESTACK_PROVIDER") || "openai").toLowerCase();
 const model = env("EVESTACK_MODEL") || { openai: "gpt-5-mini", anthropic: "claude-sonnet-5", ollama: "qwen3" }[provider];
 
-if (provider === "ollama") {
-  const baseUrl = env("OLLAMA_BASE_URL") || "http://127.0.0.1:11434";
-  // The embedding model is a SEPARATE pull and only matters if memory is used,
-  // so it is checked separately and reported as a warning, not a failure.
-  const embedProvider = (env("EVESTACK_EMBED_PROVIDER") || "ollama").toLowerCase();
-  const embedModel = env("EVESTACK_EMBED_MODEL") || "nomic-embed-text";
-  const wanted = embedProvider === "ollama" ? [model, embedModel] : [model];
-  const ollama = await inspectOllama(baseUrl, wanted);
+/**
+ * Which provider will actually be asked for EMBEDDINGS.
+ *
+ * Resolved the way lib/memory.ts `readEmbedProvider()` resolves it: an explicit
+ * EVESTACK_EMBED_PROVIDER first, then the chat provider, and for anthropic —
+ * which has no embeddings endpoint at all — OpenAI if there is a key and nothing
+ * if there is not.
+ *
+ * This used to be read INSIDE the `provider === "ollama"` branch, which left the
+ * embedding pull-check unreachable for two of the three combinations. The one
+ * that matters is the combination .env.example and the warning below both
+ * RECOMMEND: EVESTACK_PROVIDER=anthropic with EVESTACK_EMBED_PROVIDER=ollama.
+ * There the chat branch suppressed its "Anthropic has no embeddings" warning
+ * precisely because the variable was set, and nothing ever asked Ollama whether
+ * nomic-embed-text was pulled — so verify printed all green and "Everything
+ * works", and the first `remember` failed. "An embedding model that was never
+ * pulled" is named in this file's own header as a problem it exists to catch.
+ */
+const EMBED_DEFAULT_MODEL = { openai: "text-embedding-3-small", ollama: "nomic-embed-text" };
+const explicitEmbed = (env("EVESTACK_EMBED_PROVIDER") || "").toLowerCase();
+const embedProvider = explicitEmbed
+  ? explicitEmbed
+  : provider === "ollama"
+    ? "ollama"
+    : provider === "openai"
+      ? "openai"
+      : env("OPENAI_API_KEY")
+        ? "openai"
+        // anthropic with no OpenAI key anywhere: memory.ts refuses to start.
+        : null;
+const embedModel = env("EVESTACK_EMBED_MODEL") || EMBED_DEFAULT_MODEL[embedProvider];
 
+// One Ollama call for both halves. `wanted` carries only the models this
+// configuration will really ask for, so a chat-only or embeddings-only Ollama is
+// never reported missing a model nobody wants.
+const ollamaBaseUrl = env("OLLAMA_BASE_URL") || "http://127.0.0.1:11434";
+const ollama =
+  provider === "ollama" || embedProvider === "ollama"
+    ? await inspectOllama(ollamaBaseUrl, [
+        ...(provider === "ollama" ? [model] : []),
+        ...(embedProvider === "ollama" ? [embedModel] : []),
+      ])
+    : null;
+
+if (provider === "ollama") {
   if (!ollama.running) {
-    fail("model", `Ollama is not answering on ${baseUrl}`, "start Ollama, then `ollama pull " + model + "`");
+    fail("model", `Ollama is not answering on ${ollamaBaseUrl}`, "start Ollama, then `ollama pull " + model + "`");
   } else if (ollama.missing.includes(model)) {
     fail("model", `Ollama is up but "${model}" is not pulled`, `ollama pull ${model}`);
   } else {
     pass("model", `ollama/${model} is pulled and ready`);
-    if (embedProvider === "ollama" && ollama.missing.includes(embedModel)) {
-      warn(
-        "memory",
-        `the embedding model "${embedModel}" is not pulled, so remember/recall will fail`,
-        `ollama pull ${embedModel}`,
-      );
-    } else {
-      pass("memory", `embeddings via ollama/${embedModel}`);
-    }
   }
 } else {
   const keyVar = provider === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY";
@@ -179,13 +233,54 @@ if (provider === "ollama") {
   } else {
     fail("model", `${keyVar} is not set`, `add ${keyVar}=… to .env.local`);
   }
-  if (provider === "anthropic" && !env("OPENAI_API_KEY") && (env("EVESTACK_EMBED_PROVIDER") || "") !== "ollama") {
+}
+
+// Embeddings are a separate decision from chat and a separate failure, which is
+// the whole point of the block above. A warning, never a failure: memory is
+// optional and nobody should be told their install is broken because they have
+// not pulled a 274 MB model they may not use.
+if (embedProvider === null) {
+  warn(
+    "memory",
+    "Anthropic has no embeddings endpoint, so remember/recall cannot run",
+    "set EVESTACK_EMBED_PROVIDER=ollama (then `ollama pull nomic-embed-text`), or set OPENAI_API_KEY",
+  );
+} else if (embedProvider !== "openai" && embedProvider !== "ollama") {
+  // lib/memory.ts throws on anything else, naming the two it knows. A value it
+  // will reject at the first `remember` is worth a red line here.
+  fail(
+    "memory",
+    `EVESTACK_EMBED_PROVIDER="${explicitEmbed}" is not an embedding provider this agent knows`,
+    "set it to openai or ollama, or unset it to follow EVESTACK_PROVIDER",
+  );
+} else if (embedProvider === "ollama") {
+  if (!ollama.running) {
     warn(
       "memory",
-      "Anthropic has no embeddings endpoint, so remember/recall cannot run",
-      "set EVESTACK_EMBED_PROVIDER=ollama (then `ollama pull nomic-embed-text`), or set OPENAI_API_KEY",
+      `embeddings are set to ollama/${embedModel}, but Ollama is not answering on ${ollamaBaseUrl}`,
+      `start Ollama, then \`ollama pull ${embedModel}\``,
     );
+  } else if (ollama.missing.includes(embedModel)) {
+    warn(
+      "memory",
+      `the embedding model "${embedModel}" is not pulled, so remember/recall will fail`,
+      `ollama pull ${embedModel}`,
+    );
+  } else {
+    pass("memory", `embeddings via ollama/${embedModel}`);
   }
+} else if (env("OPENAI_API_KEY")) {
+  pass("memory", `embeddings via openai/${embedModel}`);
+} else if (provider === "openai") {
+  // The model line above already failed on this same missing key with this same
+  // fix. One line per problem.
+  skip("memory", "needs OPENAI_API_KEY, which the model check already reports");
+} else {
+  warn(
+    "memory",
+    `embeddings are set to openai/${embedModel}, but OPENAI_API_KEY is not set`,
+    "add OPENAI_API_KEY=… to .env.local, or set EVESTACK_EMBED_PROVIDER=ollama",
+  );
 }
 
 /* -------------------------------------------------------------------------- */
@@ -202,6 +297,17 @@ if (agent.health?.ok) {
     agent.guessed
       ? `answering at ${agent.url} (found by scanning — add EVESTACK_AGENT_PORT to be sure it is yours)`
       : `answering at ${agent.url}`,
+  );
+} else if (agent.malformed) {
+  // Not "your agent is down" — nothing was probed, because the value is not a
+  // URL. Saying the agent is not running would send the reader to `npm run dev`
+  // for a typo in .env.local. Before the guard in `agentBaseUrl` this case did
+  // not reach here at all: it threw ERR_INVALID_URL out of the middle of the run
+  // and took every check that had already passed with it, unprinted.
+  fail(
+    "agent",
+    `EVESTACK_AGENT_URL is not a URL (${agent.malformed}), so there was nothing to probe`,
+    "it should look like http://127.0.0.1:2000",
   );
 } else {
   fail(

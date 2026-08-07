@@ -51,6 +51,19 @@ async function connect() {
   const { default: pg } = await import("pg");
   const client = new pg.Client({ connectionString: process.env.WORKFLOW_POSTGRES_URL });
   await client.connect();
+  // A pg.Client with no 'error' listener turns a dead socket into an
+  // uncaughtException, and in a probe runner that does not fail THIS probe — it
+  // kills the process and takes every other probe's result with it. A Postgres
+  // blip mid-suite would then report as "the suite crashed" instead of as one red
+  // line. Every long-lived client under probes/ was missing it; the same listener
+  // already exists in templates/default/scripts/checks.mjs connectPostgres(), for
+  // the same reason and with the same body.
+  //
+  // A no-op, not `client.destroy()`: pg.Client has no `destroy`, only `end`, and
+  // there is nothing useful to do here anyway — the next query rejects on its own
+  // with pg's "Client has encountered a connection error and is not queryable",
+  // which the runner reports as this probe failing, which is what it is.
+  client.on("error", () => {});
   return client;
 }
 
@@ -95,17 +108,32 @@ export default {
         )
       `);
 
+      // Both ends of every duration come from the SERVER's clock.
+      //
+      // This used to pass `new Date().toISOString()` for completed_at while
+      // started_at was `now() - interval`, which measures the gap between two
+      // different clocks rather than a duration. Measured on this machine: the
+      // container's Postgres runs 73ms ahead of the host (three samples, 0-1ms
+      // round trip), so every duration came back 73ms short and all five
+      // percentile assertions failed together against a ±50ms tolerance — with
+      // nothing whatsoever wrong in the code under test. A probe that fails on VM
+      // clock skew is a probe that flakes on any virtualised CI runner, and the
+      // subject here is `percentile_cont`, not clock agreement.
+      //
+      // `now()` is transaction-start time and both references sit in one
+      // statement, so the recorded duration is now EXACTLY the fixture.
       const insert = async (row) => {
         await client.query(
           `INSERT INTO ${schema}.workflow_runs
              (id, status, error_code, created_at, started_at, completed_at, attributes)
-           VALUES ($1,$2,$3, now(), now() - $4::interval, $5, $6::jsonb)`,
+           VALUES ($1,$2,$3, now(), now() - $4::interval,
+                   CASE WHEN $5::boolean THEN now() END, $6::jsonb)`,
           [
             row.id,
             row.status,
             row.errorCode ?? null,
             `${(row.ms ?? 0) / 1000} seconds`,
-            row.ms === null ? null : new Date().toISOString(),
+            row.ms !== null,
             JSON.stringify(row.attributes),
           ],
         );
@@ -145,8 +173,9 @@ export default {
       `);
       const got = rows[0];
 
-      // ±50ms: started_at is computed from now() per row, so each carries a
-      // sub-millisecond real elapsed on top of its fixture.
+      // ±50ms is headroom now, not a requirement: both ends of each duration are
+      // one `now()` inside one statement, so these come back exact. It used to be
+      // load-bearing and was not wide enough — see the note on `insert`.
       for (const [key, want] of Object.entries(EXPECTED)) {
         const actual = Number(got[key]);
         const tolerance = key === "count" ? 0 : 50;
