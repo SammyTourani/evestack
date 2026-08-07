@@ -123,8 +123,21 @@ test("preflight is not imported, so no shipped page is restyled", () => {
   const css = compiler.build(["p-4"]);
   for (const sentinel of [
     "-webkit-text-size-adjust", // preflight's html rule
-    "list-style: none", // preflight's ol/ul reset
     "-webkit-appearance: button", // preflight's button reset
+    //
+    // `list-style: none` USED TO BE A THIRD SENTINEL AND IS NOT ONE.
+    //
+    // The build this scans includes the hand-authored `@layer app` block, not
+    // only what Tailwind emits — so the sentinel had to be a declaration that
+    // could ONLY have come from preflight, and that one cannot. It is ordinary
+    // CSS anybody may write. The sidebar's `.nav-list` writes it, for the plain
+    // reason that a <ul> of navigation links should not render bullets, and this
+    // test failed on it: a true statement about our own stylesheet, reported as
+    // evidence of an import that was never added.
+    //
+    // The two above are vendor-prefixed resets no hand-written rule in this
+    // project has any reason to contain. The real test is the two `@import`
+    // assertions below, which read the source and are exact.
   ]) {
     assert.ok(
       !css.includes(sentinel),

@@ -18,6 +18,7 @@
  * technology. The colour is the fourth channel, not the first.
  */
 
+import { Children } from "react";
 import { formatCost, formatValue, type Unit, type Value } from "./lib/format";
 import { describeDelta, formatDelta, periodDelta, type Better } from "./lib/delta";
 import { describeCoverage, type Coverage } from "./lib/series";
@@ -70,8 +71,12 @@ export function QueryValue(props: QueryValueProps) {
       : null;
 
   return (
-    <div className="flex flex-col gap-1 rounded-md border border-border bg-bg-raised p-4">
-      <span className="text-micro tracking-wide text-text-dim uppercase">{props.label}</span>
+    <div className="flex h-full flex-col gap-1 rounded-md border border-border bg-bg-raised p-4">
+      {/* `min-h-8` so a label that wraps to two lines ("P95 time to first token")
+          does not push its own number a line lower than its neighbours'. The
+          numbers are the thing being compared across the row; they have to sit on
+          one baseline. */}
+      <span className="min-h-8 text-micro tracking-wide text-text-dim uppercase">{props.label}</span>
       <span className="font-mono text-metric text-text">
         {text}
         {props.unit === "cost" && !priced ? (
@@ -95,7 +100,10 @@ export function QueryValue(props: QueryValueProps) {
       )}
 
       {props.spark === undefined ? null : (
-        <div className="mt-1">
+        // `mt-auto` pins every sparkline to the bottom of its tile. Without it a
+        // tile carrying a coverage warning drew its spark one line lower than the
+        // tiles beside it, so the row read as ragged rather than as a set.
+        <div className="mt-auto pt-1">
           <Sparkline
             values={props.spark}
             unit={props.unit}
@@ -113,10 +121,31 @@ export function QueryValue(props: QueryValueProps) {
  * A row of tiles. It exists so that the grid rule lives in one place rather
  * than being re-guessed on every page that shows four numbers.
  */
+/**
+ * Column counts that divide the row evenly, chosen from how many tiles it holds.
+ *
+ * `auto-fit, minmax(180px, 1fr)` divides the available width and takes whatever
+ * count falls out. That is fine until the count does not divide the tiles: with
+ * the sidebar in place the content column is ~1060px, 180px minimums gave exactly
+ * FIVE columns, and the overview's SIX tiles rendered as five plus a lone orphan
+ * under an empty half-row.
+ *
+ * A fixed 2/3/6 fixes the overview and breaks /costs, which has four — three plus
+ * an orphan at the middle step. So the count is read rather than assumed. Only the
+ * arities this actually carries are listed; anything else falls back to auto-fit,
+ * which is a reasonable guess when there is nothing better to go on.
+ */
+const COLUMNS: Record<number, string> = {
+  1: "grid-cols-1",
+  2: "grid-cols-2",
+  3: "grid-cols-1 sm:grid-cols-3",
+  4: "grid-cols-2 lg:grid-cols-4",
+  5: "grid-cols-2 sm:grid-cols-3 xl:grid-cols-5",
+  6: "grid-cols-2 md:grid-cols-3 xl:grid-cols-6",
+};
+
 export function QueryValueRow({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(180px,1fr))]">
-      {children}
-    </div>
-  );
+  const count = Children.toArray(children).length;
+  const columns = COLUMNS[count] ?? "[grid-template-columns:repeat(auto-fit,minmax(180px,1fr))]";
+  return <div className={`grid gap-3 ${columns}`}>{children}</div>;
 }

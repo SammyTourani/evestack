@@ -186,17 +186,43 @@
     text-decoration: none;
   }
 
-  /* ---- chrome ---- */
-  .topbar {
+  /* ---- chrome ----
+     A two-column grid on <body> rather than a fixed sidebar plus a margin on the
+     content. The grid is what makes the content column a real column: it gets
+     `min-width: 0`, so a wide table or chart inside it scrolls within its own
+     container instead of pushing the page wider. The old horizontal nav could not
+     do that — it set a floor on the page's width (876px of links at a 768px
+     viewport, and body.scrollWidth 1155), so every page scrolled sideways. */
+  body {
+    display: grid;
+    /* One column by default. The sidebar is absent on /signin — app/nav.tsx
+       returns null there — and a two-column template with a single child would
+       drop <main> into the 220px sidebar track and render the sign-in form in a
+       ribbon down the left edge. `:has()` asks the DOM instead of assuming. */
+    grid-template-columns: minmax(0, 1fr);
+    min-height: 100vh;
+  }
+  body:has(.sidebar) {
+    grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+  }
+  /* No sidebar, so there is no column to be left-aligned within: centre it. */
+  body:not(:has(.sidebar)) .shell {
+    margin: 0 auto;
+  }
+  :root {
+    --sidebar-w: 220px;
+  }
+  .sidebar {
     display: flex;
-    align-items: center;
-    gap: 20px;
-    padding: 0 20px;
-    height: 52px;
-    border-bottom: 1px solid var(--border);
+    flex-direction: column;
+    gap: 22px;
+    padding: 18px 12px 16px;
+    border-right: 1px solid var(--border);
     background: var(--bg-raised);
     position: sticky;
     top: 0;
+    height: 100vh;
+    overflow-y: auto;
     z-index: 10;
   }
   .brand {
@@ -204,21 +230,63 @@
     align-items: center;
     gap: 8px;
     font-weight: 600;
+    padding: 0 8px;
   }
   .brand-mark {
     color: var(--accent);
     font-size: 16px;
   }
-  .topnav {
+  .sidebar-groups {
     display: flex;
-    gap: 16px;
-    color: var(--text-dim);
+    flex-direction: column;
+    gap: 18px;
   }
-  .topnav a:hover {
+  .nav-group-title {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    padding: 0 8px;
+    margin: 0 0 6px;
+  }
+  .nav-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .nav-link {
+    display: block;
+    padding: 5px 8px 5px 10px;
+    border-radius: 6px;
+    color: var(--text-dim);
+    /* The rail lives on every link so the active one does not shift 2px right
+       when it lights up. */
+    border-left: 2px solid transparent;
+    font-size: 13.5px;
+  }
+  .nav-link:hover {
     color: var(--text);
+    background: var(--bg-hover, rgb(255 255 255 / 0.04));
+  }
+  .nav-link-active {
+    color: var(--text);
+    background: var(--bg-hover, rgb(255 255 255 / 0.06));
+    border-left-color: var(--accent);
+    font-weight: 500;
+  }
+  .sidebar-foot {
+    margin-top: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    align-items: flex-start;
+    padding: 0 8px;
   }
   .badge-selfhosted {
-    margin-left: auto;
     font-family: var(--mono);
     font-size: 11px;
     color: var(--ok);
@@ -228,9 +296,68 @@
     opacity: 0.85;
   }
   .shell {
+    /* Was `max-width: 1180px; margin: 0 auto`. The cap stays — long measures are
+       hard to read and the charts were designed against it — but it is no longer
+       centred on the viewport, because with a sidebar that puts the content
+       visually off-centre from its own column. `min-width: 0` is the line that
+       actually stops the overflow: without it a grid item defaults to
+       `min-width: auto` and refuses to shrink below its contents. */
+    min-width: 0;
     max-width: 1180px;
-    margin: 0 auto;
-    padding: 28px 20px 80px;
+    padding: 28px 24px 80px;
+  }
+
+  /* Below this the sidebar stops being affordable: it is 220px of a 900px
+     viewport. It becomes a horizontal strip above the content — still grouped,
+     still showing the active page, and scrollable in its own box rather than
+     widening the document. */
+  @media (max-width: 900px) {
+    /* `body:has(.sidebar)`, not `body`. A media query adds no specificity, so a
+       plain `body` rule here loses to the `body:has(.sidebar)` above it however
+       late it appears — which left the grid at `220px 548px` while the sidebar's
+       own contents had already flipped to a row. Half a layout is worse than
+       either. */
+    body:has(.sidebar) {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .sidebar {
+      position: static;
+      height: auto;
+      flex-direction: row;
+      align-items: center;
+      gap: 16px;
+      border-right: 0;
+      border-bottom: 1px solid var(--border);
+      overflow-x: auto;
+      padding: 10px 16px;
+    }
+    .sidebar-groups {
+      flex-direction: row;
+      gap: 16px;
+    }
+    .nav-group-title {
+      display: none;
+    }
+    .nav-list {
+      flex-direction: row;
+      gap: 2px;
+    }
+    .nav-link {
+      white-space: nowrap;
+      border-left: 0;
+      border-bottom: 2px solid transparent;
+      border-radius: 6px 6px 0 0;
+    }
+    .nav-link-active {
+      border-left-color: transparent;
+      border-bottom-color: var(--accent);
+    }
+    .sidebar-foot {
+      margin-top: 0;
+      margin-left: auto;
+      flex-direction: row;
+      align-items: center;
+    }
   }
 
   /* ---- stats ---- */
