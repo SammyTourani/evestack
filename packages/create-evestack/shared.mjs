@@ -8,7 +8,7 @@
  *
  * Still dependency-free, for the reason index.mjs gives.
  */
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -59,6 +59,92 @@ export const C = {
   reset: "\x1b[0m", dim: "\x1b[2m", bold: "\x1b[1m",
   cyan: "\x1b[36m", green: "\x1b[32m", yellow: "\x1b[33m", red: "\x1b[31m",
 };
+
+/**
+ * The Node this package is tested on, and the floor every manifest already
+ * declares.
+ *
+ * Nothing checked it. `engines` is advice — npm prints a warning nobody reads
+ * and installs anyway — so an older runtime got all the way into the generated
+ * project before failing, at a depth where the error never names the version:
+ * the template's scripts use `--env-file-if-exists` (Node 20.12+) and its
+ * checks call `URL.parse` (Node 22.1+), so the symptom is an unknown flag or a
+ * missing function several commands after the mistake was made.
+ *
+ * A message rather than an exit, so the caller owns the exit code and nothing is
+ * half-created first. The limit, stated because it is real: a Node too old to
+ * PARSE this file dies before this function exists. That is Node 13 and below,
+ * which cannot run any part of this package anyway; the versions people actually
+ * still have — 20 and 22 — parse it and get the sentence.
+ */
+export const MIN_NODE_MAJOR = 24;
+
+export function nodeVersionProblem(version = process.versions.node) {
+  const major = Number.parseInt(version, 10);
+  if (!Number.isFinite(major) || major >= MIN_NODE_MAJOR) return null;
+  return (
+    `evestack needs Node ${MIN_NODE_MAJOR} or newer — this is Node ${version}.\n` +
+    `  Every package here declares "engines": { "node": ">=${MIN_NODE_MAJOR}" }, and npm only warns.\n` +
+    "  The project this creates runs its scripts with --env-file-if-exists (Node 20.12+)\n" +
+    "  and its checks call URL.parse (Node 22.1+), so an older runtime fails later and\n" +
+    "  deeper, in messages that never name the version.\n" +
+    "  Install Node 24 from https://nodejs.org, or `nvm install 24` / `fnm use 24`."
+  );
+}
+
+/**
+ * A value as a shell would need it typed.
+ *
+ * Both wizards print `cd <dir>` for a human to paste, and a directory with a
+ * space in it — `npx create-evestack "My Agent"` — produced `cd My Agent`, which
+ * is two arguments and a broken instruction. Single quotes rather than
+ * backslashes, because inside them every character is literal but the quote
+ * itself, which is closed, escaped and reopened.
+ */
+export function shellQuote(value) {
+  const text = String(value);
+  if (text === "") return "''";
+  if (/^[A-Za-z0-9._+@%/:=,-]+$/.test(text)) return text;
+  return `'${text.split("'").join(`'\\''`)}'`;
+}
+
+/**
+ * The flags every entry point shares, and the one rule that makes them safe.
+ *
+ * `--help` used to be read AFTER the command had been routed, which is how
+ * `npx create-evestack attach --help` ran real detection on a real project and
+ * then offered to write files with the prompt defaulting to yes. Help is a
+ * question: it is answered before anything is detected, installed or written.
+ *
+ * Scanning stops at `--`, so a directory whose name genuinely begins with a dash
+ * can still be named: `npx create-evestack -- --help` scaffolds into `--help`.
+ */
+export const HELP_FLAGS = new Set(["--help", "-h"]);
+export const VERSION_FLAGS = new Set(["--version", "-V"]);
+
+export function hasFlag(argv, flags) {
+  for (const arg of argv) {
+    if (arg === "--") return false;
+    if (flags.has(arg)) return true;
+  }
+  return false;
+}
+
+/**
+ * This package's own version, for `--version`.
+ *
+ * Read from the manifest rather than duplicated in a constant, because a
+ * hand-typed copy of a number that `npm version` moves is a number that is
+ * wrong within one release.
+ */
+export function packageVersion() {
+  try {
+    return JSON.parse(readFileSync(join(HERE, "package.json"), "utf8")).version ?? "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
 export const say = (s = "") => console.log(s);
 export const step = (s) => say(`${C.cyan}▚${C.reset} ${s}`);
 export const ok = (s) => say(`  ${C.green}✓${C.reset} ${s}`);

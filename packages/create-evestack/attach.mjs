@@ -18,12 +18,14 @@
  *   3. Reversible. Every write ends up in an undo list, and following that list
  *      returns the project to plain eve.
  */
+import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
+import { projectNameFor } from "./create.mjs";
 import {
-  basename, C, DASHBOARD_IMAGE, detectPm, dim, freePort, makePrompter,
-  ok, portAnswers, REPO, say, step, templateDir, warn,
+  C, DASHBOARD_IMAGE, detectPm, dim, freePort, makePrompter, ok, packageVersion,
+  REPO, say, shellQuote, step, templateDir, warn,
 } from "./shared.mjs";
 
 /**
@@ -66,7 +68,19 @@ const OTEL_RANGE = "^2.1.3";
  * runtime rejects a mismatched protocol version outright.
  */
 const WORLD_TAG = "beta";
-const DASHBOARD_INGEST = "http://localhost:4000/api/ingest/v1/traces";
+/**
+ * The dashboard's ingest URL, on the port this attach actually picked.
+ *
+ * This was a constant naming 4000, written into the user's env file, while
+ * `create` had already learned to probe. On a machine already running one
+ * evestack dashboard that URL is the OTHER project's dashboard — whose
+ * EVESTACK_INGEST_TOKEN is a different generated value — so every span POST is a
+ * 401, and @vercel/otel reports a 401 as a successful export. The symptom is a
+ * Traces tab that stays empty on both projects.
+ */
+function dashboardIngest(port) {
+  return `http://localhost:${port}/api/ingest/v1/traces`;
+}
 
 const COMPOSE_NAMES = ["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"];
 const AGENT_ENTRIES = ["agent.ts", "agent.tsx", "agent.mts", "agent.js", "agent.mjs"];
@@ -78,13 +92,98 @@ const INSTRUMENTATION_ENTRIES = [
 const BLOCK_START = "# --- evestack attach ---------------------------------------------------------";
 const BLOCK_END = "# --- end evestack attach -----------------------------------------------------";
 
-export async function attach(argv) {
-  const flags = argv.filter((a) => a.startsWith("-"));
-  const positional = argv.filter((a) => !a.startsWith("-"));
-  const yes = flags.includes("--yes") || flags.includes("-y");
-  const dryRun = flags.includes("--dry-run") || flags.includes("-n");
+/**
+ * The flags `attach` has, and why an unknown one stops it.
+ *
+ * Same parser as `create` had and the same bug: unknown flags were filtered out
+ * and the value behind them survived as a positional, so `attach --port 5000`
+ * would attach to a directory called `5000` — i.e. refuse with "No such
+ * directory", which is a confusing sentence about a path the user never typed.
+ */
+const ATTACH_FLAGS = new Map([
+  ["--yes", "yes"], ["-y", "yes"],
+  ["--dry-run", "dryRun"], ["-n", "dryRun"],
+  ["--help", "help"], ["-h", "help"],
+  ["--version", "version"], ["-V", "version"],
+]);
 
-  const name = positional[0] ?? ".";
+export const ATTACH_USAGE = `evestack attach — add the control plane to an eve project you already have
+
+  npx create-evestack attach [dir] [--yes] [--dry-run]
+  evestack attach [dir] [--yes] [--dry-run]
+
+Additive. It writes a Postgres compose file, the env keys the dashboard and
+durable sessions need, an instrumentation file if you want traces, and nothing
+else. Files you wrote are never overwritten — they are skipped and reported —
+and everything it does write is printed as an undo list at the end.
+
+Options
+  --yes, -y       skip the confirmation. Required when stdin is not a terminal
+  --dry-run, -n   print the plan and write nothing
+  --help, -h      this
+  --version, -V   print create-evestack's version
+
+The plan is printed before anything is written, so the honest way to look before
+you leap is \`--dry-run\`. [dir] defaults to the current directory.
+`;
+
+export function parseAttachArgs(argv) {
+  const parsed = { positional: [], yes: false, dryRun: false, help: false, version: false, error: null };
+  let endOfFlags = false;
+  for (const arg of argv) {
+    if (endOfFlags || !arg.startsWith("-") || arg === "-") {
+      parsed.positional.push(arg);
+      continue;
+    }
+    if (arg === "--") {
+      endOfFlags = true;
+      continue;
+    }
+    const key = ATTACH_FLAGS.get(arg.split("=")[0]);
+    if (!key || arg.includes("=")) {
+      parsed.error =
+        `Unknown option ${JSON.stringify(arg)} — nothing was written.\n` +
+        "  attach takes one directory and:\n" +
+        "    --yes, -y      skip the confirmation\n" +
+        "    --dry-run, -n  print the plan and write nothing\n" +
+        "    --help, -h     the full usage\n" +
+        "    --version, -V  print the version";
+      return parsed;
+    }
+    parsed[key] = true;
+  }
+  if (parsed.positional.length > 1) {
+    parsed.error =
+      `attach takes one directory, and got ${parsed.positional.length}: ` +
+      `${parsed.positional.map((p) => JSON.stringify(p)).join(", ")}.\n` +
+      "  Nothing was written.";
+  }
+  return parsed;
+}
+
+export async function attach(argv) {
+  // Help and version before detection, because detection is not free: through
+  // `npx create-evestack attach --help` this command used to inspect a real
+  // project, print a plan and then ask "Write these changes? (Y/n)" with the
+  // default at yes. index.mjs answers --help before it imports this file at all;
+  // this is the same answer for `evestack attach --help`, which arrives here
+  // directly.
+  const args = parseAttachArgs(argv);
+  if (args.help) {
+    say(ATTACH_USAGE);
+    return 0;
+  }
+  if (args.version) {
+    say(packageVersion());
+    return 0;
+  }
+  if (args.error) {
+    console.error(`\n${C.red}${args.error}${C.reset}\n`);
+    return 1;
+  }
+  const { yes, dryRun } = args;
+
+  const name = args.positional[0] ?? ".";
   const target = isAbsolute(name) ? name : resolve(process.cwd(), name);
 
   say();
@@ -97,11 +196,7 @@ export async function attach(argv) {
 
   const pm = detectPm(target);
   const env = readEnvFiles(target);
-  const envFileName = existsSync(join(target, ".env.local"))
-    ? ".env.local"
-    : existsSync(join(target, ".env"))
-      ? ".env"
-      : ".env.local";
+  const envFileName = chooseEnvFile(target);
 
   // Questions first: everything asked here changes what the plan says, and a
   // plan the user then has to re-read after answering more questions is not a
@@ -122,10 +217,28 @@ export async function attach(argv) {
     if (!interactive) dim("Taking the default: yes. Delete agent/instrumentation.ts to change your mind.");
   }
 
-  // Resolved before the plan is built so the plan can name the port it will
+  // Resolved before the plan is built so the plan can name the ports it will
   // publish on rather than promising 5433 and using something else.
+  //
+  // All three are now probed. Postgres always was; the dashboard was the constant
+  // 4000 and the agent the constant 2000, which on a machine already running one
+  // evestack project meant the printed `docker run` failed on "port is already
+  // allocated" — and, worse, that the agent's EVESTACK_DASHBOARD_URL pointed at
+  // the OTHER project's dashboard, whose ingest token is a different generated
+  // value, so every span was a 401 that @vercel/otel reports as a success.
   const port = await freePort(5433);
-  const plan = buildPlan({ target, project, env, envFileName, pm, wantTraces, existingInstrumentation, port });
+  const dashboardPort = await freePort(4000);
+  // The agent's port is a PREDICTION, and the only honest one available: `eve
+  // dev` takes 2000 and silently auto-increments when it is busy, and an attached
+  // project runs its own dev script, so nothing here can pin it. If the project
+  // records a port, that is the answer; otherwise the first free port from 2000 is
+  // where eve will land, on the same reasoning eve uses. printSummary says to
+  // check eve's startup log either way.
+  const agentPort = recordedPort(env.get("EVESTACK_AGENT_PORT")) ?? (await freePort(2000));
+  const plan = buildPlan({
+    target, project, env, envFileName, pm, wantTraces, existingInstrumentation,
+    port, dashboardPort, agentPort,
+  });
   printPlan(plan);
   prompt.close();
 
@@ -167,12 +280,26 @@ export async function attach(argv) {
 
   say();
   step("Writing");
+  // Rule 3 of this file's header is "every write ends up in an undo list", and
+  // printSummary — which prints that list — only ran after every write had
+  // succeeded. So the one case where the list matters most, a run that stopped
+  // half way through on a read-only .gitignore or a root-owned file, printed a
+  // few checkmarks and a bare error message: files changed, and no record of
+  // which. Each write is now individually accounted for.
+  const written = [];
   for (const action of [...plan.adds, ...plan.changes]) {
-    action.write();
+    try {
+      action.write();
+    } catch (error) {
+      printPartialSummary(written, action, error);
+      return 1;
+    }
+    written.push(action);
     ok(`${action.path} ${C.dim}${action.what}${C.reset}`);
   }
 
   printSummary(plan);
+  return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -276,11 +403,14 @@ function reportEveVersion({ range, installed }) {
 // plan
 // ---------------------------------------------------------------------------
 
-function buildPlan({ target, project, env, envFileName, pm, wantTraces, existingInstrumentation, port }) {
+function buildPlan({
+  target, project, env, envFileName, pm, wantTraces, existingInstrumentation,
+  port, dashboardPort, agentPort,
+}) {
   const plan = {
-    target, pm, envFileName, port,
-    adds: [], changes: [], skips: [], manual: [], notes: [],
-    dbUrl: null, composeFile: null,
+    target, pm, envFileName, port, dashboardPort, agentPort,
+    adds: [], changes: [], skips: [], manual: [], notes: [], alerts: [],
+    dbUrl: null, composeFile: null, reusedCompose: null,
   };
   const add = (path, what, undo, write) => plan.adds.push({ path, what, undo, write });
   const change = (path, what, undo, write) => plan.changes.push({ path, what, undo, write });
@@ -298,17 +428,92 @@ function buildPlan({ target, project, env, envFileName, pm, wantTraces, existing
     plan.dbUrl = existingUrl;
     plan.notes.push(`Using the WORKFLOW_POSTGRES_URL already in ${envFileName} — no Postgres added.`);
   } else {
-    // Generated, never defaulted. This database ends up holding every prompt
-    // and tool result the agent has produced, and a shipped default password on
-    // a published port is the only thing between a stranger and all of it.
-    const password = randomBytes(18).toString("base64url");
+    // A Postgres this attach already wrote on a previous run, if there is one.
+    //
+    // THIS IS THE FRESH-CLONE CASE, and it is not exotic: attach gitignores the
+    // env file it writes and leaves the compose file to be committed, so a `git
+    // clone` of an attached project has the compose file and no env file. That
+    // makes existingUrl falsy, which used to mean "generate a new password" — and
+    // the new password went into a SECOND compose file while the first was
+    // skipped, both with the same project name and the same volume. Postgres only
+    // applies POSTGRES_PASSWORD when the volume is initialised, so the user got
+    // `password authentication failed for user evestack` with nothing anywhere
+    // connecting it to the second file.
+    const previous = findEvestackPostgres(target);
+    // Reuse a password already in play rather than invent one that cannot work.
+    //
+    // The order is where Postgres will actually read it from: a literal in an
+    // existing compose file wins, because that file has no `env_file:` for the
+    // env file to feed; otherwise POSTGRES_PASSWORD in the env file is what the
+    // container gets, whether attach put it there on an earlier run or the
+    // project already had one. Generating a fresh value while either of those is
+    // sitting there produces a URL that cannot authenticate against the container
+    // it names — which is the same failure this branch exists to prevent.
+    // EVESTACK_DB_PASSWORD is in the chain because a `create` scaffold keeps the
+    // password under that name, in the .env its compose file interpolates from —
+    // so attaching to a scaffolded project whose .env.local was lost reuses the
+    // value the container already has instead of inventing one it will refuse.
+    const knownPassword =
+      previous?.password ?? env.get("POSTGRES_PASSWORD") ?? env.get("EVESTACK_DB_PASSWORD") ?? null;
+    const password = knownPassword ?? randomBytes(18).toString("base64url");
+    const dbPort = previous?.port ?? port;
     // 127.0.0.1, never "localhost": the port is published on the loopback IPv4
     // address only, and a resolver that answers localhost with ::1 first turns
     // a working stack into ECONNREFUSED.
-    plan.dbUrl = `postgres://evestack:${password}@127.0.0.1:${port}/evestack`;
+    plan.dbUrl = `postgres://evestack:${password}@127.0.0.1:${dbPort}/evestack`;
 
     const existingCompose = COMPOSE_NAMES.find((n) => existsSync(join(target, n)));
-    if (!existingCompose) {
+    if (previous && previous.port === null) {
+      // The URL below has to name the port that file publishes, and this one does
+      // not publish it in the shape attach writes — so the port in it is this
+      // run's guess rather than a reading.
+      plan.alerts.push(
+        `Could not read a published port out of ${previous.file}, so WORKFLOW_POSTGRES_URL ` +
+          `assumes ${dbPort}. Check the \`ports:\` line in that file and fix the URL in ` +
+          `${envFileName} if it says something else.`,
+      );
+    }
+    if (previous) {
+      // Point at it, do not write a second one.
+      plan.reusedCompose = previous.file;
+      plan.skips.push([previous.file, "evestack already put a Postgres here — reusing it, not adding a second"]);
+      if (previous.password) {
+        plan.notes.push(
+          `Recovered this project's database password from ${previous.file}, so the volume it ` +
+            `already initialised still opens.`,
+        );
+        // The rotation advice has to name the file the CONTAINER reads, and for a
+        // file in this old shape that is the compose file itself, not the env
+        // file: it passes POSTGRES_PASSWORD straight through `environment:`, so
+        // changing the env file alone would leave the container on the old value.
+        plan.alerts.push(
+          `${previous.file} carries the database password in plain text, which is how older ` +
+            `versions of attach wrote it — so it is in your git history. To rotate: delete that ` +
+            `file and re-run attach (it writes one that reads the password from ${envFileName} ` +
+            `instead), then \`docker compose${composeFlag(previous.file)} down -v\` to drop the ` +
+            `volume — which deletes the sessions in it — and bring it up again.`,
+        );
+      } else if (knownPassword) {
+        plan.notes.push(
+          `Reusing the POSTGRES_PASSWORD already in ${envFileName} — that is the value ` +
+            `${previous.file} feeds the container, so the volume it initialised still opens.`,
+        );
+      } else {
+        // The password is in an env file that is no longer here, which is exactly
+        // what a fresh clone looks like. A new one works on a machine that has
+        // never run this project and cannot work on the machine that has.
+        plan.alerts.push(
+          `${previous.file} defines this project's Postgres but nothing here holds its password ` +
+            `— ${envFileName} is missing or has no WORKFLOW_POSTGRES_URL, which is what a fresh ` +
+            `clone looks like. A new password is being generated. Postgres only applies a ` +
+            `password when its data volume is FIRST created, so if that volume still exists on ` +
+            `this machine you will get "password authentication failed for user evestack": ` +
+            `either put the old password back in ${envFileName}, or run ` +
+            `\`docker compose${composeFlag(previous.file)} down -v\` to start the database empty ` +
+            `(that deletes the sessions in it).`,
+        );
+      }
+    } else if (!existingCompose) {
       plan.composeFile = "docker-compose.yml";
     } else if (!existsSync(join(target, "docker-compose.evestack.yml"))) {
       // Never merged into theirs. Compose merges by service name, so a fragment
@@ -322,21 +527,50 @@ function buildPlan({ target, project, env, envFileName, pm, wantTraces, existing
     }
 
     if (plan.composeFile) {
-      const projectName = composeProjectName(project.pkg.name ?? basename(target));
+      // projectNameFor, imported from the scaffolder, not a local derivation
+      // from package.json's name.
+      //
+      // composeProjectName() hashed nothing: `evestack-${pkg.name}`, so two
+      // projects both called "my-agent" — the create-evestack DEFAULT name — got
+      // one Compose project name and one volume, and the second `docker compose
+      // up -d postgres` recreated the first's container. Both agents then read
+      // one database. `create` fixed exactly this by hashing the absolute path
+      // and exported the function to be reused; the comment this file generates
+      // three hundred lines down claimed the opposite was already true.
+      const projectName = projectNameFor(target);
       add(
         plan.composeFile,
         `Postgres 17 (pgvector) on 127.0.0.1:${port}`,
-        `docker compose${plan.composeFile === "docker-compose.yml" ? "" : ` -f ${plan.composeFile}`} down -v, then rm ${plan.composeFile}`,
+        `docker compose${composeFlag(plan.composeFile)} down -v, then rm ${plan.composeFile}`,
         () => writeFileSync(join(target, plan.composeFile), composeFragment({
-          projectName, password, port, file: plan.composeFile,
+          projectName, envFileName, port, file: plan.composeFile,
         })),
       );
+      if (knownPassword) {
+        plan.notes.push(
+          `Reusing the POSTGRES_PASSWORD already in ${envFileName} rather than generating a ` +
+            `second one — the compose file below reads it from there.`,
+        );
+      }
       envAdditions.push(
         ["", ""],
         ["", `# Durable sessions — the Postgres in ${plan.composeFile}`],
         ["WORKFLOW_POSTGRES_URL", plan.dbUrl],
+        ["", "# Read by the Postgres container itself, through `env_file:` in"],
+        ["", `# ${plan.composeFile}. It lives here rather than in that file because the`],
+        ["", "# compose file is meant to be committed and this password must not be."],
+        ["POSTGRES_PASSWORD", password],
         ["", "# world-postgres defaults to concurrency 50 against a pool of 10 and warns"],
         ["", "# about it on every boot. Matching them silences it."],
+        ["WORKFLOW_POSTGRES_MAX_POOL_SIZE", "20"],
+        ["WORKFLOW_POSTGRES_WORKER_CONCURRENCY", "20"],
+      );
+    } else if (plan.reusedCompose) {
+      envAdditions.push(
+        ["", ""],
+        ["", `# Durable sessions — the Postgres in ${plan.reusedCompose}`],
+        ["WORKFLOW_POSTGRES_URL", plan.dbUrl],
+        ["POSTGRES_PASSWORD", password],
         ["WORKFLOW_POSTGRES_MAX_POOL_SIZE", "20"],
         ["WORKFLOW_POSTGRES_WORKER_CONCURRENCY", "20"],
       );
@@ -344,7 +578,7 @@ function buildPlan({ target, project, env, envFileName, pm, wantTraces, existing
       plan.manual.push([
         "Add Postgres yourself",
         `Both compose files exist. The service block evestack would have written is printed below;\n` +
-          `    add it, then put WORKFLOW_POSTGRES_URL in ${envFileName}.`,
+          `    add it, then put WORKFLOW_POSTGRES_URL and POSTGRES_PASSWORD in ${envFileName}.`,
       ]);
     }
   }
@@ -373,11 +607,19 @@ function buildPlan({ target, project, env, envFileName, pm, wantTraces, existing
   if (existingInstrumentation) {
     plan.skips.push([`agent/${existingInstrumentation}`, "you already have one — evestack does not overwrite it"]);
   } else if (wantTraces) {
+    // Read NOW, not inside the write.
+    //
+    // instrumentationFile() calls templateDir(), which on a missing template
+    // calls process.exit(1) — from inside a write, half way through the loop that
+    // is supposed to end in an undo list. Reading it here means a broken install
+    // is a refusal before anything is written, and the closure below only has a
+    // string to put on disk.
+    const instrumentation = instrumentationFile();
     add(
       "agent/instrumentation.ts",
       "trace export to the dashboard",
       "rm agent/instrumentation.ts",
-      () => writeFileSync(join(target, "agent", "instrumentation.ts"), instrumentationFile()),
+      () => writeFileSync(join(target, "agent", "instrumentation.ts"), instrumentation),
     );
     // Generated here, and it has to be, because there is no working alternative:
     // the dashboard's ingest route takes this shared secret or a session cookie,
@@ -393,7 +635,7 @@ function buildPlan({ target, project, env, envFileName, pm, wantTraces, existing
     envAdditions.push(
       ["", ""],
       ["", "# Dashboard trace export — the dashboard's own ingest route, not OTLP 4318"],
-      ["EVESTACK_DASHBOARD_URL", DASHBOARD_INGEST],
+      ["EVESTACK_DASHBOARD_URL", dashboardIngest(dashboardPort)],
       ["", "# The exporter sends this as the `x-evestack-ingest-token` header. The"],
       ["", "# dashboard needs the SAME value in its own EVESTACK_INGEST_TOKEN, or it"],
       ["", "# 401s every span while the rest of the dashboard keeps working."],
@@ -418,7 +660,7 @@ function buildPlan({ target, project, env, envFileName, pm, wantTraces, existing
 
   // ---- package.json --------------------------------------------------------
   const deps = { ...project.pkg.dependencies };
-  const wantsPostgres = Boolean(plan.composeFile) || Boolean(existingUrl);
+  const wantsPostgres = Boolean(plan.composeFile) || Boolean(plan.reusedCompose) || Boolean(existingUrl);
   const newDeps = [];
   if (wantsPostgres && !deps["@workflow/world-postgres"]) newDeps.push(["@workflow/world-postgres", WORLD_TAG]);
   if (wantTraces && !existingInstrumentation && !deps["@vercel/otel"]) newDeps.push(["@vercel/otel", OTEL_RANGE]);
@@ -470,8 +712,7 @@ function buildPlan({ target, project, env, envFileName, pm, wantTraces, existing
       undo: existed ? `delete the "evestack attach" block from ${envFileName}` : `rm ${envFileName}`,
       write: () => {
         const before = existed ? readFileSync(envPath, "utf8") : "";
-        const head = before && !before.endsWith("\n") ? `${before}\n` : before;
-        writeFileSync(envPath, `${head}${envBlock(pending)}`);
+        writeFileSync(envPath, mergeEnvBlock(before, pending));
       },
     };
     (verb === "add" ? plan.adds : plan.changes).push(action);
@@ -480,7 +721,9 @@ function buildPlan({ target, project, env, envFileName, pm, wantTraces, existing
 
   // ---- .gitignore ----------------------------------------------------------
   // The block above carries a generated database password. Committing it would
-  // be this command's fault, not the user's.
+  // be this command's fault, not the user's — which is also why chooseEnvFile()
+  // refuses to write it into a file git already tracks, where a .gitignore line
+  // is a no-op.
   if (realKeys.length > 0 && !gitIgnores(target, envFileName)) {
     const gitignorePath = join(target, ".gitignore");
     if (existsSync(gitignorePath)) {
@@ -529,6 +772,12 @@ function printPlan(plan) {
   }
   if (rows.length === 0) say(`    ${C.dim}nothing — this project is already attached${C.reset}`);
   for (const note of plan.notes) dim(note);
+  // Alerts print here, before the confirmation, because the whole point of one is
+  // that the reader may want to stop.
+  for (const alert of plan.alerts) {
+    say();
+    warn(alert);
+  }
   if (plan.manual.length > 0) {
     say();
     say(`  ${C.bold}You will have to do this part by hand${C.reset}`);
@@ -540,14 +789,19 @@ function printPlan(plan) {
 
 function printSummary(plan) {
   const { pm, target } = plan;
-  const composeArgs = plan.composeFile && plan.composeFile !== "docker-compose.yml" ? ` -f ${plan.composeFile}` : "";
+  // The file the user runs `docker compose` against: the one written here, or the
+  // one a previous attach wrote and this run decided to reuse.
+  const composeTarget = plan.composeFile ?? plan.reusedCompose;
+  const composeArgs = composeTarget ? composeFlag(composeTarget) : "";
   say();
   say(`${C.green}${C.bold}  Attached.${C.reset}`);
   say();
   say(`  ${C.bold}Next:${C.reset}`);
-  say(`    cd ${target}`);
+  // Quoted: a project at ~/My Agent printed `cd /Users/x/My Agent`, which is two
+  // arguments and a command that does not work.
+  say(`    cd ${shellQuote(target)}`);
   if (plan.newDeps?.length) say(`    ${pm} install`);
-  if (plan.composeFile) {
+  if (composeTarget) {
     say(`    docker compose${composeArgs} up -d postgres        ${C.dim}# durable sessions${C.reset}`);
     say(`    ${pm} run db:bootstrap                 ${C.dim}# create the workflow schema — nothing else creates it${C.reset}`);
   }
@@ -567,7 +821,7 @@ function printSummary(plan) {
   say(`  ${C.bold}Then the dashboard${C.reset} ${C.dim}— sessions, cost, approvals, chat:${C.reset}`);
   for (const line of dashboardRunCommand(plan)) say(`    ${line}`);
   say();
-  dim(`  Sign in at http://localhost:4000 with ${plan.dashboardUser} / ${plan.dashboardPassword}`);
+  dim(`  Sign in at http://localhost:${plan.dashboardPort} with ${plan.dashboardUser} / ${plan.dashboardPassword}`);
   if (plan.ingestToken) {
     say();
     // The one value that MUST travel by hand. A `create-evestack` scaffold has
@@ -594,9 +848,14 @@ function printSummary(plan) {
     if (plan.manual.some(([what]) => what === "Add Postgres yourself")) {
       say();
       dim("The compose service:");
-      say(composeService({ password: randomBytes(18).toString("base64url"), port: plan.port })
+      say(composeService({ envFileName: plan.envFileName, port: plan.port })
         .split("\n").map((l) => `      ${C.dim}${l}${C.reset}`).join("\n"));
     }
+    say();
+  }
+
+  for (const alert of plan.alerts) {
+    warn(alert);
     say();
   }
 
@@ -606,6 +865,38 @@ function printSummary(plan) {
   }
   say();
   dim("That list is the whole footprint. Follow it and the project is plain eve again.");
+  say();
+}
+
+/**
+ * What to print when a write fails part way through.
+ *
+ * The undo list is the promise this command makes, and a run that stops half way
+ * is when it is worth most: some files have changed, the summary that would have
+ * listed them never printed, and the user is left to guess. So the list is
+ * printed for exactly the writes that landed — not the whole plan, which would
+ * name files that were never touched.
+ */
+function printPartialSummary(written, failed, error) {
+  say();
+  say(`${C.red}${C.bold}  Stopped part way through.${C.reset}`);
+  say();
+  say(`  ${C.red}${failed.path}${C.reset} could not be written — ${error?.message ?? error}`);
+  say();
+  if (written.length === 0) {
+    dim("Nothing was written before that, so there is nothing to undo.");
+    say();
+    dim("Fix what the message above says and run attach again.");
+    say();
+    return;
+  }
+  say(`  ${C.bold}Already written — undo these if you want the project back as it was:${C.reset}`);
+  for (const action of written) {
+    say(`    ${action.path.padEnd(26)} ${C.dim}${action.undo}${C.reset}`);
+  }
+  say();
+  dim("Or fix what the message above says and run attach again: it skips what it already");
+  dim("wrote and adds only the rest.");
   say();
 }
 
@@ -674,7 +965,20 @@ function injectWorld(src) {
  * explanation would disagree within a release.
  */
 function instrumentationFile() {
-  const source = join(templateDir(), "agent", "instrumentation.ts");
+  // `{ optional: true }` and a throw, not templateDir()'s default: the default
+  // calls process.exit(1), and this used to be called from inside a write — so a
+  // broken install tore the process down mid-loop, after some files had already
+  // changed and before anything printed an undo list. A thrown Error reaches the
+  // handler in index.mjs or src/cli.mjs and prints as one sentence.
+  const dir = templateDir({ optional: true });
+  if (!dir) {
+    throw new Error(
+      "Could not locate the agent template, so the instrumentation file cannot be copied.\n" +
+        `  Reinstall create-evestack, or re-run without trace export.\n` +
+        `  Please report this at ${REPO}/issues`,
+    );
+  }
+  const source = join(dir, "agent", "instrumentation.ts");
   const body = readFileSync(source, "utf8");
   return (
     "// Added by `evestack attach`. Nothing else in the project imports it —\n" +
@@ -683,7 +987,7 @@ function instrumentationFile() {
   );
 }
 
-function composeService({ password, port }) {
+function composeService({ envFileName, port }) {
   return `services:
   postgres:
     # pgvector rather than plain postgres: the same database can back
@@ -692,8 +996,19 @@ function composeService({ password, port }) {
     restart: unless-stopped
     environment:
       POSTGRES_USER: evestack
-      POSTGRES_PASSWORD: "${password}"
       POSTGRES_DB: evestack
+    # POSTGRES_PASSWORD comes from ${envFileName}, which attach makes sure git
+    # ignores. It used to be written into this file as plain text — and this file
+    # is one you commit, so the password generated to keep a stranger out of your
+    # agent's database went into git on the next \`git add -A\`.
+    #
+    # \`env_file:\` and not \`\${...}\`: interpolation reads the shell and .env, never
+    # .env.local, so a \`\${POSTGRES_PASSWORD}\` here would fail the parse for every
+    # project whose secrets live in .env.local. env_file sets the variable inside
+    # the container, which is where Postgres reads it. The cost, stated plainly:
+    # every other variable in that file is set in this container too.
+    env_file:
+      - ${envFileName}
     ports:
       # Loopback only. This container ends up holding every prompt, tool call
       # and result your agent has ever produced; "${port}:5432" would publish
@@ -712,7 +1027,12 @@ volumes:
   evestack-pgdata:`;
 }
 
-function composeFragment({ projectName, password, port, file }) {
+/** ` -f <file>` for anything but the default compose filename, else "". */
+function composeFlag(file) {
+  return file === "docker-compose.yml" ? "" : ` -f ${file}`;
+}
+
+function composeFragment({ projectName, envFileName, port, file }) {
   const up = file === "docker-compose.yml" ? "docker compose up -d postgres" : `docker compose -f ${file} up -d postgres`;
   const down = file === "docker-compose.yml" ? "docker compose down -v" : `docker compose -f ${file} down -v`;
   return `# Postgres for this eve agent — added by \`evestack attach\`.
@@ -724,11 +1044,17 @@ function composeFragment({ projectName, password, port, file }) {
 #
 # Undo: ${down} (this also deletes the sessions), then delete this file.
 #
-# The project name is derived from package.json so two attached agents on one
-# machine get two databases instead of quietly sharing one volume.
+# This file carries no password: POSTGRES_PASSWORD is read from the env file
+# beside it, which attach keeps out of git. Commit this one freely.
+#
+# The project name carries a hash of this directory's absolute path, so two
+# attached agents — even two both called "my-agent" — are two Compose projects
+# with two volumes rather than one shared database. Move the directory and
+# Compose stops recognising the containers and volume it made here; bring them up
+# again and copy out of the old volume if you need what was in it.
 name: ${projectName}
 
-${composeService({ password, port })}
+${composeService({ envFileName, port })}
 `;
 }
 
@@ -746,19 +1072,30 @@ ${composeService({ password, port })}
  */
 function dashboardRunCommand(plan) {
   const lines = [
-    "docker run -d --name evestack-dashboard \\",
+    // The container name is per project, for the same reason the Compose project
+    // name is: a second attached project on one machine got `docker run --name
+    // evestack-dashboard` and "the container name is already in use", which is
+    // the same collision the hardcoded port had.
+    `docker run -d --name ${projectNameFor(plan.target)}-dashboard \\`,
     // 127.0.0.1 on purpose: this is a control plane that starts agent runs and
     // approves gated shell commands. `-p 4000:4000` would publish it on every
     // interface the host has.
-    "  -p 127.0.0.1:4000:4000 \\",
+    //
+    // The host side is probed, not assumed: this was a hardcoded 4000, so on a
+    // machine already running one evestack dashboard the command failed with
+    // "port is already allocated". The container side stays 4000 — that is where
+    // the dashboard listens inside its own namespace.
+    `  -p 127.0.0.1:${plan.dashboardPort}:4000 \\`,
     // Docker Desktop resolves host.docker.internal already; on Linux nothing
     // does unless this flag adds it, and there the agent is otherwise
     // unreachable from the container.
     "  --add-host host.docker.internal:host-gateway \\",
     `  -e WORKFLOW_POSTGRES_URL='${fromContainer(plan.dbUrl)}' \\`,
-    // `eve dev` listens on 2000 and auto-increments if that port is taken —
-    // read its startup log and change this if it landed somewhere else.
-    "  -e EVESTACK_AGENT_URL=http://host.docker.internal:2000 \\",
+    // `eve dev` listens on 2000 and auto-increments if that port is taken, so
+    // this is the first free port from 2000 at the time attach ran — or
+    // EVESTACK_AGENT_PORT if the project records one. Read eve's startup log and
+    // change this if it landed somewhere else.
+    `  -e EVESTACK_AGENT_URL=http://host.docker.internal:${plan.agentPort} \\`,
     `  -e EVESTACK_AUTH_USER=${plan.dashboardUser} \\`,
     `  -e EVESTACK_AUTH_PASSWORD='${plan.dashboardPassword}' \\`,
   ];
@@ -782,13 +1119,47 @@ function fromContainer(url) {
   return url.replace(/@(?:127\.0\.0\.1|localhost|\[::1\]|0\.0\.0\.0)(?=[:/]|$)/, "@host.docker.internal");
 }
 
+function envLines(pending) {
+  return pending.map(([key, value]) => (key === "" ? value : `${key}=${value}`));
+}
+
 function envBlock(pending) {
-  const lines = [BLOCK_START, "# Added by `evestack attach`. Delete this block to undo."];
-  for (const [key, value] of pending) {
-    lines.push(key === "" ? value : `${key}=${value}`);
+  return [
+    BLOCK_START,
+    "# Added by `evestack attach`. Delete this block to undo.",
+    ...envLines(pending),
+    BLOCK_END,
+    "",
+  ].join("\n");
+}
+
+/**
+ * Put the new keys in the block that is already there, or start one.
+ *
+ * BLOCK_START and BLOCK_END were written and never read, so a second run that had
+ * anything at all to add appended a second complete block. That is not
+ * hypothetical: delete one key from the block and re-run — the same file then had
+ * two "# --- evestack attach ---" blocks, and the undo instruction attach prints
+ * ("delete the evestack attach block") no longer identified one thing.
+ *
+ * The existing block's contents are left exactly as they are, including any value
+ * the user edited: only lines for keys that are missing from the whole file reach
+ * this function, and they are inserted before the end marker rather than
+ * replacing anything.
+ *
+ * A start marker with no end marker after it — a hand-truncated file — is treated
+ * as no block at all, and a well-formed one is appended. Guessing where somebody
+ * else's edit ended is worse than one extra ruler.
+ */
+function mergeEnvBlock(before, pending) {
+  const start = before.lastIndexOf(BLOCK_START);
+  const end = start === -1 ? -1 : before.indexOf(BLOCK_END, start);
+  if (start === -1 || end === -1) {
+    const head = before && !before.endsWith("\n") ? `${before}\n` : before;
+    return `${head}${envBlock(pending)}`;
   }
-  lines.push(BLOCK_END, "");
-  return `${lines.join("\n")}`;
+  const body = `${envLines(pending).join("\n")}\n`;
+  return `${before.slice(0, end)}${body}${before.slice(end)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -824,13 +1195,89 @@ function readEnvFiles(target) {
 }
 
 /**
- * Does .gitignore already cover this file?
+ * Run a git command in the project and say whether it succeeded.
  *
- * Deliberately conservative and pattern-level only — `git check-ignore` would
- * be exact but needs git on PATH and a repository, and being wrong here in the
- * safe direction only costs a duplicate line.
+ * `stdio: "ignore"` because only the exit code matters, and `error` is checked
+ * separately: a machine without git on PATH gives `spawnSync` an error rather
+ * than a status, and treating that as "no" would be reading a failure as an
+ * answer.
+ */
+function git(target, args) {
+  const result = spawnSync("git", args, { cwd: target, stdio: "ignore" });
+  return { ran: !result.error, ok: result.status === 0 };
+}
+
+/**
+ * Is git tracking this file?
+ *
+ * The question gitIgnores() below cannot answer, and the one that matters most:
+ * .gitignore does nothing for a file that is already in the index, so appending a
+ * generated password to a TRACKED .env and then adding `.env` to .gitignore — the
+ * exact sequence attach performed — leaves the password staged into the next
+ * `git commit -a`. Pattern matching cannot see that; only the index can.
+ *
+ * When git cannot be asked at all, the answer depends on whether there is
+ * anything to commit to: inside a repository, assume tracked (the cautious
+ * answer, which costs a fallback to another file); outside one, nothing can be
+ * committed, so untracked is simply true.
+ */
+function isTracked(target, fileName) {
+  const { ran, ok } = git(target, ["ls-files", "--error-unmatch", "--", fileName]);
+  if (!ran) return existsSync(join(target, ".git"));
+  return ok;
+}
+
+/**
+ * The file attach appends generated credentials to.
+ *
+ * Never a tracked one. This used to be ".env.local if it exists, else .env if
+ * that exists", and a project with a committed `.env` of non-secret defaults and
+ * no .env.local got a generated database password and an ingest token appended
+ * straight into a tracked file — with `.env` then added to .gitignore, which for
+ * a tracked file changes nothing at all.
+ *
+ * Only these two names are candidates because they are the only two eve loads: a
+ * secret written anywhere else would be ignored by the agent, which is a
+ * different bug with the same appearance. If both exist and both are tracked
+ * there is nowhere safe left, and that is a refusal rather than a quiet write —
+ * see the message for the one command that fixes it.
+ */
+function chooseEnvFile(target) {
+  const local = join(target, ".env.local");
+  const plain = join(target, ".env");
+  if (existsSync(local) && !isTracked(target, ".env.local")) return ".env.local";
+  if (existsSync(plain) && !isTracked(target, ".env")) return ".env";
+  // Neither existing candidate is safe. A file that does not exist yet cannot be
+  // tracked, so preferring .env.local here is both safe and what eve prefers.
+  if (!existsSync(local)) {
+    if (existsSync(plain)) {
+      warn(".env is tracked by git, so the generated credentials go in .env.local instead.");
+      dim("eve loads both and .env.local wins, so your existing .env keeps working.");
+    }
+    return ".env.local";
+  }
+  throw new Error(
+    `.env.local is tracked by git, so the credentials attach generates would be committed.\n` +
+      `  Take it out of the index first — the file stays on disk:\n` +
+      `    git rm --cached .env.local\n` +
+      `  Then add .env.local to .gitignore and run attach again.`,
+  );
+}
+
+/**
+ * Does git ignore this file?
+ *
+ * `git check-ignore` first, because it is the exact answer: it knows nested
+ * .gitignore files, .git/info/exclude and core.excludesFile, none of which the
+ * pattern matcher below can see. The matcher stays for the case where git cannot
+ * be asked — no git on PATH, or a directory that is not a repository — where
+ * being wrong costs one duplicate line in a .gitignore.
  */
 function gitIgnores(target, fileName) {
+  if (existsSync(join(target, ".git"))) {
+    const { ran, ok } = git(target, ["check-ignore", "--quiet", "--", fileName]);
+    if (ran) return ok;
+  }
   const path = join(target, ".gitignore");
   if (!existsSync(path)) return false;
   for (const raw of readFileSync(path, "utf8").split("\n")) {
@@ -847,9 +1294,51 @@ function escapeRegex(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function composeProjectName(name) {
-  const slug = name.replace(/^@/, "").replace(/[^a-zA-Z0-9_-]+/g, "-").toLowerCase().replace(/^-+|-+$/g, "");
-  return `evestack-${slug || "agent"}`;
+/**
+ * A port a project recorded, or null if it recorded nothing usable.
+ *
+ * Env files are hand-editable, so "2041 " and "" and "not-a-port" all arrive
+ * here; only a plain port number is an answer.
+ */
+function recordedPort(value) {
+  const port = Number.parseInt(String(value ?? "").trim(), 10);
+  return Number.isInteger(port) && port > 0 && port < 65_536 ? port : null;
+}
+
+/**
+ * A Postgres a previous `attach` already put in this project, if there is one.
+ *
+ * Identified by the volume name attach writes, `evestack-pgdata`, which is what
+ * makes this a question about OUR compose file rather than about any Postgres the
+ * user happens to run. Both spellings of the password are recognised: the plain
+ * text one older versions wrote into the compose file (recoverable, and worth
+ * recovering — the volume was initialised with it), and the current `env_file:`
+ * form, where the value lives in an env file that a fresh clone does not have.
+ *
+ * The published port is read back for the same reason: reusing the file means
+ * reusing the port it publishes, not the free one this run happened to find.
+ */
+function findEvestackPostgres(target) {
+  for (const file of ["docker-compose.evestack.yml", ...COMPOSE_NAMES]) {
+    const path = join(target, file);
+    if (!existsSync(path)) continue;
+    let text;
+    try {
+      text = readFileSync(path, "utf8");
+    } catch {
+      continue;
+    }
+    if (!text.includes("evestack-pgdata")) continue;
+    const password = /^\s*POSTGRES_PASSWORD:\s*"?([^"\n]+?)"?\s*$/m.exec(text)?.[1] ?? null;
+    const port = recordedPort(/^\s*-\s*"127\.0\.0\.1:(\d+):5432"/m.exec(text)?.[1]);
+    return {
+      file,
+      // An interpolation reference is not a password.
+      password: password && !password.includes("${") ? password : null,
+      port,
+    };
+  }
+  return null;
 }
 
 function jsonIndent(raw) {

@@ -23,7 +23,9 @@
  * project you actually want to name "attach" has to be written
  * `npx create-evestack ./attach`.
  */
-import { C, dim, say } from "./shared.mjs";
+import {
+  C, dim, hasFlag, HELP_FLAGS, nodeVersionProblem, packageVersion, say, VERSION_FLAGS,
+} from "./shared.mjs";
 
 const argv = process.argv.slice(2);
 
@@ -56,11 +58,36 @@ const argv = process.argv.slice(2);
  * the kind of thing that survives a code review and does not survive being run.
  */
 async function main() {
+  // Before the router, and before either wizard is even imported.
+  //
+  // `--help` was checked AFTER `attach` was routed, so `npx create-evestack
+  // attach --help` ran real detection on a real project, printed a plan, and
+  // asked "Write these changes? (Y/n)" — defaulting to yes. One Enter and
+  // --help had written files. Nothing about asking for help should be able to
+  // do that, so it is answered here, where nothing has been looked at yet.
+  //
+  // The Node check is in the same place for the same reason: a runtime this
+  // package does not support should be a sentence, not a failure five commands
+  // into a project that now exists.
+  const tooOld = nodeVersionProblem();
+  if (tooOld) {
+    process.stderr.write(`\n${C.red}${tooOld}${C.reset}\n\n`);
+    return 1;
+  }
+  const help = hasFlag(argv, HELP_FLAGS);
+  if (hasFlag(argv, VERSION_FLAGS)) {
+    say(packageVersion());
+    return 0;
+  }
   if (argv[0] === "attach") {
-    const { attach } = await import("./attach.mjs");
+    const { attach, ATTACH_USAGE } = await import("./attach.mjs");
+    if (help) {
+      say(ATTACH_USAGE);
+      return 0;
+    }
     return (await attach(argv.slice(1))) ?? 0;
   }
-  if (argv.includes("--help") || argv.includes("-h")) {
+  if (help) {
     usage();
     return 0;
   }
@@ -91,6 +118,11 @@ function usage() {
   dim("never overwrites your files, and prints an undo line for everything it writes.");
   say();
   dim("To scaffold a project actually named `attach`, write `npx create-evestack ./attach`.");
+  dim("Anything else starting with a dash is refused, not guessed at: `--port 5000` used to");
+  dim("create a directory called `5000`. End the options with `--` to name one on purpose.");
+  say();
+  say(`  ${C.dim}-h, --help${C.reset}     this, or ${C.bold}attach --help${C.reset} for that command's options`);
+  say(`  ${C.dim}-V, --version${C.reset}  print create-evestack's version`);
   say();
   // Named here rather than left to be discovered. Both commands exist on the
   // `evestack` bin too, alongside `doctor`, and someone who reaches for --help

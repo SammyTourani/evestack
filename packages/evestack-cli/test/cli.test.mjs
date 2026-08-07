@@ -64,7 +64,9 @@ test("an unknown command does not fall through to doctor", async () => {
   const stderr = new Sink();
   assert.equal(await main(["fix"], { stdout: new Sink(), stderr }), 2);
   assert.match(stderr.text, /Unknown command "fix"/);
-  assert.match(stderr.text, /create, attach or doctor/);
+  // Every command the binary ships, not the three it used to name: `verify` and
+  // `open` were missing from the one message a user sees after mistyping.
+  assert.match(stderr.text, /create, verify, open, attach or doctor/);
 });
 
 test("the usage text does not advertise a --fix that deliberately does not exist", () => {

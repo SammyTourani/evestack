@@ -88,7 +88,9 @@ Both work from anywhere inside the project directory.
 
 Options
 
-  -h, --help                    this, or the options for a command
+  -h, --help                    this, or a command's own options:
+                                \`evestack create --help\`, \`verify --help\`, and so
+                                on. Asking never writes, starts or opens anything
   -V, --version                 print the version
 
 \`evestack doctor\` is read-only: it never writes to your database, and when
@@ -170,10 +172,70 @@ function numeric(value, name) {
   return n;
 }
 
+/**
+ * The Node this CLI is tested on, and the floor its manifest already declares.
+ *
+ * A local copy of what create-evestack's shared.mjs does, deliberately not an
+ * import: `evestack doctor` is the command someone runs when a production queue
+ * is wedged, and it must not pull the scaffolder and its template into the
+ * process to find out how old Node is. Both floors move together or the engines
+ * field is a lie in one package.
+ */
+const MIN_NODE_MAJOR = 24;
+
+export function nodeVersionProblem(version = process.versions.node) {
+  const major = Number.parseInt(version, 10);
+  if (!Number.isFinite(major) || major >= MIN_NODE_MAJOR) return null;
+  return (
+    `evestack needs Node ${MIN_NODE_MAJOR} or newer — this is Node ${version}.\n` +
+    `  package.json declares "engines": { "node": ">=${MIN_NODE_MAJOR}" }, and npm only warns\n` +
+    "  about that. Install Node 24 from https://nodejs.org, or `nvm install 24`.\n"
+  );
+}
+
+/**
+ * Did the caller ask for a version, ignoring anything after `--`?
+ *
+ * Help is NOT handled here: every command owns its own help text and prints it
+ * itself, which is what keeps `evestack create --help` and `npx create-evestack
+ * --help` from drifting apart. Version is central because there is one version to
+ * print — this package's.
+ */
+function wantsVersion(argv) {
+  for (const arg of argv) {
+    if (arg === "--") return false;
+    if (arg === "-V" || arg === "--version") return true;
+  }
+  return false;
+}
+
+async function printVersion(stdout) {
+  const { readFileSync } = await import("node:fs");
+  const url = new URL("../package.json", import.meta.url);
+  stdout.write(`${JSON.parse(readFileSync(url, "utf8")).version}\n`);
+  return 0;
+}
+
 export async function main(argv, { stdout = process.stdout, stderr = process.stderr } = {}) {
+  // Before everything, including the router: a runtime this CLI does not support
+  // should be one sentence, not a failure inside pg or a scaffolded project.
+  const tooOld = nodeVersionProblem();
+  if (tooOld) {
+    stderr.write(tooOld);
+    return 1;
+  }
+
   // Before parseArgs, and before anything is imported: `create` and `attach`
   // own every argument after their own name. See SCAFFOLD_COMMANDS.
   const project = projectCommand(argv);
+  const scaffold = scaffoldCommand(argv);
+  // `evestack create --version` and `evestack verify -V` reached neither parser:
+  // create/attach/verify/open are routed before parseArgs, and none of the four
+  // knew the flag — so `create --version` scaffolded a project called `my-agent`
+  // and ran an install. One version, printed here, for every command.
+  if ((project || scaffold) && wantsVersion(argv.slice(1))) {
+    return printVersion(stdout);
+  }
   if (project) {
     const commands = await import("./project.mjs");
     try {
@@ -184,11 +246,10 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
     }
   }
 
-  const routed = scaffoldCommand(argv);
-  if (routed) {
-    const scaffold = await import("./scaffold.mjs");
+  if (scaffold) {
+    const scaffolder = await import("./scaffold.mjs");
     try {
-      return await scaffold[routed](argv.slice(1));
+      return await scaffolder[scaffold](argv.slice(1));
     } catch (error) {
       // The scaffolder writes its own output to the real stdout — it is an
       // interactive wizard, not a renderer — so only the failure comes back
@@ -214,14 +275,14 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
     return options.help ? 0 : 2;
   }
   if (options.version) {
-    const { readFileSync } = await import("node:fs");
-    const url = new URL("../package.json", import.meta.url);
-    stdout.write(`${JSON.parse(readFileSync(url, "utf8")).version}\n`);
-    return 0;
+    return printVersion(stdout);
   }
   if (options.command !== "doctor") {
+    // Named in full. This said "create, attach or doctor" while the binary
+    // shipped five commands, so the two a stuck user most wants — `verify` and
+    // `open` — were missing from the one message they see after mistyping.
     stderr.write(
-      `Unknown command "${options.command}". Try create, attach or doctor.\n\n${USAGE}`,
+      `Unknown command "${options.command}". Try create, verify, open, attach or doctor.\n\n${USAGE}`,
     );
     return 2;
   }
