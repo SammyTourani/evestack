@@ -190,10 +190,21 @@ export function budgetHook(options: BudgetOptions = {}): HookDefinition {
         const cost = usage.costUsd ?? costUsd(config.model, inputTokens, outputTokens, cacheReadTokens);
 
         const principalId = principalOf(ctx);
-        const day = dayKey(config);
 
+        // `dayKey` is inside the try for the same reason `guard.ts` keeps its own
+        // call inside one: it hands a configured string to `Intl`, which throws
+        // `RangeError` on a zone it does not know. Outside the try that throw left
+        // the hook, and eve reads a thrown hook as a real turn failure — so a
+        // typo'd EVESTACK_BUDGET_TIMEZONE failed every single turn, stamped
+        // `MODEL_CALL_FAILED` because eve chooses that code, with
+        // EVESTACK_BUDGET_FAIL_CLOSED never consulted. `resolveConfig` validates
+        // the zone now, so this is the second lock on a door that should no
+        // longer be reachable; a configuration error must not be able to present
+        // itself as a model failure whichever way it arrives.
+        let day: string;
         let totals;
         try {
+          day = dayKey(config);
           totals = await recordStep(config, {
             sessionId: ctx.session.id,
             principalId,

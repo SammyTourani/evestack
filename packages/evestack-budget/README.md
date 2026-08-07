@@ -55,8 +55,9 @@ eve has nowhere to put one. evestack already runs Postgres for durable sessions,
 pnpm add @evestack/budget
 ```
 
-Needs `WORKFLOW_POSTGRES_URL` — the same database eve's sessions already live in. Tables are created on
-first use in the `evestack` schema (never `workflow`, which belongs to eve).
+Needs `WORKFLOW_POSTGRES_URL`, or `DATABASE_URL` if that is the name your platform sets — the same
+database eve's sessions already live in, and the same two names the dashboard and `@evestack/schedules`
+read. Tables are created on first use in the `evestack` schema (never `workflow`, which belongs to eve).
 
 **`agent/hooks/budget.ts`**
 
@@ -102,7 +103,7 @@ Options passed in code win over the environment.
 | `EVESTACK_BUDGET_DAILY_USD` | `10` | Per-principal-per-day cap. `false` disables it. |
 | `EVESTACK_BUDGET_DISABLED` | unset | `1` turns the whole thing off. |
 | `EVESTACK_BUDGET_MODE` | `fail` | `fail` \| `cancel` \| `observe`. |
-| `EVESTACK_BUDGET_TIMEZONE` | `UTC` | IANA zone the daily window is cut on. |
+| `EVESTACK_BUDGET_TIMEZONE` | `UTC` | IANA zone the daily window is cut on. A value `Intl` rejects warns once and falls back to `UTC`. |
 | `EVESTACK_BUDGET_MODEL` | from `EVESTACK_PROVIDER`/`EVESTACK_MODEL` | Model id used to price tokens. |
 | `EVESTACK_BUDGET_UNPRICED` | `warn` | `stop` treats an unpriced model as already over budget. |
 | `EVESTACK_BUDGET_FAIL_CLOSED` | unset | `1` fails the turn when the spend store is unreachable. |
@@ -212,10 +213,17 @@ All in the `evestack` schema.
 
 | Table | What it holds |
 | --- | --- |
-| `budget_steps` | One row per model call. The deduplication key that survives eve's step retries. |
-| `budget_usage` | Aggregates, keyed `(scope, scope_key)` — `session`/`<sessionId>` and `principal-day`/`<day>\|<principal>`. |
-| `budget_stops` | Current stop state. The only thing the guard reads. |
-| `budget_events` | Why a stop happened, and what was done about it. |
+| `budget_steps` | One row per model call. The deduplication key that survives eve's step retries. Swept at 30 days. |
+| `budget_usage` | Aggregates, keyed `(scope, scope_key)` — `session`/`<sessionId>` and `principal-day`/`<day>\|<principal>`. Never swept. |
+| `budget_stops` | Current stop state. The only thing the guard reads. Swept at 30 days. |
+| `budget_events` | Why a stop happened, and what was done about it. Never swept. |
+
+`budget_steps` and `budget_stops` are swept once per process, at 30 days. Neither is read by a cap after
+that: a step row deduplicates retries that happen inside a turn, and a stop row older than the window
+belongs to a session nobody resumed. `budget_usage` is deliberately never swept, because that is where
+the money is — sweeping it would raise a cap retroactively, and it is what rewrites a stop row within one
+step if an old session ever does come back. `budget_events` is not swept either: it grows per stop rather
+than per step, and it is the only record of why a session stopped.
 
 ## The price table
 

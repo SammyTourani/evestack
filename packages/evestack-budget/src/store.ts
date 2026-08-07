@@ -65,9 +65,9 @@ function getPool(config: BudgetConfig): Pool {
   const url = config.databaseUrl;
   if (!url) {
     throw new Error(
-      "[evestack:budget] needs WORKFLOW_POSTGRES_URL (or an explicit databaseUrl). " +
-        "A spend cap that only lives in process memory resets on every restart, so " +
-        "there is no safe in-memory fallback to offer here.",
+      "[evestack:budget] needs WORKFLOW_POSTGRES_URL or DATABASE_URL (or an explicit " +
+        "databaseUrl). A spend cap that only lives in process memory resets on every " +
+        "restart, so there is no safe in-memory fallback to offer here.",
     );
   }
   // Small on purpose: this runs inside the agent process next to eve's own
@@ -198,10 +198,50 @@ export async function ensureSchema(config: BudgetConfig): Promise<void> {
         PRIMARY KEY (scope, scope_key)
       )
     `);
-    // A principal-day key contains the day, so yesterday's stop can never
-    // match today's lookup — it is simply litter. Swept once per process.
+    /**
+     * Retention. Both sweeps run once per process, on the same 30 days.
+     *
+     * A principal-day key contains the day, so yesterday's stop can never match
+     * today's lookup — it is simply litter. A session-scoped stop for a session
+     * that ended over budget is litter for exactly the same reason, and it was
+     * not covered here at all: the scope filter meant the one table nobody
+     * cleaned kept a row per stopped session forever.
+     *
+     * Dropping a session stop this old is safe because `budget_usage` is
+     * deliberately not swept. The money survives, so if such a session is ever
+     * resumed its very next `step.completed` re-reads the same over-budget total
+     * and `recordStop` writes the row again — at the cost of the one in-flight
+     * step this package already documents as its overshoot. `recordStop` does
+     * not refresh `created_at` on conflict, so a session that has been stopped
+     * continuously for longer than the window is swept and immediately rewritten.
+     */
     await db.query(
-      "DELETE FROM evestack.budget_stops WHERE scope = 'principal-day' AND created_at < now() - interval '30 days'",
+      "DELETE FROM evestack.budget_stops WHERE created_at < now() - interval '30 days'",
+    );
+    /**
+     * The per-step ledger is the table that grows per model call, and it had no
+     * bound at all: one row per step forever, with `resetSession` the sole other
+     * `DELETE` and that one scoped to a single session.
+     *
+     * It is cheap to keep it short. The row exists to deduplicate eve's step
+     * retries, which happen inside a turn and at most four times, so it is
+     * load-bearing for seconds and kept for 30 days only to stay on one number
+     * with the sweep above rather than inventing a second. Nothing is lost that
+     * a cap reads: `budget_usage` holds the totals, so removing a step row can
+     * never lower a total or raise a cap.
+     *
+     * `budget_events` is left alone on purpose. It is also unswept, but it grows
+     * per stop rather than per step, and it is the whole answer to "why did this
+     * session stop" — the question the event stream cannot answer and this
+     * package exists to record. Deleting that is a different decision from
+     * garbage-collecting a dedup key, and not one to make in passing.
+     *
+     * No index on `created_at` on purpose. This runs once per process against a
+     * table retention now keeps small, whereas an index would be paid for on
+     * every step insert on the hot path.
+     */
+    await db.query(
+      "DELETE FROM evestack.budget_steps WHERE created_at < now() - interval '30 days'",
     );
     await db.query(
       "CREATE INDEX IF NOT EXISTS budget_usage_day_idx ON evestack.budget_usage (day DESC) WHERE scope = 'principal-day'",
@@ -455,12 +495,18 @@ export async function readStop(
 ): Promise<{ readonly scope: BudgetScope; readonly reason: string } | null> {
   await ensureSchema(config);
   const db = getPool(config);
+  // Session first, which is the order `evaluate` in hook.ts decides in and for
+  // the reason stated there: when both scopes have stopped, the session message
+  // names a conversation the user can see where the daily one names an aggregate
+  // they cannot. Plain `ORDER BY scope` sorted 'principal-day' ahead of 'session'
+  // alphabetically, so the guard answered with the less actionable of the two and
+  // blamed the daily budget for a turn the session budget stopped.
   const { rows } = await db.query<{ scope: string; reason: string }>(
     `SELECT scope, reason
        FROM evestack.budget_stops
       WHERE (scope = 'session' AND scope_key = $1)
          OR (scope = 'principal-day' AND scope_key = $2)
-      ORDER BY scope
+      ORDER BY CASE WHEN scope = 'session' THEN 0 ELSE 1 END
       LIMIT 1`,
     [input.sessionId, principalDayKey(input.principalId, input.day)],
   );

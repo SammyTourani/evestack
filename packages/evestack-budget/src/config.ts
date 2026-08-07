@@ -93,6 +93,7 @@ export type BudgetOptions = Partial<BudgetConfig>;
 
 const DEFAULT_SESSION_USD = 2;
 const DEFAULT_DAILY_USD = 10;
+const DEFAULT_TIME_ZONE = "UTC";
 
 function envNumberOrFalse(raw: string | undefined, fallback: number | false): number | false {
   if (raw === undefined || raw.trim() === "") return fallback;
@@ -116,16 +117,101 @@ function envMode(raw: string | undefined): BudgetConfig["mode"] {
   return "fail";
 }
 
+/** Zones already complained about, so a bad one warns once and not once per turn. */
+const warnedTimeZones = new Set<string>();
+
+/**
+ * A zone `Intl` will actually accept, or the documented default.
+ *
+ * `Intl.DateTimeFormat` throws `RangeError` on a zone it does not know, and
+ * `dayKey` sits on the path of every step — so an unchecked value here turned a
+ * one-character typo into an agent that could not complete a turn at all. The
+ * values that reach this are ordinary rather than exotic: a trailing space
+ * survives both a `.env` file and `docker compose`, and `GMT+2` is a plausible
+ * guess at an IANA name that is not one.
+ *
+ * Hence the same posture as every other field in this file, for the same reason:
+ * warn, fall back to the default, keep serving. A daily window cut in the wrong
+ * zone is a smaller error than an agent that cannot answer, and this is a cost
+ * control — a typo in it must not be the thing that stops an agent.
+ *
+ * Empty is not a typo. `EVESTACK_BUDGET_TIMEZONE=` is a blank line in a `.env`,
+ * which plainly means "not configured", so it falls back in silence the way
+ * `envNumberOrFalse` does rather than shouting about a value nobody set.
+ */
+function validTimeZone(raw: string | undefined): string {
+  const trimmed = raw?.trim();
+  if (!trimmed) return DEFAULT_TIME_ZONE;
+  try {
+    // Construction is where the zone is validated, so this is the whole test.
+    new Intl.DateTimeFormat("en-CA", { timeZone: trimmed });
+    return trimmed;
+  } catch {
+    if (!warnedTimeZones.has(trimmed)) {
+      warnedTimeZones.add(trimmed);
+      console.warn(
+        `[evestack:budget] "${trimmed}" is not a time zone Intl accepts; cutting the daily ` +
+          `window on ${DEFAULT_TIME_ZONE} instead. EVESTACK_BUDGET_TIMEZONE wants an IANA name ` +
+          `like "America/Toronto", not an offset like "GMT+2".`,
+      );
+    }
+    return DEFAULT_TIME_ZONE;
+  }
+}
+
+/**
+ * Each provider's default model, which has to match the agent's.
+ *
+ * `templates/default/agent/agent.ts` carries the same three and says out loud
+ * that the two tables must stay in step. They had drifted: this file defaulted
+ * every non-ollama provider to `gpt-5-mini`, so the documented anthropic setup —
+ * `EVESTACK_PROVIDER=anthropic` with `EVESTACK_MODEL` left commented out, which
+ * is exactly what `templates/default/.env.example` shows — priced the run as
+ * `anthropic/gpt-5-mini`. Nothing prices that, and there is no `anthropic/*`
+ * wildcard to catch it, so every step cost $0.00 and neither the $2 session cap
+ * nor the $10 daily one could ever trip. With the `EVESTACK_BUDGET_UNPRICED=stop`
+ * that same file recommends it failed the other way: the first step of every turn
+ * was instantly over budget. A drifted default here is not a small error in
+ * either direction, which is why it is one map rather than an inline ternary.
+ */
+const PROVIDER_DEFAULT_MODEL: Record<string, string | undefined> = {
+  openai: "gpt-5-mini",
+  anthropic: "claude-sonnet-5",
+  ollama: "qwen3",
+};
+
 /**
  * The model the template would have built, reconstructed from the same two
  * variables `agent.ts` reads. Keeping this in lockstep with the template is
  * why both live in the same repo.
+ *
+ * Trimmed and length-checked rather than `??`, which is how `agent.ts` reads the
+ * same two variables: `??` only falls back on undefined, so `EVESTACK_MODEL=` —
+ * a blank line in `.env.local`, or CI passing through an unset input — survived
+ * as the model half of the key and produced `openai/`, and `EVESTACK_PROVIDER`
+ * was compared to `"ollama"` case- and space-sensitively, so `Anthropic` and
+ * ` ollama ` became providers of their own. Every one of those is an unpriced
+ * key, which is the failure above reached by another route.
  */
 function envModel(): string {
-  const explicit = process.env.EVESTACK_BUDGET_MODEL;
-  if (explicit && explicit.trim() !== "") return explicit.trim();
-  const provider = process.env.EVESTACK_PROVIDER ?? "openai";
-  const model = process.env.EVESTACK_MODEL ?? (provider === "ollama" ? "qwen3" : "gpt-5-mini");
+  const explicit = process.env.EVESTACK_BUDGET_MODEL?.trim();
+  if (explicit) return explicit;
+
+  const provider = process.env.EVESTACK_PROVIDER?.trim().toLowerCase() || "openai";
+  const model = process.env.EVESTACK_MODEL?.trim() || PROVIDER_DEFAULT_MODEL[provider];
+  if (!model) {
+    // A provider `agent.ts` does not know, which it treats as a hard error — so
+    // the agent will not have started, and refusing here too would buy nothing
+    // this package's own policy allows. There is no default model to guess
+    // either: handing back openai's would price the run against the wrong table
+    // while looking entirely correct. Naming the provider alone keeps the key
+    // honestly unpriced, which the hook already complains about loudly.
+    console.warn(
+      `[evestack:budget] no default model known for EVESTACK_PROVIDER="${provider}"; ` +
+        `set EVESTACK_BUDGET_MODEL to price this run.`,
+    );
+    return provider;
+  }
   return model.includes("/") ? model : `${provider}/${model}`;
 }
 
@@ -136,6 +222,17 @@ export function resolveConfig(options: BudgetOptions = {}): BudgetConfig {
 
   const port = process.env.PORT ?? process.env.EVE_PORT ?? "2000";
 
+  // The two names the siblings accept, in the same order they accept them:
+  // `packages/evestack-schedules/src/store.ts` and `packages/dashboard/lib/db.ts`
+  // both read `WORKFLOW_POSTGRES_URL ?? DATABASE_URL`. Reading only the first
+  // meant that on a PaaS which sets only `DATABASE_URL` — the Heroku, Railway,
+  // Render and Neon convention — the dashboard connected and the schedules
+  // connected, while this package's pool constructor threw and `hook.ts` caught
+  // that throw as "spend store unavailable". A spend cap that silently does not
+  // run, with every other half of the app looking healthy, is the worst shape
+  // this failure could have taken.
+  const databaseUrl = process.env.WORKFLOW_POSTGRES_URL ?? process.env.DATABASE_URL;
+
   const resolved: BudgetConfig = {
     sessionUsd: disabled
       ? false
@@ -143,7 +240,7 @@ export function resolveConfig(options: BudgetOptions = {}): BudgetConfig {
     dailyUsd: disabled
       ? false
       : envNumberOrFalse(process.env.EVESTACK_BUDGET_DAILY_USD, DEFAULT_DAILY_USD),
-    timeZone: process.env.EVESTACK_BUDGET_TIMEZONE ?? "UTC",
+    timeZone: validTimeZone(process.env.EVESTACK_BUDGET_TIMEZONE),
     mode: envMode(process.env.EVESTACK_BUDGET_MODE),
     model: envModel(),
     unpricedModel: process.env.EVESTACK_BUDGET_UNPRICED === "stop" ? "stop" : "warn",
@@ -159,12 +256,18 @@ export function resolveConfig(options: BudgetOptions = {}): BudgetConfig {
     ...(process.env.EVESTACK_AUTH_PASSWORD
       ? { authPassword: process.env.EVESTACK_AUTH_PASSWORD }
       : {}),
-    ...(process.env.WORKFLOW_POSTGRES_URL
-      ? { databaseUrl: process.env.WORKFLOW_POSTGRES_URL }
-      : {}),
+    ...(databaseUrl ? { databaseUrl } : {}),
   };
 
-  return { ...resolved, ...options };
+  const merged = { ...resolved, ...options };
+
+  // Options win over the environment, so the merged value is the one `dayKey`
+  // will hand to `Intl` — validate that, not only what the environment said.
+  // `budgetHook({ timeZone: "GMT+2" })` is the same mistake made in code and
+  // must not get a different outcome; and because `BudgetOptions` is a
+  // `Partial`, an explicit `timeZone: undefined` spreads over a good value as
+  // `undefined`, which `Intl` rejects as well.
+  return { ...merged, timeZone: validTimeZone(merged.timeZone) };
 }
 
 /** True when neither axis is capped, i.e. the hook has nothing to enforce. */
