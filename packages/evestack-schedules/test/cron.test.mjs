@@ -53,6 +53,21 @@ test("weekday names and ranges", () => {
   assert.deepEqual([...fields.daysOfWeek].sort(), [1, 2, 3, 4, 5]);
 });
 
+test("day and month names are case-insensitive, as the doc promises", () => {
+  // Every uppercase spelling of a Wednesday or a July used to throw. The
+  // unsupported-syntax guard tested `/[LW#?]/` over the whole expression before a
+  // single name had been resolved, and WED carries a W, JUL an L. `tracked()`
+  // parses at wrap time, so `0 9 * * WED` took the agent down at import — for
+  // syntax it does not use, with a diagnosis about a seconds field.
+  assert.deepEqual([...parseCron("0 9 * * Wed").daysOfWeek], [3]);
+  assert.deepEqual([...parseCron("0 9 * * WED").daysOfWeek], [3]);
+  assert.deepEqual([...parseCron("0 9 * * wed").daysOfWeek], [3]);
+  assert.deepEqual([...parseCron("0 9 * * MON-WED").daysOfWeek].sort((a, b) => a - b), [1, 2, 3]);
+  assert.deepEqual([...parseCron("0 0 1 JUL *").months], [7]);
+  assert.deepEqual([...parseCron("0 0 1 Jul *").months], [7]);
+  assert.deepEqual([...parseCron("0 0 1 JAN-JUL *").months].sort((a, b) => a - b), [1, 2, 3, 4, 5, 6, 7]);
+});
+
 test("Sunday is both 0 and 7", () => {
   assert.deepEqual([...parseCron("0 0 * * 7").daysOfWeek], [0]);
   assert.deepEqual([...parseCron("0 0 * * 0").daysOfWeek], [0]);
@@ -95,10 +110,22 @@ test("REFUSES six fields rather than silently dropping seconds", () => {
   assert.throws(() => parseCron("*/30 * * * * *"), /Seconds are not supported/);
 });
 
-test("REFUSES L, W, # and ?", () => {
-  for (const expression of ["0 0 L * *", "0 0 15W * *", "0 0 * * 5#2", "0 0 ? * *"]) {
+test("REFUSES L, W, # and ?, in either case, now that names are checked first", () => {
+  // Lower case included: `0 0 l * *` is the same mistake and used to get the
+  // vaguer "not a number or known name".
+  const refused = ["0 0 L * *", "0 0 l * *", "0 0 15W * *", "0 0 15w * *", "0 0 * * 5#2", "0 0 ? * *", "0 0 * * 5L"];
+  for (const expression of refused) {
     assert.throws(() => parseCron(expression), /not supported/, `should refuse ${expression}`);
   }
+});
+
+test("REFUSES a timezone for the timezone, not for seconds", () => {
+  // `CRON_TZ=…` makes the expression six fields, so the seconds diagnosis fired
+  // and told the author to delete a field they had never written.
+  assert.throws(() => parseCron("CRON_TZ=America/New_York 0 9 * * *"), /carries a timezone/);
+  assert.throws(() => parseCron("TZ=UTC 0 9 * * *"), /carries a timezone/);
+  // A genuine sixth field still reads as seconds.
+  assert.throws(() => parseCron("0 0 9 * * *"), /Seconds are not supported/);
 });
 
 test("REFUSES out-of-range and malformed values", () => {
@@ -174,4 +201,42 @@ test("describeCron still answers the cases it already got right", () => {
   assert.equal(describeCron("0 9 * * *"), "daily at 09:00");
   assert.equal(describeCron("*/15 * * * *"), "every 15 minutes");
   assert.equal(describeCron("not a cron expression"), "not a cron expression");
+});
+
+test("describeCron: an 'every N minutes' rate reads the day and month fields too", () => {
+  // This is the branch the earlier fix missed, and the reason it survived: the
+  // regression test above only ever asked about `*/15 * * * *`, which is not
+  // restricted by anything. `*/15 * * * 1` is 96 fires a week, not 672.
+  assert.equal(describeCron("*/15 * * * 1"), "every 15 minutes on mon");
+  assert.equal(describeCron("*/15 * 1 * *"), "every 15 minutes on day 1");
+  assert.equal(describeCron("*/5 * * * sun"), "every 5 minutes on sun");
+  assert.equal(describeCron("*/30 * * jan *"), "every 30 minutes in month 1");
+});
+
+test("describeCron: a minute set that does not wrap at 60 is not a rate", () => {
+  // `0-10/5` is evenly spaced inside the hour and fires three times an hour; it
+  // was described as twelve. `0,1` fires twice and was described as sixty — and
+  // as "every 1 minutes". Falling back to the raw expression is the honest
+  // answer, so the label never claims more often than the truth.
+  assert.equal(describeCron("0-10/5 * * * *"), "0-10/5 * * * *");
+  assert.equal(describeCron("0,1 * * * *"), "0,1 * * * *");
+  assert.equal(describeCron("1,2,3 * * * *"), "1,2,3 * * * *");
+  // A set that wraps is still a rate, even offset: 5,15,25,35,45,55.
+  assert.equal(describeCron("5/10 * * * *"), "every 10 minutes");
+});
+
+test("describeCron: 'daily' has to satisfy the month field as well", () => {
+  // `0 9 * 1 *` fires 31 times a year and was reported as 365.
+  assert.equal(describeCron("0 9 * 1 *"), "09:00 in month 1");
+  assert.equal(describeCron("0 9 * * *"), "daily at 09:00");
+});
+
+test("describeCron: both day fields restricted reads as OR and names both halves", () => {
+  // Vixie's rule again, on the label this time: `0 9 13 * 5` fires every Friday
+  // AND every 13th, and the label printed only the weekday.
+  assert.equal(describeCron("0 9 13 * 5"), "09:00 on fri or day 13");
+  assert.equal(describeCron("* * 13 * 5"), "every minute on fri or day 13");
+  // The other side of the same rule: a restricted weekday field that covers the
+  // whole week is no restriction at all once it is OR-ed, so this is daily.
+  assert.equal(describeCron("0 0 1 * 0-6"), "daily at 00:00");
 });

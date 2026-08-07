@@ -77,9 +77,11 @@ tracked("digest", CRON, handler, {
 ```
 
 Replays are idempotent by construction: a unique index on `(name, fire_at)` means the same tick
-cannot be recorded twice, so two workers racing to replay it cannot both run the handler. Replayed
-rows carry `caught_up = true` and the dashboard labels them, because a replay is not the same event
-as a live fire and a history that renders them identically is quietly misleading.
+cannot be recorded twice, so whoever claims it first is the only one who runs the handler — a racing
+worker, a replay, or the live fire. Catch-up also stops one minute short of the tick it was called
+from, because the tick you are inside is not a tick you missed. Replayed rows carry
+`caught_up = true` and the dashboard labels them, because a replay is not the same event as a live
+fire and a history that renders them identically is quietly misleading.
 
 ## Failure policy
 
@@ -93,21 +95,34 @@ Deliberate, and worth knowing before you rely on it:
   history.
 - **Handler errors are recorded and rethrown.** This is a recorder, not a swallower of your errors —
   eve's runner should see the failure too.
+- **One scheduled tick runs at most once.** A tick already in the table is not run again, so a
+  restart cannot replay the fire it is in the middle of. The cost is on the other side: a process
+  that dies mid-handler leaves its tick claimed, and a re-fire of that same minute is skipped rather
+  than retried. The row is there, still marked `running`.
 
 ## The cron parser
 
-Hand-written, no dependencies, 19 tests (`pnpm test`). Supports `*`, `N`, `A-B`, `A-B/S`, `*/S`,
-comma lists, month and day names, `@daily`-style aliases, and Sunday as either `0` or `7`.
+Hand-written, no dependencies, 43 tests (`pnpm test`). Supports `*`, `N`, `A-B`, `A-B/S`, `*/S`,
+comma lists, month and day names in any case (`WED`, `wed`, `Wed`), `@daily`-style aliases, and
+Sunday as either `0` or `7`.
 
 It implements Vixie cron's genuinely surprising rule: **when both day fields are restricted they are
 OR-ed, not AND-ed** — `0 0 13 * 5` fires on the 13th *and* on every Friday. Matching that matters
 more than being tidy, because the same expression is also handed to eve's own runner.
 
 It **refuses** rather than guesses: six fields (seconds), `L`, `W`, `#`, `?`, out-of-range values and
-non-timezone-local interpretation all throw at module load. A schedule that silently means something
-other than what it says is worse than one that will not start.
+a `CRON_TZ=`/`TZ=` prefix all throw at module load. A schedule that silently means something other
+than what it says is worse than one that will not start — and each refusal names its own problem, so
+a timezone prefix is refused for the timezone rather than counted as a sixth field and blamed on
+seconds.
 
 Timezone is the host's, matching cron and matching eve.
+
+On the two days a year the host's clock jumps, the fields are still wall-clock fields. Springing
+forward erases an hour of readings, and a schedule inside it (`0 2 * * *` in New York, say) fires
+once on the instant the clock lands — 03:00 — which is what Vixie cron does with a forward jump, and
+is also reported as a missed fire so catch-up can replay it. Falling back repeats an hour instead of
+erasing one, and a schedule inside that hour fires once, not twice.
 
 ## Heartbeat
 
