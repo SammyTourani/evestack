@@ -1,6 +1,6 @@
 {
   "name": "evestack",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "One command for the whole self-hosted eve stack: `evestack create` scaffolds an agent and a dashboard, `evestack attach` wraps an eve project you already have, and `evestack doctor` explains why a durable job is dead.",
   "license": "Apache-2.0",

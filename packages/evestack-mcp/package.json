@@ -1,6 +1,6 @@
 {
   "name": "@evestack/mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "evestack's control plane as an MCP server. Ask Claude Code why last night's agent run got denied, what it cost, and turn it into a regression test — over stdio, read-only by default.",
   "license": "Apache-2.0",
