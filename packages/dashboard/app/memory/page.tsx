@@ -1,4 +1,4 @@
-import { DatabaseUnavailableError, describeDbError } from "@/lib/db";
+import { DatabaseError } from "@/app/db-error";
 import { listMemories } from "@/lib/memories";
 import { MemoryList } from "./memory-client";
 import styles from "./memory.module.css";
@@ -19,13 +19,7 @@ export default async function MemoryPage(props: PageProps<"/memory">) {
   try {
     page = await listMemories({ ...(search ? { search } : {}), limit: 200 });
   } catch (error) {
-    const unavailable = error instanceof DatabaseUnavailableError;
-    return (
-      <div className="empty">
-        <h2>{unavailable ? "Database unreachable" : "Could not read memories"}</h2>
-        <p>{describeDbError(error)}</p>
-      </div>
-    );
+    return <DatabaseError error={error} />;
   }
 
   return (

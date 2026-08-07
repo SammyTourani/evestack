@@ -1,7 +1,7 @@
+import { DatabaseError } from "@/app/db-error";
 import { Suspense } from "react";
 
 import { AlertsPanel } from "./alerts-panel";
-import { DatabaseUnavailableError, describeDbError } from "@/lib/db";
 import { WINDOWS, getMonitorSummary, type MonitorSummary } from "@/lib/monitors";
 import { clock, duration, stamp } from "@/lib/time";
 import styles from "./monitors.module.css";
@@ -117,13 +117,7 @@ export default async function MonitorsPage({
   try {
     summary = await getMonitorSummary(hours);
   } catch (error) {
-    const unavailable = error instanceof DatabaseUnavailableError;
-    return (
-      <div className="empty">
-        <h2>{unavailable ? "Database unreachable" : "Could not read monitors"}</h2>
-        <p>{describeDbError(error)}</p>
-      </div>
-    );
+    return <DatabaseError error={error} />;
   }
 
   const { turns, sessions } = summary;
@@ -137,6 +131,15 @@ export default async function MonitorsPage({
     <>
       <h1>Monitors</h1>
 
+      {/* Title, then subtitle, then content — the order every other page uses.
+          The panel used to sit between the two, which put a card between a
+          heading and the sentence explaining it. */}
+      <p className="page-sub">
+        Latency and failure rates over the last {windowLabel(hours)}, from the same{" "}
+        <code>workflow.workflow_runs</code> the session list reads. Nothing is sampled and nothing
+        is estimated.
+      </p>
+
       {/* Streamed: the sandbox checks talk to the Docker daemon, which costs
           about two seconds for its CPU sample, and the charts below are pure
           SQL. Blocking the whole page on the slowest check is the mistake
@@ -144,12 +147,6 @@ export default async function MonitorsPage({
       <Suspense fallback={null}>
         <AlertsPanel />
       </Suspense>
-
-      <p className="page-sub">
-        Latency and failure rates over the last {windowLabel(hours)}, from the same{" "}
-        <code>workflow.workflow_runs</code> the session list reads. Nothing is sampled and nothing
-        is estimated.
-      </p>
 
       <nav className={styles.windows} aria-label="Time window">
         {WINDOWS.map((option) => (

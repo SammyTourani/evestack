@@ -1,5 +1,5 @@
+import { DatabaseError } from "@/app/db-error";
 import { listApprovals, type ApprovalRow, type ApproverIdentity } from "@/lib/approvals";
-import { DatabaseUnavailableError, describeDbError } from "@/lib/db";
 import { stamp } from "@/lib/time";
 import styles from "./approvals.module.css";
 
@@ -70,13 +70,7 @@ export default async function ApprovalsPage() {
   try {
     rows = await listApprovals(200);
   } catch (error) {
-    const unavailable = error instanceof DatabaseUnavailableError;
-    return (
-      <div className="empty">
-        <h2>{unavailable ? "Database unreachable" : "Could not read the audit log"}</h2>
-        <p>{describeDbError(error)}</p>
-      </div>
-    );
+    return <DatabaseError error={error} />;
   }
 
   const unidentified = rows.filter((r) => r.approverVia === "unidentified").length;

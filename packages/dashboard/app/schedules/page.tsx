@@ -1,4 +1,4 @@
-import { DatabaseUnavailableError, describeDbError } from "@/lib/db";
+import { DatabaseError } from "@/app/db-error";
 import { getSchedules } from "@/lib/schedules";
 import { ScheduleList } from "./schedules-client";
 import styles from "./schedules.module.css";
@@ -17,13 +17,7 @@ export default async function SchedulesPage() {
   try {
     view = await getSchedules();
   } catch (error) {
-    const unavailable = error instanceof DatabaseUnavailableError;
-    return (
-      <div className="empty">
-        <h2>{unavailable ? "Database unreachable" : "Could not read schedules"}</h2>
-        <p>{describeDbError(error)}</p>
-      </div>
-    );
+    return <DatabaseError error={error} />;
   }
 
   const failing = view.schedules.filter((s) => s.failingStreak > 0);

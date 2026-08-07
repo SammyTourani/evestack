@@ -100,11 +100,25 @@ export default async function OverviewPage(props: PageProps<"/">) {
    */
   const blind = [data.runs, data.failureRate, data.latency, data.spend, data.tokens, data.ttft];
   if (blind.every((h) => h.failed)) {
+    /*
+     * The REAL rejection, not a sentence about it. This used to synthesise
+     * `new Error("Every measure on this page failed to read from Postgres.")`,
+     * which is true and useless: describeDbFailure() reads a pg error code to
+     * tell a stopped container from a database that was never bootstrapped, and
+     * a hand-written sentence carries neither. So this page said "Can't reach
+     * the database" while /monitors and /evals, reading the same dead database
+     * in the same second, said "The database has no agent schema yet" — the
+     * message that names the step the reader actually skipped.
+     *
+     * Every one of them failed to reach this branch, so any reason is
+     * representative; the first is taken for determinism.
+     */
+    const reason = blind.find((h) => h.error !== undefined)?.error;
     return (
       <>
         <h1>Overview</h1>
         <DatabaseError
-          error={new Error("Every measure on this page failed to read from Postgres.")}
+          error={reason ?? new Error("Every measure on this page failed to read from Postgres.")}
         />
       </>
     );
