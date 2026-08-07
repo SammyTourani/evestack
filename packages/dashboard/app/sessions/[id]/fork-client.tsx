@@ -16,6 +16,15 @@ import styles from "./session.module.css";
  *
  * The confirmation is deliberately re-armed whenever the range changes: ticking
  * it for turns 1–2 must not silently authorise turns 1–6.
+ *
+ * Two of the fields below are carried, not computed, and both exist so the run
+ * cannot drift from the plan on screen. `planFingerprint` comes back from `GET`
+ * and goes out with the `POST`; the route re-reads the transcript for itself and
+ * refuses the replay if it no longer fingerprints to this plan, and the panel
+ * answers that refusal by dropping the plan and making the operator read the new
+ * one. `refusal` is the route saying it cannot number this session's turns from 1
+ * at all — the transcript is longer than the window the dashboard reads — which
+ * is rendered as prose instead of a button that is certain to fail.
  */
 
 interface PlannedTurn {
@@ -24,6 +33,14 @@ interface PlannedTurn {
   tools: string[];
   deniedTools: string[];
   failed: boolean;
+}
+
+interface PlanResponse {
+  turns?: PlannedTurn[];
+  planFingerprint?: string;
+  truncated?: boolean;
+  refusal?: string;
+  error?: string;
 }
 
 interface ForkResult {
@@ -38,6 +55,8 @@ export function ForkPanel({ sessionId }: { sessionId: string }) {
   const [open, setOpen] = useState(false);
   const [plan, setPlan] = useState<PlannedTurn[] | null>(null);
   const [planError, setPlanError] = useState<string | null>(null);
+  const [fingerprint, setFingerprint] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<string | null>(null);
   const [fromTurn, setFromTurn] = useState(1);
   const [message, setMessage] = useState("");
   const [acknowledged, setAcknowledged] = useState(false);
@@ -57,13 +76,26 @@ export function ForkPanel({ sessionId }: { sessionId: string }) {
           `/api/control/sessions/${encodeURIComponent(sessionId)}/fork`,
           { signal: controller.signal },
         );
-        const body = (await response.json().catch(() => null)) as
-          | { turns?: PlannedTurn[]; error?: string }
-          | null;
+        const body = (await response.json().catch(() => null)) as PlanResponse | null;
         if (!response.ok || !body?.turns) {
           throw new Error(body?.error ?? `Could not read this session's turns (${response.status}).`);
         }
+        // The route sends no turns when it cannot number them from 1, and no
+        // fingerprint when there is no plan to pin a replay to. Either way there
+        // is nothing here to acknowledge, and the reason has to be said out loud:
+        // an empty plan on its own reads as "nothing to replay", which is a
+        // different and much less alarming fact than "this session is longer than
+        // the transcript window the dashboard reads".
+        if (body.truncated || !body.planFingerprint) {
+          setRefusal(
+            body.refusal ??
+              "This session did not come back with a plan a replay could be pinned to, so replaying it is not offered.",
+          );
+          setPlan([]);
+          return;
+        }
         setPlan(body.turns);
+        setFingerprint(body.planFingerprint);
         // Default to the last turn: rewriting what you said last is the common
         // case, and it is also the range the operator is most likely to have
         // meant. It still has to be confirmed below.
@@ -97,13 +129,42 @@ export function ForkPanel({ sessionId }: { sessionId: string }) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           fromTurn,
+          // Echoed straight from the GET that produced the list above. The route
+          // re-reads the transcript itself and refuses this replay unless its read
+          // still fingerprints to that list, so this is what ties the run to the
+          // turns the operator actually read.
+          planFingerprint: fingerprint,
           ...(message.trim() ? { message: message.trim() } : {}),
         }),
       });
       const body = (await response.json().catch(() => null)) as
-        | (ForkResult & { error?: string })
+        | (ForkResult & { error?: string; code?: string })
         | null;
       if (!response.ok || !body?.sessionId) {
+        // The session outgrew the transcript window between reading the plan and
+        // pressing the button. Nothing about this plan is replayable any more, so
+        // the panel drops it and shows the reason rather than keeping a button
+        // that would be refused on every press. Returning rather than throwing
+        // keeps the same sentence from appearing twice.
+        if (body?.code === "transcript_truncated") {
+          setRefusal(body.error ?? "This session can no longer be replayed from turn 1.");
+          setPlan([]);
+          setFingerprint(null);
+          setAcknowledged(false);
+          return;
+        }
+        // A refused replay is this panel working, not failing: the transcript
+        // moved after the plan was read, so the tick no longer covers what would
+        // run. Drop the stale plan so the effect above fetches the current one,
+        // and clear the acknowledgement so it has to be given again — against the
+        // turns that are really there now.
+        if (body?.code === "plan_changed") {
+          setPlan(null);
+          setPlanError(null);
+          setFingerprint(null);
+          setRefusal(null);
+          setAcknowledged(false);
+        }
         throw new Error(body?.error ?? `Replay failed (${response.status}).`);
       }
       setResult(body);
@@ -128,18 +189,34 @@ export function ForkPanel({ sessionId }: { sessionId: string }) {
 
   return (
     <div className={styles.forkPanel}>
-      <p className={styles.forkWarn}>
-        <strong>This re-runs the conversation for real.</strong> There is no saved state to branch
-        from, so replaying turn {Math.max(1, fromTurn)} means running every turn before it again —
-        calling the model, spending money, and executing the same tools with the same arguments.
-        Anything the original sent, deleted or paid for happens a second time.
-      </p>
+      {!refusal && (
+        <p className={styles.forkWarn}>
+          <strong>This re-runs the conversation for real.</strong> There is no saved state to branch
+          from, so replaying turn {Math.max(1, fromTurn)} means running every turn before it again —
+          calling the model, spending money, and executing the same tools with the same arguments.
+          Anything the original sent, deleted or paid for happens a second time.
+        </p>
+      )}
 
       {planError && <p className={styles.forkError}>{planError}</p>}
 
       {!plan && !planError && <p className="faint">Reading this session&apos;s turns…</p>}
 
-      {plan && plan.length === 0 && (
+      {/* Prose, and no run button: the route will not replay this session, so a
+          warning about what replaying costs would be describing an offer that is
+          not on the table. */}
+      {refusal && (
+        <>
+          <p className={styles.forkError}>{refusal}</p>
+          <div className={styles.forkRow}>
+            <button type="button" className={styles.cancelBtn} onClick={() => setOpen(false)}>
+              close
+            </button>
+          </div>
+        </>
+      )}
+
+      {plan && plan.length === 0 && !refusal && (
         <p className="faint">
           No user messages were recovered from this session&apos;s durable event log, so there is
           nothing to replay.
@@ -243,7 +320,9 @@ export function ForkPanel({ sessionId }: { sessionId: string }) {
               <button
                 type="button"
                 className={styles.promote}
-                disabled={busy || !acknowledged}
+                // No fingerprint, no replay — the route would refuse it anyway,
+                // and refusing here says so before the click.
+                disabled={busy || !acknowledged || fingerprint === null}
                 onClick={run}
               >
                 {busy ? `replaying ${fromTurn} turn${fromTurn === 1 ? "" : "s"}…` : "Run the replay"}

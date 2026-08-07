@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import {
   continueSession,
   createSession,
@@ -42,9 +44,23 @@ export const dynamic = "force-dynamic";
  */
 
 /**
- * One lookback for both handlers, deliberately shared: if `GET` recovered a
- * different number of turns than `POST` does, the operator would acknowledge
- * one plan and run another.
+ * How far back both handlers read the transcript.
+ *
+ * This constant used to be described as the thing that keeps `GET` and `POST`
+ * from disagreeing — "one lookback for both handlers, deliberately shared". It
+ * is not, and the claim was the bug. `readRecentEvents` reads a TAIL window
+ * (`startIndex: -lookback`), so sharing a window SIZE is not sharing a WINDOW:
+ * two reads of the same size taken a second apart cover different events the
+ * moment anything is appended to the original session, and every turn number in
+ * this file is positional. Sharing the number only makes the two reads
+ * comparable in cost.
+ *
+ * What actually makes the two handlers agree is below, and it is two checks
+ * rather than a constant: `describeTruncation` refuses a read that did not reach
+ * the first event, so "turn 1" is really turn 1; and `fingerprintPlan` names the
+ * exact message list `GET` showed, so `POST` can refuse to replay a different
+ * one. Raising this number changes how long a session can get before forks stop
+ * being offered; it changes nothing about that safety property.
  */
 const TRANSCRIPT_LOOKBACK = 4096;
 
@@ -100,6 +116,94 @@ function planFrom(turns: readonly RecoveredTurn[]): PlannedTurn[] {
 }
 
 /**
+ * The two refusals, kept apart because the thing to do about them differs.
+ * `transcript_truncated` needs a bigger window or a shorter session and will keep
+ * failing until one of those changes; `plan_changed` only needs the operator to
+ * look at the plan again and acknowledge what it now says.
+ */
+const TRUNCATED_CODE = "transcript_truncated";
+const PLAN_CHANGED_CODE = "plan_changed";
+
+/**
+ * Why a transcript read that started mid-conversation cannot be replayed at all.
+ *
+ * `readRecentEvents` asks for the LAST `TRANSCRIPT_LOOKBACK` events
+ * (`startIndex: -lookback`) and reports the absolute index it landed on. Every
+ * turn number in this file is positional: `recoverTurns` folds whichever events
+ * it was handed, and `planFrom` calls the first one it finds "turn 1". That
+ * numbering is only true when the read reached index 0. Past the window it is a
+ * lie with a real cost — "replay turns 1..3" would replay three turns from the
+ * middle of the conversation under names that belong to earlier ones, executing
+ * their tool calls for real.
+ *
+ * So there is no degraded mode. A plan the dashboard cannot number honestly is
+ * not offered, and `startIndex` — which `readRecentEvents` has always returned
+ * and nothing here used to read — is the whole test.
+ *
+ * One honest limit: `startIndex === 0` means this read reached index 0 of the
+ * durable stream. It is not proof that no earlier event was ever pruned from
+ * that stream, because nothing the dashboard can see distinguishes a pruned
+ * stream from a short one (lib/promote-eval.ts warns about the same gap).
+ */
+export function describeTruncation(read: { startIndex: number; tailIndex: number }): string | null {
+  if (read.startIndex <= 0) return null;
+  return (
+    `This session is longer than the transcript window the dashboard reads: it has ` +
+    `${read.tailIndex + 1} recorded events and the read covers only the last ` +
+    `${TRANSCRIPT_LOOKBACK} of them, starting at event ${read.startIndex}. Turns recovered from a ` +
+    `window that begins mid-conversation cannot be numbered from 1, so replaying "turns 1..N" ` +
+    `would name the wrong turns and re-run the wrong tools for real. Replay is refused rather ` +
+    `than offered against the wrong numbering; raise TRANSCRIPT_LOOKBACK in this route if forks ` +
+    `of sessions this long are worth the bigger read.`
+  );
+}
+
+/**
+ * A stable name for the plan `GET` showed, so `POST` can refuse to run another.
+ *
+ * The operator acknowledges a specific list of messages. `POST` re-reads the
+ * transcript rather than trusting a client-supplied script — it has to, or the
+ * caller could name any messages it liked — and the fingerprint is what closes
+ * the gap between the two reads: `GET` returns it, the caller echoes it, and
+ * `POST` recomputes it from its own read. Different plan, different digest,
+ * refused. That is the same reasoning that made `fromTurn` required rather than
+ * defaulted below: for an operation that spends money and sends mail, the
+ * dangerous behaviour must not be the one you get by saying nothing.
+ *
+ * WHAT IS IN IT. The ordered user messages — the exact strings that would be
+ * re-sent — and the window anchor, so a window that slid to a different part of
+ * the same conversation cannot collide with the plan taken from the old one.
+ *
+ * WHAT IS NOT, deliberately. The per-turn tool lists. They are evidence about
+ * what the original session did, not a promise about the replay: the model is
+ * free to call different tools this time, which the panel says out loud. A
+ * completed turn's tool list cannot change either, so the only drift a
+ * tool-sensitive digest would catch is the last turn of a session that is still
+ * running — at the cost of refusing every fork of a live session. The messages
+ * are what actually get replayed, so they are what gets pinned.
+ *
+ * A hash, not a wire-format deep compare: the digest is short, it is cheap to
+ * echo through the UI, and it cannot be read as a description of the plan. It is
+ * not a MAC and is not treated as one — it authenticates nothing, and a forged
+ * value can only match by matching the log `POST` just read for itself.
+ */
+export function fingerprintPlan(
+  turns: readonly { userMessage: string }[],
+  windowStart: number,
+): string {
+  // JSON does the escaping. An array of strings has exactly one serialisation,
+  // and a message containing whatever delimiter we might otherwise have joined
+  // on cannot forge a turn boundary: ["a\nb"] and ["a", "b"] are different
+  // documents, so they are different digests.
+  const canonical = JSON.stringify([
+    "fork-plan/v1",
+    windowStart,
+    turns.map((turn) => turn.userMessage),
+  ]);
+  return createHash("sha256").update(canonical).digest("hex");
+}
+
+/**
  * GET — what a fork would do, without doing any of it.
  *
  * This exists so the confirmation in the UI can name the actual tools that
@@ -108,6 +212,13 @@ function planFrom(turns: readonly RecoveredTurn[]): PlannedTurn[] {
  * nothing new; it is served here rather than computed in the session page so
  * that the page keeps rendering from Postgres alone and does not start
  * depending on the agent being up.
+ *
+ * It returns two things besides the turns, and `POST` is unusable without them:
+ * `planFingerprint`, which the caller has to echo back so the replay is pinned to
+ * the plan that was actually shown, and `truncated`/`refusal`, which say that
+ * this session is too long for the dashboard to number from turn 1 — so the UI
+ * can explain that instead of offering a button whose `POST` is already certain
+ * to be refused.
  */
 export async function GET(
   request: Request,
@@ -119,16 +230,37 @@ export async function GET(
     const session = await getSession(id);
     if (!session) return jsonError(`No session ${id}.`, 404, "not_found");
 
-    const { events } = await readRecentEvents(id, {
+    const read = await readRecentEvents(id, {
       lookback: TRANSCRIPT_LOOKBACK,
       signal: request.signal,
     });
-    const turns = recoverTurns(events);
+
+    // Reported as a field rather than raised as an error, because the panel calls
+    // this endpoint to decide what to render and a 4xx gives it nothing to
+    // explain. `turns` comes back empty on purpose: the turns recovered from a
+    // short window are real messages under wrong numbers, and shipping them so
+    // the UI can list them "1, 2, 3" is exactly the mislabelling being refused.
+    const truncated = describeTruncation(read);
+    if (truncated) {
+      return jsonOk({
+        sessionId: id,
+        title: session.title,
+        turns: [],
+        truncated: true,
+        refusal: truncated,
+      });
+    }
+
+    const turns = recoverTurns(read.events);
 
     return jsonOk({
       sessionId: id,
       title: session.title,
       turns: planFrom(turns),
+      truncated: false,
+      // The plan the operator is about to be shown, named. `POST` will not run
+      // without this value coming back.
+      planFingerprint: fingerprintPlan(turns, read.startIndex),
     });
   } catch (error) {
     return handleRouteError(error, request);
@@ -147,16 +279,56 @@ export async function POST(
     const session = await getSession(id);
     if (!session) return jsonError(`No session ${id}.`, 404, "not_found");
 
-    const { events } = await readRecentEvents(id, {
+    const read = await readRecentEvents(id, {
       lookback: TRANSCRIPT_LOOKBACK,
       signal: request.signal,
     });
-    const turns = recoverTurns(events);
+
+    // First, because it explains the cause the other refusals would only hint at:
+    // if this read did not reach the first event, no turn number in this request
+    // means what it says and there is nothing safe to do with `fromTurn`.
+    const truncated = describeTruncation(read);
+    if (truncated) return jsonError(truncated, 409, TRUNCATED_CODE);
+
+    const turns = recoverTurns(read.events);
     if (turns.length === 0) {
       return jsonError(
         "No user messages were recovered from this session, so there is nothing to replay.",
         409,
         "nothing_to_replay",
+      );
+    }
+
+    // The plan has to be named, and the name has to match.
+    //
+    // Required for the same reason `fromTurn` is (see below): the caller says
+    // which plan it is replaying, and saying nothing does not get you a replay of
+    // whatever the transcript happens to say now. `POST` still derives the script
+    // from its own read — a client-supplied script would let any caller name any
+    // messages — so the fingerprint is the only thing tying that read to the one
+    // the operator read.
+    const claimed = body.planFingerprint;
+    if (typeof claimed !== "string" || claimed.length === 0) {
+      return jsonError(
+        `'planFingerprint' is required: it is the fingerprint GET returned alongside the plan the ` +
+          `operator was shown, and echoing it is what proves this replay is that plan rather than ` +
+          `whatever the transcript says now. GET this URL and send the value back.`,
+        400,
+        "bad_request",
+      );
+    }
+    if (claimed !== fingerprintPlan(turns, read.startIndex)) {
+      // The current fingerprint is deliberately NOT included in this response. A
+      // caller that can copy the new value out of the refusal and retry has
+      // skipped the only step that makes the button safe — a human reading what
+      // would run again.
+      return jsonError(
+        `The turns recovered from this session no longer match the plan that was acknowledged, so ` +
+          `the replay was refused: the original session has changed since GET read it. Replaying ` +
+          `re-executes real tool calls, and the messages it would send now are not the ones that ` +
+          `were shown. Reload the plan from GET, read the turns again, and acknowledge that one.`,
+        409,
+        PLAN_CHANGED_CODE,
       );
     }
 
@@ -203,11 +375,17 @@ export async function POST(
     // dropped: their content was a reaction to a conversation that no longer
     // happened, so replaying them would be fiction.
     //
-    // Re-reading the transcript here rather than trusting the plan the UI showed
-    // is safe because turns are append-only: a message that arrives in the
-    // original session between the GET and this POST can only become turn N+1,
-    // so turns 1..fromTurn — the ones the operator acknowledged — cannot change
-    // underneath them.
+    // This slice is taken from THIS request's re-read, and the two checks above
+    // are the whole reason that is the same list the operator acknowledged. The
+    // claim this comment used to make — that re-reading is safe because turns are
+    // append-only, so a message arriving between the GET and this POST can only
+    // become turn N+1 — was false. The events are append-only; the READ is a tail
+    // window. Once a session passes TRANSCRIPT_LOOKBACK events, appending one
+    // event slides that window forward and every recovered turn shifts down a
+    // number, so `slice(0, fromTurn)` would select messages nobody approved and
+    // re-run their real tool calls. An append-only log does not make a sliding
+    // window append-only, which is why `describeTruncation` refuses the sliding
+    // case outright and `fingerprintPlan` refuses any other drift.
     const script = turns.slice(0, fromTurn).map((turn, index) =>
       index === fromTurn - 1 && typeof replacement === "string" ? replacement : turn.userMessage,
     );
