@@ -21,17 +21,10 @@ const UI = new URL("../components/ui/", import.meta.url).href;
 
 const { Badge, OutcomeBadge } = await import(`${UI}badge.tsx`);
 const { Card } = await import(`${UI}card.tsx`);
-const { CommandPalette } = await import(`${UI}command-palette.tsx`);
-const { Dialog } = await import(`${UI}dialog.tsx`);
-const { EnvironmentPicker } = await import(`${UI}environment-picker.tsx`);
 const { CoverageNote, Placeholder } = await import(`${UI}feedback.tsx`);
-const { Menu, MenuItem, MenuSeparator } = await import(`${UI}menu.tsx`);
 const { Popover } = await import(`${UI}popover.tsx`);
 const { StatTile } = await import(`${UI}stat.tsx`);
 const { DataTable } = await import(`${UI}table.tsx`);
-const { Tabs } = await import(`${UI}tabs.tsx`);
-const { TimeRangePicker } = await import(`${UI}time-range-picker.tsx`);
-const { Tooltip } = await import(`${UI}tooltip.tsx`);
 
 const COLUMNS = [
   { accessorKey: "id", header: "Session" },
@@ -243,73 +236,14 @@ test("the coverage note is silent when there is nothing to warn about", () => {
   contains(render(CoverageNote, { coverage: { rows: 0, of: 40 }, noun: "turns" }), "No data — 0 of 40 turns");
 });
 
-test("tabs render nothing when empty and a real tablist otherwise", () => {
-  assert.equal(render(Tabs, { items: [], label: "Panes" }), "");
-  const markup = render(Tabs, {
-    label: "Panes",
-    items: [
-      { value: "tree", label: "Tree", content: "the tree" },
-      { value: "facts", label: "Facts", content: "the facts" },
-    ],
-  });
-  contains(markup, 'role="tablist"');
-  contains(markup, 'aria-label="Panes"');
-  contains(markup, 'role="tab"');
-  contains(markup, 'aria-selected="true"');
-  // The active tab is marked by an underline as well as a colour.
-  contains(markup, "data-[state=active]:border-accent");
-});
-
-test("the environment picker offers the null bucket as its own choice", () => {
-  const markup = render(EnvironmentPicker, {
-    environments: ["development", null],
-    value: undefined,
-    onChange: () => {},
-  });
-  contains(markup, "Environment: All environments");
-  const open = render(EnvironmentPicker, {
-    environments: [],
-    value: null,
-    onChange: () => {},
-  });
-  // With nothing selected the trigger still names the state rather than going
-  // blank, and the em dash is the same glyph an absent cell uses.
-  contains(open, "Environment: —");
-});
-
-test("the time range picker names the window it is showing", () => {
-  contains(
-    render(TimeRangePicker, {
-      value: { kind: "preset", id: "7d" },
-      onChange: () => {},
-      now: Date.parse("2026-08-06T12:00:00Z"),
-    }),
-    "Time range: Last 7 days",
-  );
-  contains(
-    render(TimeRangePicker, {
-      value: { kind: "absolute", fromMs: Date.parse("2026-08-01T00:00:00Z"), toMs: Date.parse("2026-08-06T12:00:00Z") },
-      onChange: () => {},
-    }),
-    "Aug 1 00:00 UTC → Aug 6 12:00 UTC",
-  );
-});
-
-test("the command palette exposes its shortcut on the trigger", () => {
-  const markup = render(CommandPalette, {
-    groups: [
-      { heading: "Pages", items: [{ id: "sessions", label: "Sessions", onSelect: () => {} }] },
-    ],
-  });
-  contains(markup, 'aria-keyshortcuts="Meta+K Control+K"');
-  contains(markup, "⌘K");
-  // Closed on the server: the dialog is not in the markup, only the trigger.
-  omits(markup, "Command palette");
-  // And it survives having no groups at all.
-  contains(render(CommandPalette, { groups: [] }), "Search…");
-});
-
-test("overlays render their trigger and nothing else while closed", () => {
+/*
+ * Popover only. This used to cover Dialog, Menu and Tooltip in the same test;
+ * those three were deleted along with command-palette, environment-picker and
+ * time-range-picker, because nothing in the app ever rendered them and the
+ * redesign did not reach for them either. Popover is the one of the five that a
+ * page actually uses.
+ */
+test("the popover renders its trigger and nothing else while closed", () => {
   const popover = render(Popover, {
     label: "Filter by model",
     trigger: h("button", { type: "button" }, "Model"),
@@ -317,36 +251,21 @@ test("overlays render their trigger and nothing else while closed", () => {
   });
   contains(popover, 'aria-expanded="false"');
   omits(popover, "panel");
-
-  const dialog = render(Dialog, {
-    title: "Cancel this session?",
-    description: "The agent stops mid-turn. Its sandbox keeps running.",
-    trigger: h("button", { type: "button" }, "Cancel"),
-  });
-  contains(dialog, ">Cancel<");
-  omits(dialog, "mid-turn");
-
-  const menu = render(
-    Menu,
-    { label: "Session actions", trigger: h("button", { type: "button" }, "Actions") },
-    h(MenuItem, { key: "fork" }, "Fork"),
-    h(MenuSeparator, { key: "sep" }),
-    h(MenuItem, { key: "cancel", tone: "danger" }, "Cancel"),
-  );
-  contains(menu, 'aria-haspopup="menu"');
-  omits(menu, "Fork");
-
-  const tooltip = render(Tooltip, { content: "Tools the model was offered, not tools it called." }, h("button", { type: "button" }, "?"));
-  contains(tooltip, 'data-state="closed"');
 });
 
 test("no control is left wearing the operating system's chrome", () => {
-  // `app/globals.css` takes Tailwind's theme and utilities and skips preflight,
-  // so a `<button>` with only layout utilities on it computes, measured in
-  // Chrome on this app: background rgb(239,239,239), border 2px outset,
-  // font-family Arial, text-align center. A grey OS button in a dark table
-  // header, and nothing in the component says so. Every button and text input
-  // this directory renders therefore carries the reset from `style.ts`.
+  // WHY THIS SURVIVED PREFLIGHT. It was written when globals.css took Tailwind's
+  // theme and utilities and skipped its base layer, so a `<button>` carrying only
+  // layout utilities computed — measured in Chrome on this app — background
+  // rgb(239,239,239), border 2px outset, font-family Arial. A grey OS button in a
+  // dark table header, with nothing in the component saying so.
+  //
+  // globals.css imports preflight now, which resets `font: inherit` on form
+  // controls itself, so the inline reset from `style.ts` is no longer the only
+  // thing standing between this app and Arial. It is still the thing this asserts,
+  // and deliberately: the reset travels with the component, so a control rendered
+  // somewhere that has not loaded globals.css — an email, a snapshot, a future
+  // embed — still looks like the product rather than the operating system.
   //
   // Checkboxes and radios are excluded on purpose — those should look native.
   const markups = [
@@ -357,14 +276,12 @@ test("no control is left wearing the operating system's chrome", () => {
       facetColumns: ["outcome"],
       searchPlaceholder: "Search",
     }),
-    render(TimeRangePicker, { value: { kind: "preset", id: "24h" }, onChange: () => {} }),
-    render(EnvironmentPicker, { environments: ["development"], value: undefined, onChange: () => {} }),
-    render(CommandPalette, { groups: [] }),
   ];
   const controls = markups
     .flatMap((markup) => markup.match(/<(?:button|input)\b[^>]*>/g) ?? [])
     .filter((tag) => !/type="(?:checkbox|radio)"/.test(tag));
-  assert.ok(controls.length >= 6, `expected several controls, found ${controls.length}`);
+  // Was 6 across four components; DataTable alone is the only one of them left.
+  assert.ok(controls.length >= 3, `expected several controls, found ${controls.length}`);
   for (const tag of controls) {
     assert.match(tag, /font-family:inherit/, tag);
   }
