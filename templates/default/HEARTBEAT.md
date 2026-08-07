@@ -8,12 +8,13 @@ The rule that is meant to make this liveable: **the agent only messages you when
 something here produces news.** If every check comes back boring it replies with an
 acknowledgement token.
 
-> **That token is currently delivered to you.** Nothing filters it — the filter
-> exists in `agent/schedules/heartbeat.ts` but has nowhere to run, because eve posts
-> the reply itself. So an hourly heartbeat with nothing to report sends you
-> `HEARTBEAT_OK` every hour. Read the note at the top of that file before turning
-> this on; an hourly heartbeat that always sends something is an hourly
-> notification, and you will mute it within a day.
+> **That token is currently delivered to you.** Nothing filters it, and no filter
+> ships in `agent/schedules/heartbeat.ts` either — eve posts the reply itself, so
+> nothing in this project ever sees the text to filter. So an hourly heartbeat with
+> nothing to report sends you `HEARTBEAT_OK` every hour. The rule a filter would
+> apply, and the two ways it could actually be wired, are written out at the top of
+> that file: read it before turning this on. An hourly heartbeat that always sends
+> something is an hourly notification, and you will mute it within a day.
 
 Delete the examples below and write your own.
 

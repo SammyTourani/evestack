@@ -33,6 +33,19 @@ async function pgClient(connectionString) {
   const { default: pg } = await import("pg");
   const client = new pg.Client({ connectionString });
   await client.connect();
+  // A pg.Client with no 'error' listener turns a dead socket into an
+  // uncaughtException, and in a probe runner that does not fail THIS probe — it
+  // kills the process and takes every other probe's result with it. A Postgres
+  // blip mid-suite would then report as "the suite crashed" instead of as one red
+  // line. Every long-lived client under probes/ was missing it; the same listener
+  // already exists in templates/default/scripts/checks.mjs connectPostgres(), for
+  // the same reason and with the same body.
+  //
+  // A no-op, not `client.destroy()`: pg.Client has no `destroy`, only `end`, and
+  // there is nothing useful to do here anyway — the next query rejects on its own
+  // with pg's "Client has encountered a connection error and is not queryable",
+  // which the runner reports as this probe failing, which is what it is.
+  client.on("error", () => {});
   return client;
 }
 

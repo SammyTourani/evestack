@@ -369,6 +369,28 @@ async function ensureSchema(): Promise<void> {
 }
 
 async function embedText(text: string): Promise<number[]> {
+  // Whitespace-only input is not something to embed, and — this is the part that
+  // made it worth a guard — it does not fail on its own. The tools' zod schemas
+  // use `.min(1)`, which " " passes, and so does the provider: measured against
+  // ollama/nomic-embed-text through ai-sdk-ollama, `" "`, `"   "` and `"\t\n"`
+  // each returned a valid 768-dimensional vector, and the SAME vector for all
+  // three (first components 0.0230, 0.0317, -0.2281). Only the genuinely empty
+  // string throws — `OllamaError: Empty embeddings array returned`, which is the
+  // failure `recent()`'s note below is about.
+  //
+  // So the bug is not a crash, it is a quiet lie: `remember(" ")` writes a memory
+  // whose content is a space, and `recall(" ")` runs a nearest-neighbour search
+  // against a vector that carries no meaning and presents whatever comes back as
+  // a semantic match. Refused here rather than in either input schema because
+  // `remember` and `recall` are both public exports, and this is the one line
+  // both of them go through.
+  if (text.trim() === "") {
+    throw new Error(
+      "Long-term memory needs some actual text: this value is empty or only whitespace, and an " +
+        "embedding of it would match everything and mean nothing.",
+    );
+  }
+
   const { embedding } = await embed({ model: embeddingModel(), value: text });
 
   // A width that does not match the column is caught here, once, with both
@@ -428,6 +450,38 @@ export async function recall(
   return readable(() => recallOnce(queryText, options));
 }
 
+const DEFAULT_LIMIT = 5;
+const MAX_LIMIT = 50;
+
+/**
+ * How many rows a caller may ask for — a function, not a copied expression,
+ * because the two copies disagreed and neither was right.
+ *
+ * `recall` had `Math.min(options.limit ?? 5, 50)` with NO lower bound while
+ * `recent` had `Math.max(1, Math.min(limit, 50))`. Both are public exports, and
+ * the zod schema on agent/tools/recall.ts (`.min(1).max(20)`) only guards the
+ * model's path into them, so `recall(q, { limit: -5 })` reached Postgres as
+ * `LIMIT -5`. Measured on pg 17: `LIMIT must not be negative`.
+ *
+ * `recent`'s clamp is not enough on its own either, which is why this rejects
+ * rather than clamps: Math.min and Math.max both PROPAGATE NaN, so
+ * `{ limit: NaN }` came out of either form still NaN and arrived as the
+ * template-interpolated `SET LOCAL hnsw.ef_search = NaN` a few lines below.
+ * Measured, with vector.so loaded into the session: `invalid value for parameter
+ * "hnsw.ef_search": "nan"`. (Before the library is loaded `hnsw.ef_search` is an
+ * unvalidated placeholder GUC that accepts the string, and the failure simply
+ * moves one statement later, to `LIMIT NaN` — `invalid input syntax for type
+ * bigint: "NaN"`. Either way the query dies inside a tool call.)
+ *
+ * So anything that is not a finite number falls back to the default instead of
+ * being clamped to a bound, and fractions are truncated: `LIMIT 2.5` is not a
+ * query either.
+ */
+function clampLimit(requested: number | undefined): number {
+  if (requested === undefined || !Number.isFinite(requested)) return DEFAULT_LIMIT;
+  return Math.max(1, Math.min(Math.trunc(requested), MAX_LIMIT));
+}
+
 /** Split out only so `recall` can wrap it whole; the transaction below already
  *  has a catch of its own, and a dead database is noticed before it. */
 async function recallOnce(
@@ -436,7 +490,7 @@ async function recallOnce(
 ): Promise<Recalled[]> {
   await ensureSchema();
   const embedding = await embedText(queryText);
-  const limit = Math.min(options.limit ?? 5, 50);
+  const limit = clampLimit(options.limit);
   const tags = options.tags ?? [];
 
   // HNSW returns at most `hnsw.ef_search` rows, and that default is 40 — below
@@ -513,7 +567,7 @@ export async function recent(limit = 5): Promise<Recalled[]> {
          FROM evestack.memories
         ORDER BY created_at DESC, id DESC
         LIMIT $1`,
-      [Math.max(1, Math.min(limit, 50))],
+      [clampLimit(limit)],
     );
     return rows.map((r) => ({
       id: Number(r.id),
