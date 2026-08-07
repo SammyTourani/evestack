@@ -1,3 +1,6 @@
+9772c1d  2026-08-06  The failing-schedules monitor could never fire, and I said contracts were green
+629872d  2026-08-06  Count the commits against origin/main, not a stale local one
+085b8aa  2026-08-06  Add the review packet: plan, evidence, and what went wrong
 f525c55  2026-08-06  Lock the dashboard's new dependencies
 cc89fec  2026-08-06  "Nothing happened" and "I cannot see" must not render the same
 6b9477c  2026-08-06  Delete the flag reader I wrote for actions that do not exist
