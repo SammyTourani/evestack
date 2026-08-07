@@ -145,6 +145,25 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r --if-present run build
 
+      # The workflow schema, BEFORE the probes rather than only inside "boot the
+      # agent" below.
+      #
+      # Most probes build a scratch schema and are indifferent to this. Two are
+      # not, on purpose: 07-fact-tables cross-checks every fact total against
+      # `workflow.workflow_runs` itself, and 08-metric-query validates the metric
+      # catalog against the real table rather than a paraphrase of it — which is
+      # the only way either can catch drift between the shipped SQL and the
+      # shipped schema. Ordered after the agent's bootstrap, both reported
+      # `42P01: relation "workflow.workflow_runs" does not exist`: 07 threw, and
+      # 08 declined with a reason that `--require` correctly turns into a
+      # failure. Neither is a probe bug; both were being asked to run before the
+      # thing they read existed.
+      #
+      # Idempotent — world-postgres runs migrations — so the copy inside "boot
+      # the agent" stays where it is and does nothing the second time.
+      - name: the workflow schema the probes read
+        run: cd templates/default && npm run db:bootstrap
+
       # Postgres-only and filesystem-only probes first. They are fast, they need
       # no agent, and if they fail there is no point booting one.
       - name: probes that need only Postgres
