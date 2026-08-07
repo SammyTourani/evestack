@@ -115,5 +115,35 @@ export default {
         actual: "on disk but advertised nowhere",
       });
     }
+
+    /*
+     * The landing page's capability cards, which carry the same promise in a
+     * stronger form. `packages/website/lib/copy.ts` says of them: "Each of these
+     * is a shipped file, named so the claim is checkable." Nothing was checking
+     * it — and the claim went stale the moment dashboard v2 turned app/page.tsx
+     * from a session list into an overview, leaving the Session list card
+     * pointing a reader at a file that renders something else.
+     *
+     * Existence only. Whether the file renders what the card SAYS is a judgement
+     * no assertion can make; whether it is still there is exactly the part that
+     * rots silently when a page is moved.
+     */
+    const copy = readFileSync(join(REPO_ROOT, "packages/website/lib/copy.ts"), "utf8");
+    const sources = [...copy.matchAll(/^\s*source:\s*"([^"]+)"/gm)].map((m) => m[1]);
+
+    // A capability list that silently emptied would pass every assertion below
+    // by having none to make.
+    t.ok(sources.length >= 4, `copy.ts still names ${sources.length} source files`, {
+      expected: "at least 4",
+      actual: String(sources.length),
+    });
+
+    for (const path of sources) {
+      t.ok(
+        existsSync(join(REPO_ROOT, path)),
+        `the landing page's capability card points at \`${path}\`, and it exists`,
+        { expected: `${path} on disk`, actual: "missing" },
+      );
+    }
   },
 };

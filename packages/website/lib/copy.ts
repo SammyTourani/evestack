@@ -242,9 +242,14 @@ export const observability = {
   /* Each of these is a shipped file, named so the claim is checkable. */
   capabilities: [
     {
+      /* The source path moved and the claim had to move with it. Dashboard v2
+         made app/page.tsx an overview of charts and monitors; the session list
+         is its own page now. Leaving the old path here would have broken the one
+         rule this list has — that naming the file is what makes the claim
+         checkable — by pointing a reader at a file that renders something else. */
       title: "Session list",
-      body: "Every agent run on the machine, with status, turns, model, tokens in/out/cached, cost and age. Team totals across the top.",
-      source: "packages/dashboard/app/page.tsx",
+      body: "Every agent run on the machine, with outcome, trigger, model, provider, environment and turns. Searchable, filterable by facet, sortable, and exportable as CSV.",
+      source: "packages/dashboard/app/sessions/page.tsx",
     },
     {
       title: "Run tree",
