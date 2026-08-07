@@ -15,6 +15,18 @@ const API_BASE = process.env.COMPOSIO_BASE_URL ?? "https://backend.composio.dev"
  * Composio ties OAuth grants to a user id, not a session. This must match the
  * agent's — `@evestack/composio` resolves it the same way — or the dashboard
  * will happily connect accounts the agent cannot see.
+ *
+ * DUPLICATED ON PURPOSE, and pinned by a test rather than an import.
+ * `@evestack/composio` exports this same constant, so importing it would be the
+ * obvious fix — but that package depends on `@composio/core` and
+ * `@composio/experimental`, and this file's whole reason for existing (see the
+ * header) is that the dashboard ships no runtime dependency beyond `pg`.
+ * Importing the constant would drag in the tree this client was hand-rolled to
+ * avoid, to share nine characters.
+ *
+ * So the two literals stay separate and test/composio-identity.test.mjs reads
+ * both files and fails if they ever diverge. That catches the drift — an agent
+ * signed into accounts the dashboard cannot see — without the coupling.
  */
 export const DEFAULT_COMPOSIO_USER_ID = "evestack";
 

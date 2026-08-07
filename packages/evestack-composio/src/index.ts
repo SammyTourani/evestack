@@ -8,6 +8,8 @@ import type {
   EveToolCollection,
 } from "@composio/experimental/eve";
 
+import { DEFAULT_RETRY_AFTER_MS, createSessionResolver } from "./resolver.js";
+
 export { EveProvider, denyEveToolCall, requireApprovalForTools } from "@composio/experimental/eve";
 export type { EveProviderHooks, EveProviderOptions, EveToolCollection };
 
@@ -16,19 +18,24 @@ export type { EveProviderHooks, EveProviderOptions, EveToolCollection };
  * searches the catalog, connects an account, then executes — instead of ~1000
  * toolkits being loaded into the context window.
  *
- * The router decides the actual subset per session, so treat this as the
- * vocabulary for `requireApprovalForTools()`, not as a guaranteed tool list.
- * Observed against the live API: `manageConnections: false` drops
- * MANAGE_CONNECTIONS, and disabling the remote sandbox drops REMOTE_BASH_TOOL
- * and REMOTE_WORKBENCH. COMPOSIO_EXECUTE_TOOL is a legacy slug the current
- * router no longer returns — MULTI_EXECUTE_TOOL covers both single and batch.
+ * Public because it is the vocabulary for `requireApprovalForTools()` — see the
+ * README — not because it is a guaranteed tool list: the router decides the
+ * actual subset per session. Observed against the live API:
+ * `manageConnections: false` drops MANAGE_CONNECTIONS, and disabling the remote
+ * sandbox drops REMOTE_BASH_TOOL and REMOTE_WORKBENCH.
+ *
+ * COMPOSIO_EXECUTE_TOOL is deliberately absent: it is a legacy slug the current
+ * router no longer returns, and MULTI_EXECUTE_TOOL covers both single and batch.
+ * It was listed here anyway, which made this list wrong in the one direction that
+ * matters — a caller who spread it into `requireApprovalForTools()` was gating a
+ * tool that never arrives, and would have read that as "execution is approved
+ * before it runs".
  */
 export const COMPOSIO_META_TOOLS = [
   "COMPOSIO_SEARCH_TOOLS",
   "COMPOSIO_GET_TOOL_SCHEMAS",
   "COMPOSIO_MANAGE_CONNECTIONS",
   "COMPOSIO_MULTI_EXECUTE_TOOL",
-  "COMPOSIO_EXECUTE_TOOL",
   "COMPOSIO_REMOTE_BASH_TOOL",
   "COMPOSIO_REMOTE_WORKBENCH",
 ] as const;
@@ -37,6 +44,13 @@ export const COMPOSIO_META_TOOLS = [
  * Composio ties connected accounts to a user id, not to a session — so this is
  * the identity that owns every OAuth grant the agent earns. Keep it stable or
  * the agent forgets which accounts it is signed into.
+ *
+ * Exported because it must have exactly one definition, and today it has two:
+ * `packages/dashboard/app/integrations/composio.ts` declares the same literal
+ * again. Two independent definitions of the identity that owns every OAuth grant
+ * is precisely the drift this README warns about — change one and the dashboard
+ * lists accounts the agent cannot see, with no error anywhere. The dashboard
+ * should import this instead; that is a one-line change on its side.
  */
 export const DEFAULT_COMPOSIO_USER_ID = "evestack";
 
@@ -71,19 +85,18 @@ export interface ComposioToolsOptions {
   allowTracking?: boolean;
 }
 
-type EveSession = { tools: () => Promise<EveToolCollection> };
-
-const NO_TOOLS: EveToolCollection = {};
-
 /**
- * A stable object identity that always resolves to zero tools. `defineComposioTools`
- * memoizes `tools()` per session object, so handing back this singleton makes the
- * disabled path free after the first step instead of re-deciding on every step.
+ * Whether Composio is configured at all, without opening a session.
+ *
+ * Public and documented in the README rather than deleted, because the question
+ * is asked outside the agent: the dashboard's `/integrations` page has to decide
+ * whether to render a connect flow or an explanation, and it currently answers it
+ * with its own copy of this check.
+ *
+ * `env` is a parameter rather than a `process.env` read so it can be tested and
+ * so a caller holding a different environment (a request-scoped config, a test)
+ * is not forced to mutate the global one.
  */
-const DISABLED_SESSION: EveSession = { tools: async () => NO_TOOLS };
-
-const DEFAULT_RETRY_AFTER_MS = 60_000;
-
 export function isComposioConfigured(env: Record<string, string | undefined> = process.env): boolean {
   return Boolean(env.COMPOSIO_API_KEY?.trim());
 }
@@ -112,49 +125,19 @@ export function composioUserId(
  */
 export function composioTools(options: ComposioToolsOptions = {}) {
   const log = options.logger ?? ((message: string) => console.warn(message));
-  const retryAfterMs = options.retryAfterMs ?? DEFAULT_RETRY_AFTER_MS;
 
-  let announcedMissingKey = false;
-  let live: EveSession | null = null;
-  let retryAt = 0;
-
-  return defineComposioTools((): EveSession => {
-    const apiKey = options.apiKey ?? process.env.COMPOSIO_API_KEY?.trim();
-    if (!apiKey) {
-      if (!announcedMissingKey) {
-        announcedMissingKey = true;
-        log(
-          "[evestack:composio] COMPOSIO_API_KEY is not set, so the agent has no Composio tools. " +
-            "Everything else works. Set the key to give it one-click access to 1000+ apps.",
-        );
-      }
-      return DISABLED_SESSION;
-    }
-
-    if (live) return live;
-    if (Date.now() < retryAt) return DISABLED_SESSION;
-
-    // A fresh object each attempt on purpose: `defineComposioTools` caches by
-    // session identity, so reusing a failed one would cache the empty tool set.
-    const attempt: EveSession = {
-      tools: async () => {
-        try {
-          const session = await openSession(apiKey, options, log);
-          return await session.tools();
-        } catch (error) {
-          if (live === attempt) live = null;
-          retryAt = Date.now() + retryAfterMs;
-          log(
-            `[evestack:composio] could not reach Composio (${describe(error)}). ` +
-              `Continuing without its tools; retrying in ${Math.round(retryAfterMs / 1000)}s.`,
-          );
-          return NO_TOOLS;
-        }
-      },
-    };
-    live = attempt;
-    return attempt;
-  });
+  // The decision of WHICH session a step gets — no key, the live one, or nothing
+  // while a failure cools off — lives in ./resolver.ts with the network injected,
+  // because it is the only stateful logic here and it was unreachable from a test
+  // while it sat inside this closure.
+  return defineComposioTools(
+    createSessionResolver({
+      apiKey: () => options.apiKey ?? process.env.COMPOSIO_API_KEY?.trim(),
+      openTools: async (apiKey) => (await openSession(apiKey, options, log)).tools(),
+      log,
+      retryAfterMs: options.retryAfterMs ?? DEFAULT_RETRY_AFTER_MS,
+    }),
+  );
 }
 
 async function openSession(
@@ -207,9 +190,4 @@ function withConnectLinkHook(
       return downstream ? downstream(context, next) : next();
     },
   };
-}
-
-function describe(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  return String(error);
 }

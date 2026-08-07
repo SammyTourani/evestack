@@ -18,6 +18,10 @@
  * a .d.ts and a shipped implementation can disagree.
  */
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { REPO_ROOT } from "../lib/repo.mjs";
+
 const BACKEND_METHODS = ["create", "prewarm"];
 
 /** Members `packages/sandbox-opensandbox/src/index.ts` implements by hand. */
@@ -26,6 +30,9 @@ const SESSION_MEMBERS = [
   "id",
   "resolvePath",
   "run",
+  "spawn",
+  "setNetworkPolicy",
+  "removePath",
   "readTextFile",
   "writeTextFile",
   "readBinaryFile",
@@ -33,6 +40,55 @@ const SESSION_MEMBERS = [
   "readFile",
   "writeFile",
 ];
+
+/** The wrapper whose session object has to satisfy eve. */
+const WRAPPER = join("packages", "sandbox-opensandbox", "src");
+
+/**
+ * Every non-optional member eve declares on `SandboxSession`, read from the
+ * declaration rather than listed here.
+ *
+ * A HAND-MAINTAINED LIST CANNOT CATCH THIS. SESSION_MEMBERS above was exactly
+ * the nine members the wrapper happened to implement, asserted to be a SUBSET of
+ * eve's declarations — which catches a name we implement and eve has dropped,
+ * and is structurally blind to the opposite. eve requires `spawn`,
+ * `setNetworkPolicy` and `removePath`; the wrapper shipped without all three,
+ * every assertion here passed, and the failure surfaced as
+ * `session.removePath is not a function` at the first tool call that deleted a
+ * file. Deriving the list from the interface is the only version of this check
+ * that can fail for the right reason.
+ */
+function requiredSessionMembers(declaration) {
+  const start = declaration.indexOf("interface SandboxSession");
+  if (start < 0) return [];
+  let depth = 0;
+  let body = "";
+  for (let i = declaration.indexOf("{", start); i < declaration.length; i += 1) {
+    const ch = declaration[i];
+    if (ch === "{") depth += 1;
+    if (depth > 0) body += ch;
+    if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) break;
+    }
+  }
+  const required = [];
+  // `foo(...)` or `foo: T`, but never `foo?(...)` / `foo?: T`. Comment lines and
+  // nested object types are skipped by requiring the name to start the line.
+  for (const line of body.split("\n")) {
+    const match = /^\s*(?:readonly\s+)?([A-Za-z_$][\w$]*)\s*(\??)\s*[(:<]/.exec(line);
+    if (!match) continue;
+    if (match[2] === "?") continue;
+    if (!required.includes(match[1])) required.push(match[1]);
+  }
+  return required;
+}
+
+/** Concatenated wrapper source — the session is assembled across more than one file. */
+function wrapperSource() {
+  const dir = join(REPO_ROOT, WRAPPER);
+  return readFileSync(join(dir, "index.ts"), "utf8");
+}
 
 export default {
   id: "sandbox/backend-interface-is-structurally-stable",
@@ -80,13 +136,30 @@ export default {
     }
     t.contains(types, "reused", "prewarm() still reports `reused`");
 
-    // The session surface our wrapper hand-implements. Asserting our members
-    // are a subset of eve's catches the drift that matters: a name we still
-    // implement that eve has stopped calling is dead code the runtime will
-    // never reach.
+    // The session surface, checked in BOTH directions.
     const sessionTypes = eve.readFile("dist/src/shared/sandbox-session.d.ts");
+
+    // Outward: a name we implement that eve has stopped calling is dead code.
     for (const member of SESSION_MEMBERS) {
       t.contains(sessionTypes, member, `SandboxSession still declares \`${member}\``);
+    }
+
+    // Inward: a name eve REQUIRES that we do not implement is a TypeError at the
+    // user's first tool call. This is the direction that was missing.
+    const required = requiredSessionMembers(sessionTypes);
+    t.ok(
+      required.length > 0,
+      "eve's SandboxSession declaration could still be parsed for required members",
+      required.length > 0 ? {} : { actual: "parsed zero members — the declaration shape changed" },
+    );
+    const wrapper = wrapperSource();
+    for (const member of required) {
+      // Implemented as a property or a method on the returned session object.
+      const implemented =
+        new RegExp(`\\b${member}\\s*[(:]`).test(wrapper) || new RegExp(`\\b${member}\\s*,`).test(wrapper);
+      t.ok(implemented, `the wrapper implements eve's required \`${member}\``, implemented ? {} : {
+        actual: `packages/sandbox-opensandbox/src/index.ts never defines \`${member}\``,
+      });
     }
   },
 };

@@ -95,6 +95,27 @@ export default composioTools({
 });
 ```
 
+## Also exported
+
+Four things besides `composioTools`, each because something outside the agent has
+to agree with it:
+
+| Export | Why it is public |
+| --- | --- |
+| `DEFAULT_COMPOSIO_USER_ID` | `"evestack"`. The identity that owns every OAuth grant. Import it rather than retyping the literal — see the warning below. |
+| `composioUserId(env?)` | The full resolution order: `EVESTACK_COMPOSIO_USER_ID` trimmed, else the default. A blank override falls back rather than connecting grants to `""`. |
+| `isComposioConfigured(env?)` | Whether a usable `COMPOSIO_API_KEY` is set, without opening a session — for a UI deciding whether to show a connect flow or an explanation. |
+| `COMPOSIO_META_TOOLS` | The meta-tool slugs, as the vocabulary for `requireApprovalForTools()`. It is not a guaranteed tool list: the router decides the subset per session. `COMPOSIO_EXECUTE_TOOL` is deliberately not in it — the current router never returns that slug, so gating it would look like approval coverage that does not exist. |
+
+`EveProvider`, `requireApprovalForTools` and `denyEveToolCall` are re-exported from
+`@composio/experimental/eve` so an agent needs one import, not two.
+
+> **One definition, please.** `packages/dashboard/app/integrations/composio.ts`
+> currently declares its own `DEFAULT_COMPOSIO_USER_ID = "evestack"` instead of
+> importing this one. Two independent definitions of the identity that owns every
+> OAuth grant is exactly the drift warned about above: change one and the
+> dashboard lists accounts the agent cannot see, with no error anywhere.
+
 ## Failure behaviour
 
 An agent that cannot reach a SaaS directory is still an agent, so nothing here
@@ -106,6 +127,19 @@ throws:
   cost no network call.
 - **Handshake succeeds** — the session is cached by identity, so later steps in
   the same process reuse it without another round trip.
+
+## Build
+
+```bash
+pnpm --filter @evestack/composio build
+pnpm --filter @evestack/composio typecheck
+pnpm --filter @evestack/composio test
+```
+
+The tests cover the failure contract above rather than Composio itself: the
+announce-once, cache-by-identity, cool-off-then-retry state machine lives in
+`src/resolver.ts` with the network injected, so every branch of "an agent that
+cannot reach a SaaS directory is still an agent" is checked without one.
 
 ## Stability
 

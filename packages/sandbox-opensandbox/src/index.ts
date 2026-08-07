@@ -1,20 +1,43 @@
 import { Sandbox } from "@alibaba-group/opensandbox";
+import type { CommandExecution, FileInfo } from "@alibaba-group/opensandbox";
 import type {
+  SandboxBackend,
   SandboxBackendCreateInput,
+  SandboxBackendHandle,
   SandboxBackendSessionState,
+  SandboxNetworkPolicy,
+  SandboxProcess,
+  SandboxReadBinaryFileOptions,
+  SandboxReadFileOptions,
+  SandboxReadTextFileOptions,
+  SandboxRunOptions,
+  SandboxSession,
+  SandboxSpawnOptions,
+  SandboxTemplateNotProvisionedError,
+  SandboxWriteBinaryFileOptions,
+  SandboxWriteFileOptions,
+  SandboxWriteTextFileOptions,
 } from "eve/sandbox";
+import type { SandboxCommandResult } from "eve/sandbox";
+import { WORKSPACE, joinOutput, resolvePath } from "./translate.js";
 
 /**
  * An eve `SandboxBackend` backed by Alibaba OpenSandbox.
  *
  * eve ships four backends: `vercel()` (hosted, metered), `docker()`,
- * `microsandbox()`, and `justbash()`. This adds a fifth for people who want
- * gVisor-grade isolation without paying Vercel — OpenSandbox intercepts syscalls
- * at the kernel boundary rather than relying on container namespaces, and is
- * Apache-2.0 like the rest of this stack.
+ * `microsandbox()`, and `justbash()`. This adds a fifth for people who want to
+ * self-host their sandbox host on Apache-2.0 software instead of paying Vercel.
  *
- * Reach for it when the agent runs code you do not trust. Docker is the right
- * default for everything else and needs no server.
+ * On isolation, precisely: OpenSandbox *can* be deployed on a secure runtime
+ * (gVisor, Kata, Firecracker), and that is the reason to prefer it over plain
+ * Docker for untrusted code — but which runtime a sandbox lands on is decided by
+ * the SERVER's configuration, not by anything this adapter sends. The client SDK
+ * (v0.1.11) exposes no runtime selector: `SandboxCreateOptions` carries `image`,
+ * `platform` (os/arch), `secureAccess` (endpoint auth headers, not isolation),
+ * resources, volumes, network policy and an opaque `extensions` map, and none of
+ * them names a runtime. So this backend inherits whatever isolation the server
+ * was configured with, and cannot verify or request it. Do not choose it on the
+ * strength of a property it does not select — see README.md.
  */
 
 /** Shape eve requires of a backend. Structural, so eve stays a peer dependency. */
@@ -32,13 +55,18 @@ interface CreateInput {
 
 interface PrewarmInput {
   readonly templateKey: string;
+  /**
+   * Declared because eve declares it. It was absent here, which is how the
+   * destructure below could ignore it without anyone noticing — see `prewarm`.
+   */
+  readonly bootstrap?: (input: never) => void | Promise<void>;
   readonly log?: (message: string) => void;
   readonly seedFiles: ReadonlyArray<{ path: string; content: string | Uint8Array }>;
 }
 
 interface BackendHandle {
   readonly session: SandboxSessionLike;
-  readonly useSessionFn: () => SandboxSessionLike;
+  readonly useSessionFn: () => Promise<SandboxSessionLike>;
   captureState(): Promise<{
     backendName: string;
     metadata: Record<string, unknown>;
@@ -52,14 +80,36 @@ interface BackendHandle {
  * dependency and nothing here imports it at run time.
  *
  * But a hand-copied interface agrees with itself by construction, so it drifts
- * silently — and this one did. `captureState` shipped through 0.2.0 without
- * `sessionKey`, which eve requires to match a persisted handle back to its
- * durable session. It never matched, so every turn built a fresh sandbox and
- * left the previous one paused on the OpenSandbox host. Nothing failed; the
- * reconnect metadata was written correctly and then never consulted.
+ * silently — and this one did, twice.
  *
- * These two assertions are type-only and erase completely, and they hand the
- * authority back to eve's own declarations: add a required field upstream and
+ * First `captureState` shipped through 0.2.0 without `sessionKey`, which eve
+ * requires to match a persisted handle back to its durable session. It never
+ * matched, so every turn built a fresh sandbox and left the previous one paused
+ * on the OpenSandbox host. Nothing failed; the reconnect metadata was written
+ * correctly and then never consulted.
+ *
+ * Then the SESSION drifted the same way, and the assertions added for the first
+ * bug did not cover it: they pinned `captureState`'s return and `create`'s
+ * input, and stopped there. eve's `SandboxSession` requires `spawn`,
+ * `setNetworkPolicy` and `removePath` — all non-optional — and the wrapper
+ * shipped none of them, so a tool deleting a sandbox file got
+ * "session.removePath is not a function". The same hand-copy also declared
+ * `run({ cwd })` where eve passes `workingDirectory`, and typed `readFile` as
+ * returning bytes where eve's contract is a byte stream.
+ *
+ * So the session's signatures are now taken from eve's own exported option types
+ * (`SandboxRunOptions`, `SandboxReadTextFileOptions`, and the rest) instead of
+ * being retyped here. That is the only thing that would have caught
+ * `run({ cwd })`: a hand-written parameter declaring FEWER fields than eve
+ * passes is legal TypeScript whichever variance applies — checked, it compiles
+ * clean — so no assertion can catch it and the option type has to come from eve
+ * or not exist at all.
+ *
+ * The assertions below then cover what assertions can cover: a missing member, a
+ * wrong return type, and (because these are declared as properties rather than
+ * methods, so the parameter check is contravariant rather than bivariant) an
+ * implementation that demands more of its options than eve promises to pass. All
+ * of it is type-only and erases completely: add a required member upstream and
  * `pnpm typecheck` fails here, in CI, instead of on someone's sandbox bill.
  */
 type Conforms<Actual extends Expected, Expected> = Actual;
@@ -70,25 +120,76 @@ type _SessionStateConforms = Conforms<
   SandboxBackendSessionState
 >;
 
+/** The session eve hands to authored hooks. The assertion that was missing. */
+type _SessionConforms = Conforms<SandboxSessionLike, SandboxSession>;
+
+/** ...and the handle that carries it, so `useSessionFn` cannot drift either. */
+type _HandleConforms = Conforms<BackendHandle, SandboxBackendHandle>;
+
+/** ...and the backend itself, which closes `create` and `prewarm`. */
+type _BackendConforms = Conforms<SandboxBackendLike, SandboxBackend>;
+
 /** What eve hands us must fit what `create` destructures. */
 type _CreateInputConforms = Conforms<SandboxBackendCreateInput, CreateInput>;
 
-interface RunResult {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-}
+/** And the error below must still be the one eve's `is()` narrows. */
+type _TemplateErrorConforms = Conforms<TemplateNotProvisioned, SandboxTemplateNotProvisionedError>;
+
+/** Options for `removePath`; eve exports the session but not this shape. */
+type RemovePathOptions = Parameters<SandboxSession["removePath"]>[0];
 
 interface SandboxSessionLike {
   readonly id: string;
   resolvePath(path: string): string;
-  run(options: { command: string; cwd?: string; env?: Record<string, string> }): Promise<RunResult>;
-  readTextFile(options: { path: string }): Promise<string>;
-  writeTextFile(options: { path: string; content: string }): Promise<void>;
-  readBinaryFile(options: { path: string }): Promise<Uint8Array>;
-  writeBinaryFile(options: { path: string; content: Uint8Array }): Promise<void>;
-  readFile(options: { path: string }): Promise<Uint8Array>;
-  writeFile(options: { path: string; content: Uint8Array }): Promise<void>;
+  readonly run: (options: SandboxRunOptions) => Promise<SandboxCommandResult>;
+  readonly spawn: (options: SandboxSpawnOptions) => Promise<SandboxProcess>;
+  readonly setNetworkPolicy: (policy: SandboxNetworkPolicy) => Promise<void>;
+  readonly removePath: (options: RemovePathOptions) => Promise<void>;
+  readonly readFile: (options: SandboxReadFileOptions) => Promise<ReadableStream<Uint8Array> | null>;
+  readonly readBinaryFile: (options: SandboxReadBinaryFileOptions) => Promise<Uint8Array | null>;
+  readonly readTextFile: (options: SandboxReadTextFileOptions) => Promise<string | null>;
+  readonly writeFile: (options: SandboxWriteFileOptions) => Promise<void>;
+  readonly writeBinaryFile: (options: SandboxWriteBinaryFileOptions) => Promise<void>;
+  readonly writeTextFile: (options: SandboxWriteTextFileOptions) => Promise<void>;
+}
+
+const BACKEND_NAME = "opensandbox";
+
+/**
+ * eve's `SandboxTemplateNotProvisionedError`, reconstructed structurally.
+ *
+ * eve stays out of the run-time import graph (see the note above), and eve's own
+ * `SandboxTemplateNotProvisionedError.is()` accepts a structural match — the
+ * `name` plus string `backendName` and `templateKey` — precisely so an error
+ * raised across a package boundary still narrows. The `Conforms` assertion above
+ * is what keeps that promise: add a field to eve's class and this stops
+ * compiling.
+ *
+ * The message is deliberately NOT eve's. eve's says "Run `eve build` or invoke
+ * `prewarmAppSandboxes()`", and for this backend that advice is false — no
+ * amount of prewarming will provision a template it cannot capture. eve's
+ * runtime re-runs prewarm and retries `create` exactly once on this error, so
+ * the operator would otherwise read "run eve build" after eve already did.
+ */
+class TemplateNotProvisioned extends Error {
+  readonly backendName: string;
+  readonly templateKey: string;
+
+  constructor(input: { backendName: string; templateKey: string }) {
+    super(
+      `Sandbox template "${input.templateKey}" is not provisioned for backend ` +
+        `"${input.backendName}", and this backend cannot provision one: it does not implement ` +
+        `OpenSandbox snapshots, so a bootstrap() hook and seedFiles cannot be applied. eve only ` +
+        `asks for a template when the sandbox declares one of those, so either remove them, or ` +
+        `use docker() / vercel(), which capture template state. Refusing the session is ` +
+        `deliberate — the previous release started it from a bare image instead, so the sandbox ` +
+        `came up without the tools bootstrap() installed and without any seed file, and nothing ` +
+        `said so.`,
+    );
+    this.name = "SandboxTemplateNotProvisionedError";
+    this.backendName = input.backendName;
+    this.templateKey = input.templateKey;
+  }
 }
 
 export interface OpenSandboxOptions {
@@ -99,77 +200,435 @@ export interface OpenSandboxOptions {
   readonly apiKey?: string;
   /** Idle lifetime. eve reattaches by id, so a short value is safe and cheap. */
   readonly timeoutSeconds?: number;
-  readonly workingDirectory?: string;
+  /**
+   * There is deliberately no `workingDirectory` here.
+   *
+   * 0.2.0 accepted one and it did nothing measurable: it was passed to
+   * `createDirectories` and then ignored, because `run()` and `resolvePath()`
+   * both hardcoded `/workspace`. `opensandbox({ workingDirectory: "/srv/app" })`
+   * created the directory and ran everything in `/workspace` anyway.
+   *
+   * It is removed rather than honoured because eve pins the anchor: `/workspace`
+   * is "the live working directory for every backend" and relative paths resolve
+   * from it on every one of them (eve's `SandboxSession` docs). Making this
+   * backend anchor somewhere else would break the one guarantee that lets the
+   * same authored tool run on Docker, Vercel and here. A per-command working
+   * directory is already reachable — `run({ workingDirectory })`, which eve
+   * passes through and this backend now actually reads.
+   */
 }
 
-const WORKSPACE = "/workspace";
+// ---------------------------------------------------------------------------
+// Session plumbing
+// ---------------------------------------------------------------------------
 
 /**
- * `/workspace` is one namespace across every eve backend, so a relative path
- * must resolve the same way here as it does on Docker or Vercel.
+ * A null `exitCode` means the process was killed rather than exiting. Reporting
+ * 0 there would tell the model a failed command succeeded.
  */
-function resolvePath(path: string): string {
-  if (path.startsWith("/")) return path;
-  if (path.startsWith("$HOME/")) return `/root/${path.slice(6)}`;
-  return `${WORKSPACE}/${path}`;
+function exitCodeOf(execution: CommandExecution): number {
+  return execution.exitCode ?? (execution.error ? 1 : 0);
 }
 
 /**
- * OpenSandbox returns stdout as one message PER LINE with the newline stripped:
- * `printf "a\nb\nc\n"` arrives as `[{text:"a"},{text:"b"},{text:"c"}]`. Joining
- * those with "" — as this did originally — produced "abc", so every multi-line
- * command the model ran came back as one mashed-together string. Verified
- * against a live server before and after.
+ * Duck-typed rather than `instanceof SandboxApiException`: the SDK keeps its own
+ * state off the public instance shape specifically because two copies of it can
+ * coexist in one dependency graph, and an `instanceof` across those two copies
+ * is false.
  *
- * Re-adding the separators makes this backend agree with eve's Docker backend,
- * which hands back raw stdout including its trailing newline. A tool result has
- * to look the same whichever sandbox produced it.
+ * Narrow on purpose. Every other failure propagates, because answering "the file
+ * is not there" for a connection reset is how `readTextFile` would hand a model
+ * an empty file, and how `removePath({ force: true })` would report a successful
+ * delete of something still on disk.
  */
-function joinOutput(messages: readonly unknown[] | undefined): string {
-  if (!messages || messages.length === 0) return "";
-  const lines = messages.map((m) => {
-    if (typeof m === "string") return m;
-    const record = m as Record<string, unknown>;
-    const value = record.text ?? record.content ?? record.line ?? record.data;
-    return typeof value === "string" ? value : "";
+function isNotFound(error: unknown): boolean {
+  const status = (error as { statusCode?: unknown } | null | undefined)?.statusCode;
+  return status === 404;
+}
+
+/** eve's own decoder, reproduced: utf-8 is fatal, everything else is Buffer's. */
+function decodeBytes(bytes: Uint8Array, encoding: string): string {
+  if (encoding === "utf-8" || encoding === "utf8") {
+    // Fatal, matching eve: substituting U+FFFD for a malformed byte hands the
+    // model text the file does not contain.
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  }
+  return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString(
+    encoding as BufferEncoding,
+  );
+}
+
+function encodeString(content: string, encoding: string): string | Uint8Array {
+  // The default path stays a plain string, which is the write this backend was
+  // verified with; only a non-default encoding needs bytes.
+  if (encoding === "utf-8" || encoding === "utf8") return content;
+  return Buffer.from(content, encoding as BufferEncoding);
+}
+
+function validateReadTextFileOptions(options: SandboxReadTextFileOptions): void {
+  const { startLine, endLine } = options;
+  if (startLine !== undefined && (!Number.isInteger(startLine) || startLine < 1)) {
+    throw new Error("startLine must be a positive integer (1-based).");
+  }
+  if (endLine !== undefined && (!Number.isInteger(endLine) || endLine < 1)) {
+    throw new Error("endLine must be a positive integer (1-based).");
+  }
+  if (startLine !== undefined && endLine !== undefined && startLine > endLine) {
+    throw new Error("startLine must not be greater than endLine.");
+  }
+}
+
+/**
+ * Line endings stay attached to their line, so a range slices bytes out of the
+ * file rather than re-punctuating it. Copied from eve's own implementation
+ * deliberately: `readTextFile({ startLine })` has to return the same string on
+ * every backend or an authored tool is reading a different file here.
+ */
+function splitLinesPreservingEndings(text: string): string[] {
+  const lines: string[] = [];
+  let start = 0;
+  for (let index = 0; index < text.length; index++) {
+    if (text[index] === "\r") {
+      if (index + 1 < text.length && text[index + 1] === "\n") {
+        lines.push(text.slice(start, index + 2));
+        start = index + 2;
+        index++;
+      } else {
+        lines.push(text.slice(start, index + 1));
+        start = index + 1;
+      }
+    } else if (text[index] === "\n") {
+      lines.push(text.slice(start, index + 1));
+      start = index + 1;
+    }
+  }
+  if (start < text.length) lines.push(text.slice(start));
+  return lines;
+}
+
+function applyLineRange(text: string, options: SandboxReadTextFileOptions): string {
+  if (options.startLine === undefined && options.endLine === undefined) return text;
+  const lines = splitLinesPreservingEndings(text);
+  const count = lines.length;
+  const start = options.startLine ?? 1;
+  // `endLine` past the file's line count reads through EOF without error, which
+  // eve documents; clamping is what implements that.
+  const end = Math.min(options.endLine ?? count, count);
+  if (start > count) return "";
+  return lines.slice(start - 1, end).join("");
+}
+
+/** One output channel of a spawned process, guarded against a cancelled reader. */
+interface ByteSink {
+  readonly stream: ReadableStream<Uint8Array>;
+  write(text: string): void;
+  close(): void;
+  error(reason: unknown): void;
+}
+
+function byteSink(): ByteSink {
+  const encoder = new TextEncoder();
+  let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
+  let done = false;
+  let wroteAny = false;
+  const stream = new ReadableStream<Uint8Array>({
+    start(c) {
+      controller = c;
+    },
+    cancel() {
+      // A consumer that stops reading must not turn the next log line into a
+      // throw inside the SSE handler.
+      done = true;
+    },
   });
-  return `${lines.join("\n")}\n`;
+
+  return {
+    stream,
+    write(text) {
+      if (done) return;
+      // Same separator rule as `joinOutput`: OpenSandbox strips the newline from
+      // every message, so it is re-inserted BEFORE each line after the first.
+      // Appending one after each line instead would put a trailing byte on the
+      // stream that the command never wrote, and `run()` and `spawn()` have to
+      // hand back the same bytes for the same command.
+      controller?.enqueue(encoder.encode(wroteAny ? `\n${text}` : text));
+      wroteAny = true;
+    },
+    close() {
+      if (done) return;
+      done = true;
+      controller?.close();
+    },
+    error(reason) {
+      if (done) return;
+      done = true;
+      controller?.error(reason);
+    },
+  };
 }
 
 function wrapSession(sandbox: Sandbox): SandboxSessionLike {
-  const readBytes = async (path: string): Promise<Uint8Array> => {
-    const bytes = await sandbox.files.readBytes(resolvePath(path));
-    return bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes as ArrayBuffer);
+  const readBytes = async (path: string): Promise<Uint8Array | null> => {
+    try {
+      const bytes = await sandbox.files.readBytes(path);
+      return bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes as ArrayBuffer);
+    } catch (error) {
+      // eve's read surface resolves to null for a file that does not exist, on
+      // every backend, so authored code can branch on it instead of catching.
+      if (isNotFound(error)) return null;
+      throw error;
+    }
   };
 
   const write = async (path: string, data: string | Uint8Array): Promise<void> => {
-    await sandbox.files.writeFiles([{ path: resolvePath(path), data }]);
+    await sandbox.files.writeFiles([{ path, data }]);
   };
+
+  const statPath = async (path: string): Promise<FileInfo | null> => {
+    try {
+      const info = await sandbox.files.getFileInfo([path]);
+      // The map is keyed by path, but whether the server echoes the key exactly
+      // (trailing slash, symlink resolution) was not exercised against a live
+      // server — and exactly one path was asked for, so the single value is the
+      // answer either way.
+      return info[path] ?? Object.values(info)[0] ?? null;
+    } catch (error) {
+      if (isNotFound(error)) return null;
+      throw error;
+    }
+  };
+
+  const runOptions = (options: SandboxRunOptions) => ({
+    workingDirectory: options.workingDirectory ? resolvePath(options.workingDirectory) : WORKSPACE,
+    ...(options.env ? { envs: options.env } : {}),
+  });
 
   return {
     id: String(sandbox.id),
     resolvePath,
 
-    async run({ command, cwd, env }) {
-      const execution = await sandbox.commands.run(command, {
-        workingDirectory: cwd ? resolvePath(cwd) : WORKSPACE,
-        ...(env ? { envs: env } : {}),
-      });
+    async run(options) {
+      options.abortSignal?.throwIfAborted();
+      const execution = await sandbox.commands.run(
+        options.command,
+        runOptions(options),
+        undefined,
+        options.abortSignal,
+      );
       return {
         stdout: joinOutput(execution.logs?.stdout),
         stderr: joinOutput(execution.logs?.stderr),
-        // A null exitCode means the process was killed rather than exiting.
-        // Reporting 0 there would tell the model a failed command succeeded.
-        exitCode: execution.exitCode ?? (execution.error ? 1 : 0),
+        exitCode: exitCodeOf(execution),
       };
     },
 
-    readTextFile: ({ path }) => sandbox.files.readFile(resolvePath(path)),
-    writeTextFile: ({ path, content }) => write(path, content),
-    readBinaryFile: ({ path }) => readBytes(path),
-    writeBinaryFile: ({ path, content }) => write(path, content),
-    readFile: ({ path }) => readBytes(path),
-    writeFile: ({ path, content }) => write(path, content),
+    /**
+     * eve requires `spawn` and this backend shipped without it, so every
+     * documented long-running-process call was a TypeError.
+     *
+     * OpenSandbox has no detached-process handle with independent streams, but it
+     * does stream: `commands.run` delivers stdout and stderr to handlers as the
+     * server sends them. So the process handle is that stream pair plus the
+     * command promise, with `skipAccumulation` so a long-running process does not
+     * also buffer its whole output in the SDK — the streams are the output. Shape
+     * mirrors eve's own `adaptMultiplexedCommandToSandboxProcess`.
+     */
+    async spawn(options) {
+      options.abortSignal?.throwIfAborted();
+
+      const stdout = byteSink();
+      const stderr = byteSink();
+      // `kill()` has to work without a caller-supplied signal, and an external
+      // abort has to reach the same place, so both funnel through one controller.
+      const controller = new AbortController();
+      options.abortSignal?.addEventListener("abort", () => controller.abort(options.abortSignal?.reason), {
+        once: true,
+      });
+
+      const execution = sandbox.commands.run(
+        options.command,
+        runOptions(options),
+        {
+          skipAccumulation: true,
+          onStdout: (message) => stdout.write(message.text),
+          onStderr: (message) => stderr.write(message.text),
+        },
+        controller.signal,
+      );
+
+      const finished = execution.then(
+        (result) => {
+          stdout.close();
+          stderr.close();
+          return { exitCode: exitCodeOf(result) };
+        },
+        (error: unknown) => {
+          // A reader blocked on stdout must fail rather than hang, and eve
+          // documents `wait()` rejecting with the abort reason.
+          stdout.error(error);
+          stderr.error(error);
+          throw error;
+        },
+      );
+      // Nobody is obliged to call wait(), and an uncalled rejection would take
+      // the process down.
+      finished.catch(() => undefined);
+
+      return {
+        stdout: stdout.stream,
+        stderr: stderr.stream,
+        wait: () => finished,
+        kill: async () => {
+          controller.abort();
+          await finished.catch(() => undefined);
+        },
+      };
+    },
+
+    /**
+     * eve requires `setNetworkPolicy` and this backend shipped without it, so a
+     * mid-turn policy change was a TypeError instead of the documented
+     * per-backend rejection.
+     *
+     * It rejects, in the shape eve's own just-bash backend uses, because
+     * OpenSandbox cannot honour this call at run time and half-honouring it is
+     * the one outcome worse than refusing. Every eve policy carries a default
+     * action — `"deny-all"`, or an allow-list, which denies everything it does
+     * not name — and OpenSandbox fixes `defaultAction` when the sandbox is
+     * created: the run-time egress API is `patchEgressRules` / `deleteEgressRules`
+     * and its own docs say "the current defaultAction is preserved". Patching the
+     * allow-list onto a sandbox whose default is still allow would report success
+     * having restricted nothing, on the one call whose entire purpose is to
+     * restrict. Per-domain `transform` header injection is not expressible either
+     * — that is OpenSandbox's Credential Vault, a different model with its own
+     * bindings.
+     */
+    async setNetworkPolicy(_policy) {
+      throw new Error(
+        `setNetworkPolicy() is not supported on the opensandbox sandbox backend. Every eve network ` +
+          `policy implies a default action, and OpenSandbox fixes a sandbox's defaultAction at ` +
+          `creation: its run-time egress API can only add or remove per-domain rules and preserves ` +
+          `the existing default, so applying an allow-list here would leave egress open while ` +
+          `reporting success. OpenSandbox does accept a full policy at sandbox creation, which this ` +
+          `adapter does not expose yet; for a policy that changes during a turn use vercel() or ` +
+          `microsandbox(), and for coarse egress control use docker().`,
+      );
+    },
+
+    /**
+     * eve requires `removePath` and this backend shipped without it, so a tool
+     * deleting a sandbox file got "session.removePath is not a function".
+     */
+    async removePath({ path, force, recursive, abortSignal }) {
+      abortSignal?.throwIfAborted();
+      const resolved = resolvePath(path);
+      const info = await statPath(resolved);
+
+      if (info === null) {
+        if (force) return;
+        throw new Error(
+          `removePath: ${resolved} does not exist. Pass force: true to ignore a missing path.`,
+        );
+      }
+
+      if (info.type === "directory") {
+        if (!recursive) {
+          // `deleteDirectories` has no non-recursive mode, and eve's contract is
+          // that `recursive` is what PERMITS removing a non-empty directory. So
+          // the emptiness check has to happen here or a plain
+          // `removePath({ path })` would silently delete a whole tree. The exact
+          // `listDirectory` payload was not exercised against a live server,
+          // hence the defensive filter: the directory itself must not count as
+          // its own child under either convention.
+          const entries = await sandbox.files.listDirectory({ path: resolved, depth: 1 });
+          const children = entries.filter(
+            (entry) => entry.path !== resolved && entry.path !== `${resolved}/` && entry.path !== ".",
+          );
+          if (children.length > 0) {
+            throw new Error(
+              `removePath: ${resolved} is a directory with ${children.length} entr` +
+                `${children.length === 1 ? "y" : "ies"}. Pass recursive: true to remove it.`,
+            );
+          }
+        }
+        await sandbox.files.deleteDirectories([resolved]);
+        return;
+      }
+
+      await sandbox.files.deleteFiles([resolved]);
+    },
+
+    /**
+     * The byte-stream read, which 0.2.0 typed and implemented as returning bytes.
+     * eve's contract is a `ReadableStream` — the point of this method is not
+     * materializing a large file — so it streams, and peeks one chunk first
+     * because "does it exist" has to be answered before the promise resolves.
+     */
+    async readFile(options) {
+      options.abortSignal?.throwIfAborted();
+      let iterator: AsyncIterator<Uint8Array>;
+      let first: IteratorResult<Uint8Array>;
+      try {
+        // Inside the try because `readBytesStream` returning an AsyncIterable
+        // rather than a promise means it is free to reject on the first `next()`
+        // OR to throw where it is called, and a missing file has to answer null
+        // either way.
+        iterator = sandbox.files.readBytesStream(resolvePath(options.path))[Symbol.asyncIterator]();
+        first = await iterator.next();
+      } catch (error) {
+        if (isNotFound(error)) return null;
+        throw error;
+      }
+
+      return new ReadableStream<Uint8Array>({
+        start(controller) {
+          // An existing but empty file ends here with no chunk, which is not the
+          // same as a missing one: that arrives as a 404 from the peek above.
+          if (first.done) controller.close();
+          else controller.enqueue(first.value);
+        },
+        async pull(controller) {
+          const next = await iterator.next();
+          if (next.done) controller.close();
+          else controller.enqueue(next.value);
+        },
+        async cancel(reason) {
+          await iterator.return?.(reason);
+        },
+      });
+    },
+
+    async readBinaryFile(options) {
+      options.abortSignal?.throwIfAborted();
+      return readBytes(resolvePath(options.path));
+    },
+
+    async readTextFile(options) {
+      options.abortSignal?.throwIfAborted();
+      validateReadTextFileOptions(options);
+      const bytes = await readBytes(resolvePath(options.path));
+      if (bytes === null) return null;
+      return applyLineRange(decodeBytes(bytes, options.encoding ?? "utf-8"), options);
+    },
+
+    async writeFile(options) {
+      options.abortSignal?.throwIfAborted();
+      // `WriteEntry.data` takes a ReadableStream directly, so a stream write
+      // stays a stream write instead of being buffered on the way through.
+      await sandbox.files.writeFiles([
+        { path: resolvePath(options.path), data: options.content },
+      ]);
+    },
+
+    async writeBinaryFile(options) {
+      options.abortSignal?.throwIfAborted();
+      await write(resolvePath(options.path), options.content);
+    },
+
+    async writeTextFile(options) {
+      options.abortSignal?.throwIfAborted();
+      await write(resolvePath(options.path), encodeString(options.content, options.encoding ?? "utf-8"));
+    },
   };
 }
 
@@ -185,9 +644,20 @@ export function opensandbox(options: OpenSandboxOptions = {}): SandboxBackendLik
   return {
     // Participates in eve's cache-key derivation and reconnect state, so it
     // must not collide with the built-in "vercel" or "local".
-    name: "opensandbox",
+    name: BACKEND_NAME,
 
-    async create({ existingMetadata, sessionKey }) {
+    async create({ existingMetadata, sessionKey, templateKey }) {
+      // Before anything is provisioned, because the alternative is what 0.2.0
+      // did: build a bare sandbox and hand it over as though the template had
+      // been applied. eve passes a non-null templateKey only when the sandbox
+      // declares a bootstrap() hook or seed files ("null means eve intentionally
+      // skipped template prewarm because the sandbox has no bootstrap() and no
+      // seed files" — eve's SandboxBackendCreateInput), so this is exactly the
+      // case this backend cannot serve.
+      if (templateKey !== null) {
+        throw new TemplateNotProvisioned({ backendName: BACKEND_NAME, templateKey });
+      }
+
       const previousId = existingMetadata?.sandboxId;
 
       // Reattach before creating. eve keys sandboxes to durable sessions, so a
@@ -228,14 +698,16 @@ export function opensandbox(options: OpenSandboxOptions = {}): SandboxBackendLik
       });
 
       const live = sandbox;
-      await live.files.createDirectories([{ path: options.workingDirectory ?? WORKSPACE }]);
+      await live.files.createDirectories([{ path: WORKSPACE }]);
       const session = wrapSession(live);
 
       return {
         session,
-        useSessionFn: () => session,
+        // Async because eve's `SandboxSessionUseFn` returns a Promise, which its
+        // own docker backend honours and this did not.
+        useSessionFn: async () => session,
         captureState: async () => ({
-          backendName: "opensandbox",
+          backendName: BACKEND_NAME,
           // The id is the whole reconnect story; without persisting it every
           // restart would orphan a running sandbox and start a fresh one.
           metadata: { sandboxId: String(live.id) },
@@ -257,11 +729,32 @@ export function opensandbox(options: OpenSandboxOptions = {}): SandboxBackendLik
       };
     },
 
-    async prewarm({ log }) {
-      // OpenSandbox has snapshots, but eve only needs prewarm to be idempotent
-      // and honest. Reporting `reused: false` costs a cold start on first use
-      // and never lies to the build log about state that was not captured.
-      log?.("[opensandbox] no template snapshot captured; sessions start cold");
+    async prewarm({ templateKey, bootstrap, seedFiles, log }) {
+      // This used to destructure `log` alone and report `reused: false`, which
+      // read as "you will pay a cold start" and actually meant "your bootstrap()
+      // and your seed files have been dropped on the floor". OpenSandbox has
+      // snapshots (createSnapshot / listSnapshots, and `snapshotId` on create),
+      // so capturing template state is buildable here — it is not built, so the
+      // log has to say what was lost by name, and create() refuses the session
+      // rather than starting it bare.
+      const ignored = [
+        bootstrap ? "a bootstrap() hook" : null,
+        seedFiles.length > 0
+          ? `${seedFiles.length} seed file${seedFiles.length === 1 ? "" : "s"}`
+          : null,
+      ].filter((part): part is string => part !== null);
+
+      log?.(
+        `[opensandbox] cannot capture template "${templateKey}": this backend does not implement ` +
+          `OpenSandbox snapshots, so ${ignored.join(" and ") || "the requested template state"} ` +
+          `will NOT be applied. Sessions for this sandbox will be refused with ` +
+          `SandboxTemplateNotProvisionedError rather than started from a bare image. Remove the ` +
+          `bootstrap()/seedFiles, or use docker() / vercel().`,
+      );
+      // `reused: false` is the less wrong of the two values eve's result type
+      // offers — it means "captured fresh template state", and nothing was
+      // captured. The log line above is the honest part; there is no third value
+      // for "cannot".
       return { reused: false };
     },
   };
