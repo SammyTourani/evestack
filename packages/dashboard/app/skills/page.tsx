@@ -123,6 +123,15 @@ function SkillCard({ skill, scan }: { skill: Skill; scan: ScanResult }) {
             <FindingRow key={`${finding.ruleId}:${finding.file}:${finding.line}`} finding={finding} />
           ))
         )}
+        {scan.truncated && (
+          <p className={styles.why}>
+            Showing {scan.findings.length} of{" "}
+            {scan.counts.critical + scan.counts.high + scan.counts.medium + scan.counts.low}{" "}
+            findings, most severe first. The counts above are the whole scan; this list is capped so
+            the page stays responsive. Without this line a capped list reads as a complete one, which
+            is the mistake the verdict itself used to make.
+          </p>
+        )}
         {scan.unscanned.length > 0 && (
           <p className={styles.why}>
             Not scanned:{" "}
