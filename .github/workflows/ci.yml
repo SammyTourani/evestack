@@ -306,14 +306,31 @@ jobs:
               byName.set(JSON.parse(fs.readFileSync(file, "utf8")).name, dir);
             }
 
-            for (const [dep, range] of Object.entries(manifest.dependencies)) {
-              if (!dep.startsWith("@evestack/")) continue;
-              const dir = byName.get(dep);
-              if (!dir) throw new Error(`${dep} is not a workspace package`);
-              const out = execSync(`npm pack --pack-destination /tmp ./packages/${dir}`)
-                .toString().trim().split("\n").pop();
-              manifest.dependencies[dep] = `file:/tmp/${out}`;
-              console.log(`${dep} ${range} -> file:/tmp/${out}`);
+            // Every dependency FIELD, not just `dependencies`. sync-template.mjs
+            // pins `workspace:` ranges in devDependencies too, so an @evestack/*
+            // devDependency was rewritten to ^<unpublished version> and then
+            // resolved from the public registry — the exact "tests the last
+            // published build, or 404s on a package added since" failure this
+            // step exists to prevent. It failed loudly, but for a reason that
+            // pointed at npm rather than at here. Nothing slips through today;
+            // this is so that stays true when someone adds one.
+            const FIELDS = ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"];
+            for (const field of FIELDS) {
+              for (const [dep, range] of Object.entries(manifest[field] ?? {})) {
+                if (!dep.startsWith("@evestack/")) continue;
+                // A peer range is a compatibility statement, not something to
+                // resolve, so naming it is the whole fix.
+                if (field === "peerDependencies") {
+                  console.log(`${dep} is a peerDependency (${range}); left alone`);
+                  continue;
+                }
+                const dir = byName.get(dep);
+                if (!dir) throw new Error(`${dep} is not a workspace package`);
+                const out = execSync(`npm pack --pack-destination /tmp ./packages/${dir}`)
+                  .toString().trim().split("\n").pop();
+                manifest[field][dep] = `file:/tmp/${out}`;
+                console.log(`${field}.${dep} ${range} -> file:/tmp/${out}`);
+              }
             }
             fs.writeFileSync(p, JSON.stringify(manifest, null, 2) + "\n");
           '

@@ -263,9 +263,18 @@ process can reach, and nothing else.
 
 One limit worth knowing before you plan network policy: the Docker backend honours only
 `allow-all` and `deny-all`. Domain allow-lists need `microsandbox()` (macOS on Apple Silicon, or
-Linux with KVM). For kernel-boundary isolation of code you did not write, there is
-[`@evestack/sandbox-opensandbox`](https://github.com/SammyTourani/evestack/tree/main/packages/sandbox-opensandbox)
-— gVisor, via an OpenSandbox server you run. Use Docker unless you have a specific reason not to.
+Linux with KVM). There is also
+[`@evestack/sandbox-opensandbox`](https://github.com/SammyTourani/evestack/tree/main/packages/sandbox-opensandbox),
+which runs the sandbox on an OpenSandbox server you host instead of on your Docker daemon.
+
+Be precise about what that buys you, because isolation is the reason people reach for it. An
+OpenSandbox **server** can be configured on a gVisor, Kata or Firecracker runtime — but which
+runtime a sandbox lands on is the server's decision, not the adapter's: the client SDK has no
+runtime selector, so this backend neither requests one nor can verify it got one. On the plain
+Docker runtime, which is what it was tested against, you get container namespaces — the same
+isolation `docker()` already gives you, with a server in front of it. Do not choose it as
+kernel-boundary isolation unless you have independently confirmed your own server runs a secure
+runtime. Use Docker unless you have a specific reason not to.
 
 The one-line swap is also a [registry](/docs/registry) item, `@evestack/docker-sandbox`, if you
 are adding it to an existing eve project rather than starting from the template.

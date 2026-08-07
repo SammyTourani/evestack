@@ -19,12 +19,20 @@ to whichever provider is already selected.
 values is rejected at boot with the list above rather than silently treated as OpenAI — a
 misspelled provider is a mistake, not a preference.
 
+One thing that table does not cover, and it decides whether long-term memory works: **embeddings**.
+`openai` has an embeddings endpoint on the same key. `ollama` has one, but it is a **second pull**
+(`ollama pull nomic-embed-text`). `anthropic` has none at all, so `remember` and `recall` on that
+path need either an `OPENAI_API_KEY` as well or `EVESTACK_EMBED_PROVIDER=ollama` to run embeddings
+locally. Nothing else about the Anthropic path is affected. The three `EVESTACK_EMBED_*` variables
+are in [long-term memory](/docs/memory).
+
 ## Ollama
 
 For zero cost, total:
 
 ```bash
-ollama pull qwen3
+ollama pull qwen3                # the chat model
+ollama pull nomic-embed-text     # embeddings — a separate model, and `remember` needs it
 ```
 
 Then set **both** of these in `.env.local`:
@@ -59,9 +67,10 @@ save the turn. Both are ignored on the hosted providers, whose models the catalo
 
 <Warning>
   **Check your free RAM first.** qwen3 is 5.2 GB, and it loads on top of Docker, Postgres, the
-  dashboard and the agent. On a machine without roughly *model size + 4 GB* to spare, this does
-  not degrade gracefully — it can take minutes to answer a one-word prompt and can take the host
-  down. On a laptop already running the rest of the stack, a hosted key is the practical choice.
+  dashboard and the agent — plus the 274 MB embedding model once memory is used. On a machine
+  without roughly *both model sizes + 4 GB* to spare, this does not degrade gracefully — it can
+  take minutes to answer a one-word prompt and can take the host down. On a laptop already
+  running the rest of the stack, a hosted key is the practical choice.
 </Warning>
 
 <Note>

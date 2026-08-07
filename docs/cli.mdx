@@ -1,9 +1,29 @@
 ---
-title: create-evestack CLI
-description: The one-command scaffolder — dependency-free on purpose.
+title: CLI
+description: The five `evestack` commands, and the scaffolder under both of its published names.
 ---
 
+`evestack` is the whole command. Five things:
+
 ```bash
+evestack create [name]        scaffold an agent + dashboard into a new directory
+evestack verify               check every part of the stack and say what to fix
+evestack open                 print the dashboard URL and sign-in, and open it
+evestack attach [dir]         add evestack to an eve project you already have
+evestack doctor               explain why a durable job is dead
+```
+
+`npx create-evestack [name]` is the same scaffolder as `evestack create`, under the name npm's
+`create-*` convention leads people to. Same code, same prompts, same flags — a bug is fixed once.
+
+`-h` / `--help` and `-V` / `--version` work anywhere. `evestack doctor --help` prints doctor's own
+flags rather than this list, because there are eleven of them and they would bury the commands
+someone is more likely to want.
+
+## `evestack create` / `npx create-evestack`
+
+```bash
+npx evestack create [name] [--yes]
 npx create-evestack [name] [--yes]
 ```
 
@@ -12,27 +32,27 @@ npx create-evestack [name] [--yes]
 | `[name]` | Project directory. Prompted for if omitted (interactively). |
 | `--yes` / `-y` | Skip prompts, use defaults. Also triggered automatically when stdin isn't a TTY (CI, a piped script). |
 
-## What it generates
+### What it generates
 
 - The agent project, from `templates/default`
 - `.env.local` with a **uniquely generated** `EVESTACK_AUTH_PASSWORD` — never a shipped default
 - `.gitignore` covering `.env*`, so a generated key can't be accidentally committed
 - `docker-compose.yml` for Postgres
 
-## Why it has zero dependencies
+### Why the scaffolder has zero dependencies
 
 A scaffolder that installs a prompt library before asking its first question is slower than
 the thing it scaffolds — and every dependency is another supply-chain surface for a tool that
 writes files and credentials to your disk. It's built on Node's built-in `readline`, `crypto`,
 and `fs` only.
 
-## Exit codes
+### Exit codes
 
 `0` only when the project was created **and** its dependencies installed. If `npm install`
 fails, or `node_modules/eve` is missing afterwards, it exits `1` and prints what to run — so a
 `&&` chain or a CI step stops there rather than walking into an empty `node_modules`.
 
-## Two real bugs this caught
+### Two real bugs this caught
 
 An early version exited `0` — success — having created nothing, whenever stdin wasn't an
 interactive terminal (a CI run, a piped heredoc). `readline`'s `question()` never resolves
@@ -47,3 +67,96 @@ skipped and `npx create-evestack` produced an empty directory. It worked perfect
 monorepo checkout, where no `node_modules` appears in the path, which is exactly why nothing
 caught it. The filter now matches path *segments* of the path *relative to the template root*,
 and CI scaffolds from an `npx`-shaped directory on every PR.
+
+## `evestack verify`
+
+```bash
+evestack verify [--open | --no-open] [--json]
+```
+
+Runs the project's own `scripts/verify.mjs`: `.env.local`, Docker, Postgres, the workflow schema,
+pgvector, the model provider, embeddings, the dashboard and trace ingest. For anything broken it
+names the command that fixes it, and it exits `1` if a required check failed, so CI can run it too.
+
+| Flag | Effect |
+| --- | --- |
+| `--open` | Open the dashboard afterwards without asking. |
+| `--no-open` | Never open it. Implied when it is not running in a terminal. |
+| `--json` | Machine-readable, and opens nothing. |
+
+It does not reimplement the checks: it executes the script that shipped with *your* project, so a
+globally installed CLI cannot report problems against rules your project does not have. A project
+made by `attach` has no `scripts/` of its own, and there it falls back to the copy inside
+`create-evestack`.
+
+## `evestack open`
+
+```bash
+evestack open [--no-open]
+```
+
+Prints the dashboard URL, the username and the password, says whether anything is answering there,
+and opens a browser. It exists because the scaffolder prints the credentials exactly once into a
+terminal that then scrolls, and the only recovery path was knowing which key of `.env.local` held
+the password.
+
+The port comes from `EVESTACK_DASHBOARD_URL`, which is where the chosen dashboard port is
+recorded — the scaffolder does not assume 4000. `--no-open` prints and stops. Exit `1` means
+nothing is answering yet.
+
+## `evestack attach`
+
+```bash
+npx evestack attach [dir] [--yes] [--dry-run]
+```
+
+Adds evestack to an eve project you already have, without overwriting anything, and prints an undo
+line for everything it writes.
+
+| Flag | Effect |
+| --- | --- |
+| `[dir]` | The project to attach to. Defaults to the current directory. |
+| `--yes` / `-y` | Skip the confirmation. Required when stdin is not a terminal — it will not guess at a project it did not create. |
+| `--dry-run` / `-n` | Print the plan and write nothing. |
+
+## `evestack doctor`
+
+```bash
+evestack doctor [options]
+```
+
+Read-only forensics for a durable job that is dead: it never writes to your database, and when
+there is something to fix it prints the SQL and lets you decide. Safe to point at production.
+
+| Flag | Effect |
+| --- | --- |
+| `--schema=NAME` | graphile-worker's schema. Default `graphile_worker`. |
+| `--workflow=NAME` | eve's workflow schema. Default `workflow`. |
+| `--url=URL` | Postgres connection string. Default `$WORKFLOW_POSTGRES_URL`, then `$DATABASE_URL`. |
+| `--agent-url=URL` | The eve agent, for session health. Default `$EVESTACK_AGENT_URL`, then `http://127.0.0.1:2000`. |
+| `--limit=N` | Max rows listed per section. Default `50`; counts are never capped. |
+| `--probes=N` | Max sessions probed, `0` to skip. Default `25`. |
+| `--idle=MINUTES` | How long a session must be quiet before it is worth probing. Default `30`. |
+| `--timeout=MS` | `statement_timeout` and the HTTP timeout. Default `15000`. |
+| `--sql` | Print only the remediation SQL, nothing else — so `--sql \| psql` stays your decision. |
+| `--json` | Print the whole diagnosis as JSON. Same diagnosis as the human report, not a second code path. |
+| `--verbose` | Add the raw rows behind each finding. |
+
+A flag that takes a value needs it as `--flag=VALUE`. `--limit 50` is refused rather than guessed
+at, because the alternative is a silent run with the default and a stray positional argument.
+
+### Exit codes
+
+Doctor's codes are the ones the repro scripts in `contract/runtime/repro` use, so an operator who
+has run those already knows what they mean.
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Looked, and found nothing that is costing a run right now. |
+| `1` | At least one fault — a stranded run, a wedged job, a wedged session. |
+| `2` | Could not look: no database, wrong schema, or bad arguments. |
+
+`create` and `attach` use the same shape: `0` is a project you can run, `1` is one you cannot.
+
+`verify` and `open` both work from anywhere inside the project directory — they walk up looking
+for `.env.local`, because `evestack` is on `PATH` and gets typed from wherever you happen to be.

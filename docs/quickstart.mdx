@@ -17,9 +17,9 @@ npx evestack create my-agent
 ```
 
 `npx create-evestack my-agent` does the same thing. They are two published names for one
-implementation — `evestack` is the single command (`create`, `attach`, `doctor`), and
-`create-evestack` is the name npm's `create-*` convention leads people to. Same code, same
-prompts, same flags.
+implementation — `evestack` is the single command (`create`, `verify`, `open`, `attach`,
+`doctor` — see [the CLI reference](/docs/cli)), and `create-evestack` is the name npm's
+`create-*` convention leads people to. Same code, same prompts, same flags.
 
 You'll be asked for a model provider — OpenAI, Anthropic or Ollama — and whether to enable
 Composio's one-click tool sign-in. Answer both, or pass `--yes` to skip prompts and fill in
@@ -30,6 +30,17 @@ Whichever you pick, `.env.local` gets `EVESTACK_PROVIDER` *and* that provider's 
 variable. Both matter: `EVESTACK_PROVIDER` is what `agent/agent.ts` branches on, and setting a
 model name without it leaves you on the previous provider. See
 [the provider table](/docs/local-setup#picking-a-provider) if you're switching later by hand.
+
+<Warning>
+  **The provider you pick decides whether long-term memory works.** `remember` and `recall` need
+  an embeddings model, and the three providers differ: OpenAI has one on the same key; Ollama has
+  one but it is a **second pull** (`ollama pull nomic-embed-text`); **Anthropic has no embeddings
+  endpoint at all**, so on that path memory needs either an `OPENAI_API_KEY` as well or
+  `EVESTACK_EMBED_PROVIDER=ollama` to run embeddings locally. Nothing else is affected — the
+  agent, its sandbox, durable sessions and the dashboard all work either way, and the first
+  `remember` call names the variable that fixes it. Full detail in
+  [long-term memory](/docs/memory).
+</Warning>
 
 This generates a unique `EVESTACK_AUTH_PASSWORD` per project. `eve` fails closed by default, so
 there's no shipped default password sitting between a stranger and your agent.

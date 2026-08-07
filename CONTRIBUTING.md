@@ -40,9 +40,13 @@ it needs Docker running.
 
 **It does not need a paid model key.** The `$0` Ollama path runs the whole suite — this said
 otherwise for a while, which is the wrong thing for this project of all projects to be wrong
-about. Two lines in `.env.local`, `ollama pull qwen3`, and:
+about. Two lines in `.env.local`, and **two** pulls — the embedding model is a different model
+from the chat one, and without it `remember` fails on the first call and `memory 5/5` below is
+unreachable:
 
 ```bash
+ollama pull qwen3                # the chat model
+ollama pull nomic-embed-text     # embeddings, 274 MB — `npm run verify` checks for it by name
 cd templates/default && pnpm exec eve eval
 # EVALS 4 — smoke 1/1, deny-survives 4/4, sandbox 3/3, memory 5/5 — 13 gates, 37.6s
 ```

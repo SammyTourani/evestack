@@ -50,7 +50,7 @@ self-hosting still needs.
 | Dashboard | yes, anywhere | Vercel only |
 | Dashboard can *drive* the agent | yes | read-only |
 | One-click tool sign-in | 1,070 toolkits (Composio, hosted) | 4 Vercel-managed connectors, plus Custom OAuth and API-key connectors you register ([docs](https://vercel.com/docs/connect)) |
-| Long-term memory | included (pgvector, your database) | no first-party store; the gallery's memory options are third-party SaaS |
+| Long-term memory | included (pgvector, your database) — needs an embeddings provider, and Anthropic is not one ([why](/docs/memory)) | no first-party store; the gallery's memory options are third-party SaaS |
 
 <Note>
   The memory row used to read "not included," which is wrong. eve's own

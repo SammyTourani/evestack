@@ -6,9 +6,9 @@ description: Free semantic recall on the Postgres you're already running — and
 ## Why this is free
 
 The Postgres storing your durable sessions is already running, and `docker-compose.yml` uses
-the `pgvector/pgvector` image — so long-term memory costs one `CREATE EXTENSION` and zero new
-containers. The agent gets `remember` and `recall` tools out of the box
-(`agent/tools/remember.ts`, `agent/tools/recall.ts`).
+the `pgvector/pgvector` image — so the storage side of long-term memory costs one
+`CREATE EXTENSION` and zero new containers. The agent gets `remember` and `recall` tools out of
+the box (`agent/tools/remember.ts`, `agent/tools/recall.ts`).
 
 ```
 "Remember this for the future: my production database runs on port 5433
@@ -20,6 +20,64 @@ containers. The agent gets `remember` and `recall` tools out of the box
 ```
 "Your production database runs on port 5433, and you deploy on Fridays."
 ```
+
+## It needs an embeddings provider, and Anthropic is not one
+
+Storage is free; turning text into a vector is not automatic. `lib/memory.ts` resolves the
+embedding model from your chat provider, and the three providers do not all have one:
+
+| `EVESTACK_PROVIDER` | Embeddings | Model, vector width |
+| --- | --- | --- |
+| unset, or `openai` | yes, same key | `text-embedding-3-small`, 1536 |
+| `ollama` | yes, but **a second `ollama pull`** | `nomic-embed-text` (274 MB), 768 |
+| `anthropic` | **none — Anthropic has no embeddings endpoint** | borrows OpenAI's if `OPENAI_API_KEY` is set |
+
+On `anthropic` with no `OPENAI_API_KEY`, `remember` and `recall` do not work. The first call
+fails with the fix in it:
+
+```
+EVESTACK_PROVIDER=anthropic has no embeddings endpoint, so long-term memory needs one from
+somewhere else. Either set OPENAI_API_KEY, or run embeddings locally with
+EVESTACK_EMBED_PROVIDER=ollama (then `ollama pull nomic-embed-text`).
+```
+
+That is deliberately a tool failure and not a boot failure — the agent, its sandbox and its
+durable sessions all still work, because a project that cannot do embeddings is an ordinary
+configuration rather than a broken one. `npm run verify` says the same thing before you find
+out from a tool call.
+
+On `ollama`, the embedding model is a **separate pull from the chat model**:
+
+```bash
+ollama pull nomic-embed-text
+```
+
+Miss it and `remember` fails on a model Ollama does not have. `npm run verify` checks for it by
+name.
+
+## The three variables
+
+Set nothing here and embeddings follow `EVESTACK_PROVIDER`, which is right almost always. The
+overrides exist for the Anthropic case above, and for a different embedding model:
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `EVESTACK_EMBED_PROVIDER` | follows `EVESTACK_PROVIDER` | `openai` or `ollama`. This is the one that makes memory work on the Anthropic path |
+| `EVESTACK_EMBED_MODEL` | `text-embedding-3-small` / `nomic-embed-text` | the embedding model to call |
+| `EVESTACK_EMBED_DIMENSIONS` | 1536 / 768 | the vector width, which must match what that model returns |
+
+Model and width go together, and the width is baked into `evestack.memories` at creation. Change
+either one and the old rows are unusable — vectors from two different models are not comparable —
+so the table has to be dropped:
+
+```bash
+docker compose exec postgres psql -U evestack -d evestack \
+  -c 'DROP TABLE evestack.memories'
+```
+
+`lib/memory.ts` checks the existing column width on the first memory call and says exactly this,
+with both numbers, rather than letting the mismatch surface later as pgvector's `expected 1536
+dimensions, not 768` from inside an INSERT.
 
 ## HNSW, not IVFFlat — a correctness fix, not a preference
 
