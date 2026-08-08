@@ -79,7 +79,10 @@ export default async function EvalsPage() {
     sessions = await listSessions(100);
   } catch (error) {
     return (
-      <DatabaseError error={error} />
+      <>
+        <h1>Evals</h1>
+        <DatabaseError error={error} />
+      </>
     );
   }
 
@@ -149,7 +152,7 @@ export default async function EvalsPage() {
   return (
     <>
       <h1>Evals</h1>
-      <p className={styles.sub}>
+      <p className="page-sub">
         Turn a session that already happened into an eve eval. The transcript <em>is</em> the test:
         promotion replays the user&apos;s real messages and asserts what the agent really did.
       </p>

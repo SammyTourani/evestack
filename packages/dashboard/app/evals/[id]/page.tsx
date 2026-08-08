@@ -1,5 +1,5 @@
 import { readRecentEvents, type EveStreamEvent } from "@/lib/agent-client";
-import { describeDbError } from "@/lib/db";
+import { DatabaseError } from "@/app/db-error";
 import { generateEval, recoverTurns, type GeneratedEval, type RecoveredTurn } from "@/lib/promote-eval";
 import { getSession } from "@/lib/queries";
 import { CopySource } from "../copy-source";
@@ -75,12 +75,7 @@ export default async function EvalPreviewPage(props: PageProps<"/evals/[id]">) {
   try {
     session = await getSession(id);
   } catch (error) {
-    return (
-      <div className="empty">
-        <h2>Can&apos;t reach the database</h2>
-        <p className="dim">{describeDbError(error)}</p>
-      </div>
-    );
+    return <DatabaseError error={error} />;
   }
 
   if (!session) {
@@ -164,7 +159,7 @@ export default async function EvalPreviewPage(props: PageProps<"/evals/[id]">) {
   return (
     <>
       {header}
-      <p className={styles.sub}>
+      <p className="page-sub">
         {turns.length === 0
           ? "Nothing was recovered from this session's event log."
           : `Replays ${turns.length} real message${turns.length === 1 ? "" : "s"} from session ${session.id.slice(-10)}.`}

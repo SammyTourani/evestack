@@ -173,13 +173,35 @@ function SandboxRow({ sandbox, flags }: { sandbox: Sandbox; flags: readonly Sand
   );
 }
 
+/**
+ * Title and subtitle, on every path.
+ *
+ * They used to be written out inside each branch, and the two early returns
+ * below only carried the <h1> — so the page explained itself when it had
+ * containers to show and went silent in exactly the two states a reader is most
+ * likely to arrive in confused. Every other page keeps the two adjacent, which
+ * is what makes them survive an early return; this makes that structural rather
+ * than a thing each branch has to remember.
+ */
+function Header() {
+  return (
+    <>
+      <h1>Sandboxes</h1>
+      <p className="page-sub">
+        The containers eve is running on this machine, read from your own Docker daemon. A hosted
+        dashboard cannot show you this.
+      </p>
+    </>
+  );
+}
+
 export default async function SandboxesPage() {
   const result = await listSandboxes();
 
   if (result.kind === "disabled") {
     return (
       <>
-        <h1>Sandboxes</h1>
+        <Header />
         <Placeholder
           tone="empty"
           title="Sandbox visibility is off"
@@ -192,7 +214,7 @@ export default async function SandboxesPage() {
   if (result.kind === "unreachable") {
     return (
       <>
-        <h1>Sandboxes</h1>
+        <Header />
         <Placeholder
           tone="error"
           title="Docker did not answer"
@@ -229,11 +251,7 @@ export default async function SandboxesPage() {
 
   return (
     <>
-      <h1>Sandboxes</h1>
-      <p className="page-sub">
-        The containers eve is running on this machine, read from your own Docker daemon. A hosted
-        dashboard cannot show you this.
-      </p>
+      <Header />
 
       {sandboxes.length === 0 ? (
         <Placeholder

@@ -1,12 +1,6 @@
 /* Scoped to the evals screen. Colors and radii come from globals.css so this
    page reads as part of the same dashboard; nothing here redefines a variable. */
 
-.sub {
-  color: var(--text-dim);
-  margin: 0 0 20px;
-  max-width: 78ch;
-}
-
 /* ---- the draft framing ----
    The one thing a reader must not leave with is the belief that the downloaded
    file is a finished test. It gets the loudest box on the page, above the

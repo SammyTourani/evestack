@@ -3,19 +3,30 @@
    dashboard still makes zero network requests.
 
    The layer order below is the whole design of this file. Tailwind ships three
-   pieces and this commit takes two of them:
+   pieces and this file now takes all three:
 
      theme      the token layer                          taken
-     base       preflight, Tailwind's element reset      NOT taken, on purpose
+     base       preflight, Tailwind's element reset      taken — see below
      utilities  the utility classes                      taken
 
-   Preflight rewrites margins, list markers, heading sizes, form-control fonts
-   and image display on every element in the document. Ten pages are already
-   styled against browser defaults, so importing it here would restyle all of
-   them in the commit that introduces Tailwind and nobody could tell a port
-   error from an intended change. It is one line — `@import
-   "tailwindcss/preflight.css" layer(base);` — and it belongs to the wave that
-   restyles the pages, not to this one.
+   PREFLIGHT WAS DELIBERATELY LEFT OUT AND IS NOW IN. The note that used to sit
+   here was right at the time: preflight rewrites margins, list markers, heading
+   sizes, form-control fonts and image display on every element in the document,
+   ten pages were styled against browser defaults, and importing it in the commit
+   that introduced Tailwind would have restyled all of them at once with nobody
+   able to tell a port error from an intended change. It also said the line
+   "belongs to the wave that restyles the pages" — and that wave was never
+   scheduled, which is why five pages carried the design system and thirteen did
+   not, and why the seam between them was the most visible thing in the product.
+
+   This is that wave. The line is in, and the pages are restyled alongside it
+   rather than after it.
+
+   ORDER IS WHAT MAKES THIS SAFE. `base` sits BEFORE `app`, so every element rule
+   the hand-rolled stylesheet already writes — body, a, table, th, td, h1 — still
+   beats preflight's reset for that element. Preflight only reaches what `app`
+   never had an opinion about: h2–h6, ul/ol markers, fieldset, form controls,
+   img. That is the surface this wave had to look at anyway.
 
    `app` holds the hand-rolled CSS that shipped before Tailwind. It is inside a
    layer rather than loose so that a utility can beat it: unlayered CSS outranks
@@ -25,6 +36,7 @@
 @layer theme, base, components, app, utilities;
 
 @import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/preflight.css" layer(base);
 @import "tailwindcss/utilities.css" layer(utilities);
 
 /* ── raw palette ──────────────────────────────────────────────────────────
@@ -476,6 +488,20 @@
     text-align: center;
     padding: 72px 20px;
     color: var(--text-dim);
+    /*
+     * The same measure the page subtitle gets, for the same reason. This is the
+     * one state a reader arrives at with nothing else on screen to anchor on —
+     * an empty list, a missing schema, an agent that has never run — so it is the
+     * worst place to set a 140-character line. /integrations ran its "No Composio
+     * API key yet" explanation to 1,480px across a 1,530px column; centred text
+     * that wide has no left edge for the eye to return to.
+     *
+     * `margin-inline: auto` rather than leaving it to `text-align: center`: the
+     * text was centred, the BOX was not, so capping the width without this would
+     * have parked the whole state against the left edge.
+     */
+    max-width: 78ch;
+    margin-inline: auto;
   }
   .empty h2 {
     color: var(--text);
@@ -489,6 +515,22 @@
     border: 1px solid var(--border);
     border-radius: 5px;
     padding: 2px 7px;
+    /*
+     * A wrapped chip has to look like one chip, not two broken ones.
+     *
+     * Giving .empty a measure made these wrap for the first time, and the
+     * default `box-decoration-break: slice` draws the background, border and
+     * padding once across the whole run — so `npm run dev` breaking after "npm"
+     * rendered an open-ended box on line one and a second box missing its left
+     * border on line two. `clone` repeats the decoration on each line, which is
+     * what a reader expects a code token to look like.
+     *
+     * Not `white-space: nowrap`: these chips also carry
+     * `docker compose --profile dashboard up -d --force-recreate`, which has to
+     * be allowed to break or it overflows the column it was just constrained to.
+     */
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
   }
 
   h1 {
@@ -498,6 +540,22 @@
   .page-sub {
     color: var(--text-dim);
     margin: 0 0 22px;
+    /*
+     * ONE MEASURE, because there were six.
+     *
+     * The sentence under a page title is the same element everywhere, and it was
+     * styled five more times — `.sub` in skills, schedules, evals, memory and
+     * approvals — at 70ch, 74ch and 78ch and 13px, while this shared rule set no
+     * measure at all and let seven other pages run the full 1180px of the content
+     * column. At 14px that is roughly 140 characters a line, about twice what
+     * prose is comfortable at, so the pages WITHOUT a measure were the badly set
+     * ones.
+     *
+     * 78ch is the value three of the five had already converged on. It lives here
+     * rather than in each module so the next page inherits the decision instead
+     * of guessing again.
+     */
+    max-width: 78ch;
   }
 
   /* ---- sign in ----

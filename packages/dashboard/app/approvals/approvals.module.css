@@ -1,13 +1,6 @@
 /* Scoped to this page so globals.css stays the shared vocabulary. Colors come
    from the same CSS variables used everywhere else. */
 
-.sub {
-  color: var(--text-dim);
-  font-size: 13px;
-  margin: 6px 0 20px;
-  max-width: 70ch;
-}
-
 /* Deliberately loud. An audit log with unattributable rows is the exact thing
    this page exists to make impossible to ignore. */
 .warn {

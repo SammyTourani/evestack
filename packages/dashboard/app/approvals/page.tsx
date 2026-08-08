@@ -1,5 +1,5 @@
+import { DatabaseError } from "@/app/db-error";
 import { listApprovals, type ApprovalRow, type ApproverIdentity } from "@/lib/approvals";
-import { DatabaseUnavailableError, describeDbError } from "@/lib/db";
 import { stamp } from "@/lib/time";
 import styles from "./approvals.module.css";
 
@@ -70,13 +70,7 @@ export default async function ApprovalsPage() {
   try {
     rows = await listApprovals(200);
   } catch (error) {
-    const unavailable = error instanceof DatabaseUnavailableError;
-    return (
-      <div className="empty">
-        <h2>{unavailable ? "Database unreachable" : "Could not read the audit log"}</h2>
-        <p>{describeDbError(error)}</p>
-      </div>
-    );
+    return <DatabaseError error={error} />;
   }
 
   const unidentified = rows.filter((r) => r.approverVia === "unidentified").length;
@@ -84,7 +78,7 @@ export default async function ApprovalsPage() {
   return (
     <>
       <h1>Approvals</h1>
-      <p className={styles.sub}>
+      <p className="page-sub">
         Every human-in-the-loop decision this dashboard carried out. eve&apos;s protocol carries no
         identity, so this is the only place that records <em>who</em>.
       </p>

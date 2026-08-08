@@ -69,17 +69,22 @@ export async function AlertsPanel() {
 
   return (
     <Card>
+      {/*
+        No <h2>Monitors</h2> here. This panel renders on exactly one page, and
+        that page's <h1> already says Monitors — so the card was repeating the
+        title directly under it. The state summary is what the header is FOR, and
+        it survives on its own line.
+      */}
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="m-0 text-section font-medium text-text">Monitors</h2>
-        <span className="text-small text-text-dim">
-          {firing === 0 ? "Nothing firing" : `${firing} firing`}
-          {unchecked > 0 ? `, ${unchecked} not checked` : null} · {alerts.length} shipped by default
-        </span>
+        <p className="m-0 text-small text-text-dim">
+          These are on out of the box rather than composed in a builder. Every one corresponds to a
+          failure this codebase has actually hit, and four of them — sandbox isolation, sandbox
+          lifetime, trace ingest and unpriced spend — cannot exist in a hosted product at all.
+        </p>
       </div>
       <p className="mt-1 mb-3 text-small text-text-dim">
-        These are on out of the box rather than composed in a builder. Every one corresponds to a
-        failure this codebase has actually hit, and four of them — sandbox isolation, sandbox
-        lifetime, trace ingest and unpriced spend — cannot exist in a hosted product at all.
+        {firing === 0 ? "Nothing firing" : `${firing} firing`}
+        {unchecked > 0 ? `, ${unchecked} not checked` : null} · {alerts.length} shipped by default
       </p>
       <ul className="m-0 list-none p-0">
         {alerts.map((a) => (

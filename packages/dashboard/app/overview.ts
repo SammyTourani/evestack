@@ -103,6 +103,22 @@ export interface Headline {
    * code, built here by me.
    */
   readonly failed: boolean;
+
+  /**
+   * WHY the current-window query was rejected, when it was.
+   *
+   * `failed` alone says the tile is blind; it does not say what to do about it,
+   * and the page has to tell someone. Discarding the reason meant app/page.tsx
+   * had nothing real to hand DatabaseError, so it synthesised
+   * `new Error("Every measure on this page failed to read from Postgres.")` —
+   * true, and stripped of the one detail that distinguishes a stopped container
+   * from a database that is running and has never been bootstrapped.
+   * describeDbFailure() can tell those apart from a pg error code and cannot
+   * tell them apart from a sentence, so the overview said "Can't reach the
+   * database" while /monitors and /evals, reading the same dead database in the
+   * same second, correctly said "The database has no agent schema yet".
+   */
+  readonly error?: unknown;
 }
 
 const EMPTY: Headline = { value: null, previous: null, spark: [], coverage: { rows: 0, of: 0 }, failed: false };
@@ -171,6 +187,7 @@ export async function headline(
     })(),
     spark: (one(series)?.data ?? []).map((r) => num(r[key])),
     failed,
+    error: current.status === "rejected" ? current.reason : undefined,
     /*
      * `{rows, of}` is the shape lib/metrics.ts returns, and reading the wrong
      * key here is not a cosmetic bug: the fallback is `matchedRows`, so a
