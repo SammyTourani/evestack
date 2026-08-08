@@ -1,7 +1,11 @@
 import { Badge, type Tone } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { FOCUS_RING } from "@/components/ui/style";
+import { deliveryStatus, type DeliveryStatus } from "@/lib/alert-delivery";
 import { evaluateAlerts, type AlertResult, type AlertState } from "@/lib/alerts";
+import { ago } from "@/lib/time";
+
+import { DeliveryTest } from "./delivery-test";
 
 /**
  * The alert list, above the charts.
@@ -50,8 +54,65 @@ function AlertRow({ alert }: { alert: AlertResult }) {
   );
 }
 
+/**
+ * Whether any of this leaves the machine — said on the page, every time.
+ *
+ * This is the honest half of the feature and the reason the panel changed at
+ * all. Nine monitors rendered under the word "firing", with no statement about
+ * delivery, invite exactly one conclusion: that someone will be told. Until
+ * lib/alert-delivery.ts existed, nobody was, and the page gave a reader no way
+ * to find that out short of reading the source.
+ *
+ * So the unconfigured case is not hidden, greyed out, or phrased as an upsell.
+ * It is the same `warn` tone the panel already uses for `unknown`, and for the
+ * same reason: "we are not watching for you" must not render like "all clear".
+ */
+function Delivery({ status }: { status: DeliveryStatus }) {
+  if (!status.configured) {
+    return (
+      <p className="mt-1 mb-3 text-small text-warn">
+        <strong className="font-normal">Nothing is delivered.</strong>{" "}
+        {status.disabledReason} A monitor you have to be looking at is a chart with a threshold
+        drawn on it.
+      </p>
+    );
+  }
+
+  const failing = status.failing.length > 0;
+
+  return (
+    <div className="mt-1 mb-3 flex flex-col gap-1.5">
+      <p className="m-0 text-small text-text-dim">
+        Delivering state changes to {status.sinks.join(", ")}, checked every{" "}
+        {status.intervalSeconds}s.{" "}
+        {status.renotifyMinutes === null
+          ? "Only transitions are sent, so a monitor that stays firing is mentioned once."
+          : `A monitor that stays firing is repeated every ${status.renotifyMinutes} minutes.`}{" "}
+        {status.lastDeliveryAt === null
+          ? "Nothing has been sent yet."
+          : `Last sent ${ago(status.lastDeliveryAt)}${status.lastDeliveryOk === false ? " and it failed" : ""}.`}
+      </p>
+
+      {failing ? (
+        <p className="m-0 text-small text-err">
+          {status.failing.length} monitor{status.failing.length === 1 ? "" : "s"} could not be
+          delivered and {status.failing.length === 1 ? "is" : "are"} being retried:{" "}
+          {status.failing.map((f) => `${f.id} (${f.attempts}× — ${f.error})`).join("; ")}
+        </p>
+      ) : null}
+
+      <DeliveryTest sinks={status.sinks} />
+    </div>
+  );
+}
+
 export async function AlertsPanel() {
   let alerts: AlertResult[];
+  // Deliberately not in the same try: a delivery-status read that fails must not
+  // be reported as "the monitor set could not be evaluated". deliveryStatus()
+  // already swallows its own errors into `neverRun`, so this cannot throw — but
+  // ordering it first would make a future change able to.
+  const status = await deliveryStatus();
   try {
     alerts = await evaluateAlerts();
   } catch (error) {
@@ -82,10 +143,12 @@ export async function AlertsPanel() {
           lifetime, trace ingest and unpriced spend — cannot exist in a hosted product at all.
         </p>
       </div>
-      <p className="mt-1 mb-3 text-small text-text-dim">
+      <p className="mt-1 mb-1 text-small text-text-dim">
         {firing === 0 ? "Nothing firing" : `${firing} firing`}
         {unchecked > 0 ? `, ${unchecked} not checked` : null} · {alerts.length} shipped by default
       </p>
+
+      <Delivery status={status} />
       <ul className="m-0 list-none p-0">
         {alerts.map((a) => (
           <AlertRow key={a.id} alert={a} />

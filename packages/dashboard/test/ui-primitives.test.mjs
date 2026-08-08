@@ -254,36 +254,59 @@ test("the popover renders its trigger and nothing else while closed", () => {
 });
 
 test("no control is left wearing the operating system's chrome", () => {
-  // WHY THIS SURVIVED PREFLIGHT. It was written when globals.css took Tailwind's
-  // theme and utilities and skipped its base layer, so a `<button>` carrying only
-  // layout utilities computed — measured in Chrome on this app — background
-  // rgb(239,239,239), border 2px outset, font-family Arial. A grey OS button in a
-  // dark table header, with nothing in the component saying so.
+  // WHAT THIS ASSERTED BEFORE, AND WHY IT CHANGED. It was written when
+  // globals.css took Tailwind's theme and utilities and skipped its base layer,
+  // so a `<button>` carrying only layout utilities computed — measured in Chrome
+  // on this app — background rgb(239,239,239), border 2px outset, font-family
+  // Arial. `style.ts` hand-rolled the reset, and this matched
+  // /font-family:inherit/ on every control.
   //
-  // globals.css imports preflight now, which resets `font: inherit` on form
-  // controls itself, so the inline reset from `style.ts` is no longer the only
-  // thing standing between this app and Arial. It is still the thing this asserts,
-  // and deliberately: the reset travels with the component, so a control rendered
-  // somewhere that has not loaded globals.css — an email, a snapshot, a future
-  // embed — still looks like the product rather than the operating system.
+  // globals.css imports preflight now. Read off tailwindcss@4.3.3/preflight.css
+  // rather than assumed, `font: inherit` at line 249 and `background-color:
+  // transparent` at 255 cover form controls, and `padding: 0; border: 0 solid`
+  // at 13-15 cover everything — so the utilities this used to require became
+  // duplicates and were deleted.
+  //
+  // The intervening version of this comment argued they should stay anyway, so
+  // the reset "travels with the component" into an email or an embed that never
+  // loaded globals.css. That argument does not survive being looked at:
+  // `font-family: inherit` in a foreign document inherits THAT document's font,
+  // so it produces the host's typeface, not the product's. It bought nothing.
+  //
+  // What preflight does NOT do is the thing now asserted. Line 377-380 ADDS
+  // `appearance: button` to `button` and to submit/reset/button inputs, to make
+  // the border radius stylable in iOS Safari — so without `appearance-none`
+  // those render as platform controls, and preflight is the reason rather than
+  // the cure. This is a stronger test than the one it replaces: it guards a
+  // hazard that exists, instead of a duplicate that did not.
   //
   // Checkboxes and radios are excluded on purpose — those should look native.
-  const markups = [
-    render(DataTable, {
-      data: [{ id: "a", outcome: "ok" }],
-      columns: COLUMNS,
-      caption: "Sessions",
-      facetColumns: ["outcome"],
-      searchPlaceholder: "Search",
-    }),
-  ];
-  const controls = markups
-    .flatMap((markup) => markup.match(/<(?:button|input)\b[^>]*>/g) ?? [])
-    .filter((tag) => !/type="(?:checkbox|radio)"/.test(tag));
-  // Was 6 across four components; DataTable alone is the only one of them left.
+  const markup = render(DataTable, {
+    data: [{ id: "a", outcome: "ok" }],
+    columns: COLUMNS,
+    caption: "Sessions",
+    facetColumns: ["outcome"],
+    searchPlaceholder: "Search",
+  });
+  const controls = (markup.match(/<(?:button|input)\b[^>]*>/g) ?? []).filter(
+    (tag) => !/type="(?:checkbox|radio)"/.test(tag),
+  );
   assert.ok(controls.length >= 3, `expected several controls, found ${controls.length}`);
+
+  // The ones preflight hands a platform appearance to.
+  const buttonish = controls.filter(
+    (tag) => /^<button\b/.test(tag) || /type="(?:button|submit|reset)"/.test(tag),
+  );
+  assert.ok(buttonish.length >= 2, `expected buttons, found ${buttonish.length}`);
+  for (const tag of buttonish) {
+    assert.match(tag, /appearance-none/, tag);
+  }
+
+  // And every control, button or field, still has to say where the keyboard is.
+  // That fails silently when it drifts, which is why it is pinned here and not
+  // left to a visual pass.
   for (const tag of controls) {
-    assert.match(tag, /font-family:inherit/, tag);
+    assert.match(tag, /focus-visible:outline-2/, tag);
   }
 });
 

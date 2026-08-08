@@ -21,7 +21,8 @@
  *   wedged                a turn started and never finished; nothing retries it
  *   turn_failure_rate     error_code plus finished-with-no-model-call
  *   turn_latency_p95      the number worth alerting on, not session duration
- *   daily_spend           against EVESTACK_DAILY_BUDGET_USD when set
+ *   daily_spend           against EVESTACK_ALERT_DAILY_SPEND_USD, falling back
+ *                         to @evestack/budget's own daily cap
  *   unpriced_spend        a model with no catalog price is running and the
  *                         real bill is unknown, which reads as $0.00 anywhere
  *                         that forgets to check `priced`
@@ -46,6 +47,7 @@
  * at, which is the single most dangerous thing an alerting page can do.
  */
 
+import { dailySpendCap } from "./budget-env";
 import { query } from "./db";
 import { getMonitorSummary } from "./monitors";
 import { getSchedules } from "./schedules";
@@ -78,9 +80,19 @@ export const THRESHOLDS = {
   scheduleFailingStreak: 3,
 } as const;
 
-function budgetUsd(): number | null {
-  const raw = Number(process.env.EVESTACK_DAILY_BUDGET_USD);
-  return Number.isFinite(raw) && raw > 0 ? raw : null;
+/**
+ * The cap "Spend today" is judged against, and which cap it is.
+ *
+ * This used to read `EVESTACK_DAILY_BUDGET_USD`, which is not a variable. The
+ * real one is `EVESTACK_BUDGET_DAILY_USD` — the same four words in a different
+ * order — and the transposition existed only inside this file, so nothing else
+ * in the repository contradicted it. The result was not a wrong number; it was
+ * this monitor reporting `unknown` on every install ever made, saying "no cap is
+ * configured" while @evestack/budget enforced its $10/day default a process
+ * away. lib/budget-env.ts carries the full write-up.
+ */
+function budgetUsd(): { usd: number | null; scope: "install" | "per-principal" } {
+  return dailySpendCap(process.env);
 }
 
 const pct = (n: number): string => `${(n * 100).toFixed(1)}%`;
@@ -146,8 +158,16 @@ export async function evaluateAlerts(): Promise<AlertResult[]> {
 
   /* ── money ───────────────────────────────────────────────────────────────── */
   if (spend.status === "fulfilled") {
-    const cap = budgetUsd();
+    const { usd: cap, scope } = budgetUsd();
     const { total, unpriced, unpricedTurns } = spend.value;
+    // Which cap this is, said out loud. `dailySpend()` sums every priced turn on
+    // the INSTALL, and the fallback cap is per PRINCIPAL — the same number on a
+    // single-user install and a different one the moment there are two. Naming
+    // the scope is what stops that difference from being a silent wrong answer.
+    const scopeNote =
+      scope === "per-principal"
+        ? " That is @evestack/budget's per-principal daily cap, compared here against the whole install's spend — set EVESTACK_ALERT_DAILY_SPEND_USD to judge the install against its own number."
+        : "";
     out.push({
       id: "daily_spend",
       title: "Spend today",
@@ -155,9 +175,10 @@ export async function evaluateAlerts(): Promise<AlertResult[]> {
       state: cap === null ? "unknown" : total > cap ? "firing" : "ok",
       detail:
         cap === null
-          ? `${usd(total)} so far today. No cap is configured, so there is nothing to compare it to.`
-          : `${usd(total)} of ${usd(cap)} spent today.`,
-      threshold: cap === null ? "set EVESTACK_DAILY_BUDGET_USD to enable" : `under ${usd(cap)}/day`,
+          ? `${usd(total)} so far today. Both EVESTACK_ALERT_DAILY_SPEND_USD and @evestack/budget's daily cap are switched off, so there is nothing to compare it to.`
+          : `${usd(total)} of ${usd(cap)} spent today.${scopeNote}`,
+      threshold:
+        cap === null ? "set EVESTACK_ALERT_DAILY_SPEND_USD to enable" : `under ${usd(cap)}/day`,
       href: "/",
     });
 

@@ -1,0 +1,157 @@
+---
+title: Alerts
+description: Nine monitors that ship on, and a delivery path that tells you when one changes — with the limits of an in-process notifier stated rather than hidden.
+---
+
+`/monitors` has always computed nine checks. Until now it only ever showed them, which made them a
+dashboard rather than an alert: they existed for the length of one render, and the moment you
+needed them was the moment nobody was looking.
+
+This page is the other half — the part that speaks first.
+
+## Turn it on
+
+One variable. Set it to a Slack incoming webhook, a Discord webhook, or any HTTPS endpoint you
+control:
+
+```bash
+EVESTACK_ALERT_WEBHOOK_URL=https://hooks.slack.com/services/T0/B0/xxxx
+```
+
+The payload shape is picked from the hostname — `hooks.slack.com` gets `{"text": …}`, a Discord
+webhook path gets `{"content": …}`, anything else gets a structured JSON body. Override it with
+`EVESTACK_ALERT_WEBHOOK_FORMAT=slack|discord|webhook` if you post through a proxy.
+
+Restart the dashboard and it says which way it went, once, at boot:
+
+```
+[evestack:alerts] delivering transitions — 1 sink(s), every 60s
+```
+
+Unset, it says the other thing, and `/monitors` says it too rather than leaving you to assume.
+That is deliberate: a page showing nine checks under the word **firing**, with nothing stated about
+delivery, invites exactly one conclusion.
+
+Press **Send a test** on `/monitors` to prove the channel. It sends one obviously-synthetic message
+and does not touch any monitor's state — a test that consumed a real transition could swallow the
+alert it was meant to prove.
+
+## What gets sent, and what does not
+
+A message goes out when a monitor **changes**, never merely because it is still bad. An
+integration that re-sends every minute is muted within a day, at which point it is worth less than
+nothing: it has trained you to ignore the channel the real one will arrive in.
+
+| From | To | Sent |
+| --- | --- | --- |
+| never seen | firing | **yes** — a fresh install that is already broken is worth one first message |
+| never seen | ok / not checked | no — nine "all fine" messages on first boot is how a channel gets muted |
+| ok | firing | **yes** |
+| not checked | firing | **yes** |
+| firing | ok | **yes**, the all-clear |
+| firing | not checked | **yes**, as *not checked* — see below |
+| ok | not checked | only for `page` severity |
+| not checked | ok | no |
+
+**`firing → not checked` is never reported as resolved.** The monitor stopped being answerable
+while it was firing, so the problem is un-observed, not over. Sending "resolved" there would stand
+an operator down in the middle of a live incident, and it is the single most dangerous thing this
+path could do.
+
+**`ok → not checked` pages only for `page`-severity checks.** For the two that would wake someone,
+losing the ability to evaluate *is* the incident. Below that it is silent, because an unmounted
+Docker socket is a configuration choice, not news.
+
+To repeat a still-firing alert, set `EVESTACK_ALERT_RENOTIFY_MINUTES=60`. It is off by default.
+
+## The spend monitor, and which cap it uses
+
+`EVESTACK_ALERT_DAILY_SPEND_USD` is the install-wide daily spend the alert is judged against.
+
+With it unset, the alert falls back to `@evestack/budget`'s `EVESTACK_BUDGET_DAILY_USD` (default
+`10`) so that it works out of the box — and it **says so in the alert text**, because the two are
+not the same measure. The budget cap is per principal; this alert sums every priced turn on the
+install. On the single-user install that self-hosting usually means they are the same number; with
+two users the install crosses $10 while neither person is near their own limit.
+
+<Warning>
+  This monitor spent its entire existence stuck at *not checked*. It read
+  `EVESTACK_DAILY_BUDGET_USD` — the same four words in a different order from the variable that
+  exists — so on every install ever made it reported "no cap is configured" while `@evestack/budget`
+  enforced its $10/day default a process away. A check that cannot fire is worse than a missing
+  one, because the page counts it among the ones that passed.
+</Warning>
+
+Set it to `false` to switch spend alerting off without touching your budget caps.
+
+## Signing, for the generic sink
+
+Slack and Discord authenticate by secret URL. For your own endpoint, set a shared secret and every
+POST is signed:
+
+```bash
+EVESTACK_ALERT_WEBHOOK_SECRET=$(openssl rand -hex 32)
+```
+
+```
+x-evestack-alert-timestamp: 1786232997598
+x-evestack-alert-signature: sha256=d0b4cec6bb0de…
+```
+
+The signature is `HMAC-SHA256(secret, "<timestamp>.<raw body>")`. The timestamp is inside the
+signed material on purpose — signing the body alone authenticates the content and nothing else, so
+a captured POST replays forever. Reject anything older than your own tolerance.
+
+## Honest limits
+
+- **If the dashboard is down, nothing is delivered, and nothing here can tell you so.** That is a
+  genuine limit of any in-process notifier, not an oversight. The payload carries `sentAt` so a
+  receiver that cares can alert on silence — the one check that has to live outside the thing it
+  watches.
+- **The dashboard is an optional compose profile** (`profiles: ["full", "dashboard"]`). `docker
+  compose up` without a profile starts Postgres and the agent and no notifier at all.
+- **It is deliberately not delivered through your agent's channel.** evestack already has a path
+  that reaches a human — the [heartbeat](/docs/proactive) — and it is the wrong one for this.
+  Three of the nine monitors (`wedged`, `no_spans_while_active`, `turn_failure_rate`) fire exactly
+  when the agent is unwell, so routing them through the agent means the turn that wedges is the
+  turn that would have told you. The dashboard is a separate process and stays up when the agent
+  does not.
+- **Delivery is at-least-once, not exactly-once.** A transition is only marked delivered once a
+  sink returns 2xx, so a receiver that is down replays it on the next tick rather than losing it.
+  A receiver that accepts the POST and then drops it is indistinguishable from one that delivered
+  it — that is the correct place to give up.
+- **With several sinks configured, all of them must accept before a transition counts as
+  delivered.** Marking it done because one worked would mean the other never receives that alert,
+  and the reason to configure two is that you do not trust one.
+- **Two dashboards will not double-send.** A short lease row in `evestack.alert_lease` gives one
+  instance the tick; it expires rather than being released, so a crash mid-send is picked up by the
+  other one interval later.
+
+## What it writes
+
+Three tables, all in the `evestack` schema, created on first delivery and never before — a feature
+that is off costs nothing, including a table.
+
+| Table | What it holds |
+| --- | --- |
+| `evestack.alert_state` | one row per monitor: what was last **seen**, and what was last **delivered** |
+| `evestack.alert_deliveries` | every POST, whether it worked, the status, and how long it took. Pruned at 30 days |
+| `evestack.alert_lease` | which instance is sending |
+
+The two state columns are separate on purpose. The decision to send compares the live state
+against what was last *delivered*, so a webhook returning 500 does not consume the transition. If
+they were one column, a single failed POST would mark the alert handled and the page that started
+failing at 02:00 would never be mentioned again.
+
+Stored URLs are truncated to their origin. Slack and Discord both put a working credential in the
+path, so the full URL is never written to a table the dashboard renders.
+
+## Reading it from somewhere else
+
+`GET /api/alerts` returns all nine with their state, plus whether delivery is configured and when
+it last ran. `POST /api/alerts` runs a tick now; `POST /api/alerts?test=1` sends the test message.
+All three take the dashboard's ordinary credentials, including HTTP Basic:
+
+```bash
+curl -u "$EVESTACK_AUTH_USER:$EVESTACK_AUTH_PASSWORD" http://localhost:4000/api/alerts
+```
