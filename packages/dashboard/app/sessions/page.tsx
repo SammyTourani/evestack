@@ -254,7 +254,12 @@ export default async function SessionsListPage(props: PageProps<"/sessions">) {
   try {
     sessions = await listSessions(limit, cursor);
   } catch (error) {
-    return <DatabaseError error={error} />;
+    return (
+      <>
+        <h1>Sessions</h1>
+        <DatabaseError error={error} />
+      </>
+    );
   }
 
   // Degraded, not fatal. The fact tables live in the `evestack` schema and are

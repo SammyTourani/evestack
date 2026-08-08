@@ -79,7 +79,10 @@ export default async function EvalsPage() {
     sessions = await listSessions(100);
   } catch (error) {
     return (
-      <DatabaseError error={error} />
+      <>
+        <h1>Evals</h1>
+        <DatabaseError error={error} />
+      </>
     );
   }
 

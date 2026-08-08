@@ -117,7 +117,17 @@ export default async function MonitorsPage({
   try {
     summary = await getMonitorSummary(hours);
   } catch (error) {
-    return <DatabaseError error={error} />;
+    // The <h1> comes too, on this path as on every other. Returning the error
+    // alone left the reader on a page that did not say which page it was — the
+    // sidebar's active item was the only clue, and that is not what a heading is
+    // for. The subtitle is not repeated here because it quotes the window, and
+    // the window is a fact about data this branch could not read.
+    return (
+      <>
+        <h1>Monitors</h1>
+        <DatabaseError error={error} />
+      </>
+    );
   }
 
   const { turns, sessions } = summary;
