@@ -118,7 +118,13 @@ without you choosing a platform.
   shell. Nothing else in the generated compose file needs to change.
 </Note>
 
-Open `http://localhost:4000` and sign in with the `EVESTACK_AUTH_USER` and
+Open the dashboard — **usually** `http://localhost:4000`, but check what the scaffolder printed.
+It calls `freePort(4000)` and takes the first port at or above 4000 that is actually free, so a
+second project on the same machine, or anything already holding 4000, moves it. The same is true
+of the agent's 2000 and Postgres's 5433. The generated `docker-compose.yml` and `.env.local` both
+carry the numbers this project actually got.
+
+Sign in with the `EVESTACK_AUTH_USER` and
 `EVESTACK_AUTH_PASSWORD` generated into `.env.local` — the scaffolder prints them when it
 finishes. Every route is behind that credential: the dashboard starts agent runs, approves
 gated shell commands and deletes memories, so it fails closed rather than serving a viewer to

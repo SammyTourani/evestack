@@ -48,6 +48,27 @@ disclosure.
   on every interface the host has. And one shared secret per deployment is not per-person auth:
   there is no lockout, no rate limit and no second factor, so still put something you already
   trust (reverse-proxy OAuth, Tailscale, a VPN) in front before it leaves loopback.
+- **Signing out clears your browser; it does not revoke a cookie somebody already has.** The
+  session cookie is a signed value with an expiry and no server-side record, so there is nothing
+  to invalidate. Measured, not assumed: a cookie captured before `POST /api/auth/signout` still
+  answers 200 on a guarded route afterwards, and
+  `contract/runtime/probes/15-sign-in.probe.mjs` reports which way it went on every run. That is
+  the ordinary trade-off of a stateless session and it is fine for a control plane sitting
+  behind something else; it is worth knowing before you treat "Sign out" as a response to a
+  leak.
+
+  **What does end every session at once is changing `EVESTACK_AUTH_PASSWORD`**, and that is by
+  design rather than by accident — `signingKey()` in `packages/dashboard/lib/auth.ts` derives
+  the HMAC key from `user\0password` precisely "so that changing the password invalidates every
+  outstanding cookie". Measured on the default configuration: a cookie that answered 200 before
+  the password changed answered **401** after.
+
+  One exception, and it is the reason to read this bullet rather than skim it. Setting
+  `EVESTACK_SESSION_SECRET` — which you would do to run several dashboard replicas that accept
+  each other's cookies — moves the key off the password, so **rotating the password no longer
+  revokes anything**. That is a read of the one line in `signingKey()`, not a measurement: the
+  secret wins the `||` and the password is not part of the key material. If you have set it,
+  rotate the secret too.
 - **Postgres is on loopback by every path, and the repo's own compose still has a weak default
   password.** That database holds every prompt, tool call and result the agent has produced, so
   it is worth being exact about:

@@ -439,7 +439,15 @@ export default {
     } finally {
       process.chdir(cwd);
       await client.end();
-      await db.getPool().end();
+      // closePool(), not getPool().end(). Both close the sockets; only one
+      // clears the module global, and every probe in this tier shares a
+      // process. Ending it here without forgetting it left the next probe that
+      // imports a querying lib module — 16-schedule-streaks — holding a pool
+      // that rejects everything with "Cannot use a pool after calling end on
+      // the pool", before its first assertion. It failed on ordering, so it was
+      // invisible to a single --only run and appeared the first time the whole
+      // tier ran together in CI.
+      await db.closePool();
     }
   },
 };

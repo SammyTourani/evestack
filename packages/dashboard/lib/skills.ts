@@ -38,12 +38,37 @@ export const SKILLS_DIR_ENV = "EVESTACK_SKILLS_DIR";
 const PROJECT_RELATIVE_SKILLS_DIR = join("agent", "skills");
 
 /**
- * The dashboard is cloned from the evestack repo rather than generated into a
- * project (see docs/dashboard.mdx), so `<cwd>/agent/skills` usually does not
- * exist and the nearest real skills directory is the one the template ships.
- * Falling back to it makes the page useful out of the box; `resolvedBy` tells
- * the reader that is what happened, so nobody mistakes template skills for
- * their own agent's.
+ * The fallback, and the premise it was written on was already wrong.
+ *
+ * This comment used to begin "The dashboard is cloned from the evestack repo
+ * rather than generated into a project (see docs/dashboard.mdx)". That doc says
+ * the opposite, and says so in a note that exists specifically to retract the
+ * older claim: "This section used to open with 'The dashboard is not part of a
+ * create-evestack project — clone the repository for it' … Both halves were
+ * wrong: the scaffolder has shipped that compose service for a while". So the
+ * justification cited, as its authority, a page that had been corrected to say
+ * the reverse.
+ *
+ * What is actually true is narrower and still supports the fallback. In the
+ * PUBLISHED IMAGE the working directory is `/repo/packages/dashboard`, and no
+ * compose file this project writes mounts the user's project into it — so
+ * `<cwd>/agent/skills` genuinely does not exist there, and never will until
+ * someone mounts it. Falling back to the bundled template is what keeps the
+ * page from being empty out of the box.
+ *
+ * THE COST, STATED PLAINLY, because it is a security page: in a container the
+ * fallback ALWAYS resolves, so the Skills page always scans the image's own
+ * copy of the template's skills and never the agent's. The skill it shows is
+ * called `memory-hygiene`, which is also the name of the one the scaffolder
+ * writes into a real project — so the page looks like it is reading your agent
+ * when it is not. `resolvedBy: "bundled-template"` and the absolute path are
+ * both rendered, which is what keeps this honest rather than silent, and
+ * app/skills/page.tsx now says what to do about it in that case instead of only
+ * in the branch where nothing is found at all.
+ *
+ * To scan your own: set EVESTACK_SKILLS_DIR and mount the directory into the
+ * container. The env var reaches it already — the generated compose gives the
+ * dashboard `env_file: .env.local` — so the mount is the missing half.
  */
 const BUNDLED_TEMPLATE_SKILLS_DIR = join(
   "..",
