@@ -2,6 +2,7 @@ import { Suspense } from "react";
 
 import { DatabaseError } from "@/app/db-error";
 import { FleetBanner } from "@/app/fleet-banner";
+import { Live } from "@/app/live";
 import {
   loadOverview,
   makeWindow,
@@ -134,18 +135,25 @@ export default async function OverviewPage(props: PageProps<"/">) {
         Each number says how much of the window it could actually be computed from.
       </p>
 
-      <nav aria-label="Time range" className="mb-4 flex flex-wrap gap-1.5">
-        {OVERVIEW_WINDOWS.map((w) => (
-          <a
-            key={w}
-            href={w === DEFAULT_WINDOW ? "/" : `/?window=${w}`}
-            aria-current={w === hours ? "page" : undefined}
-            className={`${CONTROL} aria-[current=page]:border-accent aria-[current=page]:text-text`}
-          >
-            {windowLabel(w)}
-          </a>
-        ))}
-      </nav>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <nav aria-label="Time range" className="flex flex-wrap gap-1.5">
+          {OVERVIEW_WINDOWS.map((w) => (
+            <a
+              key={w}
+              href={w === DEFAULT_WINDOW ? "/" : `/?window=${w}`}
+              aria-current={w === hours ? "page" : undefined}
+              className={`${CONTROL} aria-[current=page]:border-accent aria-[current=page]:text-text`}
+            >
+              {windowLabel(w)}
+            </a>
+          ))}
+        </nav>
+
+        {/* This page is force-dynamic and used to stay on whatever it first
+            rendered. app/live.tsx records why polling won over SSE and over
+            `revalidate`, and why the age of the data is always on screen. */}
+        <Live />
+      </div>
 
       {/* Renders nothing when nothing is wrong. Streamed — see the header. */}
       <Suspense fallback={null}>

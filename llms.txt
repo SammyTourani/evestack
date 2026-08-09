@@ -87,6 +87,7 @@ on advertising them.
 - [Local setup](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/local-setup.mdx)
 - [Architecture](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/architecture.mdx)
 - [Dashboard](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/dashboard.mdx)
+- [Alerts](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/alerts.mdx)
 - [Observability](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/observability.mdx)
 - [Composio auth](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/composio-auth.mdx)
 - [Memory](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/memory.mdx)

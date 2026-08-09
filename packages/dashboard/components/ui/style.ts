@@ -37,39 +37,48 @@ export const SURFACE =
   "rounded-md border border-border bg-bg-raised text-text shadow-lg shadow-black/40";
 
 /**
- * Undo the operating system's idea of a button, because preflight is not here.
+ * What is left to undo on a `<button>` once preflight is in the page.
  *
- * `app/globals.css` takes Tailwind's theme and utilities and deliberately skips
- * preflight, so form controls keep their user-agent styling. Measured in Chrome
- * on this app rather than assumed: a `<button>` with only layout and colour
- * utilities on it computes `background-color: rgb(239, 239, 239)`,
- * `border: 2px outset`, `font-family: Arial` and `text-align: center`. In the
- * middle of a dark table header that is a grey OS button with the wrong
- * typeface, and no class in the component says so.
+ * This constant used to open "because preflight is not here", and carried six
+ * utilities to hand-roll what preflight does. It is here now — `app/globals.css`
+ * imports `tailwindcss/preflight.css` into the `base` layer, and
+ * test/design-tokens.test.mjs fails if that import is removed — so the list has
+ * been cut to the two things preflight does NOT do, plus the ring.
  *
- * `[font-family:inherit]` is the half that will matter later even where the
- * rest does not: `--font-sans` already resolves to Geist, and the moment a wave
- * puts it on `<body>` every control that did not inherit stays on Arial.
+ * Read off tailwindcss@4.3.3/preflight.css rather than assumed:
  *
- * Padding is reset to zero and re-added per button, which works because
- * Tailwind emits `px-*`/`py-*` after `p-*` regardless of the order they appear
- * in the class string.
+ *   line 13-15   `*` gets margin: 0, padding: 0, border: 0 solid
+ *                  → `p-0` and `border-0` were duplicates
+ *   line 243-255 `button` gets `font: inherit` and background-color: transparent
+ *                  → `[font-family:inherit]`, `[line-height:inherit]` and
+ *                    `bg-transparent` were duplicates. `font:` is the shorthand,
+ *                    so it carries line-height as well as family
+ *   line 377-380 `button` gets `appearance: button`
+ *                  → `appearance-none` is NOT a duplicate. Preflight adds this
+ *                    one, to make the border-radius stylable in iOS Safari, and
+ *                    without the reset a button renders as a platform control
+ *
+ * `text-left` stays because a `<button>` centres its text by user-agent default
+ * and preflight does not touch text-align; every use of this is a row or a menu
+ * item where centred text would be wrong.
  */
-export const BARE_BUTTON =
-  `cursor-pointer appearance-none border-0 bg-transparent p-0 text-left [font-family:inherit] [line-height:inherit] ${FOCUS_RING}`;
+export const BARE_BUTTON = `cursor-pointer appearance-none text-left ${FOCUS_RING}`;
 
 /**
  * The neutral control: a filter chip, a toolbar button, a menu trigger. Sized
  * to the 12px mono of `.status` and the table header rather than to a new
  * scale, so a control sitting next to a pill matches its height.
  */
-export const CONTROL = `inline-flex items-center gap-1.5 rounded-md border border-border bg-bg-raised px-2.5 py-1.5 text-small text-text-dim hover:bg-bg-hover hover:text-text disabled:cursor-not-allowed disabled:opacity-50 [font-family:inherit] [line-height:inherit] appearance-none cursor-pointer ${FOCUS_RING}`;
+export const CONTROL = `inline-flex items-center gap-1.5 rounded-md border border-border bg-bg-raised px-2.5 py-1.5 text-small text-text-dim hover:bg-bg-hover hover:text-text disabled:cursor-not-allowed disabled:opacity-50 appearance-none cursor-pointer ${FOCUS_RING}`;
 
 /**
- * A text input. Same reason as `BARE_BUTTON`: without preflight an `<input>`
- * computes `font-family: Arial` while the page around it is on `--sans`, which
- * is why `.signin-field input` in `app/globals.css` has always said
- * `font: inherit`. Checkboxes and radios are deliberately left native — those
+ * A text input.
+ *
+ * `border` and `bg-*` are re-stated rather than inherited: preflight strips both
+ * from a form control (`border: 0 solid`, `background-color: transparent`), so
+ * on this palette an unstyled input is an invisible box on the page background.
+ * The font is preflight's job — `font: inherit` at line 249 — and is no longer
+ * repeated here. Checkboxes and radios are deliberately left native; those
  * should look like the platform's.
  */
-export const FIELD = `rounded-md border border-border bg-bg-raised px-2.5 py-1.5 text-body text-text placeholder:text-text-faint [font-family:inherit] ${FOCUS_RING}`;
+export const FIELD = `rounded-md border border-border bg-bg-raised px-2.5 py-1.5 text-body text-text placeholder:text-text-faint ${FOCUS_RING}`;

@@ -197,10 +197,23 @@ jobs:
 
       # Postgres-only and filesystem-only probes first. They are fast, they need
       # no agent, and if they fail there is no point booting one.
+      # --exclude=seam, and the reason is worth writing down because the obvious
+      # version of this step is subtly broken.
+      #
+      # `--require` is greedy on purpose: a probe is required when ANY of its
+      # `needs` is named, which is what stops one skipping past a prerequisite
+      # that is actually present. seam/trace-ingest-lands-in-postgres needs
+      # postgres AND the dashboard, so this step demanded it and it failed on a
+      # dashboard that is not booted until two steps later.
+      #
+      # The tempting fix — drop `postgres` from that probe's `needs` so the
+      # greedy rule stops catching it — would put a lie in the one field the
+      # runner uses to decide what is safe to demand. The group is excluded here
+      # instead, and demanded in the step that provides both.
       - name: probes that need only Postgres
         env:
           WORKFLOW_POSTGRES_URL: postgres://evestack:evestack@localhost:5433/evestack_probe
-        run: node contract/runtime/run.mjs --require=postgres,typescript
+        run: node contract/runtime/run.mjs --require=postgres,typescript --exclude=seam
 
       # A FRESH database for the agent, created per run, so nothing is ever
       # re-enqueued from a previous job. That is not tidiness: re-enqueued runs
@@ -237,6 +250,18 @@ jobs:
           export SLACK_BOT_TOKEN=xoxb-ci-probe-not-a-real-token
           export SLACK_SIGNING_SECRET=ci-slack-signing-secret
 
+          # THE SAME PAIR THE DASHBOARD USES, and it has to be the same pair.
+          # lib/auth.ts is explicit that create-evestack generates one
+          # EVESTACK_AUTH_USER / EVESTACK_AUTH_PASSWORD for the agent and
+          # lib/agent-client.ts sends it onward as Basic — one secret to rotate,
+          # not two that drift. Booting the agent without it while the dashboard
+          # has it is a configuration no real install has, and it showed up
+          # exactly where you would expect: every fleet sweep classified its
+          # sessions `unknown`, which is the honest report of "I could not reach
+          # the agent" for a mismatch this job created.
+          export EVESTACK_AUTH_USER=probe
+          export EVESTACK_AUTH_PASSWORD=probe-password-not-a-secret
+
           # No model key on purpose — see the note above the job.
           npx eve dev --port 2999 > /tmp/eve-dev.log 2>&1 &
           echo $! > /tmp/eve-dev.pid
@@ -254,6 +279,53 @@ jobs:
           cat /tmp/eve-dev.log
           exit 1
 
+      # The dashboard, against the agent that is now up and the database that
+      # agent writes to.
+      #
+      # It has never run in this job, and four paths went untested because of
+      # it: chat streaming, an approval decision travelling eve's follow-up
+      # route, the fleet classifier's agent-dependent branches, and trace ingest
+      # end to end. Each is dashboard -> agent or exporter -> dashboard ->
+      # Postgres, so no amount of probing either end alone reaches them. Every
+      # bug this repo has found in that seam — the tail-index-of-minus-one
+      # confusion, the 15-second sessions page, the proxy comparing Origin to
+      # the bind address — was found by a person, by hand, after shipping.
+      #
+      # The agent's database, NOT evestack_probe: the point is to watch the
+      # dashboard read rows the agent has just written, which the seeded copy
+      # cannot show.
+      #
+      # No model key here either. Every assertion is about protocol and storage:
+      # a turn that never reaches a provider still opens a stream, still emits
+      # terminal events, and still leaves run rows to classify.
+      - name: boot the dashboard
+        env:
+          WORKFLOW_POSTGRES_URL: postgres://evestack:evestack@localhost:5433/evestack
+          EVESTACK_AGENT_URL: http://localhost:2999
+          EVESTACK_AUTH_USER: probe
+          EVESTACK_AUTH_PASSWORD: probe-password-not-a-secret
+          EVESTACK_SESSION_SECRET: probe-session-secret-not-a-secret
+          EVESTACK_INGEST_TOKEN: probe-ingest-token-not-a-secret
+          EVESTACK_PUBLIC_URL: http://localhost:4009
+        run: |
+          cd packages/dashboard
+          node_modules/.bin/next start --port 4009 > /tmp/dashboard.log 2>&1 &
+          echo $! > /tmp/dashboard.pid
+
+          # /api/health is the liveness tier and is deliberately reachable
+          # without a credential, so this waits on the same route Docker's
+          # HEALTHCHECK uses rather than on one that would 401.
+          for i in $(seq 1 60); do
+            if curl -sf -o /dev/null http://localhost:4009/api/health 2>/dev/null; then
+              echo "dashboard up after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::the dashboard did not answer on :4009 within 60s"
+          cat /tmp/dashboard.log
+          exit 1
+
       - name: probes that need the agent
         env:
           EVESTACK_PROBE_AGENT_URL: http://localhost:2999
@@ -269,6 +341,28 @@ jobs:
           export EVESTACK_PROBE_DISCORD_PRIVATE_KEY="$(cat /tmp/discord-probe-key.pem)"
           node contract/runtime/run.mjs --require=agent --only=protocol
           node contract/runtime/run.mjs --require=agent --only=channels
+
+      # The seam: dashboard -> agent, and exporter -> dashboard -> Postgres.
+      #
+      # --require=dashboard, so a dashboard that failed to boot fails the job
+      # rather than skipping four probes and reporting green. That is the same
+      # rule the rest of this tier follows and the reason --require exists.
+      - name: probes that need the dashboard and the agent together
+        env:
+          EVESTACK_PROBE_AGENT_URL: http://localhost:2999
+          EVESTACK_PROBE_DASHBOARD_URL: http://localhost:4009
+          EVESTACK_PROBE_DASHBOARD_USER: probe
+          EVESTACK_PROBE_DASHBOARD_PASSWORD: probe-password-not-a-secret
+          EVESTACK_PROBE_INGEST_TOKEN: probe-ingest-token-not-a-secret
+          WORKFLOW_POSTGRES_URL: postgres://evestack:evestack@localhost:5433/evestack
+        run: node contract/runtime/run.mjs --require=dashboard,agent,postgres --only=seam
+
+      - name: the dashboard's own log
+        if: always()
+        run: |
+          echo "── dashboard log ────────────────────────────────────────────"
+          cat /tmp/dashboard.log || echo "(no log)"
+          kill "$(cat /tmp/dashboard.pid)" 2>/dev/null || true
 
       - name: the agent's own log
         # Always: a probe failure is usually explained by what the agent logged

@@ -1,3 +1,4 @@
+import { readBudgetCaps } from "@/lib/budget-env";
 import { query } from "@/lib/db";
 
 /** The three the hook enforces; anything else is treated as "fail" there. */
@@ -33,13 +34,13 @@ interface UsageRow {
   unpriced_steps: number;
 }
 
-function parseCap(raw: string | undefined, fallback: number): number | false {
-  if (raw === undefined || raw.trim() === "") return fallback;
-  const trimmed = raw.trim().toLowerCase();
-  if (trimmed === "false" || trimmed === "off" || trimmed === "none") return false;
-  const value = Number(trimmed.replace(/^\$/, ""));
-  return Number.isFinite(value) && value >= 0 ? value : fallback;
-}
+/*
+ * The parser used to live here, and a second copy of it lived nowhere at all —
+ * which is how lib/alerts.ts came to read a variable name that does not exist.
+ * It is now in lib/budget-env.ts with the two defaults pinned to
+ * packages/evestack-budget/src/config.ts by test/budget-env.test.mjs, so a
+ * change to the caps upstream fails a test here instead of drifting quietly.
+ */
 
 /**
  * The zone the hook cuts the day on, which is not always the one configured.
@@ -68,8 +69,7 @@ function resolveTimeZone(raw: string | undefined): string {
 export async function GET(request: Request) {
   const sessionId = new URL(request.url).searchParams.get("sessionId");
   const timeZone = resolveTimeZone(process.env.EVESTACK_BUDGET_TIMEZONE);
-  const disabled =
-    process.env.EVESTACK_BUDGET_DISABLED === "1" || process.env.EVESTACK_BUDGET_DISABLED === "true";
+  const caps = readBudgetCaps(process.env);
 
   try {
     // Inside the try, not above it. This is the same zone the hook cuts the daily
@@ -140,8 +140,8 @@ export async function GET(request: Request) {
       ok: true,
       day,
       limits: {
-        sessionUsd: disabled ? false : parseCap(process.env.EVESTACK_BUDGET_SESSION_USD, 2),
-        dailyUsd: disabled ? false : parseCap(process.env.EVESTACK_BUDGET_DAILY_USD, 10),
+        sessionUsd: caps.sessionUsd,
+        dailyUsd: caps.dailyUsd,
         // Validated, not echoed. The hook that actually enforces this falls back to
         // "fail" for anything outside these three (envMode in
         // packages/evestack-budget/src/config.ts), so passing the raw variable

@@ -1,4 +1,4 @@
-import { type SessionSnapshot, getSessionSnapshot } from "./agent-client";
+import { StreamTruncatedError, type SessionSnapshot, getSessionSnapshot } from "./agent-client";
 import { query } from "./db";
 
 /**
@@ -99,7 +99,14 @@ export type SessionHealth =
    * process died mid-flight. Nothing in eve will ever notice or retry it.
    */
   | "wedged"
-  /** The agent could not be reached, so nothing can be said about this session. */
+  /**
+   * Nothing can be said about this session. Two causes, and the `reason` on the
+   * entry separates them because they send a reader to different places: the
+   * agent could not be reached at all, or it answered and its event stream
+   * stopped before the session's state could be read. Reporting the second as
+   * the first sent operators to check a healthy network — see the catch in
+   * inspectFleet.
+   */
   | "unknown";
 
 export interface FleetEntry {
@@ -429,11 +436,24 @@ export async function inspectFleet(
 
         return { ...base, ...classifySession(snapshot, inFlightMs, idleMs) };
       } catch (error) {
+        /*
+         * `unknown` either way — nothing here can be classified — but NOT the
+         * same sentence, because they send the reader to different places.
+         *
+         * A StreamTruncatedError means the agent answered: its response headers
+         * arrived and were parsed, and then the body ended before a single event
+         * could be read. Reporting that as "the agent could not be reached"
+         * pointed operators at a healthy network. Caught in CI, where the fleet
+         * sweep blamed an agent the same job had just talked to twice.
+         */
         return {
           ...base,
           health: "unknown",
           pendingCount: 0,
-          reason: `the agent could not be reached (${error instanceof Error ? error.message : String(error)})`,
+          reason:
+            error instanceof StreamTruncatedError
+              ? `the agent answered but its stream stopped before this session's state could be read (${error.message})`
+              : `the agent could not be reached (${error instanceof Error ? error.message : String(error)})`,
         };
       }
     }),
