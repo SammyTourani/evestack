@@ -178,13 +178,23 @@ export default {
       ["a message that is not a string or a message object", '{"message":42}'],
     ]) {
       const response = await message(UNKNOWN, body);
-      const refused = response.status >= 400 && response.status < 500;
-      t.ok(refused, `a message with ${label} is refused with a 4xx`, {
+      const parsed = await json(response);
+      // 400 bad_request SPECIFICALLY, not "any 4xx".
+      //
+      // These go to an id that does not exist, so a bare 4xx check is satisfied
+      // by the unknown-session 404 whether or not the body was ever looked at —
+      // delete every validator in the route and this loop still passes. The
+      // route validates the body BEFORE it looks the session up, so a 400 is
+      // reachable and is the only answer that proves the validation ran.
+      const refused = response.status === 400 && parsed.code === "bad_request";
+      t.ok(refused, `a message with ${label} is refused with 400 bad_request`, {
         ...(refused
-          ? { actual: `${response.status}` }
+          ? {}
           : {
-              expected: "4xx",
-              actual: `${response.status} — a 5xx is a crash and a 2xx started a run from nonsense`,
+              expected: "400 bad_request, from the body check that runs before the session lookup",
+              actual:
+                `${response.status} ${parsed.code ?? ""} — a 404 here means the body was never ` +
+                `validated, a 5xx is a crash, and a 2xx started a run from nonsense`,
             }),
       });
     }
@@ -225,8 +235,11 @@ export default {
     // — which is CI, deliberately — the turn fails at the model call and the
     // session is TERMINAL within a second, so the route answers
     // 409 session_terminal: "This session has already ended; start a new one
-    // instead of continuing it." That is the third of the four guards doing
-    // exactly its job, not a failure.
+    // instead of continuing it." That is the SECOND of the four guards doing
+    // exactly its job, not a failure. (Order in the route: session_not_found,
+    // session_terminal, session_busy, session_mismatch — this comment said
+    // "third" and was counting the ones it had in mind rather than the ones in
+    // the file.)
     //
     // The first version of this assertion demanded a 2xx. It passed on the
     // machine it was written on and failed in CI, because that machine had

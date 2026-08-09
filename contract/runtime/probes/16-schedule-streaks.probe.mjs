@@ -84,26 +84,29 @@ export default {
     const DASHBOARD = join(HERE, "..", "..", "..", "packages", "dashboard");
 
     const client = await connect();
+    // Declared out here so the finally block can close it. `const store` inside
+    // the try is not in scope there, which is a ReferenceError thrown from a
+    // cleanup path — the one place an error hides the real failure.
+    let store = null;
     try {
-      // The writer's own DDL, applied through the writer. Hand-rolling a CREATE
-      // TABLE here would let this probe pass against a shape the product does
-      // not ship — the same reason ci.yml runs world-postgres's bootstrap rather
-      // than writing the workflow schema itself.
-      await client.query("CREATE SCHEMA IF NOT EXISTS evestack");
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS evestack.schedule_runs (
-          id bigserial PRIMARY KEY, name text NOT NULL, cron text,
-          fire_at timestamptz NOT NULL, started_at timestamptz NOT NULL DEFAULT now(),
-          finished_at timestamptz, duration_ms integer,
-          status text NOT NULL DEFAULT 'running', error text,
-          caught_up boolean NOT NULL DEFAULT false, session_id text
-        )`);
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS evestack.schedule_state (
-          name text PRIMARY KEY, paused boolean NOT NULL DEFAULT false,
-          paused_at timestamptz, paused_by text,
-          updated_at timestamptz NOT NULL DEFAULT now()
-        )`);
+      // The writer's own DDL, applied THROUGH the writer.
+      //
+      // The first version of this block said exactly that — "Hand-rolling a
+      // CREATE TABLE here would let this probe pass against a shape the product
+      // does not ship" — and then hand-rolled two CREATE TABLEs directly
+      // underneath. The comment described the opposite of the four lines it sat
+      // on, which is the same defect this branch fixed in probe 06 and in
+      // lib/skills.ts, written while fixing them.
+      //
+      // @evestack/schedules exports ensureSchema() and it reads
+      // WORKFLOW_POSTGRES_URL, so there is nothing standing in the way of just
+      // calling it. Now a column the writer adds or renames reaches this probe
+      // automatically, and a copy of the schema cannot drift out from under it.
+      await import(join(DASHBOARD, "test/register-ts-resolve.mjs"));
+      store = await import(
+        join(HERE, "..", "..", "..", "packages", "evestack-schedules", "src", "store.ts")
+      );
+      await store.ensureSchema();
 
       // Any leftovers from an interrupted run, before inserting.
       await client.query(`DELETE FROM evestack.schedule_runs WHERE name LIKE $1`, [`${NAME_PREFIX}%`]);
@@ -134,8 +137,7 @@ export default {
         [name("allFailed"), { failing: STREAK_DEPTH, total: STREAK_DEPTH + 1 }],
       ]);
 
-      // The repo's one TypeScript-resolution shim, then the real module.
-      await import(join(DASHBOARD, "test/register-ts-resolve.mjs"));
+      // The shim is already registered above, before the writer was imported.
       const schedules = await import(join(DASHBOARD, "lib/schedules.ts"));
 
       const view = await schedules.getSchedules();
@@ -209,18 +211,38 @@ export default {
       // A schedule with no state row must read as not paused, not as null or
       // undefined: the page renders a toggle from this and LEFT JOIN gives NULL
       // for every schedule nobody has ever paused, which is most of them.
+      // ON THE FIELDS THAT CAN ACTUALLY BE NULL. This asserted `paused === false`
+      // under the claim that it was catching "a LEFT JOIN NULL reaching the UI",
+      // and it could never have: lib/schedules.ts maps it as
+      // `paused: raw.paused === true`, which coerces NULL to false before
+      // anything here can see it. The assertion was true, the reason was not,
+      // and a reason that cannot be wrong is a check that is not looking.
+      //
+      // `pausedAt` and `pausedBy` are the two that pass NULL through unchanged
+      // — `raw.paused_at ? … : null` and `?? null` — so they are where a schedule
+      // with no state row is actually observable, and where a future map that
+      // stopped normalising would show up.
       const untouched = byName.get(name("failing3"));
+      const clean =
+        untouched?.paused === false && untouched?.pausedAt === null && untouched?.pausedBy === null;
       t.ok(
-        untouched?.paused === false,
-        "a schedule that has never been paused reads as not paused, not null",
-        untouched?.paused === false
+        clean,
+        "a schedule with no state row reads as not paused, with no pausedAt or pausedBy",
+        clean
           ? {}
-          : { expected: "false", actual: `${untouched?.paused} — a LEFT JOIN NULL reaching the UI` },
+          : {
+              expected: "paused false, pausedAt null, pausedBy null",
+              actual: `paused=${untouched?.paused} pausedAt=${untouched?.pausedAt} pausedBy=${untouched?.pausedBy}`,
+            },
       );
     } finally {
       await client.query(`DELETE FROM evestack.schedule_runs WHERE name LIKE $1`, [`${NAME_PREFIX}%`]).catch(() => {});
       await client.query(`DELETE FROM evestack.schedule_state WHERE name LIKE $1`, [`${NAME_PREFIX}%`]).catch(() => {});
       await client.end().catch(() => {});
+      // The writer opens its own pool the moment ensureSchema() runs; probes share
+      // a process, so leaving it open is the same class of leak that closePool()
+      // was just added to lib/db.ts for.
+      await store?.closePool?.().catch(() => {});
     }
   },
 };

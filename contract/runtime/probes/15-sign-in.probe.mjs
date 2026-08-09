@@ -8,6 +8,8 @@
  * HTTP Basic instead: probes 10 through 14 send `authorization: Basic …`, and
  * every request in .github/workflows/dashboard-image.yml is a `curl -u`.
  * `grep -rn "evestack_session" .github contract` found nothing before this file.
+ * (Every AUTHENTICATED request in that workflow is a `curl -u`; the trace-ingest
+ * one carries a Bearer token, which is a different tier and not a session.)
  *
  * test/auth.test.mjs is 49 tests and is excellent, and it stops at lib/auth.ts —
  * it cannot load these routes, which import `next/server`. Contract 17 reads the
@@ -185,15 +187,27 @@ export default {
       });
     }
 
-    // Secure must NOT be set over plain http, or the browser discards the
-    // cookie and the operator is locked out of their own dashboard on the
-    // deployment the quickstart describes.
+    // Secure must MATCH THE SCHEME, and the first version of this asserted it
+    // was never set at all. That is only right for the http:// deployment the
+    // quickstart describes — where a Secure cookie is discarded by the browser
+    // and locks the operator out of their own dashboard — and it would have
+    // failed against any correctly configured https one, which is the
+    // deployment SECURITY.md tells people to build. `isSecureRequest()` sets it
+    // deliberately, so a probe that forbids it outright is asserting that a
+    // correct install is broken.
+    const secure = /;\s*Secure/i.test(issued);
+    const overHttps = DASHBOARD.startsWith("https://");
     t.ok(
-      !/;\s*Secure/i.test(issued),
-      "the cookie is not marked Secure over plain http, which would make it undeliverable",
-      !/;\s*Secure/i.test(issued)
-        ? {}
-        : { expected: "no Secure attribute on an http:// origin", actual: issued },
+      secure === overHttps,
+      `the cookie's Secure attribute matches the scheme it was issued over (${overHttps ? "https" : "http"})`,
+      secure === overHttps
+        ? { actual: secure ? "Secure set" : "Secure absent" }
+        : {
+            expected: overHttps
+              ? "Secure, or the cookie travels in the clear"
+              : "no Secure, or the browser discards it on an http origin and nobody can sign in",
+            actual: issued,
+          },
     );
 
     /* ── and it actually authenticates ─────────────────────────────────────── */
@@ -281,10 +295,20 @@ export default {
       });
     }
 
-    // THE ASSERTION THAT MAKES SIGNOUT MEAN ANYTHING. A route that sets a
-    // clearing cookie while the old value still authenticates has not signed
-    // anyone out; it has only made the browser forget. The old value is
-    // presented here directly, which is what a stolen cookie would do.
+    // A NOTE, NOT AN ASSERTION, AND ON PURPOSE — the first version of this
+    // comment called itself "the assertion that makes signout mean anything"
+    // while the line below it was a t.note, which is the sort of mismatch this
+    // tier exists to refuse.
+    //
+    // It is a note because BOTH outcomes are correct designs and the code has
+    // chosen one. Sessions here are a signed value with an expiry and no
+    // server-side record, so signout clears the browser and cannot revoke a
+    // copy already taken; a probe that asserted revocation would be asserting a
+    // stateful design this project does not have. What the note buys is that
+    // every run says which way it went, so the day someone adds a revocation
+    // list the output changes and SECURITY.md's bullet gets revisited.
+    //
+    // The old value is presented directly, which is what a stolen cookie does.
     const afterSignout = await fetch(`${DASHBOARD}${GUARDED}`, {
       headers: { cookie: cookiePair(issued) },
       redirect: "manual",
