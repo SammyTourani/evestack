@@ -29,6 +29,8 @@
  */
 import { spawn } from "node:child_process";
 
+import { basename } from "node:path";
+
 import {
   C,
   connectPostgres,
@@ -42,6 +44,7 @@ import {
   schemasPresent,
   pgvectorState,
 } from "./checks.mjs";
+import { blank, c, fix, g, heading, row, rule } from "./ui.mjs";
 
 const argv = process.argv.slice(2);
 
@@ -416,41 +419,82 @@ if (asJson) {
   process.exit(failed.length === 0 ? 0 : 1);
 }
 
-const MARK = {
-  pass: `${C.green}✓${C.reset}`,
-  fail: `${C.red}✗${C.reset}`,
-  warn: `${C.yellow}!${C.reset}`,
-  skip: `${C.dim}–${C.reset}`,
-};
+/**
+ * The ten checks, in three groups.
+ *
+ * A flat list of ten lines made every check look equally important and equally
+ * urgent, so a red `dashboard` and a red `postgres` read the same — when one of
+ * them is why the other failed. Grouping them in dependency order says, without
+ * a sentence, that the thing to fix is the highest red line.
+ *
+ * Any check not named here still prints, under "other": a group table that
+ * silently drops a check would be the worst possible bug in a verifier.
+ */
+const GROUPS = [
+  ["foundation", ["config", "docker", "postgres", "schema", "pgvector"]],
+  ["model", ["model", "memory"]],
+  ["the stack", ["agent", "dashboard", "traces"]],
+];
 
-console.log(`\n${C.cyan}${C.bold}  evestack verify${C.reset}\n`);
-for (const r of results) {
-  console.log(`  ${MARK[r.state]} ${r.name.padEnd(10)} ${r.detail}`);
-  if (r.fix) console.log(`    ${C.dim}fix:${C.reset} ${C.bold}${r.fix}${C.reset}`);
+const MARK = { pass: g.OK, fail: g.FAIL, warn: g.WARN, skip: g.SKIP };
+
+blank();
+heading("verify", basename(process.cwd()));
+const grouped = new Set(GROUPS.flatMap(([, names]) => names));
+const sections = [
+  ...GROUPS,
+  ["other", results.map((r) => r.name).filter((n) => !grouped.has(n))],
+];
+
+for (const [title, names] of sections) {
+  const rows = names.map((n) => results.find((r) => r.name === n)).filter(Boolean);
+  if (rows.length === 0) continue;
+  blank();
+  console.log(`    ${C.dim}${title}${C.reset}`);
+  for (const r of rows) {
+    row(MARK[r.state], r.name, r.state === "fail" ? c.red(r.detail) : c.dim(r.detail), "", {
+      indent: 6, labelWidth: 12,
+    });
+    // The fix is the only thing on this screen anyone is meant to type, so it
+    // is bold and on its own line rather than a dim `fix:` prefix inline.
+    if (r.fix) fix(r.fix, { indent: 8 });
+  }
 }
-console.log();
+blank();
 
 if (failed.length > 0) {
-  console.log(
-    `  ${C.red}${C.bold}${failed.length} check${failed.length === 1 ? "" : "s"} failed.${C.reset} ` +
-      `${C.dim}Fix the first one and run \`npm run verify\` again.${C.reset}\n`,
-  );
+  rule();
+  const counts = [
+    c.redBold(`${failed.length} failed`),
+    ...(warned.length ? [c.yellow(`${warned.length} warning${warned.length === 1 ? "" : "s"}`)] : []),
+    c.dim(`${results.filter((r) => r.state === "pass").length} passed`),
+  ];
+  console.log(`  ${counts.join(c.dim(" · "))}`);
+  blank();
+  console.log(`  ${c.dim("Fix the highest red line and run")} ${c.bold("evestack verify")} ${c.dim("again.")}`);
+  blank();
   process.exit(1);
 }
 
 const user = env("EVESTACK_AUTH_USER") ?? "evestack";
 const password = env("EVESTACK_AUTH_PASSWORD");
 
-console.log(`  ${C.green}${C.bold}Everything works.${C.reset}${warned.length ? ` ${C.yellow}(${warned.length} optional thing to know about)${C.reset}` : ""}\n`);
-console.log(`  ${C.bold}Your dashboard${C.reset}  ${dashboardUrl}`);
-if (password) console.log(`  ${C.bold}Sign in${C.reset}         ${user} ${C.dim}/${C.reset} ${password}`);
-console.log(`  ${C.dim}Sessions, live chat, approvals, memory and cost — all read from your own Postgres.${C.reset}`);
-console.log();
-console.log(`  ${C.bold}Talk to the agent from a terminal${C.reset}`);
-console.log(`    ${C.dim}curl -X POST ${agent.url}/eve/v1/session \\${C.reset}`);
-console.log(`    ${C.dim}  -H 'content-type: application/json' \\${C.reset}`);
-console.log(`    ${C.dim}  -d '{"message":"say hello"}'${C.reset}`);
-console.log();
+rule();
+console.log(
+  `  ${c.greenBold("Everything works.")}` +
+    (warned.length ? ` ${c.yellow(`${warned.length} optional thing${warned.length === 1 ? "" : "s"} to know about, above.`)}` : ""),
+);
+blank();
+console.log(`  ${c.bold("Dashboard")}   ${c.brandBold(dashboardUrl)}`);
+if (password) console.log(`  ${c.bold("Sign in")}     ${user} ${c.dim("/")} ${password}`);
+console.log(`  ${c.dim("Sessions, live chat, approvals, memory and cost — all read from your own Postgres.")}`);
+blank();
+// One command, not a three-line curl. The tour does the same thing and then
+// explains what happened, which is what someone running verify for the first
+// time is actually after.
+console.log(`  ${c.dim("Never used it before?")}  ${c.bold("evestack tour")}  ${c.dim("— sends a first message and follows it")}`);
+console.log(`  ${c.dim("through the dashboard. One model call.")}`);
+blank();
 
 /* -------------------------------------------------------------------------- */
 /* open it                                                                     */

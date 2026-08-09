@@ -1,6 +1,6 @@
 {
   "name": "create-evestack",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "type": "module",
   "description": "The whole eve stack. On your own machine. Durable Postgres sessions, a Docker sandbox, memory, approvals, schedules, 1,070 tool integrations, and a dashboard that drives the agent.",
   "license": "Apache-2.0",
@@ -20,6 +20,7 @@
     ".": "./create.mjs",
     "./create": "./create.mjs",
     "./attach": "./attach.mjs",
+    "./ui": "./ui.mjs",
     "./package.json": "./package.json",
     "./template/scripts/verify.mjs": "./template/scripts/verify.mjs",
     "./template/scripts/checks.mjs": "./template/scripts/checks.mjs"
@@ -29,6 +30,7 @@
     "create.mjs",
     "attach.mjs",
     "shared.mjs",
+    "ui.mjs",
     "template/",
     "README.md",
     "LICENSE"
@@ -38,7 +40,7 @@
   },
   "scripts": {
     "prepack": "node scripts/sync-template.mjs",
-    "test": "node scripts/sync-template.mjs && node --check index.mjs && node --check create.mjs && node --check attach.mjs && node --check shared.mjs && node --test test/*.test.mjs"
+    "test": "node scripts/sync-template.mjs && node --check index.mjs && node --check create.mjs && node --check attach.mjs && node --check shared.mjs && node --check ui.mjs && node --test test/*.test.mjs"
   },
   "homepage": "https://github.com/SammyTourani/evestack#readme",
   "bugs": {

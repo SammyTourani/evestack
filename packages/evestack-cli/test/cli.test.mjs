@@ -8,7 +8,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { parseArgs, main, scaffoldCommand, USAGE, DOCTOR_USAGE } from "../src/cli.mjs";
+import { tmpdir } from "node:os";
+
+import {
+  COMMANDS, DOCTOR_USAGE, main, parseArgs, scaffoldCommand, unknownCommand, USAGE,
+} from "../src/cli.mjs";
 import { safeIdentifier, redact, parseUtcTimestamp, DoctorError } from "../src/db.mjs";
 import { duration, table, firstLine } from "../src/format.mjs";
 
@@ -49,9 +53,20 @@ test("a URL containing an = survives parsing", () => {
   assert.equal(options.url, "postgres://u:p@h/db?sslmode=require");
 });
 
-test("no arguments prints usage and exits 2", async () => {
+test("no arguments, outside a project, prints the command list and is not an error", async () => {
+  // This used to exit 2 — an error code for typing the program's name. Outside
+  // a project the command list IS the answer to "evestack", so it is a success.
+  // Inside one, the answer is `status`; that path is covered in status.test.mjs
+  // because it needs a project on disk to find.
   const stdout = new Sink();
-  assert.equal(await main([], { stdout, stderr: new Sink() }), 2);
+  const cwd = process.cwd();
+  try {
+    // A directory with no .env.local above it, so findProject() finds nothing.
+    process.chdir(tmpdir());
+    assert.equal(await main([], { stdout, stderr: new Sink() }), 0);
+  } finally {
+    process.chdir(cwd);
+  }
   assert.equal(stdout.text, USAGE);
 });
 
@@ -64,26 +79,53 @@ test("an unknown command does not fall through to doctor", async () => {
   const stderr = new Sink();
   assert.equal(await main(["fix"], { stdout: new Sink(), stderr }), 2);
   assert.match(stderr.text, /Unknown command "fix"/);
-  // Every command the binary ships, not the three it used to name: `verify` and
-  // `open` were missing from the one message a user sees after mistyping.
-  assert.match(stderr.text, /create, verify, open, attach or doctor/);
+  // Every command the binary ships is listed in the usage that follows, so the
+  // one message a user sees after mistyping names all of them. It used to name
+  // three of five in a hand-written sentence that went stale twice.
+  for (const command of COMMANDS) {
+    assert.match(stderr.text, new RegExp(`evestack ${command}\\b`));
+  }
+});
+
+test("a near-miss is corrected rather than just refused", () => {
+  // Distance 2, so a transposition and a slip are caught...
+  assert.match(unknownCommand("verfiy"), /Did you mean `evestack verify`\?/);
+  assert.match(unknownCommand("statsu"), /Did you mean `evestack status`\?/);
+  assert.match(unknownCommand("docter"), /Did you mean `evestack doctor`\?/);
+  // ...and a word that simply is not one of ours is not guessed at. A
+  // suggestion that fires on anything vaguely similar teaches people to ignore
+  // suggestions.
+  assert.doesNotMatch(unknownCommand("deploy"), /Did you mean/);
+  assert.doesNotMatch(unknownCommand("publish"), /Did you mean/);
 });
 
 test("the usage text does not advertise a --fix that deliberately does not exist", () => {
   assert.doesNotMatch(USAGE, /--fix/);
   assert.doesNotMatch(DOCTOR_USAGE, /--fix/);
-  assert.match(USAGE, /never writes to your database/);
+  // The read-only promise belongs to doctor's own help. It was in the top-level
+  // usage, which is how that block reached thirty-eight lines.
+  assert.match(DOCTOR_USAGE, /never writes to your database/);
+});
+
+test("the command list stays short enough to read", () => {
+  // The regression this guards: the top-level help grew a quickstart, a
+  // paragraph about doctor, and a note about both front doors — thirty-eight
+  // lines for a question whose answer is "which verb do I want".
+  assert.ok(
+    USAGE.split("\n").length <= 20,
+    `top-level usage is ${USAGE.split("\n").length} lines; it is the command list, not the manual`,
+  );
 });
 
 /* -------------------------------------------------------------------------- */
 /* one command, three subcommands                                              */
 /* -------------------------------------------------------------------------- */
 
-test("the top-level usage names all three commands and both front doors", () => {
+test("the top-level usage names every command and both front doors", () => {
   // The whole point of merging the two CLIs: someone who runs `evestack` with
   // no arguments has to be able to see that `create` exists here, and that the
   // `npx create-evestack` in every doc is the same thing.
-  for (const command of ["evestack create", "evestack attach", "evestack doctor"]) {
+  for (const command of COMMANDS.map((n) => `evestack ${n}`)) {
     assert.match(USAGE, new RegExp(command.replace(" ", "\\s")));
   }
   assert.match(USAGE, /npx create-evestack/);

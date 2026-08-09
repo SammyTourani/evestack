@@ -191,7 +191,7 @@ function note(detail) {
 }
 
 function section(title) {
-  process.stdout.write(`\n${"=".repeat(78)}\n${title}\n${"=".repeat(78)}\n`);
+  process.stdout.write(`\n${title} ${"\u2500".repeat(Math.max(0, 77 - title.length))}\n\n`);
 }
 
 /** Print rows as an aligned table — this output is the evidence, so it has to

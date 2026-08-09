@@ -14,15 +14,11 @@
 import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
-export const C = {
-  reset: "\x1b[0m",
-  bold: "\x1b[1m",
-  dim: "\x1b[2m",
-  red: "\x1b[31m",
-  green: "\x1b[32m",
-  yellow: "\x1b[33m",
-  cyan: "\x1b[36m",
-};
+// One colour table for the whole project, and the only one that asks whether
+// this is a terminal before emitting an escape. `npm run verify | tee log.txt`
+// used to write raw \x1b[31m into the file. Re-exported rather than re-declared
+// so that verify.mjs and dev.mjs keep their single `from "./checks.mjs"` import.
+export { C, c, g } from "./ui.mjs";
 
 /**
  * `.env.local` as a plain object.

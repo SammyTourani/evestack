@@ -1,43 +1,74 @@
 ---
 title: CLI
-description: The five `evestack` commands, and the scaffolder under both of its published names.
+description: The seven `evestack` commands, and the scaffolder under both of its published names.
 ---
 
-`evestack` is the whole command. Five things:
+`evestack` is the whole command. Seven things:
 
 ```bash
-evestack create [name]        scaffold an agent + dashboard into a new directory
-evestack verify               check every part of the stack and say what to fix
-evestack open                 print the dashboard URL and sign-in, and open it
+evestack create [name]        scaffold an agent, a database and a dashboard
+evestack status               is it up? what do I run?
+evestack tour                 a guided first run, on a stack that is already up
+evestack open                 the dashboard URL and its password, in a browser
+evestack verify               check every part and name the fix for anything broken
 evestack attach [dir]         add evestack to an eve project you already have
-evestack doctor               explain why a durable job is dead
+evestack doctor               a run stopped moving — read-only forensics
 ```
 
 `npx create-evestack [name]` is the same scaffolder as `evestack create`, under the name npm's
 `create-*` convention leads people to. Same code, same prompts, same flags — a bug is fixed once.
 
-`-h` / `--help` and `-V` / `--version` work anywhere. `evestack doctor --help` prints doctor's own
-flags rather than this list, because there are eleven of them and they would bury the commands
-someone is more likely to want.
+`-h` / `--help` and `-V` / `--version` work anywhere, and asking never writes, starts or opens
+anything. Each command's `--help` prints its own options; the top-level one is the command list
+and nothing else.
+
+A bare `evestack` inside a project runs `status`. Outside one it prints the command list and
+exits `0` — typing the program's name is not an error. A command it does not recognise gets one
+suggestion if there is a close one (`evestack verfiy` → *Did you mean `evestack verify`?*) and
+never a guess if there is not.
+
+### Which one am I looking for
+
+The three checking commands answer different questions, and it is worth being able to pick:
+
+| | Question | Cost |
+| --- | --- | --- |
+| `status` | Is it running right now, and where? | four parallel probes, read-only |
+| `verify` | Is it configured correctly, part by part? | talks to Docker, Postgres and the ingest route |
+| `doctor` | Everything is up and a run still will not move — why? | reads Postgres, writes nothing |
 
 ## `evestack create` / `npx create-evestack`
 
 ```bash
-npx evestack create [name] [--yes]
-npx create-evestack [name] [--yes]
+npx evestack create [name] [--yes] [--verbose]
+npx create-evestack [name] [--yes] [--verbose]
 ```
 
 | Flag | Effect |
 | --- | --- |
 | `[name]` | Project directory. Prompted for if omitted (interactively). |
-| `--yes` / `-y` | Skip prompts, use defaults. Also triggered automatically when stdin isn't a TTY (CI, a piped script). |
+| `--yes` / `-y` | Skip prompts, use defaults. Also triggered automatically when stdin isn't a TTY (CI, a piped script). It additionally declines to start containers, because nobody is there to say no to a 200 MB pull. |
+| `--verbose` | Show the raw `npm` and `docker` output instead of one progress row each. |
+
+Four questions, all asked before any work starts, so the install and the image pull are a wait
+you can walk away from:
+
+1. **Where** — the directory.
+2. **Model** — OpenAI, Anthropic or Ollama, and a key if you have one.
+3. **Tools** — Composio, on by default.
+4. **Bring it up** — whether to start Postgres, create the schema and pull the dashboard.
 
 ### What it generates
 
 - The agent project, from `templates/default`
 - `.env.local` with a **uniquely generated** `EVESTACK_AUTH_PASSWORD` — never a shipped default
-- `.gitignore` covering `.env*`, so a generated key can't be accidentally committed
-- `docker-compose.yml` for Postgres
+- `.env` with the generated database password, which is the only file Compose interpolates from
+- `.gitignore` covering `.env*`, so a generated credential can't be accidentally committed
+- `docker-compose.yml` for Postgres, with the dashboard behind a profile
+
+It finishes by drawing the four moving parts with the ports **this** project chose — they are not
+always 2000, 5433 and 4000, because a second scaffold on the same machine moves them — and then
+offers to start the agent, which is the only step left.
 
 ### Why the scaffolder has zero dependencies
 
@@ -51,6 +82,8 @@ and `fs` only.
 `0` only when the project was created **and** its dependencies installed. If `npm install`
 fails, or `node_modules/eve` is missing afterwards, it exits `1` and prints what to run — so a
 `&&` chain or a CI step stops there rather than walking into an empty `node_modules`.
+
+If you accept the offer to start the agent, the exit code becomes the agent's.
 
 ### Two real bugs this caught
 
@@ -68,15 +101,67 @@ monorepo checkout, where no `node_modules` appears in the path, which is exactly
 caught it. The filter now matches path *segments* of the path *relative to the template root*,
 and CI scaffolds from an `npx`-shaped directory on every PR.
 
+## `evestack status`
+
+```bash
+evestack status [--json]
+```
+
+The glance. Four probes in parallel — the agent, Postgres, the dashboard and the model
+configuration — with the command that fixes anything that is down printed under it. Read-only:
+the Postgres connection is pinned `default_transaction_read_only = on` by the same helper
+`doctor` uses, so it is safe to point at production.
+
+It reports two things about Postgres beyond reachability: whether the workflow schema was ever
+created (forgetting `db:bootstrap` is a distinct state with a distinct fix, not a green tick),
+and how many runs and memories are in it.
+
+When Postgres *and* the dashboard are both unreachable it checks Docker before printing two
+compose commands that would fail, and says that instead.
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Everything this project needs is answering. |
+| `1` | Something is down, and it printed what to run. |
+| `2` | Not an evestack project. |
+
+## `evestack tour`
+
+```bash
+evestack tour [--yes] [--message=TEXT] [--no-open]
+```
+
+A guided first run, four steps, on a stack that is already up. It confirms the parts are
+answering, sends **one real message** to your agent and streams the reply into the terminal, then
+links you to that same turn in the dashboard and explains what each surface just showed you.
+
+That one message is a real model call — a fraction of a cent on `gpt-5-mini`, free and slower on
+Ollama. Nothing else in the tour calls a model, and it says so before it sends anything.
+
+| Flag | Effect |
+| --- | --- |
+| `--yes` / `-y` | Don't ask before sending the message. |
+| `--message=TEXT` | Send something other than the default question. |
+| `--no-open` | Never launch a browser. |
+
+It needs the agent, Postgres and a model key. The dashboard is step 3 rather than a
+prerequisite — a turn is a turn whether or not anything is watching — so with the container down
+it still runs and prints the link.
+
 ## `evestack verify`
 
 ```bash
 evestack verify [--open | --no-open] [--json]
 ```
 
-Runs the project's own `scripts/verify.mjs`: `.env.local`, Docker, Postgres, the workflow schema,
-pgvector, the model provider, embeddings, the dashboard and trace ingest. For anything broken it
-names the command that fixes it, and it exits `1` if a required check failed, so CI can run it too.
+Runs the project's own `scripts/verify.mjs` and groups its ten checks in dependency order —
+**foundation** (`.env.local`, Docker, Postgres, the schema, pgvector), **model** (the provider
+key, embeddings), then **the stack** (the agent, the dashboard, trace ingest). For anything
+broken it names the command that fixes it, and it exits `1` if a required check failed, so CI
+can run it too.
+
+Grouping is the point: a red `dashboard` and a red `postgres` used to read as equally urgent when
+one of them is why the other failed. Fix the highest red line first.
 
 | Flag | Effect |
 | --- | --- |
@@ -158,5 +243,24 @@ has run those already knows what they mean.
 
 `create` and `attach` use the same shape: `0` is a project you can run, `1` is one you cannot.
 
-`verify` and `open` both work from anywhere inside the project directory — they walk up looking
-for `.env.local`, because `evestack` is on `PATH` and gets typed from wherever you happen to be.
+`status`, `verify`, `open` and `tour` all work from anywhere inside the project directory — they
+walk up looking for the project's env files, because `evestack` is on `PATH` and gets typed from
+wherever you happen to be.
+
+## Output
+
+Every command shares one renderer, so colour, width and glyphs are decided in one place
+(`packages/create-evestack/ui.mjs`, copied verbatim into each scaffold as `scripts/ui.mjs`).
+
+**Colour is off unless stdout is a terminal.** Piping, redirecting to a file, or paging gets plain
+text — which is what makes a `doctor` report safe to paste into an issue. Three environment
+variables override the decision:
+
+| Variable | Effect |
+| --- | --- |
+| `NO_COLOR` | Any value, including empty, turns colour off. ([no-color.org](https://no-color.org)) |
+| `FORCE_COLOR` | Any value but `0` turns colour on, even through a pipe — for CI logs that render it. |
+| `EVESTACK_ASCII` | Any value swaps the block and box-drawing glyphs for ASCII. Set automatically on Windows outside Windows Terminal, where a legacy code page mangles them. |
+
+`TERM=dumb` is treated as no colour. The brand blue needs a 256-colour terminal and falls back to
+cyan without one.

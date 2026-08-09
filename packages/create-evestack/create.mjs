@@ -20,7 +20,7 @@
  * and every dependency here is one more supply-chain surface for a tool that
  * writes files and credentials.
  */
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import {
   cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync,
@@ -30,32 +30,53 @@ import {
   basename, C, DASHBOARD_IMAGE, detectPm, dim, freePort, makePrompter, ok,
   packageVersion, REPO, say, shellQuote, step, templateDir, warn,
 } from "./shared.mjs";
+import { blank, box, c, g, row, rule, shortPath, task, wordmark } from "./ui.mjs";
+
+/** One finished thing, in the aligned two-column shape every command uses. */
+const done = (label, detail) => row(g.OK, label, c.dim(detail), "", { labelWidth: 13 });
+
+/* -------------------------------------------------------------------------- */
+/* the wizard's shape                                                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * How many questions are left.
+ *
+ * The wizard asked four things with no indication of how many were coming, so
+ * every prompt was potentially the last one or the first of twenty — which is
+ * the difference between answering and abandoning. Naming the step also gives
+ * the Ollama RAM warning and the Composio explanation somewhere to sit that is
+ * not the middle of a question.
+ */
+const STEPS = 4;
+function stepHeader(n, title) {
+  blank();
+  say(`  ${g.MARK} ${c.bold(title)}  ${c.dim(`· step ${n} of ${STEPS}`)}`);
+  blank();
+}
+
+/** padEnd against printable width, for the provider table. */
+function padTo(s, n) {
+  return `${s}${" ".repeat(Math.max(0, n - s.length))}`;
+}
 
 /* -------------------------------------------------------------------------- */
 /* bringing it up                                                              */
 /* -------------------------------------------------------------------------- */
 
 /**
- * Ask before starting anything.
+ * Run a command in the project under a live one-line progress row.
  *
- * Only on a terminal. In CI, in a heredoc, or under `--yes`, "would you like me
- * to start containers" has no one to answer it, and a scaffolder that pulls a
- * 200 MB image because nobody was there to say no is a scaffolder people stop
- * running unattended.
- */
-async function confirmStart() {
-  if (!process.stdin.isTTY || !process.stdout.isTTY) return false;
-  const { confirm, close } = await makePrompter(false);
-  const yes = await confirm(
-    `Start Postgres, create the schema and pull the dashboard now? ${C.dim}(~200 MB)${C.reset}`,
-    true,
-  );
-  close();
-  return yes;
-}
-
-/**
- * Run a command in the project, streaming its output. Returns true on exit 0.
+ * `stdio: "inherit"` is what this used to do, and it is the reason bringUp's own
+ * comment described the experience as "a long silence followed by a wall of
+ * layer hashes". Three commands ran back to back, each printing hundreds of
+ * lines of someone else's progress output, and the four things that were
+ * actually happening were invisible inside it.
+ *
+ * So the child's output is captured and the row is the only thing on screen —
+ * until it fails, at which point the captured tail is printed, because a failure
+ * with its own output withheld is strictly worse than noise. `--verbose` puts
+ * the raw stream back for anyone debugging the commands themselves.
  *
  * `shell` on Windows only, and not for cosmetic consistency: `npm`, `pnpm`,
  * `yarn` and `bun` are installed there as `.cmd` shims, which CreateProcess
@@ -66,47 +87,126 @@ async function confirmStart() {
  *
  * NOT VERIFIED ON WINDOWS — there is no Windows machine in this loop. The claim
  * being matched is the one the template's own scripts already make.
+ *
+ * ASYNC, and that part is load-bearing rather than a style choice. The first
+ * version of this used `spawnSync`, which blocks the event loop for the whole
+ * lifetime of the child — so the `setInterval` behind the progress row could
+ * never fire. Measured: zero repaints across a two-second child. The spinner
+ * painted frame one, froze at `0s`, and jumped straight to the finished row, so
+ * an eighteen-second install looked exactly like a hang. That is worse than the
+ * wall of layer hashes it was replacing, because a wall of output at least moves.
+ *
+ * The captured output is capped. A cold `docker compose --wait` pull emits a
+ * lot, all of it progress noise, and only the tail is ever printed.
  */
-function run(cwd, command, args) {
-  const result = spawnSync(command, args, {
-    cwd,
-    stdio: "inherit",
-    shell: process.platform === "win32",
+const MAX_CAPTURE = 64 * 1024;
+
+function run(cwd, command, args, { verbose = false } = {}) {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, {
+      cwd,
+      stdio: verbose ? "inherit" : ["ignore", "pipe", "pipe"],
+      shell: process.platform === "win32",
+    });
+    let output = "";
+    const collect = (chunk) => {
+      output += chunk;
+      if (output.length > MAX_CAPTURE) output = output.slice(-MAX_CAPTURE);
+    };
+    child.stdout?.setEncoding("utf8").on("data", collect);
+    child.stderr?.setEncoding("utf8").on("data", collect);
+    // ENOENT for a package manager that is not installed arrives here, not as a
+    // non-zero exit, and it has to resolve rather than reject or the progress
+    // row never settles and the cursor stays hidden.
+    child.on("error", (error) => resolve({ ok: false, output: `${output}${error.message}` }));
+    child.on("close", (code) => resolve({ ok: code === 0, output }));
   });
-  return result.status === 0;
+}
+
+/** The last few lines of a failed command, which is the part that says why. */
+function printTail(output, lines = 12) {
+  const tail = output.split("\n").filter((l) => l.trim()).slice(-lines);
+  if (tail.length === 0) return;
+  blank();
+  for (const line of tail) say(`      ${c.dim(line.slice(0, 100))}`);
+  blank();
+}
+
+/**
+ * A step that runs a command and reports it as one row.
+ *
+ * Returns false at the first failure so the caller can stop — these three
+ * depend on each other in order, and running `db:bootstrap` against a Postgres
+ * that never started produces a second, more confusing error on top of the
+ * first.
+ */
+async function runStep({ cwd, label, doing, done, command, args, verbose, whenFailed }) {
+  if (verbose) say(`  ${g.MARK} ${c.bold(label)} ${c.dim(doing)}`);
+  const t = verbose ? null : task(label, doing);
+  const result = await run(cwd, command, args, { verbose });
+  if (result.ok) {
+    if (t) t.done(done);
+    else ok(done);
+    return true;
+  }
+  if (t) t.fail(whenFailed);
+  else warn(whenFailed);
+  printTail(result.output);
+  return false;
 }
 
 /**
  * The three commands that have one correct answer, in the order they depend on
  * each other, stopping at the first failure.
  *
- * Each step says what it is doing first, because `docker compose up` on a cold
- * machine is a long silence followed by a wall of layer hashes, and a reader
- * who does not know which of the four steps they are in cannot tell a slow pull
- * from a hang.
+ * Exported, with `only: "database"` to stop after the schema, so that
+ * test/bring-up.test.mjs can drive the real Docker path — the async spawn, the
+ * progress rows, a container genuinely starting — without a 200 MB image pull
+ * in CI. The first two steps need only the pgvector image the test already
+ * requires; the third is the one that costs bandwidth.
  */
-async function bringUp(target, pm, dashboardPort) {
-  say();
-  step("Starting Postgres");
-  if (!run(target, "docker", ["compose", "up", "-d", "--wait", "postgres"])) {
-    warn("Postgres did not come up. The commands below will show you why.");
+export async function bringUp(target, pm, dashboardPort, { verbose = false, only = null } = {}) {
+  blank();
+  if (
+    !(await runStep({
+      cwd: target, verbose, label: "postgres", command: "docker",
+      args: ["compose", "up", "-d", "--wait", "postgres"],
+      doing: "starting the container",
+      done: "up, and accepting connections",
+      whenFailed: "did not come up — the commands below will show you why",
+    }))
+  ) {
     return false;
   }
-  ok("Postgres is up");
 
-  step("Creating the workflow schema");
-  if (!run(target, pm, ["run", "db:bootstrap"])) {
-    warn("The schema was not created. Fix what it printed, then re-run it.");
+  if (
+    !(await runStep({
+      cwd: target, verbose, label: "schema", command: pm, args: ["run", "db:bootstrap"],
+      doing: "creating the workflow tables",
+      done: "workflow tables created",
+      whenFailed: "not created — fix what is printed above, then re-run it",
+    }))
+  ) {
     return false;
   }
 
-  step(`Pulling and starting the dashboard on :${dashboardPort}`);
-  if (!run(target, "docker", ["compose", "--profile", "dashboard", "up", "-d", "--wait"])) {
-    warn("The dashboard did not start. `docker compose logs dashboard` has the reason.");
-    warn("Everything else is up — the agent works without it.");
+  if (only === "database") return true;
+
+  // The one that takes real time on a cold machine: a ~200 MB pull.
+  if (
+    !(await runStep({
+      cwd: target, verbose, label: "dashboard", command: "docker",
+      args: ["compose", "--profile", "dashboard", "up", "-d", "--wait"],
+      doing: `pulling ${DASHBOARD_IMAGE.split("/").pop()}`,
+      done: `up on :${dashboardPort}`,
+      whenFailed: "did not start — `docker compose logs dashboard` has the reason",
+    }))
+  ) {
+    // Not fatal, and said so: the agent is useful without the dashboard, and
+    // stopping here would leave a working stack looking like a failed install.
+    say(`  ${c.dim("Everything else is up — the agent works without it.")}`);
     return false;
   }
-  ok(`Dashboard is up on :${dashboardPort}`);
   return true;
 }
 
@@ -197,11 +297,10 @@ export async function create(argv) {
 
   const { ask, confirm, close } = await makePrompter(nonInteractive);
 
-  say();
-  say(`${C.cyan}${C.bold}  evestack${C.reset} ${C.dim}— eve on your own machine, $0 infrastructure${C.reset}`);
-  say();
+  wordmark({ big: true });
 
   // ---- name & directory -----------------------------------------------------
+  stepHeader(1, "Where");
   const name = positional[0] ?? (await ask("Project name?", "my-agent"));
   const target = isAbsolute(name) ? name : resolve(process.cwd(), name);
   const existing = inspectTarget(target);
@@ -231,12 +330,14 @@ export async function create(argv) {
     return 1;
   }
 
+  say(`    ${c.dim(`${g.arrow} ${shortPath(target)}`)}`);
+
   // ---- model ----------------------------------------------------------------
-  say();
-  say(`  ${C.bold}Model provider${C.reset}`);
-  dim("1) OpenAI     — gpt-5-mini, best tool-calling per dollar, costs per token");
-  dim("2) Anthropic  — claude-sonnet-5, strong tool-calling, costs per token");
-  dim("3) Ollama     — local, $0, weaker tool-calling, needs RAM headroom");
+  stepHeader(2, "Model");
+  say(`      ${c.bold("1")}  ${padTo("OpenAI", 11)}${padTo("gpt-5-mini", 18)}${c.dim("best tool-calling per dollar")}`);
+  say(`      ${c.bold("2")}  ${padTo("Anthropic", 11)}${padTo("claude-sonnet-5", 18)}${c.dim("strong tool-calling")}`);
+  say(`      ${c.bold("3")}  ${padTo("Ollama", 11)}${padTo("qwen3", 18)}${c.dim("local, $0, needs RAM headroom")}`);
+  blank();
   // Every one of these is written to .env.local as EVESTACK_PROVIDER. It is the
   // variable agent/agent.ts branches on (defaulting to "openai"), and a model
   // name written without it goes to whichever provider was already selected —
@@ -301,15 +402,15 @@ export async function create(argv) {
     apiKeyLine = "# Local models need no API key.";
   } else {
     say();
-    dim(`Paste a key now, or leave blank and add it to .env.local later — ${chosen.keyHint}`);
+    dim(`Paste a key now, or leave blank and add it later — ${chosen.keyHint}`);
     const key = await ask(`${chosen.keyVar}:`, "");
     apiKeyLine = `${chosen.keyVar}=${key}`;
   }
 
   // ---- integrations ---------------------------------------------------------
-  say();
+  stepHeader(3, "Tools");
   const wantComposio = await confirm(
-    `Enable one-click sign-in to 1000+ tools via Composio? ${C.dim}(Gmail, Slack, Notion, Linear…)${C.reset}`,
+    `Enable one-click sign-in to 1,070 tools via Composio? ${C.dim}(Gmail, Slack, Notion, Linear…)${C.reset}`,
     true,
   );
   let composioLine = "# COMPOSIO_API_KEY=ak_...";
@@ -319,11 +420,36 @@ export async function create(argv) {
     composioLine = ck ? `COMPOSIO_API_KEY=${ck}` : "COMPOSIO_API_KEY=";
   }
 
+  // ---- bring it up? ---------------------------------------------------------
+  //
+  // Asked HERE, with the other questions, rather than after the install where it
+  // used to live. Four questions up front and then a wait you can walk away from
+  // beats three questions, a two-minute install, and then a fourth question that
+  // needs you back at the keyboard.
+  stepHeader(4, "Bring it up");
+  const dockerUp = hasDocker();
+  let wantStart = false;
+  if (!dockerUp) {
+    warn("Docker is not running, so this step is skipped — Postgres and the sandbox need it.");
+    dim("Start Docker Desktop and run the commands printed at the end.");
+  } else if (nonInteractive || !process.stdout.isTTY) {
+    // In CI, in a heredoc, or under --yes, "shall I pull 200 MB" has nobody to
+    // answer it, and a scaffolder that does it anyway is one people stop running
+    // unattended.
+    dim("Skipped: not an interactive terminal. The commands are printed at the end.");
+  } else {
+    wantStart = await confirm(
+      `Start Postgres, create the schema and pull the dashboard? ${C.dim}(~200 MB)${C.reset}`,
+      true,
+    );
+  }
+
   close();
 
   // ---- scaffold -------------------------------------------------------------
-  say();
-  step("Creating project");
+  blank();
+  rule();
+  blank();
   // Guarded rather than left to throw. `npx create-evestack /etc/foo` reaches
   // here with nothing existing at the path and no permission to create it, and
   // index.mjs prints message-only — so an unguarded mkdirSync showed the user
@@ -376,7 +502,7 @@ export async function create(argv) {
   pkg.private = true;
   delete pkg.description;
   writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
-  ok(`Project at ${C.bold}${target}${C.reset}`);
+  done("project", shortPath(target));
 
   // Credentials are generated, never defaulted. eve fails closed on non-loopback
   // traffic, so a shipped default password would be the one thing standing
@@ -483,7 +609,7 @@ export async function create(argv) {
       "",
     ].join("\n"),
   );
-  ok("Generated .env.local with a unique auth password and trace-ingest token");
+  done("credentials", ".env.local — a unique auth password and trace-ingest token");
 
   // Compose only accepts [a-z0-9][a-z0-9_-]* as a project name, and a directory
   // name is not constrained to that — so normalise rather than emit a file that
@@ -524,123 +650,201 @@ export async function create(argv) {
   // carries no secret; this file and .env.local are both ignored by the
   // .gitignore written above.
   writeFileSync(join(target, ".env"), composeEnvFile(dbPassword));
-  ok("Generated .env with the database password — read by Compose, ignored by git");
+  done("database", ".env — the generated password, read by Compose, ignored by git");
 
   writeFileSync(join(target, "docker-compose.yml"), composeFile(composeProject, { pgPort, dashboardPort, agentPort }));
-  ok("Wrote docker-compose.yml — Postgres, and the dashboard behind a profile");
+  done("compose", "docker-compose.yml — Postgres, dashboard behind a profile");
 
   // ---- install --------------------------------------------------------------
-  step("Installing dependencies");
   const pm = detectPm();
+  const installing = args.verbose ? null : task("install", `${pm} install`, { labelWidth: 13 });
+  if (args.verbose) say(`  ${g.MARK} ${c.bold("install")} ${c.dim(`${pm} install`)}`);
   // `shell` on Windows for the reason run() states: npm/pnpm/yarn/bun are `.cmd`
   // shims there and a bare spawn cannot execute them, so every Windows run ended
   // at "Created, but dependencies are not installed" and exit 1. Not verified on
   // Windows from here — this matches what the template's own scripts already do.
-  const install = spawnSync(pm, ["install"], {
-    cwd: target,
-    stdio: "inherit",
-    shell: process.platform === "win32",
-  });
-  // A failed install leaves an empty node_modules, and the "Next:" steps below
-  // would then fail one after another with unrelated-looking errors. Report it
-  // as the failure it is — including the exit code, so CI and shell `&&` chains
-  // stop here instead of proceeding on a project that cannot run.
-  const installed = install.status === 0 && existsSync(join(target, "node_modules", "eve"));
+  const install = await run(target, pm, ["install"], { verbose: args.verbose });
+  // A failed install leaves an empty node_modules, and the steps below would
+  // then fail one after another with unrelated-looking errors. Report it as the
+  // failure it is — including the exit code, so CI and shell `&&` chains stop
+  // here instead of proceeding on a project that cannot run.
+  const installed = install.ok && existsSync(join(target, "node_modules", "eve"));
   if (installed) {
-    ok("Dependencies installed");
+    if (installing) installing.done("dependencies installed");
+    else ok("Dependencies installed");
+  } else if (installing) {
+    installing.fail("failed — the project exists, but it cannot run yet");
+    printTail(install.output);
   }
 
-  // ---- next steps -----------------------------------------------------------
-  const dockerUp = hasDocker();
   // localhost, not 127.0.0.1, because this one is for a human to click.
   const dashboardUrl = `http://localhost:${dashboardPort}`;
-  say();
+
   if (!installed) {
-    say(`${C.yellow}${C.bold}  Created, but dependencies are not installed.${C.reset}`);
-    say();
-    say(`  ${C.bold}Finish it:${C.reset}`);
+    blank();
+    say(`  ${c.yellowBold("Created, but dependencies are not installed.")}`);
+    blank();
+    say(`  ${c.bold("Finish it")}`);
     // Quoted: a project called "My Agent" printed `cd My Agent`, which is two
     // arguments and a command that does not work.
-    say(`    cd ${shellQuote(basename(target))}`);
-    say(`    ${pm} install`);
-    say();
+    say(`    ${c.bold(`cd ${shellQuote(basename(target))} && ${pm} install`)}`);
+    blank();
     dim("If the install failed on a 404 for @evestack/composio, that package is not");
     dim("published yet. Drop it from package.json and delete agent/tools/composio.ts —");
     dim("everything else in the template works without it.");
-    say();
+    blank();
     return 1;
   }
-  say(`${C.green}${C.bold}  Done.${C.reset}`);
-  say();
-  if (!dockerUp) {
-    warn("Docker isn't running. Start Docker Desktop first — Postgres and the sandbox need it.");
-    say();
-  }
-  // Five lines, one of them the dashboard. This used to be five lines plus a
-  // monorepo clone plus a `docker build` that had never been run by anyone —
-  // the largest single piece of friction in the product. What replaced it is a
-  // pull, because the compose file written above points at a published image.
-  // ---- offer to do the infrastructure part ----------------------------------
+
+  // ---- bring it up ----------------------------------------------------------
   //
-  // Two of the four remaining commands are pure setup with one correct answer:
-  // start Postgres, create the schema. The third pulls an image. None of them
-  // needs a decision, all of them fail in ways that are hard to read, and every
-  // one is a chance to stop. `npm run dev` stays manual because it runs in the
-  // foreground and belongs to the user's terminal.
-  //
-  // Asked, not assumed: it starts containers and pulls ~200 MB. Declining
-  // prints the same list it always did.
-  if (dockerUp && (await confirmStart())) {
-    const brought = await bringUp(target, pm, dashboardPort);
-    if (brought) {
-      say();
-      say(`  ${C.bold}Left to do:${C.reset}`);
-      say(`    cd ${shellQuote(basename(target))} && ${pm} run dev  ${C.dim}# the agent, in this terminal${C.reset}`);
-      say(`    ${pm} run verify                    ${C.dim}# checks all of it, in another${C.reset}`);
-      say();
-      say(`  ${C.dim}Dashboard${C.reset} ${dashboardUrl} ${C.dim}—${C.reset} evestack ${C.dim}/${C.reset} ${password}`);
-      say();
-      say(`  ${C.dim}Nothing here bills you. No Vercel account, no metered compute.${C.reset}`);
-      say();
-      return 0;
-    }
-    // bringUp already explained what failed; fall through to the manual list so
-    // the reader has the commands in front of them.
-    say();
+  // Two of these are pure setup with one correct answer and the third is a pull;
+  // none needs a decision, all of them fail in ways that are hard to read, and
+  // every one is a chance for a first-timer to stop. The question was asked in
+  // step 4, before the install, so this part needs nobody at the keyboard.
+  let up = false;
+  if (wantStart) {
+    up = await bringUp(target, pm, dashboardPort, { verbose: args.verbose });
   }
 
-  say(`  ${C.bold}Next:${C.reset}`);
-  say(`    cd ${shellQuote(basename(target))}`);
-  say(`    docker compose up -d postgres              ${C.dim}# durable sessions${C.reset}`);
-  // `npx --package=@workflow/world-postgres bootstrap` looks equivalent and is
-  // not: its CLI loads `.env` via dotenv and never reads `.env.local`, so it
-  // silently falls back to postgres://world:world@localhost:5432/world and dies
-  // on ECONNREFUSED. The script wires the generated .env.local in explicitly.
-  say(`    ${pm} run db:bootstrap                       ${C.dim}# create the workflow schema${C.reset}`);
-  say(`    ${pm} run dev                                ${C.dim}# chat with your agent on :2000${C.reset}`);
-  say(`    docker compose --profile dashboard up -d   ${C.dim}# the dashboard on :${dashboardPort}${C.reset}`);
-  say(`    ${pm} run verify                             ${C.dim}# check every part of it${C.reset}`);
-  say();
-  // The dashboard is the reason to pick evestack over plain eve, so the sign-in
-  // is printed rather than left to be dug out of .env.local. It is a freshly
-  // generated per-project secret on the user's own terminal; the alternative is
-  // a user who brings the container up and cannot get past the sign-in page.
-  say(`  ${C.dim}Sign in at${C.reset} ${dashboardUrl} ${C.dim}with${C.reset} evestack ${C.dim}/${C.reset} ${password}`);
-  dim("(it is in .env.local, which the dashboard container reads too — nothing to copy)");
+  // ---- what you have --------------------------------------------------------
+  blank();
+  rule();
+  blank();
+  architecture({ agentPort, pgPort, dashboardPort, provider: chosen.id, model: chosen.model, up });
+  blank();
+  say(`  ${c.bold("Dashboard")}   ${c.brandBold(dashboardUrl)}`);
+  say(`  ${c.bold("Sign in")}     evestack ${c.dim("/")} ${c.bold(password)}`);
+  say(`  ${c.dim("Both are in .env.local, which the dashboard container reads too.")}`);
+  say(`  ${c.dim("`evestack open` prints them again — this terminal will scroll.")}`);
+  blank();
+
+  if (!useOllama && apiKeyLine.endsWith("=")) {
+    say(`  ${c.yellowBold(`Add ${chosen.keyVar} to .env.local before you start.`)}`);
+    blank();
+  }
+
+  const cd = shellQuote(basename(target));
+  if (!up) {
+    // The manual list, printed only when something is genuinely left to do.
+    say(`  ${c.bold("Next")}`);
+    say(`    ${c.bold(`cd ${cd}`)}`);
+    if (!dockerUp) say(`    ${c.dim("start Docker Desktop")}`);
+    say(`    ${c.bold("docker compose up -d postgres")}              ${c.dim("# durable sessions")}`);
+    // `npx --package=@workflow/world-postgres bootstrap` looks equivalent and is
+    // not: its CLI loads `.env` via dotenv and never reads `.env.local`, so it
+    // silently falls back to postgres://world:world@localhost:5432/world and dies
+    // on ECONNREFUSED. The script wires the generated .env.local in explicitly.
+    say(`    ${c.bold(`${pm} run db:bootstrap`)}                        ${c.dim("# create the workflow schema")}`);
+    say(`    ${c.bold("docker compose --profile dashboard up -d")}   ${c.dim(`# the dashboard on :${dashboardPort}`)}`);
+    say(`    ${c.bold(`${pm} run dev`)}                                ${c.dim("# the agent")}`);
+    blank();
+    say(`  ${c.dim("Then `evestack status` from anywhere inside the project.")}`);
+    blank();
+    return 0;
+  }
+
+  // Everything but the agent is up, and the agent is a foreground process that
+  // belongs to this terminal. Offering to start it is the difference between
+  // finishing with a running stack and finishing with one more thing to paste.
+  say(`  ${c.bold("One command left")}`);
+  say(`    ${c.bold(`cd ${cd} && ${pm} run dev`)}`);
+  blank();
+  say(`  ${c.dim("Then, in another terminal:")} ${c.bold("evestack tour")} ${c.dim("— a guided first run.")}`);
+  blank();
+
+  if (await confirmRunAgent(cd)) {
+    say(`  ${c.dim(`${g.arrow} ${pm} run dev  ·  Ctrl-C stops it. Your data stays in Postgres.`)}`);
+    blank();
+    // stdio inherited: eve's dev UI, its colours and its TTY detection are all
+    // exactly as they would be if it had been typed. This process becomes a
+    // passthrough, and its exit code becomes eve's.
+    const dev = spawnSync(pm, ["run", "dev"], {
+      cwd: target,
+      stdio: "inherit",
+      shell: process.platform === "win32",
+    });
+    return dev.status ?? 0;
+  }
   // Said once, here, because the split is the reason nothing in this project has
   // to be scrubbed before it is pushed.
   dim("docker-compose.yml is safe to commit: the credentials are in .env and .env.local,");
   dim("both of which the generated .gitignore ignores.");
-  say();
-  say(`  ${C.dim}Nothing here bills you. No Vercel account, no metered compute.${C.reset}`);
-  // Keyed off the line actually written, not off a substring of a key format:
-  // "sk-" is an OpenAI shape, and an Anthropic key that did not start with it
-  // would have produced this warning to someone who had just pasted one.
-  if (!useOllama && apiKeyLine.endsWith("=")) {
-    say(`  ${C.yellow}Add ${chosen.keyVar} to .env.local before starting.${C.reset}`);
-  }
-  say();
+  blank();
+  say(`  ${c.dim("Nothing here bills you. No Vercel account, no metered compute.")}`);
+  blank();
   return 0;
+}
+
+/**
+ * The four moving parts, and which of them ever leaves the machine.
+ *
+ * This is the piece of teaching the scaffolder never did. It finished by
+ * printing a list of commands, which tells someone what to type and nothing
+ * about what they now have — and evestack is four processes on three ports with
+ * one outbound call, which is exactly the shape that a paragraph fails to
+ * explain and a six-line picture does not.
+ *
+ * Drawn with the ports this project actually chose, not the defaults: on a
+ * machine already running one scaffold these are 2001, 5434 and 4001, and a
+ * diagram that lied about that would be worse than none.
+ */
+function architecture({ agentPort, pgPort, dashboardPort, provider, model, up }) {
+  const port = (n) => c.brand(`:${n}`);
+  // Running state as a glyph at the head of the row rather than a "not started"
+  // suffix: the suffix pushed the two container rows past the frame, and a
+  // status is a thing you scan down a column for anyway.
+  const dot = (running) => (running ? c.green(g.dot) : c.dim(g.dot));
+  const part = (running, name, p, what) =>
+    `  ${dot(running)} ${c.bold(padTo(name, 11))}${port(p)}   ${c.dim(what)}`;
+
+  say(`  ${g.MARK} ${c.bold("your machine")}`);
+  box(
+    [
+      // The agent is never running at this point — it is the command that comes
+      // next — so it is drawn in the same "not yet" state as the containers when
+      // they were skipped.
+      part(false, "agent", agentPort, `${detectPm()} run dev — your terminal`),
+      `      ${c.dim(g.pipe)}`,
+      `      ${c.dim(`${g.down}  writes every turn`)}`,
+      part(up, "postgres", pgPort, "docker — sessions, memory, traces, cost"),
+      `      ${c.dim(g.up)}`,
+      `      ${c.dim(`${g.pipe}  reads, and drives the agent`)}`,
+      part(up, "dashboard", dashboardPort, "docker — open this one"),
+    ],
+    { indent: 4, inner: 64 },
+  );
+  say(`      ${c.dim(g.pipe)}`);
+  say(
+    `      ${c.dim(`${g.bl}${g.bar}${g.arrow}`)} ${c.bold(provider)} ` +
+      `${c.dim(`${model} — the only thing that leaves this machine`)}`,
+  );
+  // Always, not `if (!up)`. The agent is never running at this point — it is the
+  // command that comes next — so there is a dim dot on screen even on the fully
+  // successful path, and a live run showed it there with nothing to explain it.
+  say(`      ${c.dim(`${g.dot} dim = not started yet`)}`);
+}
+
+/**
+ * Offer to hand this terminal to the agent.
+ *
+ * The last line of the old output was `npm run dev`, to be copied into a shell
+ * that had just been told four other things. It is the only remaining step, it
+ * has one correct answer, and the reason it was never automated is that it runs
+ * in the foreground — which is an argument for asking, not for refusing.
+ *
+ * Never in CI or a pipe: a scaffolder that blocks forever holding a foreground
+ * process is a broken CI step.
+ */
+async function confirmRunAgent(cd) {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return false;
+  const { confirm, close } = await makePrompter(false);
+  const yes = await confirm(
+    `Start it now? ${C.dim}(holds this terminal — or run \`cd ${cd}\` and start it yourself)${C.reset}`,
+    true,
+  );
+  close();
+  return yes;
 }
 
 // Build leftovers and secrets that must never reach a generated project.
@@ -727,6 +931,7 @@ function inspectTarget(path) {
  */
 const CREATE_FLAGS = new Map([
   ["--yes", "yes"], ["-y", "yes"],
+  ["--verbose", "verbose"],
   ["--help", "help"], ["-h", "help"],
   ["--version", "version"], ["-V", "version"],
 ]);
@@ -753,7 +958,9 @@ Postgres plus the dashboard, and installs dependencies.
 
 Options
   --yes, -y       take every default and ask nothing. Implied when stdin is not
-                  a terminal — CI, a heredoc, a Dockerfile
+                  a terminal — CI, a heredoc, a Dockerfile. It also declines to
+                  start containers, because nobody is there to say no
+  --verbose       show the raw npm and docker output instead of one line each
   --help, -h      this
   --version, -V   print create-evestack's version
 
@@ -764,7 +971,7 @@ a directory whose name starts with a dash, end the options first:
 `;
 
 export function parseCreateArgs(argv) {
-  const parsed = { positional: [], yes: false, help: false, version: false, error: null };
+  const parsed = { positional: [], yes: false, verbose: false, help: false, version: false, error: null };
   let endOfFlags = false;
   for (const arg of argv) {
     if (endOfFlags || !arg.startsWith("-")) {
