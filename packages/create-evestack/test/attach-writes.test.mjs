@@ -234,3 +234,41 @@ test("--dry-run writes nothing, and --help detects nothing", () => {
   assert.match(help.stdout, /evestack attach —/);
   assert.doesNotMatch(help.stdout, /Write these changes/);
 });
+
+/**
+ * A .env written on Windows used to be read as if it were empty.
+ *
+ * `readEnvFiles` split on "\n" and matched each line against a regex ending in
+ * `$`. With no `m` flag `$` anchors to end of input and `.` cannot match CR, so
+ * every line of a CRLF file failed and the function returned an empty Map —
+ * measured at 0 of 2 lines. `core.autocrlf=true` is enough to produce one.
+ *
+ * The consequence is not cosmetic. attach reads that Map to answer "does this
+ * project already have a database?", and an empty Map says no, so it attaches a
+ * SECOND Postgres to a project that already had one and appends a
+ * WORKFLOW_POSTGRES_URL that wins over the real one — the agent then writes its
+ * sessions to a new empty database while the operator's own sits untouched.
+ * attach.mjs:424 says in as many words that this must not happen.
+ */
+test("a CRLF env file is read, so attach does not add a second database", () => {
+  const dir = eveProject({
+    envFiles: {
+      ".env.local":
+        "WORKFLOW_POSTGRES_URL=postgres://me:mypw@db.internal:5432/prod\r\n" +
+        "OPENAI_API_KEY=sk-real\r\n",
+    },
+  });
+  const result = attach(dir);
+  assert.equal(result.status, 0, result.stderr);
+
+  const env = read(dir, ".env.local");
+  const urls = [...env.matchAll(/^\s*WORKFLOW_POSTGRES_URL=/gm)].length;
+  assert.equal(urls, 1, `attach re-declared the database URL:\n${env}`);
+  assert.match(env, /db\.internal:5432\/prod/, "the project's own database URL must survive");
+
+  const compose = read(dir, "docker-compose.yml");
+  assert.ok(
+    compose === null || !/\bpostgres:\b/.test(compose),
+    `attach added a second Postgres to a project that already had one:\n${compose}`,
+  );
+});

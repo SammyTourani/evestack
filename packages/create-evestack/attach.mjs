@@ -1185,7 +1185,28 @@ function readEnvFiles(target) {
   for (const file of [".env", ".env.local"]) {
     const path = join(target, file);
     if (!existsSync(path)) continue;
-    for (const line of readFileSync(path, "utf8").split("\n")) {
+    // `/\r?\n/`, not `"\n"`, and the difference is a second database.
+    //
+    // In JavaScript `.` does not match CR and `$` without the `m` flag anchors
+    // to end of input, so against a CRLF file every line ends in a character
+    // the pattern cannot consume and NOTHING matches — this returned an empty
+    // Map for the whole file. Measured: 0 of 2 lines parsed on CRLF, 2 of 2 on
+    // LF. A .env written on Windows, or checked out with `core.autocrlf=true`,
+    // is enough.
+    //
+    // What an empty Map causes, in the two places it is read:
+    //   :420 `existingUrl` is undefined, so attach takes the else branch and
+    //        adds its own Postgres — the case the comment there says must not
+    //        happen, because "a second Postgres would split the session history
+    //        in half and neither half would be complete".
+    //   :703 every key looks absent, so the block appended to the env file
+    //        re-declares keys that are already in it — and later wins, so the
+    //        new container's URL silently overrides the project's real one.
+    //
+    // The sibling readers in evestack-cli/src/project.mjs and
+    // templates/default/scripts/checks.mjs `.trim()` each line and were never
+    // affected. This one matched the raw line.
+    for (const line of readFileSync(path, "utf8").split(/\r?\n/)) {
       const match = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$/.exec(line);
       if (!match) continue;
       merged.set(match[1], match[2].trim().replace(/^["']|["']$/g, ""));
