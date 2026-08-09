@@ -30,10 +30,24 @@ export default async function SchedulesPage() {
   // header of ./next-fire.ts for the measured three-zone spread and for why the
   // agent's zone is derived from its own recorded fires rather than assumed.
   const now = new Date();
-  const nextFires: Record<string, NextFire | null> = {};
+  // Collected as entries and built with `Object.fromEntries`, because the keys
+  // are schedule names and a schedule name is chosen by the operator.
+  // `object[name] = value` on a plain literal does not create an own property
+  // when `name` is `__proto__` — it sets the prototype. Measured:
+  //
+  //   const a = {}; a["__proto__"] = {at: "x"};
+  //   Object.hasOwn(a, "__proto__")  ->  false
+  //   JSON.stringify(a)              ->  "{}"
+  //
+  // So a schedule called `__proto__` loses its next-fire silently and takes the
+  // object's prototype with it. `fromEntries` uses CreateDataProperty, which
+  // makes it an ordinary own key and leaves the prototype alone — and unlike
+  // `Object.create(null)` the result is still a plain object, which is what
+  // crosses the server/client boundary to ScheduleList below.
+  const fires: [string, NextFire | null][] = [];
   for (const schedule of view.schedules) {
     if (!schedule.cron) {
-      nextFires[schedule.name] = null;
+      fires.push([schedule.name, null]);
       continue;
     }
     // Only fires recorded under THIS expression. `schedule_runs.cron` is written
@@ -42,8 +56,9 @@ export default async function SchedulesPage() {
     const observed = [schedule.lastRun, ...view.recent.filter((run) => run.name === schedule.name)]
       .filter((run): run is ScheduleRun => run !== null && run.cron === schedule.cron)
       .map((run) => run.fireAt);
-    nextFires[schedule.name] = projectNextFire(schedule.cron, observed, now);
+    fires.push([schedule.name, projectNextFire(schedule.cron, observed, now)]);
   }
+  const nextFires: Record<string, NextFire | null> = Object.fromEntries(fires);
 
   return (
     <>
