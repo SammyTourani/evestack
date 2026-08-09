@@ -23,14 +23,24 @@
  *
  * ── What is reachable without a model key, and what is not ───────────────────
  *
- * CI runs with no provider key on purpose, so a turn finishes instantly at the
- * model call. That is enough for everything here: a session still starts, still
- * reaches a waiting boundary, still publishes a continuation token, and still
- * has a stream to cancel. What is NOT reachable is a long-running turn that
- * cancel interrupts mid-flight — `no_active_turn` is the honest answer for a
- * turn that already settled, and the route treats it as success for exactly
- * that reason. Interrupting real work belongs to `eve eval`, which is gated on
- * a key. This probe does not claim it.
+ * CI runs with no provider key on purpose, so the first turn fails at the model
+ * call within a second and the session goes TERMINAL. Every refusal below is
+ * still reachable — the 401, the unknown-session 404, five malformed bodies, a
+ * rejected continuation token, and cancel in all four of its shapes — because
+ * none of them needs a turn that succeeded.
+ *
+ * The follow-up message is the one assertion whose ANSWER depends on the key,
+ * and it accepts both: a 2xx where the session reached a waiting boundary, or
+ * 409 `session_terminal` where it had already ended. Both are the route working;
+ * the probe says which one it saw. Demanding the 2xx is what the first version
+ * did, and it passed on a laptop with a key in
+ * `templates/default/.env.local` and failed in CI — a probe that only passes
+ * where a key happens to exist is a probe that tests the key.
+ *
+ * What is NOT reachable at all, and is not claimed: a long-running turn that
+ * cancel interrupts mid-flight. `no_active_turn` is the honest answer for a turn
+ * that already settled, and the route treats it as success for that reason.
+ * Interrupting real work belongs to `eve eval`, which is gated on a key.
  */
 const DASHBOARD = process.env.EVESTACK_PROBE_DASHBOARD_URL?.replace(/\/$/, "") ?? null;
 const AGENT = process.env.EVESTACK_PROBE_AGENT_URL?.replace(/\/$/, "") ?? null;
@@ -208,16 +218,46 @@ export default {
     }
     t.note(`session ${id}`);
 
+    // TWO OUTCOMES ARE CORRECT HERE, AND WHICH ONE YOU GET DEPENDS ON A MODEL KEY.
+    //
+    // With a key the first turn runs, the session reaches a waiting boundary,
+    // publishes a continuation token, and the follow-up is accepted. Without one
+    // — which is CI, deliberately — the turn fails at the model call and the
+    // session is TERMINAL within a second, so the route answers
+    // 409 session_terminal: "This session has already ended; start a new one
+    // instead of continuing it." That is the third of the four guards doing
+    // exactly its job, not a failure.
+    //
+    // The first version of this assertion demanded a 2xx. It passed on the
+    // machine it was written on and failed in CI, because that machine had
+    // OPENAI_API_KEY in templates/default/.env.local and CI has no key on
+    // purpose. A probe that only passes where a key happens to exist is a probe
+    // that tests the key.
+    //
+    // So both are accepted and each is asserted for what it proves. What is
+    // refused either way: a 5xx, and a 2xx that quietly acted on a different
+    // session.
     const followUp = await waitUntilAcceptingMessages(id);
     const accepted = followUp.status >= 200 && followUp.status < 300;
-    t.ok(accepted, "a follow-up message on a live session is accepted", {
-      ...(accepted
-        ? { actual: `${followUp.status}` }
+    const terminal = followUp.status === 409 && followUp.body.code === "session_terminal";
+
+    t.ok(
+      accepted || terminal,
+      "a follow-up is accepted, or refused because the session had already ended",
+      accepted || terminal
+        ? { actual: accepted ? `${followUp.status} accepted` : "409 session_terminal" }
         : {
-            expected: "2xx",
+            expected: "2xx, or 409 session_terminal",
             actual: `${followUp.status} ${JSON.stringify(followUp.body).slice(0, 200)}`,
-          }),
-    });
+          },
+    );
+
+    if (terminal) {
+      t.note(
+        "no model key on this agent: the first turn died at the model call and the session " +
+          "went terminal, so this exercised the session_terminal guard rather than the accept path",
+      );
+    }
 
     // The token was resolved BY THE DASHBOARD, off the durable stream, which is
     // the whole reason the route lets a caller omit it. `resolvedContinuationToken`
