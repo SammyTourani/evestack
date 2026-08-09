@@ -31,9 +31,23 @@ const alert = (id, state, severity = "warn") => ({
   detail: `${id} is ${state}`,
 });
 
-/** A `Remembered` for one id: what we last SAW and what we last SENT. */
-const memory = (notifiedState, extra = {}) =>
-  new Map([["a", { state: notifiedState ?? "ok", notifiedState, notifiedAt: null, since: null, ...extra }]]);
+/**
+ * A `Remembered` for one id: what we last SAW and what we last SENT.
+ *
+ * `everOk` is derived rather than passed, because in production it is not a
+ * free variable: writeObservations latches it on the same write that records an
+ * `ok` observation, so a fixture whose state is `ok` and whose everOk is false
+ * describes a row Postgres cannot produce.
+ */
+const memory = (notifiedState, extra = {}) => {
+  const state = extra.state ?? notifiedState ?? "ok";
+  return new Map([
+    [
+      "a",
+      { state, notifiedState, notifiedAt: null, since: null, everOk: state === "ok", ...extra },
+    ],
+  ]);
+};
 
 const plan = (live, remembered, opts = {}) =>
   planNotifications(live, remembered, { now: Date.parse("2026-08-08T12:00:00Z"), renotifyMs: null, ...opts });
@@ -105,7 +119,7 @@ test("coverage loss fires on a monitor that has been healthy all along", () => {
   // `from === "ok"` and therefore fired only for a monitor that had already been
   // delivered as ok, which cannot happen. It has to read the last state SEEN.
   const neverDelivered = new Map([
-    ["a", { state: "ok", notifiedState: null, notifiedAt: null, since: null }],
+    ["a", { state: "ok", notifiedState: null, notifiedAt: null, since: null, everOk: true }],
   ]);
   const out = plan([alert("a", "unknown", "page")], neverDelivered);
   assert.equal(out.length, 1, "a page-severity check that stops being answerable must say so");
@@ -482,4 +496,48 @@ test("two different URLs on the same host are still two sinks", () => {
       "https://hooks.slack.com/services/T0/B0/aaa,https://hooks.slack.com/services/T0/B0/bbb",
   });
   assert.equal(config.sinks.length, 2);
+});
+
+/* ── the coverage-loss alert must survive a failed send ────────────────────── */
+
+test("a page-severity coverage-loss alert is re-planned until it lands", () => {
+  // THE HIGH-SEVERITY BUG, and it was a one-word difference.
+  //
+  // The rule read `prior.state === "ok"` — the last OBSERVATION, which
+  // writeObservations advances on every tick before anything is sent. So the
+  // rule was eligible for exactly one tick: if that tick's POST failed, the next
+  // tick saw state='unknown', concluded the monitor had never been healthy, and
+  // planned nothing. A `page` notification dropped by one transient 5xx, never
+  // retried — and the empty plan then counted the row as settled and cleared its
+  // delivery_error, so nothing was left to say it had happened.
+  //
+  // `everOk` latches instead, so the retry is what the rest of the table already
+  // promises.
+  const afterFailedSend = new Map([
+    [
+      "a",
+      {
+        // The observation has already moved on — this is tick N+1.
+        state: "unknown",
+        // Nothing was delivered, because the POST failed.
+        notifiedState: null,
+        notifiedAt: null,
+        since: null,
+        everOk: true,
+      },
+    ],
+  ]);
+  const out = plan([alert("a", "unknown", "page")], afterFailedSend);
+  assert.equal(out.length, 1, "the dropped page must be planned again");
+  assert.equal(out[0].kind, "stale");
+});
+
+test("a monitor that has never been healthy is still silent when it goes unknown", () => {
+  // The other half. `sandbox_networked` is `page` and is unknown from birth on
+  // any install without a Docker socket — announcing that would fire on every
+  // fresh install, which is the spam the whole rule table is arranged to avoid.
+  const neverHealthy = new Map([
+    ["a", { state: "unknown", notifiedState: null, notifiedAt: null, since: null, everOk: false }],
+  ]);
+  assert.deepEqual(plan([alert("a", "unknown", "page")], neverHealthy), []);
 });

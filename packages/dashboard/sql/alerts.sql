@@ -83,8 +83,29 @@ CREATE TABLE IF NOT EXISTS evestack.alert_state (
   -- state EVERY sink has acknowledged, which is what the panel reads.
   --
   -- The key is a hash of the URL rather than the URL: this column is rendered.
-  notified_sinks    jsonb     NOT NULL DEFAULT '{}'::jsonb
+  notified_sinks    jsonb     NOT NULL DEFAULT '{}'::jsonb,
+
+  -- Has this monitor ever been seen healthy?
+  --
+  -- The coverage-loss rule — a `page` check that was fine and stops being
+  -- answerable — needs to know the monitor came from `ok`. It read that off
+  -- `state`, which is the LAST OBSERVATION and is advanced on every tick before
+  -- anything is sent. So the rule was eligible for exactly one tick: if that
+  -- tick's POST failed, the next tick saw state='unknown', concluded the monitor
+  -- had never been healthy, and planned nothing. The notification was dropped
+  -- and never retried — and because the plan was then empty, the row counted as
+  -- settled and its delivery_error was cleared too, so nothing recorded that it
+  -- had happened.
+  --
+  -- This is durable instead. Once true it stays true, so a failed send is
+  -- re-planned on every tick until it lands, which is what the rest of this
+  -- table already promises.
+  ever_ok           boolean   NOT NULL DEFAULT false
 );
+
+-- Added after the first release; see the header on CREATE TABLE IF NOT EXISTS.
+ALTER TABLE evestack.alert_state
+  ADD COLUMN IF NOT EXISTS ever_ok boolean NOT NULL DEFAULT false;
 
 -- CREATE TABLE IF NOT EXISTS does nothing once the table is there, so a column
 -- added after the first release needs its own statement. See the header.

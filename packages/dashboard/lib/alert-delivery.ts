@@ -63,6 +63,8 @@ export interface Remembered {
    * two fields above are the union across sinks, kept for the panel.
    */
   readonly notifiedSinks?: Readonly<Record<string, { state: AlertState; at: string | null }>>;
+  /** Has this monitor ever been observed healthy? Durable; see sql/alerts.sql. */
+  readonly everOk?: boolean;
 }
 
 /**
@@ -219,7 +221,23 @@ export function planNotifications(
      * delivered, notified_state is `unknown` and the next tick falls into the
      * unchanged branch above.
      */
-    const wasOk = prior?.state === "ok";
+    /*
+     * `everOk` is durable; `prior.state` is not, and that difference was a
+     * dropped page.
+     *
+     * This read `prior.state === "ok"`. That is the last OBSERVATION, and
+     * writeObservations advances it on every tick before anything is sent — so
+     * the rule was eligible for exactly one tick. If that tick's POST failed,
+     * the next tick saw state='unknown', concluded the monitor had never been
+     * healthy, and planned nothing. A `page`-severity notification, dropped by
+     * one transient 5xx, never retried. Worse, the empty plan then counted the
+     * row as settled and cleared its delivery_error, so nothing was left to say
+     * it had happened.
+     *
+     * Reachable on any install: `sandbox_networked` is `page` and goes unknown
+     * the moment Docker is unreachable.
+     */
+    const wasOk = prior?.everOk === true;
     if (
       to === "unknown" &&
       from !== "unknown" &&
@@ -508,8 +526,9 @@ export async function readRemembered(): Promise<Map<string, Remembered>> {
     notified_at: string | Date | null;
     since: string | Date | null;
     notified_sinks: Record<string, { state: AlertState; at: string | null }> | null;
+    ever_ok: boolean | null;
   }>(
-    `SELECT id, state, notified_state, notified_at, since, notified_sinks
+    `SELECT id, state, notified_state, notified_at, since, notified_sinks, ever_ok
        FROM evestack.alert_state`,
   );
 
@@ -522,6 +541,7 @@ export async function readRemembered(): Promise<Map<string, Remembered>> {
         notifiedAt: iso(r.notified_at),
         since: iso(r.since),
         notifiedSinks: r.notified_sinks ?? {},
+        everOk: r.ever_ok === true,
       },
     ]),
   );
@@ -545,13 +565,19 @@ async function writeObservations(alerts: readonly AlertResult[]): Promise<void> 
   const tuples = alerts.map((a, i) => {
     const b = i * 5;
     params.push(a.id, a.state, a.severity, a.title, a.detail);
-    return `($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5})`;
+    // The 6th column is computed, not bound: a first insert of a healthy
+    // monitor has to latch ever_ok immediately, or its very first ok->unknown
+    // would be silent.
+    return `($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, $${b + 2} = 'ok')`;
   });
 
   await query(
-    `INSERT INTO evestack.alert_state (id, state, severity, title, detail)
+    `INSERT INTO evestack.alert_state (id, state, severity, title, detail, ever_ok)
      VALUES ${tuples.join(", ")}
      ON CONFLICT (id) DO UPDATE SET
+       -- Latches. Once healthy, always "has been healthy" — that is what makes
+       -- the coverage-loss rule survive a failed send.
+       ever_ok     = evestack.alert_state.ever_ok OR EXCLUDED.state = 'ok',
        state       = EXCLUDED.state,
        severity    = EXCLUDED.severity,
        title       = EXCLUDED.title,
@@ -821,6 +847,28 @@ async function runDelivery(options?: {
     };
   });
 
+  /*
+   * Clear stale failure markers BEFORE the nothing-to-do return.
+   *
+   * This block used to sit at the end, after the early return below — so on
+   * every tick where nothing needed sending, which in a healthy system is
+   * almost every tick, it never ran. A monitor that fired, failed to deliver,
+   * and then resolved without ever being delivered plans nothing afterwards, so
+   * /monitors kept rendering "1 monitor could not be delivered and is being
+   * retried" about a transition that no longer existed and nothing would retry.
+   * The fix was unreachable on exactly the ticks that needed it.
+   */
+  const stillPending = new Set(perSink.flatMap((e) => e.plan.map((t) => t.alert.id)));
+  const settled = live.map((a) => a.id).filter((id) => !stillPending.has(id));
+  if (settled.length > 0) {
+    await query(
+      `UPDATE evestack.alert_state
+          SET delivery_error = NULL, delivery_attempts = 0
+        WHERE id = ANY($1::text[]) AND delivery_error IS NOT NULL`,
+      [settled],
+    );
+  }
+
   if (perSink.every((entry) => entry.plan.length === 0)) {
     return { evaluated: live.length, planned: [], sent: 0, failures: [], skipped: null };
   }
@@ -862,27 +910,6 @@ async function runDelivery(options?: {
 
   if (failedIds.size > 0) {
     await markFailed([...failedIds], failures.map((f) => `${f.sink}: ${f.error}`).join("; "));
-  }
-
-  /*
-   * Clear the error on anything that is no longer waiting to be sent.
-   *
-   * A monitor can fail to deliver and then stop needing to: it fires, the POST
-   * 500s, and by the next tick it has resolved, so the plan for it is empty and
-   * nothing will ever retry it. Without this the row keeps its `delivery_error`
-   * forever and /monitors shows "1 monitor could not be delivered" about an
-   * incident that ended — a permanent red banner describing nothing, which is
-   * how a reader learns to stop believing the banner.
-   */
-  const stillPending = new Set(perSink.flatMap((e) => e.plan.map((t) => t.alert.id)));
-  const settled = live.map((a) => a.id).filter((id) => !stillPending.has(id));
-  if (settled.length > 0) {
-    await query(
-      `UPDATE evestack.alert_state
-          SET delivery_error = NULL, delivery_attempts = 0
-        WHERE id = ANY($1::text[]) AND delivery_error IS NOT NULL`,
-      [settled],
-    );
   }
 
   // The union, for the caller's report. A monitor appears once even when two
