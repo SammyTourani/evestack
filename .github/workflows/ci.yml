@@ -462,14 +462,27 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # Before the build, deliberately. The dashboard's unit tests import
+      # ONE workspace dependency, built first, and no more than that.
+      #
+      # `test/schedules-next-fire.test.mjs` checks the page's projection against
+      # @evestack/schedules' own `nextFire()` — the function the runner actually
+      # fires on — which is the only oracle that can say whether the two agree.
+      # That import resolves through package exports to a gitignored `dist/`, so
+      # on a cold checkout the whole dashboard suite dies with ERR_MODULE_NOT_FOUND
+      # before running a single test. It did, for exactly one commit.
+      #
+      # This is the third job to meet that trap; the note below records the first
+      # two. Building the one package it needs keeps the fast signal intact —
+      # `tsc` on a package this size is a couple of seconds against the two
+      # minutes a full workspace build costs.
+      - run: pnpm --filter @evestack/schedules run build
+      # Before the Next build, deliberately. The dashboard's unit tests import
       # lib/auth.ts, lib/pricing.ts, lib/traces.ts and lib/promote-eval.ts
-      # directly under `node --test`; their whole import graph is node builtins
-      # plus `pg` (checked: no workspace package and no Next entry point among
-      # them), so they need neither `pnpm -r run build` nor a Next build and
-      # they finish in about 300ms. Running them ahead of a two-minute
-      # `next build` is the difference between learning that default-deny
-      # routing broke in seconds and learning it after the compile.
+      # directly under `node --test`; apart from the oracle above, their import
+      # graph is node builtins plus `pg` — no Next entry point — so they need no
+      # Next build and they finish in about 300ms. Running them ahead of a
+      # two-minute `next build` is the difference between learning that
+      # default-deny routing broke in seconds and learning it after the compile.
       #
       # These also run inside the `test` job via the root `pnpm test`, which is
       # `pnpm -r --if-present test`. That is not redundant on purpose: this step
