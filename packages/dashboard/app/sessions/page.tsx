@@ -208,10 +208,52 @@ function readLimit(raw: string): number {
   return (PAGE_SIZES as readonly number[]).includes(asked) ? asked : DEFAULT_PAGE_SIZE;
 }
 
-function href(limit: number, cursor: string): string {
+/**
+ * `outcome` rides along, or paging out of a filtered view silently unfilters it.
+ *
+ * The facet chips themselves are client state and do not survive a navigation —
+ * that is pre-existing and fine, because the reader set them and can see them
+ * go. A deep link is different: the filter came from the URL, so the URL is
+ * what has to carry it to page two.
+ */
+function href(limit: number, cursor: string, outcome?: string): string {
   const params = new URLSearchParams({ limit: String(limit) });
   if (cursor) params.set("cursor", cursor);
+  if (outcome) params.set("outcome", outcome);
   return `/sessions?${params}`;
+}
+
+/**
+ * The outcomes `fact_turn` can actually hold — `sql/facts.sql:189`'s CHECK
+ * constraint, in the same order.
+ *
+ * The list is here rather than imported because the constraint is SQL: this is
+ * a copy, and contract/runtime probe 07 is what keeps the two honest.
+ */
+const OUTCOMES = new Set([
+  "ok",
+  "failed",
+  "no_model_call",
+  "cancelled",
+  "budget_stopped",
+  "wedged",
+  "running",
+]);
+
+/**
+ * `?outcome=` → an opening facet, or nothing.
+ *
+ * Validated rather than passed through. An unrecognised value would select a
+ * facet no row can match, and an empty table under a filter chip the reader
+ * did not set reads as "no sessions", which is the wrong answer to a typo.
+ *
+ * This exists because `lib/alerts.ts` links here as `/sessions?outcome=wedged`
+ * and the page read only `limit` and `cursor` — so the alert that found eight
+ * wedged turns dropped you on an unfiltered first page and let you find them.
+ */
+function readOutcome(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  return OUTCOMES.has(raw) ? raw : undefined;
 }
 
 const NUMBER = new Intl.NumberFormat("en-US");
@@ -220,6 +262,7 @@ export default async function SessionsListPage(props: PageProps<"/sessions">) {
   const params = await props.searchParams;
   const limit = readLimit(first(params.limit));
   const rawCursor = first(params.cursor);
+  const outcome = readOutcome(first(params.outcome));
 
   let cursor: SessionCursor | null = null;
   if (rawCursor) {
@@ -240,7 +283,7 @@ export default async function SessionsListPage(props: PageProps<"/sessions">) {
               The <code>cursor</code> in this URL is not one this page issued.
             </p>
             <p>
-              <a className={`text-accent hover:underline ${FOCUS_RING}`} href={href(limit, "")}>
+              <a className={`text-accent hover:underline ${FOCUS_RING}`} href={href(limit, "", outcome)}>
                 Start from the newest session
               </a>
             </p>
@@ -322,7 +365,7 @@ export default async function SessionsListPage(props: PageProps<"/sessions">) {
             <h2>No more sessions</h2>
             <p className="dim">This page is past the last session in the list.</p>
             <p>
-              <a className={`text-accent hover:underline ${FOCUS_RING}`} href={href(limit, "")}>
+              <a className={`text-accent hover:underline ${FOCUS_RING}`} href={href(limit, "", outcome)}>
                 Back to the newest
               </a>
             </p>
@@ -330,7 +373,7 @@ export default async function SessionsListPage(props: PageProps<"/sessions">) {
         )
       ) : (
         <>
-          <SessionsTable rows={rows} now={now} />
+          <SessionsTable rows={rows} now={now} outcome={outcome} />
           <nav aria-label="Pagination" className="mt-3 flex flex-wrap items-center gap-3 text-small">
             <span className="text-text-faint">rows per page</span>
             {PAGE_SIZES.map((size) =>
@@ -341,7 +384,7 @@ export default async function SessionsListPage(props: PageProps<"/sessions">) {
               ) : (
                 <a
                   key={size}
-                  href={href(size, rawCursor)}
+                  href={href(size, rawCursor, outcome)}
                   className={`rounded-sm text-accent tabular-nums hover:underline ${FOCUS_RING}`}
                 >
                   {NUMBER.format(size)}
@@ -350,14 +393,14 @@ export default async function SessionsListPage(props: PageProps<"/sessions">) {
             )}
             <span className="grow" />
             {cursor === null ? null : (
-              <a href={href(limit, "")} className={CONTROL}>
+              <a href={href(limit, "", outcome)} className={CONTROL}>
                 ← Newest
               </a>
             )}
             {next === null ? (
               <span className="text-text-faint">End of the list</span>
             ) : (
-              <a href={href(limit, next)} className={CONTROL}>
+              <a href={href(limit, next, outcome)} className={CONTROL}>
                 Older {NUMBER.format(limit)} →
               </a>
             )}

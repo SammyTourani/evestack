@@ -82,6 +82,21 @@ export default async function ApprovalsPage() {
         Every human-in-the-loop decision this dashboard carried out. eve&apos;s protocol carries no
         identity, so this is the only place that records <em>who</em>.
       </p>
+      {/*
+        Say what this page is NOT, because its name and its position under
+        "Drive" both promise otherwise.
+
+        This is a log of decisions already made — it has no controls and cannot
+        answer anything. A session parked on a gated tool is answered in Chat,
+        which attaches to a durable session by id. Without this line the reader
+        who came here to unblock an agent has no way of learning that, and the
+        fleet banner used to send them to a read-only page too.
+      */}
+      <p className="page-sub">
+        A record, not a queue — there is nothing to action here. A session parked on a decision is
+        answered in <a href="/chat">Chat</a>, which attaches to it by id; the banner on{" "}
+        <a href="/">Overview</a> links each waiting session straight through.
+      </p>
 
       {rows.length === 0 ? (
         <div className="empty">

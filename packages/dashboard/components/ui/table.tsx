@@ -40,6 +40,7 @@
 import {
   type Column,
   type ColumnDef,
+  type ColumnFiltersState,
   type SortingState,
   flexRender,
   getCoreRowModel,
@@ -79,6 +80,14 @@ export interface DataTableProps<T> {
   /** Enables the free-text filter across every column when set. */
   readonly searchPlaceholder?: string;
   readonly initialSorting?: SortingState;
+  /**
+   * Facet selections the table opens with, e.g. from a deep link.
+   *
+   * `initialState`, not controlled state: the chips keep owning the filters
+   * after first render, so this seeds them and then gets out of the way. A
+   * caller passing nothing behaves exactly as before.
+   */
+  readonly initialColumnFilters?: ColumnFiltersState;
   /** Stable ids, so selection survives a re-sort. */
   readonly getRowId?: (row: T, index: number) => string;
   /** Controls above the table, on the same line as the facet chips. */
@@ -123,6 +132,7 @@ export function DataTable<T>({
   facetColumns = [],
   searchPlaceholder,
   initialSorting = [],
+  initialColumnFilters,
   getRowId,
   toolbar,
   virtualizeAfter = 150,
@@ -151,6 +161,7 @@ export function DataTable<T>({
     columns: resolved,
     defaultColumn: DEFAULT_COLUMN,
     state: { sorting, globalFilter },
+    ...(initialColumnFilters?.length ? { initialState: { columnFilters: initialColumnFilters } } : {}),
     onSortingChange: setSorting,
     onGlobalFilterChange: setGlobalFilter,
     getRowId,

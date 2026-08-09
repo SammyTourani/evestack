@@ -254,9 +254,16 @@ function ExportButton({ rows, now }: { readonly rows: readonly SessionListRow[];
 export function SessionsTable({
   rows,
   now,
+  outcome,
 }: {
   readonly rows: readonly SessionListRow[];
   readonly now: number;
+  /**
+   * A facet to open with, from `?outcome=` — how the wedged-turns alert deep
+   * links here. Validated server-side against the `fact_turn` CHECK constraint,
+   * so anything that arrives is a value the column can actually hold.
+   */
+  readonly outcome?: string;
 }) {
   const columns = useMemo(() => makeColumns(now), [now]);
   return (
@@ -269,6 +276,7 @@ export function SessionsTable({
       facetColumns={["outcome", "trigger", "model", "provider", "environment", "runType"]}
       searchPlaceholder="Search sessions"
       initialSorting={[{ id: "when", desc: true }]}
+      initialColumnFilters={outcome ? [{ id: "outcome", value: [outcome] }] : undefined}
       getRowId={(row) => row.id}
       toolbar={<ExportButton rows={rows} now={now} />}
       virtualizeAfter={DEFAULT_PAGE_SIZE}
