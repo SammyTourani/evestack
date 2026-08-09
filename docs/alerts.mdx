@@ -127,9 +127,16 @@ a captured POST replays forever. Reject anything older than your own tolerance.
   single permanently-broken webhook re-sent the identical alert to every healthy channel on every
   tick, forever. That is the muted channel this whole page is about, arrived at by way of being
   careful about the other thing.
-- **Two dashboards will not double-send.** A short lease row in `evestack.alert_lease` gives one
-  instance the tick; it expires rather than being released, so a crash mid-send is picked up by the
-  other one interval later.
+- **Two dashboards will not normally double-send, and the exception is named.** A short lease row
+  in `evestack.alert_lease` gives one instance the tick; it expires rather than being released, so
+  a crash mid-send is picked up by the other one interval later. Within a single dashboard,
+  deliveries are serialised outright, so a timer tick and a `POST /api/alerts` cannot overlap.
+
+  What the lease does *not* cover: it is granted on elapsed time and does not check who holds it,
+  so if one instance's sends take longer than the whole interval — several sinks, each slow but
+  healthy — the other can take over while the first is still posting, and one transition goes out
+  twice. Configure a sink list whose total latency fits inside `EVESTACK_ALERT_INTERVAL_SECONDS`,
+  or run one dashboard. A duplicate page is the worst case here; nothing is lost.
 
 ## What it writes
 
