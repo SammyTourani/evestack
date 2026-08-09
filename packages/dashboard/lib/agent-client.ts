@@ -479,7 +479,41 @@ async function readNdjson(body: ReadableStream<Uint8Array>, limit: number): Prom
 
   try {
     while (events.length < limit) {
-      const { done, value } = await reader.read();
+      let chunk;
+      try {
+        chunk = await reader.read();
+      } catch (error) {
+        /*
+         * A DROPPED CONNECTION MID-READ IS NOT "THE AGENT IS UNREACHABLE".
+         *
+         * The response headers have already arrived — that is where `limit` came
+         * from — so the agent answered. If the body then stops short, what we
+         * have is a PARTIAL read, and the callers of this can work from partial:
+         * getSessionSnapshot only needs to know whether the session is waiting,
+         * terminal, or holding requests.
+         *
+         * Letting the rejection through instead made lib/fleet.ts report
+         * `unknown`, whose reason string is "the agent could not be reached" —
+         * about an agent that had just answered. On the fleet banner that reads
+         * as a network problem, so an operator goes and checks a network that is
+         * fine while the session it could not classify sits there.
+         *
+         * Reproduced against a stub of eve's stream endpoint, which is also what
+         * narrowed it: of eight shapes, exactly one throws — the server
+         * advertising a tail index HIGHER than the number of lines it then
+         * writes, and closing the socket rather than ending the response. A
+         * clean end that is equally short already returned what it had, which is
+         * the behaviour this brings the abrupt case into line with.
+         *
+         * Zero events is the exception and still throws. Headers alone say the
+         * session exists; they say nothing about its state, so classifying it
+         * from an empty list would invent a verdict. `unknown` is the honest
+         * answer there and this lets the caller reach it.
+         */
+        if (events.length === 0) throw error;
+        break;
+      }
+      const { done, value } = chunk;
       if (done) break;
       buffered += decoder.decode(value, { stream: true });
 
