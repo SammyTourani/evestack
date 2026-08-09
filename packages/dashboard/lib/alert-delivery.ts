@@ -300,6 +300,14 @@ export function resolveSinks(env: Record<string, string | undefined>): SinkConfi
       bad.push(url);
       continue;
     }
+    // Deduplicated by URL, because the same URL is the same sink.
+    //
+    // Per-sink delivery keys its record by sinkKey(url), so a list containing
+    // one URL twice is two entries collapsing onto one record: both get POSTed,
+    // the second acknowledgement overwrites the first, and the reader is paged
+    // twice for one transition. A comma-separated list is exactly the shape
+    // where a copy-paste duplicate goes unnoticed.
+    if (sinks.some((existing) => existing.url === url)) continue;
     sinks.push({ kind: sinkKind(parsed, forced), url, secret });
   }
 

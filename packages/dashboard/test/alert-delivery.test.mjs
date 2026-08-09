@@ -461,3 +461,25 @@ test("the rule table was actually exercised, not just imported", () => {
   );
   assert.deepEqual([...produced].sort(), ["fired", "renotify", "resolved", "stale"]);
 });
+
+test("the same URL listed twice is one sink, not two", () => {
+  // Per-sink delivery keys its record by sinkKey(url), so two entries for one
+  // URL collapse onto one record: both get POSTed, the second acknowledgement
+  // overwrites the first, and the reader is paged twice for one transition. A
+  // comma-separated list is exactly where a copy-paste duplicate hides.
+  const config = resolveSinks({
+    EVESTACK_ALERT_WEBHOOK_URL: "https://ops.example.com/h, https://ops.example.com/h",
+  });
+  assert.equal(config.sinks.length, 1);
+});
+
+test("two different URLs on the same host are still two sinks", () => {
+  // The dedup is on the whole URL, not the host: two Slack webhooks in one
+  // workspace differ only in their path, and collapsing those would silently
+  // drop a channel the operator asked for.
+  const config = resolveSinks({
+    EVESTACK_ALERT_WEBHOOK_URL:
+      "https://hooks.slack.com/services/T0/B0/aaa,https://hooks.slack.com/services/T0/B0/bbb",
+  });
+  assert.equal(config.sinks.length, 2);
+});
