@@ -47,7 +47,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { evaluateAlerts, type AlertResult, type AlertState, type Severity } from "./alerts";
-import { query } from "./db";
+import { describeDbError, isMissingTable, query } from "./db";
 
 /* ── types ─────────────────────────────────────────────────────────────────── */
 
@@ -1068,6 +1068,18 @@ export interface DeliveryStatus {
   readonly failing: readonly { id: string; error: string; attempts: number }[];
   /** Set when the state tables have never been created — nothing has ever run. */
   readonly neverRun: boolean;
+  /**
+   * Why the delivery state could not be read at all, when that is the reason
+   * the fields above are empty.
+   *
+   * `neverRun` used to absorb this case too, and it was wrong twice over: the
+   * flag was written and never read, and its catch returned it for ANY failure
+   * — so a Postgres that was down rendered as "Nothing has been sent yet", the
+   * same words a healthy install with delivery switched off shows. A monitor
+   * panel reporting calm because it could not reach the database is the exact
+   * failure the alert loop exists to prevent.
+   */
+  readonly unreadable: string | null;
 }
 
 /**
@@ -1108,12 +1120,24 @@ export async function deliveryStatus(): Promise<DeliveryStatus> {
         attempts: f.delivery_attempts,
       })),
       neverRun: false,
+      unreadable: null,
     };
-  } catch {
-    // Missing table, or a database that is down. Either way there is nothing to
-    // report and the honest answer is "nothing has been delivered", not an error
-    // banner on a page whose own charts are rendering fine.
-    return { ...base, lastDeliveryAt: null, lastDeliveryOk: null, failing: [], neverRun: true };
+  } catch (error) {
+    // Missing table and "the database is down" are opposite answers and used to
+    // return the same one. A table this repo has simply never created is a
+    // legitimate off state — nothing has run, say so calmly, and do NOT
+    // bootstrap from a page render. Anything else is a read that failed, and a
+    // delivery panel that stays quiet about that is telling the reader they are
+    // covered when nobody knows whether they are.
+    const missing = isMissingTable(error);
+    return {
+      ...base,
+      lastDeliveryAt: null,
+      lastDeliveryOk: null,
+      failing: [],
+      neverRun: missing,
+      unreadable: missing ? null : describeDbError(error),
+    };
   }
 }
 
