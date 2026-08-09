@@ -23,7 +23,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { bringUp, composeEnvFile, composeFile, projectNameFor } from "../create.mjs";
+import { bringUp, childEnv, composeEnvFile, composeFile, projectNameFor } from "../create.mjs";
 import { freePort } from "../shared.mjs";
 
 const PG_IMAGE = "pgvector/pgvector:pg17";
@@ -54,6 +54,20 @@ test(
 
     t.after(() => {
       spawnSync("docker", ["compose", "down", "-v"], { cwd: dir, stdio: "ignore" });
+    });
+
+    // HOSTILE ON PURPOSE, rather than by accident of how the suite was invoked.
+    //
+    // This test already caught the bug below — but only when the whole suite ran
+    // as `pnpm -r --if-present test`, because that is what put
+    // npm_config_if_present in the environment. Run any other way it passed, so
+    // for a while it looked like flakiness rather than a finding. Setting it
+    // here makes the assertion mean the same thing under every invocation.
+    const savedIfPresent = process.env.npm_config_if_present;
+    process.env.npm_config_if_present = "true";
+    t.after(() => {
+      if (savedIfPresent === undefined) delete process.env.npm_config_if_present;
+      else process.env.npm_config_if_present = savedIfPresent;
     });
 
     const started = Date.now();
@@ -149,4 +163,33 @@ test("ui.mjs installs no signal handlers merely by being imported", async () => 
     { encoding: "utf8" },
   );
   assert.deepEqual(JSON.parse(out), { sigint: 0, sigterm: 0, exit: 0 });
+});
+
+test("npm config that arrives through the environment cannot change what a step means", () => {
+  // `npm run <missing-script>` exits 1, and 0 when npm_config_if_present is set
+  // — measured, both ways. Every step in bringUp reads its exit code, so an
+  // ambient copy of that variable turns "the script does not exist" into
+  // success: the schema row prints "workflow tables created" having created
+  // nothing, bringUp returns true, and the dashboard starts against an empty
+  // database.
+  //
+  // It reaches a child by inheritance, so it is not something a caller opts
+  // into. The root `pnpm -r --if-present test` in this repository exports it.
+  const saved = process.env.npm_config_if_present;
+  try {
+    process.env.npm_config_if_present = "true";
+    assert.equal(
+      childEnv().npm_config_if_present,
+      undefined,
+      "npm_config_if_present must not reach a child, or a missing script reads as a completed step",
+    );
+    // Everything else is passed through: this strips one named variable, it does
+    // not sanitise the environment.
+    process.env.BRINGUP_CANARY_NOT_AN_EVESTACK_VAR = "kept";
+    assert.equal(childEnv().BRINGUP_CANARY_NOT_AN_EVESTACK_VAR, "kept", "unrelated variables still reach the child");
+  } finally {
+    delete process.env.BRINGUP_CANARY_NOT_AN_EVESTACK_VAR;
+    if (saved === undefined) delete process.env.npm_config_if_present;
+    else process.env.npm_config_if_present = saved;
+  }
 });
