@@ -1,0 +1,513 @@
+# Build the dashboard image on a pull request, and then RUN it.
+#
+# ---------------------------------------------------------------------------
+# What was actually missing
+# ---------------------------------------------------------------------------
+#
+# The obvious framing — "the Dockerfile is only built at release" — is not quite
+# the gap, and the second half is the useful statement:
+#
+#   NOTHING, ANYWHERE, HAS EVER STARTED THIS IMAGE.
+#
+# publish-dashboard.yml builds it on both architectures, assembles a multi-arch
+# tag, and ends with a step called "prove it pulls". That step runs
+# `docker buildx imagetools inspect`, which reads a manifest out of a registry.
+# It never creates a container. ci.yml's `dashboard-build` job compiles the Next
+# application, which is a different artifact and does not know this file exists.
+#
+# So the class of failure neither covers is: the image builds, pushes and pulls
+# perfectly, and then dies or 500s the moment anyone runs it. That is not
+# hypothetical. Three COPY lines near the bottom of the Dockerfile exist because
+# it happened, and the file says so in its own words:
+#
+#   "NOT optional, and the reason the previous runtime stage would have failed
+#    on first use even if it had built. lib/approvals.ts, lib/memories.ts and
+#    lib/traces.ts each readFileSync(join(dir, "sql", "<name>.sql")) at REQUEST
+#    time … Approvals, the memory-deletion audit log and trace ingest each 500
+#    on first use without their file."
+#
+# An image missing `sql/` builds green, pushes green, inspects green, starts,
+# answers the health probe, and 500s on the first real request. Every check this
+# repository had would have passed it. So this job builds the image and then
+# spends about a minute proving the CONTAINER works: each file the runtime stage
+# copies is exercised through the code that reads it, not merely listed.
+#
+# ---------------------------------------------------------------------------
+# The cost, stated plainly
+# ---------------------------------------------------------------------------
+#
+# Measured on the first two runs of this file: 271s cold, 70s with the layer
+# cache warm. The cold number is the one to quote when this file changes, since
+# a change here invalidates the cache it is measuring.
+#
+# That cost is paid by every future contributor, so it is bounded three ways:
+#
+#   1. `paths:` on pull_request. It runs only when the PR touches something that
+#      ends up INSIDE the image. A docs or website PR does not pay for it. That
+#      list is the runtime stage's COPY lines read back as globs: ADD A COPY,
+#      ADD IT HERE, or this job silently stops watching the thing you added.
+#   2. amd64 only. arm64 is not dropped as unimportant — it is why
+#      publish-dashboard.yml rents a second native runner — but a PR asks "does
+#      this still work", and for a Node application that answer does not differ
+#      by architecture. The release path stays the arm64 gate.
+#   3. A build cache scoped to this job alone.
+#
+# NOT a required check, deliberately. GitHub reports a `paths:`-filtered
+# workflow as skipped rather than successful, and a skipped REQUIRED check
+# blocks a merge forever — so requiring this would wedge every PR that does not
+# touch the dashboard, which is most of them.
+name: Dashboard image
+
+on:
+  pull_request:
+    paths:
+      - "packages/dashboard/**"
+      - "packages/evestack-schedules/**"
+      - "templates/default/agent/skills/**"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "package.json"
+      - ".github/workflows/dashboard-image.yml"
+  # On main, and deliberately WITHOUT a paths filter. Two lists would have to be
+  # kept in sync by memory, and this repository has already been bitten twice by
+  # a hardcoded list nobody remembered to extend. A push to main happens once per
+  # merge, so running it unconditionally there is cheap — and it is what notices
+  # a break that appears only once two independently-green PRs are both in.
+  push:
+    branches: [main]
+
+concurrency:
+  group: dashboard-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      # The same image as the compose file the scaffolder writes and as ci.yml's
+      # runtime job, so this is the database users actually get.
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: evestack
+          POSTGRES_PASSWORD: evestack
+          POSTGRES_DB: evestack
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U evestack -d evestack"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 20
+
+    env:
+      # Throwaway, and their whole life is this job. Literals rather than
+      # secrets on purpose: a fork's PR gets no secrets, and a job that quietly
+      # degrades to "no credential configured" on exactly the PRs least likely
+      # to be trusted is worse than no job at all.
+      PGURL: postgres://evestack:evestack@localhost:5433/evestack
+      AUTH_USER: probe
+      AUTH_PASSWORD: probe-password-not-a-secret
+      INGEST_TOKEN: probe-ingest-token-not-a-secret
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # The agent schema, before anything reads it.
+      #
+      # The first version of this job skipped it, and the job caught that
+      # itself: /api/health answers 503 `schema-missing` when
+      # `workflow.workflow_runs` is absent — deliberately, because "a stack
+      # brought up without db:bootstrap answered 200 here and reported HEALTHY
+      # in docker ps while every page failed" — so `curl -sf` refused it and the
+      # container never came up. The image was fine; the database was empty.
+      #
+      # The `workflow` schema belongs to @workflow/world-postgres and owns its
+      # own migrations, so this runs THEIR script rather than hand-rolling the
+      # DDL in psql. That is the same rule ci.yml's runtime job follows, and the
+      # reason a Node toolchain has to exist in this job at all.
+      #
+      # Scoped to the template. This job never compiles anything — the image
+      # builds itself — so a full workspace install and build would be a minute
+      # spent on packages nothing here touches.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter "@evestack/template-default..."
+      - name: create the workflow schema
+        env:
+          WORKFLOW_POSTGRES_URL: ${{ env.PGURL }}
+        run: |
+          set -euo pipefail
+          (cd templates/default && npm run db:bootstrap)
+          # Anti-vacuity: bootstrap can print encouraging things and leave the
+          # schema absent, and the failure that follows would then be blamed on
+          # the image. Confirm the one table /api/health actually looks for.
+          psql "$PGURL" -tAc "SELECT to_regclass('workflow.workflow_runs')::text" | grep -q workflow_runs || {
+            echo "::error::db:bootstrap finished but workflow.workflow_runs does not exist"; exit 1; }
+          echo "workflow schema present"
+
+      - name: build the image
+        uses: docker/build-push-action@v6
+        with:
+          # The repository ROOT, exactly as publish-dashboard.yml does it, for
+          # the reason the Dockerfile's header spends thirty lines on:
+          # `@evestack/schedules` is a `workspace:*` dependency and `workspace:`
+          # is a pnpm protocol npm does not implement. An earlier version of that
+          # file used a `packages/dashboard` context and ended every build anyone
+          # attempted at EUNSUPPORTEDPROTOCOL — for months, unnoticed, precisely
+          # because no job built it.
+          context: .
+          file: packages/dashboard/Dockerfile
+          platforms: linux/amd64
+          # Into the local daemon, not a registry. A PR — including one from a
+          # fork — has no business pushing anything, and the question here is
+          # whether the image works, not whether it uploads.
+          push: false
+          load: true
+          tags: evestack-dashboard:pr
+          # Its own scope. Sharing publish-dashboard.yml's would let any PR write
+          # into the cache the release path reads from.
+          cache-from: type=gha,scope=dashboard-image-pr
+          cache-to: type=gha,mode=max,scope=dashboard-image-pr
+
+      # ---------------------------------------------------------------------
+      # Structure first: every file the runtime stage copies is still there
+      # ---------------------------------------------------------------------
+      # Cheap, and it catches the regression that is actually likely — someone
+      # adds `sql/whatever.sql` and a later refactor of `COPY … /sql ./sql` into
+      # named files quietly leaves it behind. Compared against the REPOSITORY
+      # rather than a list written here, because a list written here would have
+      # to be remembered, and the lists that need remembering are the ones that
+      # go stale.
+      #
+      # This is also the only coverage `sql/memory-audit.sql` gets. Every other
+      # schema below is applied by a GET; that one is reached only by deleting a
+      # memory that exists, and manufacturing a memory to delete costs more than
+      # it proves. Presence here, behaviour everywhere else — said out loud so
+      # the difference is not mistaken for uniform coverage.
+      - name: the image carries the same sql/ the repository has
+        run: |
+          set -euo pipefail
+          repo="$(cd packages/dashboard/sql && ls *.sql | sort | tr '\n' ' ')"
+          img="$(docker run --rm --entrypoint sh evestack-dashboard:pr -c 'ls sql/*.sql | xargs -n1 basename | sort' | tr '\n' ' ')"
+          echo "repository: $repo"
+          echo "image:      $img"
+          # Anti-vacuity before the comparison, not after: two empty strings are
+          # equal, so a glob that matched nothing on both sides would pass this
+          # step while proving nothing at all.
+          case "$repo" in "") echo "::error::found no .sql files in the repository — this check would have been vacuous"; exit 1 ;; esac
+          if [ "$repo" != "$img" ]; then
+            echo "::error::the image's sql/ does not match the repository's. Each of these is readFileSync'd at REQUEST time, so a missing one is a 500 on first use rather than a build failure."
+            exit 1
+          fi
+          echo "$(echo "$repo" | wc -w) sql files, identical on both sides"
+
+      - name: the skills fixture and the fallback skills directory survived
+        run: |
+          set -euo pipefail
+          # fixtures/ is what lets `/api/skills?selftest=1` answer truthfully in a
+          # container; the templates path is lib/skills.ts's fallback for a
+          # deployment with no agent/skills of its own, which a container never
+          # has. Both are exercised for real further down — this only localises a
+          # failure to "the file is missing" instead of "a route returned 500".
+          docker run --rm --entrypoint sh evestack-dashboard:pr -c '
+            test -f fixtures/skills/malicious-fixture/SKILL.md || { echo "missing fixtures/skills/malicious-fixture/SKILL.md"; exit 1; }
+            test -d /repo/templates/default/agent/skills || { echo "missing /repo/templates/default/agent/skills"; exit 1; }
+          '
+          echo "both present"
+
+      # ---------------------------------------------------------------------
+      # Start it
+      # ---------------------------------------------------------------------
+      - name: a webhook sink, so the alert loop starts rather than opting out
+        run: |
+          set -euo pipefail
+          cat > /tmp/sink.mjs <<'EOF'
+          import { createServer } from "node:http";
+          import { appendFileSync } from "node:fs";
+          createServer((req, res) => {
+            let body = "";
+            req.on("data", (c) => (body += c));
+            req.on("end", () => {
+              appendFileSync("/tmp/sink.jsonl", JSON.stringify({ path: req.url, body }) + "\n");
+              res.writeHead(200, { "content-type": "text/plain" }).end("ok");
+            });
+          }).listen(5998, "127.0.0.1", () => console.log("sink on :5998"));
+          EOF
+          node /tmp/sink.mjs > /tmp/sink.log 2>&1 &
+          for i in $(seq 1 20); do
+            curl -sf -o /dev/null -XPOST http://127.0.0.1:5998/up -d '{}' && { echo "sink up"; exit 0; }
+            sleep 1
+          done
+          echo "::error::the local webhook sink never came up"
+          cat /tmp/sink.log
+          exit 1
+
+      - name: run the container
+        run: |
+          set -euo pipefail
+          # --network host so the container reaches the Postgres SERVICE, which
+          # GitHub publishes on the runner's localhost, and the sink above.
+          # Bridge networking would need the generated github_network_* name,
+          # which is an implementation detail this job should not depend on.
+          docker run -d --name dash --network host \
+            -e WORKFLOW_POSTGRES_URL="$PGURL" \
+            -e EVESTACK_AUTH_USER="$AUTH_USER" \
+            -e EVESTACK_AUTH_PASSWORD="$AUTH_PASSWORD" \
+            -e EVESTACK_SESSION_SECRET=probe-session-secret-not-a-secret \
+            -e EVESTACK_INGEST_TOKEN="$INGEST_TOKEN" \
+            -e EVESTACK_PUBLIC_URL=http://localhost:4000 \
+            -e EVESTACK_ALERT_WEBHOOK_URL=http://127.0.0.1:5998/hook \
+            -e EVESTACK_ALERT_INTERVAL_SECONDS=15 \
+            evestack-dashboard:pr
+
+          # The STATUS, kept, rather than a bare success/failure.
+          #
+          # This loop used to be `curl -sf … && exit 0`, and when the first run
+          # of this job failed it reported "never answered within 60s" — while
+          # the server was answering perfectly, with 503 `schema-missing`, and
+          # `-f` was turning that into an indistinguishable non-zero. The wrong
+          # half of the stack got investigated. A wait that cannot tell "nothing
+          # is listening" from "it told you exactly what is wrong" is worse than
+          # no diagnostics, because it reads like the former.
+          code=000
+          for i in $(seq 1 60); do
+            code="$(curl -s -o /tmp/health.json -w '%{http_code}' http://localhost:4000/api/health || echo 000)"
+            [ "$code" = "200" ] && { echo "answering 200 after ${i}s"; exit 0; }
+            # A container that has already exited will never answer, and waiting
+            # the full minute to say so buries the reason under a timeout.
+            if [ "$(docker inspect -f '{{.State.Running}}' dash)" != "true" ]; then
+              echo "::error::the container exited before it ever answered"
+              docker logs dash
+              exit 1
+            fi
+            sleep 1
+          done
+          if [ "$code" = "000" ]; then
+            echo "::error::nothing was listening on :4000 after 60s — the container is running but never bound"
+          else
+            echo "::error::/api/health answered $code, not 200, for 60s. Its body says why:"
+            cat /tmp/health.json
+          fi
+          docker logs dash
+          exit 1
+
+      # The HEALTHCHECK directive itself, which nothing else in this repository
+      # tests. It is what `docker ps` and every orchestrator read, and it is
+      # written to report unhealthy when EVESTACK_AUTH_PASSWORD is unset — a
+      # dashboard that fails closed should look broken rather than look fine.
+      - name: docker's own HEALTHCHECK reports healthy
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 40); do
+            status="$(docker inspect -f '{{.State.Health.Status}}' dash)"
+            case "$status" in
+              healthy)   echo "healthy after $((i * 2))s"; exit 0 ;;
+              unhealthy) echo "::error::HEALTHCHECK reports unhealthy"; docker logs dash; exit 1 ;;
+            esac
+            sleep 2
+          done
+          echo "::error::HEALTHCHECK never left '$(docker inspect -f '{{.State.Health.Status}}' dash)'"
+          docker logs dash
+          exit 1
+
+      # ---------------------------------------------------------------------
+      # The negative control, and it goes FIRST
+      # ---------------------------------------------------------------------
+      # Every step below asserts that authenticated routes answer 200. That is
+      # worth nothing unless the credential is what makes the difference: a
+      # dashboard with authentication disabled would also answer 200, and the
+      # whole suite would be measuring its own optimism. So prove a session-tier
+      # route refuses an anonymous caller before trusting any 200 that follows.
+      - name: an unauthenticated request is refused
+        run: |
+          set -euo pipefail
+          code="$(curl -s -o /dev/null -w '%{http_code}' http://localhost:4000/api/health/detail)"
+          [ "$code" = "401" ] || { echo "::error::/api/health/detail answered $code with no credential, expected 401"; exit 1; }
+          echo "401 as expected — the 200s below mean something"
+
+      # ---------------------------------------------------------------------
+      # Each schema, through the code that reads it from inside the image
+      # ---------------------------------------------------------------------
+      - name: the request-time schemas apply, and the routes that need them work
+        run: |
+          set -euo pipefail
+          A=(-u "$AUTH_USER:$AUTH_PASSWORD")
+
+          # queries.ts -> sql/query-indexes.sql. It also imports ensureTraceSchema,
+          # so this single request applies sql/traces.sql as a side effect.
+          curl -sf "${A[@]}" http://localhost:4000/api/health/detail > /tmp/detail.json || {
+            echo "::error::/api/health/detail failed — queries.ts could not apply sql/query-indexes.sql"; docker logs dash; exit 1; }
+          node -e '
+            const j = require("/tmp/detail.json");
+            if (j.ok !== true) { console.error("::error::health/detail says ok=false: " + (j.error ?? "")); process.exit(1); }
+            if (j.database !== "connected") { console.error("::error::database is not connected"); process.exit(1); }
+            console.log("health/detail: ok, database connected");
+          '
+
+          # approvals.ts -> sql/approvals.sql
+          curl -sf "${A[@]}" http://localhost:4000/api/approvals > /tmp/approvals.json || {
+            echo "::error::/api/approvals failed — approvals.ts could not apply sql/approvals.sql"; docker logs dash; exit 1; }
+          node -e '
+            const j = require("/tmp/approvals.json");
+            if (j.ok !== true) { console.error("::error::approvals says ok=false"); process.exit(1); }
+            console.log("approvals: ok");
+          '
+
+          # facts.ts -> sql/facts.sql. POST, not GET: the metric query takes a
+          # body — `{view, measures, …}`, Langfuse's shape — and a GET is a 405.
+          curl -sf -XPOST "${A[@]}" -H 'content-type: application/json' \
+            -d '{"view":"turns","measures":[{"measure":"cost","aggregation":"sum"}]}' \
+            http://localhost:4000/api/metrics/query > /tmp/metrics.json || {
+            echo "::error::/api/metrics/query failed — facts.ts could not apply sql/facts.sql"; docker logs dash; exit 1; }
+          node -e '
+            const j = require("/tmp/metrics.json");
+            if (j.ok !== true) { console.error("::error::metrics/query says ok=false: " + (j.error ?? "")); process.exit(1); }
+            if (!Array.isArray(j.data)) { console.error("::error::metrics/query returned no data array"); process.exit(1); }
+            console.log("metrics/query: ok, compiled and ran");
+          '
+
+      # traces.ts -> sql/traces.sql, through the ingest tier a real exporter uses
+      # rather than through the session tier.
+      #
+      # A REAL span, and then the row read back out of Postgres. Posting
+      # `{"resourceSpans":[]}` also answers 200 — measured — and writes nothing,
+      # so it would assert that the route exists and nothing whatsoever about
+      # whether the schema applied or the write landed.
+      - name: a span posted to the container arrives in Postgres
+        run: |
+          set -euo pipefail
+          node -e '
+            const hex = (n) => Array.from({length: n}, (_, i) => ((i * 37 + 11) % 256).toString(16).padStart(2, "0")).join("");
+            const now = Date.now() * 1e6;
+            require("fs").writeFileSync("/tmp/span.json", JSON.stringify({
+              resourceSpans: [{
+                resource: { attributes: [{ key: "service.name", value: { stringValue: "ci-image-smoke" } }] },
+                scopeSpans: [{
+                  scope: { name: "image-smoke", version: "1" },
+                  spans: [{
+                    traceId: hex(16), spanId: hex(8), name: "image.smoke", kind: 1,
+                    startTimeUnixNano: String(now - 1e9), endTimeUnixNano: String(now),
+                    status: { code: 1 },
+                  }],
+                }],
+              }],
+            }));
+          '
+          code="$(curl -s -o /tmp/ingest.json -w '%{http_code}' -XPOST http://localhost:4000/api/ingest/v1/traces \
+            -H "authorization: Bearer $INGEST_TOKEN" -H 'content-type: application/json' \
+            --data-binary @/tmp/span.json)"
+          case "$code" in
+            2*) echo "ingest answered $code" ;;
+            *)  echo "::error::trace ingest answered $code"; cat /tmp/ingest.json; docker logs dash; exit 1 ;;
+          esac
+
+          for i in $(seq 1 15); do
+            n="$(psql "$PGURL" -tAc "SELECT count(*) FROM evestack.spans WHERE scope_name = 'image-smoke'")"
+            [ "$n" = "1" ] && { echo "the span is in Postgres after ${i}s"; exit 0; }
+            sleep 2
+          done
+          echo "::error::the span never reached evestack.spans — the route accepted it and the write did not land"
+          docker logs dash
+          exit 1
+
+      - name: the skills page reads both the fixture and the fallback directory
+        run: |
+          set -euo pipefail
+          A=(-u "$AUTH_USER:$AUTH_PASSWORD")
+
+          curl -sf "${A[@]}" http://localhost:4000/api/skills > /tmp/skills.json || {
+            echo "::error::/api/skills failed"; docker logs dash; exit 1; }
+          node -e '
+            const j = require("/tmp/skills.json");
+            // `resolvedBy` is the route stating which directory it actually used.
+            // A container has no agent/skills of its own, so anything other than
+            // the bundled template means the COPY did not travel — and asserting
+            // on this rather than on a non-empty list is what distinguishes
+            // "found the fallback" from "found something, somewhere".
+            if (j.directory?.resolvedBy !== "bundled-template") {
+              console.error("::error::skills resolvedBy=" + JSON.stringify(j.directory?.resolvedBy) + ", expected bundled-template — templates/default/agent/skills is not in the image");
+              process.exit(1);
+            }
+            if (!Array.isArray(j.skills) || j.skills.length < 1) {
+              console.error("::error::the fallback directory resolved but listed no skills");
+              process.exit(1);
+            }
+            console.log(`skills: ${j.skills.length} from the bundled template`);
+          '
+
+          # fixtures/: the scanner's proof-of-life. `?selftest=1` reads the inert
+          # specimen by a hard-coded name and the scanner must flag it critical.
+          # Without the fixture the route degrades to a cheerful ok:true that says
+          # the firewall "cannot be self-tested here" — which is why this asserts
+          # on the verdict and not on the status code.
+          curl -sf "${A[@]}" 'http://localhost:4000/api/skills?selftest=1' > /tmp/selftest.json || {
+            echo "::error::/api/skills?selftest=1 failed"; docker logs dash; exit 1; }
+          node -e '
+            const j = require("/tmp/selftest.json");
+            if (j.armed !== true) { console.error("::error::the scanner self-test is not armed — fixtures/ is missing from the image"); process.exit(1); }
+            if (j.canary?.verdict !== "critical") {
+              console.error("::error::the canary verdict is " + JSON.stringify(j.canary?.verdict) + ", expected critical");
+              process.exit(1);
+            }
+            console.log(`skills selftest: armed, canary verdict ${j.canary.verdict}`);
+          '
+
+      # ---------------------------------------------------------------------
+      # instrumentation.ts, sql/alerts.sql, and an outbound POST
+      # ---------------------------------------------------------------------
+      # The newest thing in the image and the one with the most moving parts: a
+      # `register()` hook that starts a timer, reads sql/alerts.sql off disk and
+      # posts to a webhook. None of that runs during a build, and `register()`
+      # has two guards on it — NEXT_RUNTIME and NEXT_PHASE — either of which
+      # would silently produce a container that never alerts.
+      - name: the alert loop starts inside the container and applies its schema
+        run: |
+          set -euo pipefail
+          docker logs dash 2>&1 | grep -q "evestack:alerts" || {
+            echo "::error::instrumentation.ts never logged — the alert loop did not start in the container"; docker logs dash; exit 1; }
+          if docker logs dash 2>&1 | grep -q "not delivering"; then
+            echo "::error::the alert loop opted out despite EVESTACK_ALERT_WEBHOOK_URL being set"
+            docker logs dash
+            exit 1
+          fi
+
+          # The schema, in the database, applied from a file inside the image.
+          for i in $(seq 1 30); do
+            found="$(psql "$PGURL" -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'evestack' AND table_name IN ('alert_state','alert_deliveries','alert_lease')")"
+            if [ "$found" = "3" ]; then echo "all three alert tables exist after $((i * 2))s"; break; fi
+            if [ "$i" = "30" ]; then
+              echo "::error::sql/alerts.sql never applied (found $found of 3 tables)"
+              docker logs dash
+              exit 1
+            fi
+            sleep 2
+          done
+
+          # `ever_ok` specifically, because it arrives through an ALTER rather
+          # than the CREATE — it was added after the first release, and
+          # CREATE TABLE IF NOT EXISTS silently does nothing on a table that is
+          # already there. That is exactly how a column goes missing in
+          # production and nowhere else.
+          psql "$PGURL" -tAc "SELECT 1 FROM information_schema.columns WHERE table_schema = 'evestack' AND table_name = 'alert_state' AND column_name = 'ever_ok'" | grep -q 1 || {
+            echo "::error::alert_state.ever_ok is missing — the ALTER in sql/alerts.sql did not run"; exit 1; }
+          echo "ever_ok present"
+
+      # ---------------------------------------------------------------------
+      # Always, whatever happened above
+      # ---------------------------------------------------------------------
+      - name: the container's own log
+        if: always()
+        run: |
+          echo "── docker logs ──────────────────────────────────────────────"
+          docker logs dash 2>&1 || echo "(no container)"
+          echo "── what the webhook sink received ───────────────────────────"
+          cat /tmp/sink.jsonl 2>/dev/null || echo "(nothing, which is fine unless a monitor actually changed state)"
+          docker rm -f dash > /dev/null 2>&1 || true

@@ -82,6 +82,25 @@ green suite without it.
 If you touch `packages/dashboard`, load the pages you changed in a browser and check them
 against real data — a session that only exists in your head doesn't catch layout bugs.
 
+### If you touch the Dockerfile, or anything the image carries
+
+You do not have to build it — `.github/workflows/dashboard-image.yml` builds the image on
+every PR that touches something inside it, starts the container against a real Postgres, and
+exercises each file the runtime stage copies through the code that reads it. That job exists
+because the failure it catches is invisible everywhere else: `sql/*.sql` is read with
+`readFileSync` at **request** time, so an image missing one builds green, pushes green, starts,
+answers the health probe, and 500s on the first real request.
+
+To run it yourself, from the repository root — note the context is the root, not
+`packages/dashboard`, because `@evestack/schedules` is a `workspace:*` dependency:
+
+```bash
+docker build -f packages/dashboard/Dockerfile -t evestack-dashboard .
+```
+
+It is a full `next build` inside the container and wants a few GB of RAM; on a small machine,
+let CI do it.
+
 ## Where things live
 
 | You want to... | Look at |
