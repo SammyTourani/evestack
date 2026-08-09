@@ -7,9 +7,15 @@
 # the scaffolder and every setup doc used to have to print an apology for.
 #
 # It is release-gated, not push-gated. `packages/dashboard` changes on most PRs
-# and none of those are a version anyone should be pulling; ci.yml's
-# `dashboard-build` job already proves the image compiles on every commit, which
-# is the signal a PR needs. This one publishes.
+# and none of those are a version anyone should be pulling, so the PR signal
+# lives in dashboard-image.yml — which builds this same file and then RUNS the
+# container. This one publishes.
+#
+# That sentence used to read "ci.yml's `dashboard-build` job already proves the
+# image compiles on every commit", and it was not true. `dashboard-build` runs
+# `next build`; it produces the application, never an image, and has no idea
+# this Dockerfile exists. For as long as that comment stood, the honest summary
+# of PR-time image coverage was: none.
 #
 #   git tag dashboard-v0.1.0 && git push origin dashboard-v0.1.0
 #

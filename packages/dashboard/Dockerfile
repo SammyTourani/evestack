@@ -30,9 +30,16 @@
 # is a pnpm protocol npm does not implement — so every build of this image, by
 # anyone, ended at `EUNSUPPORTEDPROTOCOL`. No CI job built it, which is why that
 # went unnoticed: `docker compose --profile full up -d` had never once worked.
-# ci.yml's `dashboard-build` job compiles the app on every commit and the
-# publish workflow builds this file for real on every release tag, so that
+# .github/workflows/dashboard-image.yml now builds this file on every PR that
+# touches anything inside the image and then starts the container, so that
 # particular silence is over.
+#
+# Note what that job covers and this comment used to imply the others did.
+# `dashboard-build` in ci.yml compiles the Next application — a different
+# artifact, which does not read this file. The publish workflow's "prove it
+# pulls" step inspects a registry manifest and never creates a container. Both
+# are green for an image that starts and 500s, which is exactly the failure the
+# three COPY lines at the bottom of this file were written to prevent.
 #
 # Three ways out were weighed:
 #
