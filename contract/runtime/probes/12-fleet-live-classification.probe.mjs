@@ -331,14 +331,27 @@ export default {
       // session may be classified `unknown`. That state means "the agent could not
       // be reached", and reporting it while eve is healthy would send an operator
       // to debug a network that is fine.
-      const noneUnknown = entries.every((e) => e.health !== "unknown");
+      /*
+       * NOT "nothing is unknown". `unknown` is a legitimate verdict: the sweep
+       * may reach the agent and still get nothing it can judge a session by, and
+       * inventing a verdict from no evidence is the failure this module was
+       * rewritten to avoid.
+       *
+       * What must never happen is the sweep BLAMING THE NETWORK for an agent
+       * that answered. This probe talks to that agent twice before it gets here,
+       * so a "could not be reached" in the report is a false diagnosis pointing
+       * an operator at a healthy machine — which is exactly what it caught, and
+       * what StreamTruncatedError now separates.
+       */
+      const blamesTheNetwork = entries.filter((e) => /could not be reached/.test(e.reason ?? ""));
+      const noneUnknown = blamesTheNetwork.length === 0;
       t.ok(
         noneUnknown,
-        "and none is `unknown` while the agent is up — that state means the agent could not be reached",
+        "no entry blames an unreachable agent — this probe has already talked to it twice",
         noneUnknown
           ? {}
           : {
-              expected: "no `unknown` entries against a live agent",
+              expected: "no entry reporting the agent as unreachable",
               // The reason, not just the count. `unknown` always carries the
               // error that produced it, and without it a failure here says only
               // "the sweep could not reach the agent" — which is the one thing

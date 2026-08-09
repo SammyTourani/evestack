@@ -107,14 +107,22 @@ test("a full read is unaffected by the socket dropping afterwards", async () => 
   assert.equal(out.events.length, 7);
 });
 
-test("a stream that drops before ANY event still throws", async () => {
+test("a stream that drops before ANY event throws a TYPED error", async () => {
   // The exception that makes the rest safe. Headers prove the session exists;
   // they say nothing about its state, so returning an empty list would let
   // classifySession invent a verdict — it would read "not waiting, not
   // terminal, nothing pending" and call a session active or wedged on no
   // evidence at all. `unknown` is the honest answer, and this is how the caller
   // reaches it.
-  await assert.rejects(() => read("destroy_6_0"));
+  await assert.rejects(() => read("destroy_6_0"), (error) => {
+    // Typed, not anonymous. lib/fleet.ts branches on this to say "the agent
+    // answered but sent no events" instead of "the agent could not be
+    // reached" — the second sends an operator to check a healthy network,
+    // and the response headers this read got are proof it is healthy.
+    assert.equal(error.name, "StreamTruncatedError");
+    assert.match(error.message, /ended before any event could be read/);
+    return true;
+  });
 });
 
 test("an empty session reports a tail index of -1 and no events", async () => {

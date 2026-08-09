@@ -1,4 +1,4 @@
-import { type SessionSnapshot, getSessionSnapshot } from "./agent-client";
+import { StreamTruncatedError, type SessionSnapshot, getSessionSnapshot } from "./agent-client";
 import { query } from "./db";
 
 /**
@@ -429,11 +429,24 @@ export async function inspectFleet(
 
         return { ...base, ...classifySession(snapshot, inFlightMs, idleMs) };
       } catch (error) {
+        /*
+         * `unknown` either way — nothing here can be classified — but NOT the
+         * same sentence, because they send the reader to different places.
+         *
+         * A StreamTruncatedError means the agent answered: its response headers
+         * arrived and were parsed, and then the body ended before a single event
+         * could be read. Reporting that as "the agent could not be reached"
+         * pointed operators at a healthy network. Caught in CI, where the fleet
+         * sweep blamed an agent the same job had just talked to twice.
+         */
         return {
           ...base,
           health: "unknown",
           pendingCount: 0,
-          reason: `the agent could not be reached (${error instanceof Error ? error.message : String(error)})`,
+          reason:
+            error instanceof StreamTruncatedError
+              ? `the agent answered but sent no events to judge this session by (${error.message})`
+              : `the agent could not be reached (${error instanceof Error ? error.message : String(error)})`,
         };
       }
     }),

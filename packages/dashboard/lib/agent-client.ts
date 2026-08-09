@@ -471,6 +471,29 @@ export async function readRecentEvents(
   }
 }
 
+/**
+ * The agent answered, and then its stream gave us nothing.
+ *
+ * Distinct from "the agent could not be reached", and the distinction is the
+ * whole reason this class exists. Both used to arrive at lib/fleet.ts as an
+ * anonymous rejection, so the fleet banner reported an unreachable agent —
+ * sending an operator to check a network — for a session whose response HEADERS
+ * had already arrived and been read. The headers are proof of reachability.
+ *
+ * What it means for the caller: the session exists and its state is unknown.
+ * That is a real answer, and a different one from "I could not ask".
+ */
+export class StreamTruncatedError extends Error {
+  constructor(cause: unknown) {
+    super(
+      "the agent answered but its event stream ended before any event could be read " +
+        `(${cause instanceof Error ? cause.message : String(cause)})`,
+    );
+    this.name = "StreamTruncatedError";
+    this.cause = cause;
+  }
+}
+
 async function readNdjson(body: ReadableStream<Uint8Array>, limit: number): Promise<EveStreamEvent[]> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -510,7 +533,7 @@ async function readNdjson(body: ReadableStream<Uint8Array>, limit: number): Prom
          * from an empty list would invent a verdict. `unknown` is the honest
          * answer there and this lets the caller reach it.
          */
-        if (events.length === 0) throw error;
+        if (events.length === 0) throw new StreamTruncatedError(error);
         break;
       }
       const { done, value } = chunk;
