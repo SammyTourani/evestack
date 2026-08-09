@@ -1,5 +1,6 @@
 import { UNCONFIGURED_MESSAGE, authConfigured } from "@/lib/auth";
 import { query } from "@/lib/db";
+import { dashboardVersion } from "@/lib/version";
 
 export const dynamic = "force-dynamic";
 
@@ -32,7 +33,7 @@ export async function GET(): Promise<Response> {
 
   if (!authConfigured()) {
     return Response.json(
-      { ok: false, status: "unconfigured", error: UNCONFIGURED_MESSAGE },
+      { ok: false, status: "unconfigured", version: dashboardVersion(), error: UNCONFIGURED_MESSAGE },
       { status: 503, headers },
     );
   }
@@ -60,17 +61,18 @@ export async function GET(): Promise<Response> {
           ok: false,
           database: "connected",
           status: "schema-missing",
+          version: dashboardVersion(),
           error:
             "Postgres is reachable but has no agent schema. Run `npm run db:bootstrap` in your agent project.",
         },
         { status: 503, headers },
       );
     }
-    return Response.json({ ok: true, database: "connected" }, { headers });
+    return Response.json({ ok: true, database: "connected", version: dashboardVersion() }, { headers });
   } catch {
     // No error detail here. pg's messages carry the host, port and database
     // name from the connection string, and nothing authenticates this response.
     // The full message is on /api/health/detail.
-    return Response.json({ ok: false, database: "unreachable" }, { status: 503, headers });
+    return Response.json({ ok: false, database: "unreachable", version: dashboardVersion() }, { status: 503, headers });
   }
 }
