@@ -244,28 +244,36 @@ export default {
     /* ── resumption: the property the header promises ──────────────────────── */
 
     if (frames.length >= 2) {
-      const resumeFrom = ids[0];
-      const resumed = await call(
-        `/api/control/sessions/${encodeURIComponent(id)}/stream?startIndex=${resumeFrom}`,
-        { headers: { accept: "text/event-stream" } },
-      );
+      const lastSeen = ids[0];
+
+      // THE HEADER, not the query parameter, and the distinction is the whole
+      // promise. `Last-Event-ID` is what a reconnecting EventSource sends and it
+      // carries the last event the client ALREADY SAW, so resuming must start at
+      // the one after it — resolveStartIndex() returns `parsed + 1` for exactly
+      // that reason. An explicit `?startIndex=N` is an absolute position and is
+      // deliberately inclusive; asserting the exclusive rule against it, as the
+      // first version of this probe did, tests the wrong parameter and reports
+      // correct behaviour as a bug.
+      const resumed = await call(`/api/control/sessions/${encodeURIComponent(id)}/stream`, {
+        headers: { accept: "text/event-stream", "last-event-id": String(lastSeen) },
+      });
       const resumedIds = parseSse(await drain(resumed, { budgetMs: 10_000 })).map((f) => Number(f.id));
 
-      const noReplay = resumedIds.every((n) => n > resumeFrom);
+      const noReplay = resumedIds.every((n) => n > lastSeen);
       t.ok(
         noReplay,
-        "resuming past an index replays nothing at or before it",
+        "a reconnect carrying Last-Event-ID replays nothing the client already saw",
         noReplay
           ? {}
           : {
-              expected: `every id > ${resumeFrom}`,
-              actual: `${resumedIds.join(", ")} — a reconnecting browser would re-render events the reader already saw`,
+              expected: `every id > ${lastSeen}`,
+              actual: `${resumedIds.join(", ")} — a reconnecting browser would re-render events the reader already read`,
             },
       );
 
       // The other half, and the one that actually loses information: the frames
       // that came after the resume point must all still be there.
-      const expectedAfter = ids.filter((n) => n > resumeFrom);
+      const expectedAfter = ids.filter((n) => n > lastSeen);
       const nothingDropped = expectedAfter.every((n) => resumedIds.includes(n));
       t.ok(
         nothingDropped,
@@ -276,6 +284,21 @@ export default {
               expected: `${expectedAfter.join(", ")}`,
               actual: `${resumedIds.join(", ")} — a reconnect would silently lose the event that said how the turn ended`,
             },
+      );
+
+      // And the parameter's own semantics, pinned separately so the two can
+      // never be conflated again: `?startIndex=N` starts AT N.
+      const absolute = await call(
+        `/api/control/sessions/${encodeURIComponent(id)}/stream?startIndex=${lastSeen}`,
+        { headers: { accept: "text/event-stream" } },
+      );
+      const absoluteIds = parseSse(await drain(absolute, { budgetMs: 10_000 })).map((f) => Number(f.id));
+      t.ok(
+        absoluteIds[0] === lastSeen,
+        "?startIndex=N is an absolute position and includes N, which is why Last-Event-ID has to add one",
+        absoluteIds[0] === lastSeen
+          ? {}
+          : { expected: lastSeen, actual: `${absoluteIds.join(", ") || "(no frames)"}` },
       );
     }
 

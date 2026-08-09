@@ -7,9 +7,9 @@
    AUTHENTICATION. This script predates lib/auth.ts. Every route except the
    liveness one now redirects an unauthenticated GET to /signin, so a run
    without credentials captures the sign-in form, at 1440x900, twice, and
-   reports "captured dark / captured light / done". Playwright's
-   `httpCredentials` sends the same HTTP Basic pair `curl -u` uses, which is
-   the path lib/auth.ts documents for scripts.
+   reports "captured dark / captured light / done". The HTTP Basic pair now goes
+   on every request as a header — see the note on `authHeader` for why
+   Playwright's own `httpCredentials` cannot work against this dashboard.
 
    THE PAGE IT CAPTURED. It screenshotted `/` and wrote it to `sessions-*.png`.
    That was right when `/` WAS the session list. Dashboard v2 made `/` an
@@ -52,22 +52,50 @@ if (!username || !password) {
   process.exit(1);
 }
 
-const credentials = { username, password };
+/**
+ * The credential goes on EVERY request as a header, not through Playwright's
+ * `httpCredentials`.
+ *
+ * `httpCredentials` implements the browser side of HTTP Basic: it waits for a
+ * 401 carrying `WWW-Authenticate` and only then retries with the header. The
+ * dashboard never sends that challenge — proxy.ts omits it deliberately, because
+ * it would make the browser raise its own credential dialog on every background
+ * fetch from the chat page — and for an HTML navigation it answers 303 to
+ * /signin rather than 401 at all. So there is no challenge to respond to:
+ * `httpCredentials` sends nothing, the capture follows the redirect, and the
+ * screenshot is of the sign-in form.
+ *
+ * Setting the header outright is what `curl -u` does, which lib/auth.ts names as
+ * the supported path for scripts.
+ */
+const authHeader = `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
 
-/** Which session to open for the detail shot: the one with the most turns, so
- *  the run tree in the picture is actually a tree. */
+/**
+ * Which session to open for the detail shot: the one with the most turns, so
+ * the run tree in the picture is actually a tree.
+ *
+ * `/api/health/detail`, not `/api/health`. The liveness route is the one Docker's
+ * HEALTHCHECK hits and it deliberately answers `{ok, database}` and nothing
+ * else — this script used to read `recentSessions` off it, which has been
+ * `undefined` since that route was narrowed, so `sessionId` was null and the
+ * detail capture was skipped entirely without the script noticing.
+ */
 async function pickSession() {
-  const response = await fetch(`${dashboardUrl}/api/health`, {
-    headers: { authorization: `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}` },
+  const response = await fetch(`${dashboardUrl}/api/health/detail`, {
+    headers: { authorization: authHeader },
   });
   const health = await response.json();
-  return health.recentSessions?.[0]?.id ?? null;
+  const sessions = health.recentSessions ?? [];
+  if (sessions.length === 0) return null;
+  // Most turns wins. A one-turn session renders a run tree with a single row,
+  // which is a picture of the feature not working.
+  return [...sessions].sort((a, b) => (b.turns ?? 0) - (a.turns ?? 0))[0].id;
 }
 
 const sessionId = await pickSession();
 console.log("session for detail capture:", sessionId ?? "(none found)");
 if (!sessionId) {
-  console.error("no session in /api/health — seed the database before capturing");
+  console.error("no session in /api/health/detail — seed the database before capturing");
   process.exit(1);
 }
 
@@ -84,7 +112,7 @@ for (const scheme of ["dark", "light"]) {
     viewport: { width: 1440, height: 900 },
     deviceScaleFactor: 2,
     colorScheme: scheme,
-    httpCredentials: credentials,
+    extraHTTPHeaders: { authorization: authHeader },
   });
 
   for (const shot of shots) {
