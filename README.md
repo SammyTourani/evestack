@@ -18,7 +18,7 @@ agent **and drives it**.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset=".github/dashboard-dark.webp">
-  <img alt="The evestack dashboard's Sessions page: a banner reading '8 sessions wedged — a turn started and never finished, nothing in eve will notice or retry it', above a searchable table of 250 real agent runs with outcome, trigger, model, provider, environment and turn count across openai, anthropic, ollama and an unpriced model." src=".github/dashboard-light.webp">
+  <img alt="The evestack dashboard's Sessions page: a banner reading '8 sessions wedged — a turn started and never finished, nothing in eve will notice or retry it', above a searchable table of 250 real agent runs with outcome, trigger, model, provider, environment and turn count across openai, anthropic, ollama and acme providers, two rows marked failed in red among the rest." src=".github/dashboard-light.webp">
 </picture>
 
 ## Quickstart
