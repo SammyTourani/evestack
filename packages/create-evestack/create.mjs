@@ -101,10 +101,43 @@ function padTo(s, n) {
  */
 const MAX_CAPTURE = 64 * 1024;
 
+/**
+ * npm config that arrives through the ENVIRONMENT and changes what an exit code
+ * means. Stripped before every child, because a step here is only worth running
+ * if its answer is the same for everybody.
+ *
+ * `npm_config_if_present` is the one that bit. npm reads `--if-present` from the
+ * environment like every other config, and under it `npm run <missing-script>`
+ * exits **0** instead of 1:
+ *
+ *     plain                        exit 1
+ *     npm_config_if_present=true   exit 0
+ *
+ * Anyone whose shell is inside an `--if-present` invocation exports it — the
+ * root `pnpm -r --if-present test` in this very repo does — and it is inherited
+ * all the way down into the `npm run db:bootstrap` below. The schema step then
+ * reports "✓ workflow tables created" having created nothing, `bringUp` returns
+ * true, and the dashboard is started against a database with no schema. A step
+ * whose failure is invisible is worse than no step.
+ *
+ * Found by test/bring-up.test.mjs, which failed only under the root `pnpm -r`
+ * run and passed every other way — a difference that looked for a while like
+ * flakiness and was the bug reporting itself.
+ */
+const UNSAFE_NPM_ENV = ["npm_config_if_present"];
+
+/** Exported so test/bring-up.test.mjs can pin the stripping without Docker. */
+export function childEnv() {
+  const env = { ...process.env };
+  for (const key of UNSAFE_NPM_ENV) delete env[key];
+  return env;
+}
+
 function run(cwd, command, args, { verbose = false } = {}) {
   return new Promise((resolve) => {
     const child = spawn(command, args, {
       cwd,
+      env: childEnv(),
       stdio: verbose ? "inherit" : ["ignore", "pipe", "pipe"],
       shell: process.platform === "win32",
     });
