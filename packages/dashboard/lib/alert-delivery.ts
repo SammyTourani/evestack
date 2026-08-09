@@ -1121,6 +1121,15 @@ export async function deliveryStatus(): Promise<DeliveryStatus> {
 
 const HOLDER = `${hostname()}:${process.pid}:${randomUUID().slice(0, 8)}`;
 const PRUNE_EVERY_TICKS = 60;
+/**
+ * How often to repeat an UNCHANGED failure.
+ *
+ * Derived from the interval rather than fixed in ticks, so it is an hour at the
+ * 60s default and an hour at the 15s floor. A fixed tick count would have meant
+ * four hours at one setting and one at the other, for no reason a reader could
+ * see.
+ */
+const REPEAT_ERROR_MS = 3_600_000;
 
 declare global {
   // eslint-disable-next-line no-var
@@ -1145,10 +1154,18 @@ export function startAlertDelivery(): { started: boolean; reason: string } {
   }
 
   let ticks = 0;
+  // Kept across ticks so an unchanged failure is not re-logged every interval.
+  const repeatEvery = Math.max(1, Math.round(REPEAT_ERROR_MS / config.intervalMs));
+  let lastTickError: string | null = null;
+  let sameErrorTicks = 0;
   const tick = async (): Promise<void> => {
     try {
       const outcome = await deliverOnce({ config });
       ticks += 1;
+      // A tick that worked ends the streak. Without this a later failure would
+      // inherit the old count and could skip its own first report.
+      lastTickError = null;
+      sameErrorTicks = 0;
       if (outcome.failures.length > 0) {
         console.warn(
           `[evestack:alerts] ${outcome.failures.length} sink(s) refused: ` +
@@ -1159,9 +1176,33 @@ export function startAlertDelivery(): { started: boolean; reason: string } {
         await pruneDeliveries(30).catch(() => {});
       }
     } catch (error) {
-      // The database being down is the common case here and it is transient.
-      // Logging and continuing is right; throwing out of a timer callback would
-      // take the dashboard process with it.
+      /*
+       * The database being down is the common case here and it is transient.
+       * Logging and continuing is right; throwing out of a timer callback would
+       * take the dashboard process with it.
+       *
+       * But NOT the same line every interval forever. Measured against a dead
+       * Postgres: the loop survives correctly and writes an identical
+       * "connect ECONNREFUSED" every 15 seconds — 5,760 lines a day, about one
+       * fact. This module's own argument against re-sending an unchanged alert
+       * applies to its own logs, and a log nobody can read is the same failure
+       * as a channel nobody listens to.
+       *
+       * So: say it when it changes, and once an hour while it persists, which is
+       * what a reader tailing this actually needs — that it is STILL failing,
+       * without the other 239 copies.
+       */
+      const message = error instanceof Error ? error.message : String(error);
+      const repeated = message === lastTickError;
+      lastTickError = message;
+      if (repeated) {
+        sameErrorTicks += 1;
+        if (sameErrorTicks % repeatEvery !== 0) return;
+        const minutes = Math.round((sameErrorTicks * config.intervalMs) / 60_000);
+        console.warn(`[evestack:alerts] still failing after ${minutes}m: ${message}`);
+        return;
+      }
+      sameErrorTicks = 0;
       console.warn(
         `[evestack:alerts] tick failed: ${error instanceof Error ? error.message : String(error)}`,
       );
