@@ -114,6 +114,42 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
+      # The agent schema, before anything reads it.
+      #
+      # The first version of this job skipped it, and the job caught that
+      # itself: /api/health answers 503 `schema-missing` when
+      # `workflow.workflow_runs` is absent — deliberately, because "a stack
+      # brought up without db:bootstrap answered 200 here and reported HEALTHY
+      # in docker ps while every page failed" — so `curl -sf` refused it and the
+      # container never came up. The image was fine; the database was empty.
+      #
+      # The `workflow` schema belongs to @workflow/world-postgres and owns its
+      # own migrations, so this runs THEIR script rather than hand-rolling the
+      # DDL in psql. That is the same rule ci.yml's runtime job follows, and the
+      # reason a Node toolchain has to exist in this job at all.
+      #
+      # Scoped to the template. This job never compiles anything — the image
+      # builds itself — so a full workspace install and build would be a minute
+      # spent on packages nothing here touches.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter "@evestack/template-default..."
+      - name: create the workflow schema
+        env:
+          WORKFLOW_POSTGRES_URL: ${{ env.PGURL }}
+        run: |
+          set -euo pipefail
+          (cd templates/default && npm run db:bootstrap)
+          # Anti-vacuity: bootstrap can print encouraging things and leave the
+          # schema absent, and the failure that follows would then be blamed on
+          # the image. Confirm the one table /api/health actually looks for.
+          psql "$PGURL" -tAc "SELECT to_regclass('workflow.workflow_runs')::text" | grep -q workflow_runs || {
+            echo "::error::db:bootstrap finished but workflow.workflow_runs does not exist"; exit 1; }
+          echo "workflow schema present"
+
       - name: build the image
         uses: docker/build-push-action@v6
         with:
@@ -229,8 +265,19 @@ jobs:
             -e EVESTACK_ALERT_INTERVAL_SECONDS=15 \
             evestack-dashboard:pr
 
+          # The STATUS, kept, rather than a bare success/failure.
+          #
+          # This loop used to be `curl -sf … && exit 0`, and when the first run
+          # of this job failed it reported "never answered within 60s" — while
+          # the server was answering perfectly, with 503 `schema-missing`, and
+          # `-f` was turning that into an indistinguishable non-zero. The wrong
+          # half of the stack got investigated. A wait that cannot tell "nothing
+          # is listening" from "it told you exactly what is wrong" is worse than
+          # no diagnostics, because it reads like the former.
+          code=000
           for i in $(seq 1 60); do
-            curl -sf -o /dev/null http://localhost:4000/api/health 2>/dev/null && { echo "answering after ${i}s"; exit 0; }
+            code="$(curl -s -o /tmp/health.json -w '%{http_code}' http://localhost:4000/api/health || echo 000)"
+            [ "$code" = "200" ] && { echo "answering 200 after ${i}s"; exit 0; }
             # A container that has already exited will never answer, and waiting
             # the full minute to say so buries the reason under a timeout.
             if [ "$(docker inspect -f '{{.State.Running}}' dash)" != "true" ]; then
@@ -240,7 +287,12 @@ jobs:
             fi
             sleep 1
           done
-          echo "::error::the container never answered /api/health within 60s"
+          if [ "$code" = "000" ]; then
+            echo "::error::nothing was listening on :4000 after 60s — the container is running but never bound"
+          else
+            echo "::error::/api/health answered $code, not 200, for 60s. Its body says why:"
+            cat /tmp/health.json
+          fi
           docker logs dash
           exit 1
 
