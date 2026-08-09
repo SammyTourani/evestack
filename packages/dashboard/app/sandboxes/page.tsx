@@ -205,7 +205,15 @@ export default async function SandboxesPage() {
         <Placeholder
           tone="empty"
           title="Sandbox visibility is off"
-          detail="Set EVESTACK_DOCKER_SOCKET to your Docker socket to see the containers eve is running. It is off by default on purpose: a process that can talk to the Docker socket can start a container with the host filesystem mounted, which makes it root-equivalent on this machine. Nothing here writes — lifecycle actions need EVESTACK_DOCKER_LIFECYCLE as well."
+          // The last sentence used to read "lifecycle actions need
+          // EVESTACK_DOCKER_LIFECYCLE as well", naming a variable no code has
+          // ever read. lib/sandboxes.ts deleted that reader deliberately —
+          // "an env-var reader with no caller is a promise the code does not
+          // keep" — and this string, plus one line of .env.example, kept the
+          // promise anyway. Telling someone a flag gates a capability is worse
+          // than saying nothing when the flag does nothing: it reads as a
+          // control they have chosen not to enable.
+          detail="Set EVESTACK_DOCKER_SOCKET to your Docker socket to see the containers eve is running. It is off by default on purpose: a process that can talk to the Docker socket can start a container with the host filesystem mounted, which makes it root-equivalent on this machine. Nothing here writes: this page lists containers and there is no way to stop or remove one from the dashboard."
         />
       </>
     );
