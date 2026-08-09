@@ -36,8 +36,11 @@
 # The cost, stated plainly
 # ---------------------------------------------------------------------------
 #
-# This adds minutes to a PR — a standing cost paid by every future contributor —
-# so it is bounded three ways:
+# Measured on the first two runs of this file: 271s cold, 70s with the layer
+# cache warm. The cold number is the one to quote when this file changes, since
+# a change here invalidates the cache it is measuring.
+#
+# That cost is paid by every future contributor, so it is bounded three ways:
 #
 #   1. `paths:` on pull_request. It runs only when the PR touches something that
 #      ends up INSIDE the image. A docs or website PR does not pay for it. That
