@@ -185,10 +185,10 @@ test("npm config that arrives through the environment cannot change what a step 
     );
     // Everything else is passed through: this strips one named variable, it does
     // not sanitise the environment.
-    process.env.EVESTACK_BRINGUP_CANARY = "kept";
-    assert.equal(childEnv().EVESTACK_BRINGUP_CANARY, "kept", "unrelated variables still reach the child");
+    process.env.BRINGUP_CANARY_NOT_AN_EVESTACK_VAR = "kept";
+    assert.equal(childEnv().BRINGUP_CANARY_NOT_AN_EVESTACK_VAR, "kept", "unrelated variables still reach the child");
   } finally {
-    delete process.env.EVESTACK_BRINGUP_CANARY;
+    delete process.env.BRINGUP_CANARY_NOT_AN_EVESTACK_VAR;
     if (saved === undefined) delete process.env.npm_config_if_present;
     else process.env.npm_config_if_present = saved;
   }
