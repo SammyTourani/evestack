@@ -2,7 +2,7 @@
 
 > A fully free, self-hosted distribution of Vercel's `eve` agent framework. `eve` on your own
 > machine — durable Postgres sessions, a Docker sandbox, a dashboard that observes AND drives
-> the agent, and one-click sign-in to ~1,070 tools via Composio. $0 infrastructure; the only
+> the agent, and one-click sign-in to 1,070 toolkits via Composio. $0 infrastructure; the only
 > real cost is model tokens, and Ollama removes that too.
 
 `eve` is a trademark of Vercel. evestack is an independent project, not affiliated with or
@@ -14,6 +14,14 @@ evestack is not a fork of `eve`. It ships primarily as an `eve` registry
 (`eve registry add @evestack=...`), so an existing `eve` project can adopt one piece without
 migrating. `templates/default` and `packages/create-evestack` exist for the zero-to-running
 path (`npx create-evestack my-agent`).
+
+If you are an agent that can speak MCP, `@evestack/mcp` (`packages/evestack-mcp`, docs at
+`/docs/mcp`) exposes this dashboard as tools — sessions, costs, the approval audit log, and
+promote-a-session-to-an-eval. It is a thin client over the dashboard's HTTP routes, not a second
+implementation, so it can answer nothing the dashboard cannot. **Its four mutating tools — starting
+runs, sending turns, answering approvals, cancelling — are withheld from `tools/list` entirely
+unless `EVESTACK_MCP_ALLOW_CONTROL=1`.** Do not advise anyone to set that without saying that it
+lets a model approve a gated tool call a human was asked to stand at.
 
 ## Core facts an agent should know before answering questions about this repo
 
@@ -42,9 +50,15 @@ path (`npx create-evestack my-agent`).
   suggest `npx --package=@workflow/world-postgres bootstrap` — that CLI reads `.env` via dotenv
   and never `.env.local`, which is the only env file `create-evestack` writes, so it falls back
   to `postgres://world:world@localhost:5432/world` and fails with `ECONNREFUSED`.
-- `agent/channels/eve.ts` deliberately does not call `eve`'s `localDev()` directly. Its loopback
-  test (`/^127\./`, `*.localhost`) accepts hostile hostnames such as `127.evil.com`, so the
-  template wraps it in an exact-match loopback check. Do not "simplify" that back.
+- `agent/channels/eve.ts` calls `eve`'s `localDev()` **directly**, and on the pinned eve that is
+  correct. Through 0.29.x `localDev()` matched an unanchored `/^127\./` against the
+  attacker-controlled `Host` header, so `127.evil.com` obtained an unauthenticated principal, and
+  the template wrapped it in an exact-match loopback check. **eve 0.30.0 fixed it upstream** — the
+  grant is now decided from the process (`eve dev` / `vercel dev`), never from the request — so the
+  wrapper was deleted: on 0.30+ it can add no protection and would wrongly reject local dev over a
+  LAN IP, a tunnel or a container hostname. Do NOT re-add it. `SECURITY.md` and the header comment
+  in that file are the ground truth; this bullet described the deleted wrapper as current for four
+  days after it was removed.
 - Registry items pin dependency versions from `templates/default/package.json`, and CI enforces
   the match. Bare, unversioned names are a bug, not a style choice.
 - **Composio is a hosted third party and holds the OAuth tokens for connected accounts.** It is
@@ -97,6 +111,7 @@ on advertising them.
 - [Upstream eve](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/upstream.mdx)
 - [Registry](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/registry.mdx)
 - [CLI](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/cli.mdx)
+- [MCP](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/mcp.mdx)
 - [Troubleshooting](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/troubleshooting.mdx)
 
 ## Repository

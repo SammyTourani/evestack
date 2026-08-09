@@ -192,11 +192,11 @@ const collectErrors = (page, bucket) => {
   await page.screenshot({ path: `${OUT}/3-settled.png` });
 
   /* copy affordances — scoped to the section (the hero and closing CTA
-     carry their own "npx create-evestack" copy buttons) */
+     carry their own "npx evestack create" copy buttons) */
   const qs = page.locator("#quickstart");
-  await qs.getByRole("button", { name: 'Copy "npx create-evestack"' }).click();
+  await qs.getByRole("button", { name: 'Copy "npx evestack create"' }).click();
   let clip = await page.evaluate(() => navigator.clipboard.readText());
-  assert(clip === "npx create-evestack", "command row copies its payload", JSON.stringify(clip));
+  assert(clip === "npx evestack create", "command row copies its payload", JSON.stringify(clip));
 
   await qs.getByRole("button", { name: 'Copy "docker compose up -d postgres"' }).click();
   clip = await page.evaluate(() => navigator.clipboard.readText());
@@ -264,7 +264,7 @@ const collectErrors = (page, bucket) => {
   assert(nojs.hasRail && !nojs.armed, "no-JS renders unarmed", JSON.stringify(nojs));
   assert(nojs.checkOp > 0.9 && nojs.dimRows === 0, "no-JS shows settled truth", JSON.stringify(nojs));
   assert(
-    (nojs.commandText ?? "").includes("npx create-evestack"),
+    (nojs.commandText ?? "").includes("npx evestack create"),
     "no-JS shows the commands",
     JSON.stringify(nojs.commandText),
   );

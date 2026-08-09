@@ -8,7 +8,8 @@ import { DatabaseError } from "@/app/db-error";
 import { makeWindow, OVERVIEW_WINDOWS, ranked, stacked, windowLabel } from "@/app/overview";
 import { query } from "@/lib/db";
 import { effectiveRates } from "@/lib/facts";
-import { formatUsd } from "@/lib/pricing";
+import { freshFacts } from "@/lib/metrics";
+import { findPrice, formatUsd } from "@/lib/pricing";
 
 export const dynamic = "force-dynamic";
 
@@ -68,6 +69,10 @@ interface Decomposition {
   /** Per-model, summed. See the header for why not fleet-wide. */
   readonly cacheSavings: number;
   readonly cacheReadTokens: number;
+  /** How much of `cacheSavings` rests on the assumed 10% cache-read rate. */
+  readonly estimatedSavings: number;
+  /** The models that assumption was applied to, so the reader can judge it. */
+  readonly estimatedModels: string[];
 }
 
 /**
@@ -78,6 +83,24 @@ interface Decomposition {
  * question that follows immediately from "some of this is unpriced".
  */
 async function decompose(from: string, to: string): Promise<Decomposition> {
+  /**
+   * `freshFacts()` first, for the same reason `listTurnFacts` does it — and this
+   * was the one fact-table reader in the app that skipped it.
+   *
+   * `refreshFacts()` is what applies `sql/facts.sql`, so on any database that
+   * has never served a metrics query — which is every fresh install — this
+   * SELECT was a 42P01. It runs inside `Promise.all` beside `stacked()` and
+   * `ranked()`, which DO refresh, so the outcome depended on which promise won:
+   * the page rendered "Can't reach the database" on a Postgres that was up and
+   * correctly bootstrapped, and did it only on the first load, which is the
+   * hardest kind of report to act on.
+   *
+   * The coalescing wrapper rather than bare `refreshFacts()`: all three queries
+   * on this page want the same upsert, and metrics.ts is explicit that running
+   * it three times concurrently is "wasted work at best and lock contention at
+   * worst". Sharing the in-flight promise keeps it at one.
+   */
+  await freshFacts();
   const rows = await query<Record<string, string | boolean | null>>(
     `SELECT model,
             priced,
@@ -107,7 +130,9 @@ async function decompose(from: string, to: string): Promise<Decomposition> {
   let freeTurns = 0;
   let cacheSavings = 0;
   let cacheReadTokens = 0;
+  let estimatedSavings = 0;
   const unpricedModels: string[] = [];
+  const estimatedModels: string[] = [];
 
   for (const r of rows) {
     const model = typeof r.model === "string" ? r.model : null;
@@ -131,7 +156,22 @@ async function decompose(from: string, to: string): Promise<Decomposition> {
       // What these tokens would have cost uncached, minus what they did. Per
       // model: a blended rate across models is a number with no referent.
       const saved = reads * ((rates.input - rates.cacheRead) / 1_000_000);
-      if (saved > 0) cacheSavings += saved;
+      if (saved > 0) {
+        cacheSavings += saved;
+        // Which side of this subtraction is measured, and which is assumed.
+        //
+        // `rates.input` is always published. `rates.cacheRead` is not: pricing.ts
+        // falls back to `price.input * 0.1` when a model states no cache-read
+        // rate, and 66 of 206 catalog models state none. Among the 140 that do,
+        // the ratio to input runs 0.008 to 0.52 — so 10% is a plurality, not a
+        // rule, and for those models this dollar figure is an estimate wearing
+        // the same typography as a measurement. Naming the models is what lets
+        // a reader decide whether to trust the total.
+        if (model !== null && findPrice(model)?.cacheRead === undefined) {
+          if (!estimatedModels.includes(model)) estimatedModels.push(model);
+          estimatedSavings += saved;
+        }
+      }
       // A model priced at zero end to end is genuinely free, not unpriced.
       if (rates.input === 0 && rates.output === 0) freeTurns += turns;
     }
@@ -149,6 +189,8 @@ async function decompose(from: string, to: string): Promise<Decomposition> {
     freeTurns,
     cacheSavings,
     cacheReadTokens,
+    estimatedSavings,
+    estimatedModels,
   };
 }
 
@@ -281,11 +323,27 @@ export default async function CostsPage(props: PageProps<"/costs">) {
                 />
               </div>
               {costs.cacheSavings > 0 ? (
-                <p className="mt-4 mb-0 border-t border-border pt-3 text-small text-ok">
-                  Caching saved {formatUsd(costs.cacheSavings)} in this window — what those{" "}
-                  {costs.cacheReadTokens.toLocaleString("en-US")} cached tokens would have cost at
-                  each model&rsquo;s own uncached input rate, minus what they did cost.
-                </p>
+                <>
+                  <p className="mt-4 mb-0 border-t border-border pt-3 text-small text-ok">
+                    Caching saved {formatUsd(costs.cacheSavings)} in this window — what those{" "}
+                    {costs.cacheReadTokens.toLocaleString("en-US")} cached tokens would have cost at
+                    each model&rsquo;s own uncached input rate, minus what they did cost.
+                  </p>
+                  {costs.estimatedModels.length > 0 ? (
+                    <p className="m-0 mt-1.5 text-small text-text-dim">
+                      {formatUsd(costs.estimatedSavings)} of that is an estimate:{" "}
+                      {costs.estimatedModels.length === 1
+                        ? `${costs.estimatedModels[0]} publishes`
+                        : `${costs.estimatedModels.slice(0, 3).join(", ")}${
+                            costs.estimatedModels.length > 3
+                              ? ` and ${costs.estimatedModels.length - 3} more`
+                              : ""
+                          } publish`}{" "}
+                      no cache-read rate, so a tenth of the input rate is assumed. Set{" "}
+                      <code>EVESTACK_PRICING</code> to replace the guess with the real number.
+                    </p>
+                  ) : null}
+                </>
               ) : null}
             </Card>
 

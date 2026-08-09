@@ -174,7 +174,7 @@ async function preflight() {
   // 401 to report, not ours to guess at. For Ollama it IS knowable locally, and
   // a missing pull is otherwise a failure on the user's first message.
 
-  const provider = (env("EVESTACK_PROVIDER") || "openai").toLowerCase();
+  const provider = (env("EVESTACK_PROVIDER")?.trim() || "openai").toLowerCase();
   if (provider === "ollama") {
     const model = env("EVESTACK_MODEL") || "qwen3";
     const ollama = await inspectOllama(

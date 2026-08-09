@@ -49,6 +49,7 @@
 
 import { dailySpendCap } from "./budget-env";
 import { query } from "./db";
+import { freshFacts } from "./metrics";
 import { getMonitorSummary } from "./monitors";
 import { getSchedules } from "./schedules";
 import { concerns, listSandboxes } from "./sandboxes";
@@ -378,6 +379,21 @@ async function wedged(): Promise<AlertResult> {
 }
 
 async function dailySpend(): Promise<{ total: number; unpriced: string[]; unpricedTurns: number }> {
+  /**
+   * Refresh before summing, or the spend cap is armed with stale money.
+   *
+   * This read the fact table without one. Inside `Promise.allSettled` a 42P01
+   * degrades to `unknown` rather than breaking the panel, which is why it never
+   * looked like a bug — but the failure that matters is quieter than that: on a
+   * database whose facts are behind, every turn since the last refresh is
+   * missing from the total, so the daily cap under-reports and the alert that
+   * exists to fire before you overspend does not fire. A monitor that is wrong
+   * in the safe-looking direction is the exact defect class this file is for.
+   *
+   * Coalesced, so the tick shares one upsert with anything else refreshing, and
+   * cheap: a no-op refresh is ~20ms against a 60s default loop interval.
+   */
+  await freshFacts();
   const rows = await query<{ model: string | null; priced: boolean; cost: string | null; n: string }>(
     `SELECT model, priced, sum(cost_usd)::text AS cost, count(*)::text AS n
        FROM evestack.fact_turn

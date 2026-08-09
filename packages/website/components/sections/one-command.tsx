@@ -15,7 +15,7 @@ export function OneCommand() {
             align="left"
             eyebrow="01 · one command"
             title={terminal.caption}
-            sub="npx create-evestack writes your env, generates credentials, and prints the three commands that finish the job: Postgres up, bootstrap, dev. Kill the stack, restart it — sessions pick up where they left off."
+            sub="npx evestack create writes your env, generates credentials, and prints the three commands that finish the job: Postgres up, bootstrap, dev. Kill the stack, restart it — sessions pick up where they left off."
           />
           <dl className="grid grid-cols-3 gap-6 font-mono text-mono-13">
             <div className="flex flex-col gap-1">

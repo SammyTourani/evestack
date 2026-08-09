@@ -2,11 +2,20 @@
 
 One command for the whole self-hosted [eve](https://github.com/vercel/eve) stack.
 
+Seven commands. Run `evestack` inside a project with no arguments and you get `status`.
+
 ```bash
-npx evestack create my-agent    # scaffold an agent + dashboard
-npx evestack attach .           # add evestack to an eve project you already have
-npx evestack doctor             # why is this durable job dead?
+npx evestack create my-agent    # scaffold an agent, a database and a dashboard
+evestack status                 # is it up? and if not, what do I run?
+evestack tour                   # a guided first run, on a stack that is already up
+evestack open                   # the dashboard URL and its password, in a browser
+evestack verify                 # check every part and name the fix for anything broken
+evestack attach .               # add evestack to an eve project you already have
+evestack doctor                 # a run stopped moving — read-only forensics
 ```
+
+`status`, `tour`, `open` and `verify` all work from anywhere inside the project; they walk up to
+find its root. Asking for help never writes, starts or opens anything.
 
 `create` and `attach` are [`create-evestack`](https://www.npmjs.com/package/create-evestack),
 imported rather than reimplemented — `npx create-evestack my-agent` is the same code under the
@@ -15,7 +24,7 @@ this way round because the scaffolder is dependency-free and carries the agent t
 `doctor` needs a Postgres driver; inverting it would put `pg` in front of every first scaffold.
 See `src/scaffold.mjs`.
 
-The rest of this file is about `doctor`, which is the part that is not a wrapper.
+The rest of this file is about `doctor`, which is the part that is neither a wrapper nor a probe.
 
 ## `evestack doctor`
 

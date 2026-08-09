@@ -56,10 +56,26 @@ export async function FleetBanner() {
             {awaitingHuman} session{awaitingHuman === 1 ? "" : "s"} waiting on a person.
           </strong>{" "}
           Parked on a decision nobody has made.{" "}
+          {/*
+            These link to /chat, not /sessions/<id>, and the difference is the
+            whole point of the line.
+
+            A wedged session needs forensics, so it goes to the detail page. A
+            session awaiting a human needs an ANSWER, and /chat?session=<id> is
+            the only surface in the dashboard that can give one — it attaches to
+            a durable session it did not start and renders the pending
+            `input.requested` with approve and deny.
+
+            It had never been linked from anywhere. The banner announced "parked
+            on a decision nobody has made" and sent the reader to a read-only
+            page, so the one route from noticing to deciding was to know the
+            query parameter existed and type it. /approvals does not close the
+            loop either: it is the log of decisions already made.
+          */}
           {waiting.slice(0, 3).map((entry, index) => (
             <span key={entry.sessionId}>
               {index > 0 && ", "}
-              <a href={`/sessions/${encodeURIComponent(entry.sessionId)}`}>
+              <a href={`/chat?session=${encodeURIComponent(entry.sessionId)}`}>
                 {entry.title?.slice(0, 40) ?? entry.sessionId.slice(-8)}
               </a>
             </span>

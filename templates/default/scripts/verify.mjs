@@ -172,7 +172,7 @@ if (client) {
 /* model provider                                                              */
 /* -------------------------------------------------------------------------- */
 
-const provider = (env("EVESTACK_PROVIDER") || "openai").toLowerCase();
+const provider = (env("EVESTACK_PROVIDER")?.trim() || "openai").toLowerCase();
 const model = env("EVESTACK_MODEL") || { openai: "gpt-5-mini", anthropic: "claude-sonnet-5", ollama: "qwen3" }[provider];
 
 /**

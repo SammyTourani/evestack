@@ -35,13 +35,17 @@ drawing the four parts with the ports **your** machine actually had free.
 In another terminal:
 
 ```bash
-evestack status                            # is it up? and if not, what to run
-evestack tour                              # a guided first run: one message, followed
+npx evestack status                        # is it up? and if not, what to run
+npx evestack tour                          # a guided first run: one message, followed
                                            # through the terminal, Postgres and the dashboard
 ```
 
-`evestack verify` is the thorough version — every part, with the command that fixes anything
+`npx evestack verify` is the thorough version — every part, with the command that fixes anything
 broken. All three work from anywhere inside the project.
+
+`npx` because nothing has installed the command yet: scaffolding runs it once and leaves nothing
+on your PATH. `npm i -g evestack` drops the `npx ` from every line above, and is worth it if you
+run more than one of these.
 
 The scaffolder generates your credentials and prints them once; `evestack open` prints them
 again and opens the dashboard. Every route is behind that credential — the dashboard starts runs
@@ -66,7 +70,7 @@ anything, and prints an undo line for everything it writes.
 | **Memory** | Semantic recall on the Postgres you already run, via pgvector. No vector service. Needs an embeddings provider — OpenAI, or Ollama locally; Anthropic has none | [docs](docs/memory.mdx) |
 | **Schedules** | Durable cron with a history of every fire, and a pause switch that needs no redeploy | [docs](docs/proactive.mdx) |
 | **Evals** | Promote any real session — especially one that went wrong — into an `evals/*.eval.ts` | [docs](docs/dashboard.mdx) |
-| **Integrations** | One-click OAuth into ~1,000 tools via Composio | [docs](docs/composio-auth.mdx) |
+| **Integrations** | One-click OAuth into 1,070 toolkits via Composio | [docs](docs/composio-auth.mdx) |
 | **Skills** | Inspect what the agent has loaded, and scan skills before it does | [docs](docs/dashboard.mdx) |
 | **`evestack doctor`** | Read-only forensics for a durable job that is stuck. Prints the SQL; never writes | [docs](docs/cli.mdx) |
 

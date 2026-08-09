@@ -88,10 +88,27 @@ function Delivery({ status }: { status: DeliveryStatus }) {
         {status.renotifyMinutes === null
           ? "Only transitions are sent, so a monitor that stays firing is mentioned once."
           : `A monitor that stays firing is repeated every ${status.renotifyMinutes} minutes.`}{" "}
-        {status.lastDeliveryAt === null
-          ? "Nothing has been sent yet."
-          : `Last sent ${ago(status.lastDeliveryAt)}${status.lastDeliveryOk === false ? " and it failed" : ""}.`}
+        {/*
+          Three states, not two. "Nothing has been sent yet" used to cover a
+          database that could not be read, which reads as all-clear on the one
+          panel that must never do that — see DeliveryStatus.unreadable.
+        */}
+        {status.unreadable !== null
+          ? null
+          : status.lastDeliveryAt === null
+            ? status.neverRun
+              ? "Nothing has been delivered yet — the state tables are created by the first tick."
+              : "Nothing has been sent yet."
+            : `Last sent ${ago(status.lastDeliveryAt)}${status.lastDeliveryOk === false ? " and it failed" : ""}.`}
       </p>
+
+      {status.unreadable !== null ? (
+        <p className="m-0 text-small text-warn">
+          <strong className="font-normal">Delivery state could not be read.</strong> The loop may
+          be running and sending normally — this panel cannot tell you either way.{" "}
+          {status.unreadable}
+        </p>
+      ) : null}
 
       {failing ? (
         <p className="m-0 text-small text-err">
@@ -110,8 +127,9 @@ export async function AlertsPanel() {
   let alerts: AlertResult[];
   // Deliberately not in the same try: a delivery-status read that fails must not
   // be reported as "the monitor set could not be evaluated". deliveryStatus()
-  // already swallows its own errors into `neverRun`, so this cannot throw — but
-  // ordering it first would make a future change able to.
+  // classifies its own errors into `neverRun` / `unreadable` rather than
+  // throwing, so this cannot throw — but ordering it first would make a future
+  // change able to.
   const status = await deliveryStatus();
   try {
     alerts = await evaluateAlerts();

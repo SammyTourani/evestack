@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { describeDbFailure, isMissingSchema } from "../lib/db.ts";
+import { describeDbFailure, isMissingSchema, isMissingTable } from "../lib/db.ts";
 
 /**
  * Telling "the database is not there" apart from "the schema was never created".
@@ -53,6 +53,28 @@ test("an undefined table outside the workflow schema is not a bootstrap problem"
   const other = new Error('42P01: relation "evestack.spans" does not exist');
   assert.equal(isMissingSchema(other), false);
   assert.match(describeDbFailure(other).guidance, /docker compose up/);
+});
+
+/**
+ * `isMissingTable` is the same question without the `workflow.` narrowing, and
+ * the delivery panel is what asks it.
+ *
+ * `deliveryStatus()` used to return `neverRun: true` from a bare `catch`, so a
+ * Postgres that was down rendered as "Nothing has been sent yet" — the same
+ * words a healthy install with no sinks configured shows. Both directions are
+ * asserted, because getting this one backwards makes the alerting panel report
+ * calm precisely when it has lost the ability to know.
+ */
+test("a missing evestack table is a never-run state, not an unreadable database", () => {
+  assert.equal(isMissingTable(new Error('42P01: relation "evestack.alert_deliveries" does not exist')), true);
+  // Still true for the workflow schema — this is the general form.
+  assert.equal(isMissingTable(missing), true);
+});
+
+test("a database that is down is NOT reported as never-run", () => {
+  assert.equal(isMissingTable(refused), false);
+  assert.equal(isMissingTable(new Error("57P01: terminating connection due to administrator command")), false);
+  assert.equal(isMissingTable(new Error("permission denied for schema evestack")), false);
 });
 
 test("the detail is always carried through, whichever branch is taken", () => {

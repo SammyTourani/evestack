@@ -286,6 +286,22 @@ export function isMissingSchema(error: unknown): boolean {
   return message.includes(UNDEFINED_TABLE) && message.includes("workflow.");
 }
 
+/**
+ * The same question for a table this repo owns, rather than eve's.
+ *
+ * `isMissingSchema` is deliberately narrowed to `workflow.` because its answer
+ * is the `db:bootstrap` advice, which is wrong for anything else. The
+ * `evestack.*` tables have their own creators — `sql/facts.sql`, `sql/alerts.sql`
+ * — and "this feature has never run" is a legitimate, non-error state for them.
+ *
+ * Same SQLSTATE match and the same reason for it: a locale change must not turn
+ * a missing table into an unreadable database or the other way round.
+ */
+export function isMissingTable(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes(UNDEFINED_TABLE);
+}
+
 export interface DbFailure {
   readonly title: string;
   readonly detail: string;

@@ -749,7 +749,7 @@ export async function create(argv) {
   say(`  ${c.bold("Dashboard")}   ${c.brandBold(dashboardUrl)}`);
   say(`  ${c.bold("Sign in")}     evestack ${c.dim("/")} ${c.bold(password)}`);
   say(`  ${c.dim("Both are in .env.local, which the dashboard container reads too.")}`);
-  say(`  ${c.dim("`evestack open` prints them again — this terminal will scroll.")}`);
+  say(`  ${c.dim("`npx evestack open` prints them again — this terminal will scroll.")}`);
   blank();
 
   if (!useOllama && apiKeyLine.endsWith("=")) {
@@ -772,7 +772,7 @@ export async function create(argv) {
     say(`    ${c.bold("docker compose --profile dashboard up -d")}   ${c.dim(`# the dashboard on :${dashboardPort}`)}`);
     say(`    ${c.bold(`${pm} run dev`)}                                ${c.dim("# the agent")}`);
     blank();
-    say(`  ${c.dim("Then `evestack status` from anywhere inside the project.")}`);
+    say(`  ${c.dim("Then `npx evestack status` from anywhere inside the project.")}`);
     blank();
     return 0;
   }
@@ -783,7 +783,7 @@ export async function create(argv) {
   say(`  ${c.bold("One command left")}`);
   say(`    ${c.bold(`cd ${cd} && ${pm} run dev`)}`);
   blank();
-  say(`  ${c.dim("Then, in another terminal:")} ${c.bold("evestack tour")} ${c.dim("— a guided first run.")}`);
+  say(`  ${c.dim("Then, in another terminal:")} ${c.bold("npx evestack tour")} ${c.dim("— a guided first run.")}`);
   blank();
 
   if (await confirmRunAgent(cd)) {

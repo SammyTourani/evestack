@@ -177,3 +177,60 @@ test("status --help neither probes nor needs a project", async () => {
   assert.match(stdout.text, /evestack status/);
   assert.match(stdout.text, /--json/);
 });
+
+/**
+ * `new URL` is not a validator, and the guard written for that assumed it was.
+ *
+ * `EVESTACK_DASHBOARD_URL=localhost:4000` — the scheme left off, which is the
+ * single most likely way to get this variable wrong — PARSES. It becomes
+ * protocol `localhost:` with origin "null", so the try/catch never fired and
+ * `new URL("/api/health", "null")` threw one frame later: `evestack status`
+ * exited 1 having printed nothing but "Invalid URL".
+ */
+test("a dashboard URL with no scheme falls back instead of throwing", async () => {
+  const probes = await probeAll((key) => ({ EVESTACK_DASHBOARD_URL: "localhost:4000" })[key]);
+  assert.equal(probes.dashboard.state, "fail", "nothing is listening, so it is down");
+  assert.equal(probes.dashboard.where, ":4000", "falls back to the documented default");
+  assert.match(probes.dashboard.detail, /answering/, "reports the probe, not a parse error");
+});
+
+/**
+ * `new URL("https://host").port` is "" — the port is implied, not absent — so
+ * `|| 80` labelled every https deployment `:80`.
+ */
+test("an https URL reports 443, not 80", async () => {
+  const probes = await probeAll(
+    (key) => ({ EVESTACK_DASHBOARD_URL: "https://dashboard.invalid" })[key],
+  );
+  assert.equal(probes.dashboard.where, ":443");
+});
+
+test("an explicit port still wins over the scheme default", async () => {
+  const probes = await probeAll(
+    (key) => ({ EVESTACK_DASHBOARD_URL: "https://dashboard.invalid:8443" })[key],
+  );
+  assert.equal(probes.dashboard.where, ":8443");
+});
+
+/**
+ * `--json` must be machine-readable, and it was not: probeModel appends
+ * `c.dim("(local)")` on the ollama path, probePostgres joins with the `g.skip`
+ * glyph, and both went into the payload verbatim under FORCE_COLOR.
+ */
+test("--json carries no escape sequences, whatever colour is on", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "evestack-status-json-"));
+  writeFileSync(join(dir, ".env.local"), "EVESTACK_PROVIDER=ollama\n");
+  const cwd = process.cwd();
+  process.chdir(dir);
+  try {
+    const out = new Sink();
+    await status(["--json"], { stdout: out, stderr: new Sink() });
+    // eslint-disable-next-line no-control-regex
+    assert.ok(!/\x1b\[/.test(out.text), "escapes leaked into the JSON payload");
+    const parsed = JSON.parse(out.text);
+    const model = parsed.results.find((r) => r.part === "model");
+    assert.match(model.detail, /\(local\)/, "the text survives, only the escapes go");
+  } finally {
+    process.chdir(cwd);
+  }
+});

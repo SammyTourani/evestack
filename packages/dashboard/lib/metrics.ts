@@ -1204,7 +1204,7 @@ let refreshInFlight: Promise<unknown> | null = null;
  * TTL on top of it: a no-op refresh over the seeded month is ~20ms, and a
  * staleness window would be a second thing to be wrong about.
  */
-function freshFacts(): Promise<unknown> {
+export function freshFacts(): Promise<unknown> {
   if (!refreshInFlight) {
     refreshInFlight = refreshFacts().finally(() => {
       refreshInFlight = null;
