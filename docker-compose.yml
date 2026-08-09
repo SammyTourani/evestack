@@ -135,6 +135,22 @@ services:
       # accounts the agent cannot see.
       COMPOSIO_API_KEY: ${COMPOSIO_API_KEY:-}
       EVESTACK_COMPOSIO_USER_ID: ${EVESTACK_COMPOSIO_USER_ID:-}
+
+      # Where the Skills page reads from. Points at the mount below; both halves
+      # are needed or it silently falls back — see the volume's comment.
+      EVESTACK_SKILLS_DIR: /agent-skills
+    volumes:
+      # The template's skills FROM THE HOST, not the copy baked into the image.
+      #
+      # lib/skills.ts falls back to `/repo/templates/default/agent/skills`, which
+      # the Dockerfile COPYs in — so without this mount the page reads a snapshot
+      # frozen at image build time. On this compose file that is the same
+      # directory by name, which is exactly what makes it easy to miss: edit a
+      # skill here, reload the page, and nothing changes until the image is
+      # rebuilt.
+      #
+      # Read-only. The dashboard has no reason to write here.
+      - ./templates/default/agent/skills:/agent-skills:ro
     ports:
       - "127.0.0.1:${DASHBOARD_PORT:-4000}:4000"
     extra_hosts:

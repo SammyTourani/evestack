@@ -1223,6 +1223,30 @@ services:
       WORKFLOW_POSTGRES_URL: postgres://evestack:${password}@postgres:5432/evestack
       # \`npm run dev\` also runs on the host, not in compose.
       EVESTACK_AGENT_URL: \${EVESTACK_AGENT_URL:-http://host.docker.internal:${agentPort}}
+      # Where the Skills page looks. Points at the mount below, and without both
+      # halves the page scans the wrong directory — see the volume's comment.
+      EVESTACK_SKILLS_DIR: /agent-skills
+    volumes:
+      # YOUR agent/skills, so the Skills page scans the skills your agent
+      # actually loads.
+      #
+      # Without this mount the page is not empty, which is what made the problem
+      # hard to see. lib/skills.ts falls back to the template's skills bundled
+      # INSIDE the image, so the page renders a skill called \`memory-hygiene\` —
+      # the same name the scaffolder writes into this project — and looks like it
+      # is reading yours. It is reading its own copy. The page labels the source
+      # ("bundled template", with the absolute path), and a label is a weaker
+      # thing than being right.
+      #
+      # That matters more here than on other pages. eve advertises every skill in
+      # this directory to the model and hands it a \`load_skill\` tool, so anything
+      # in it can put instructions into a live turn without a human seeing them
+      # first — which is why the page scans them at all. A scanner pointed at the
+      # wrong directory reports a clean verdict about files nobody is running.
+      #
+      # Read-only: the dashboard has no reason to write here, and this container
+      # already holds a database URL and can start agent runs.
+      - ./agent/skills:/agent-skills:ro
     ports:
       # 127.0.0.1 on purpose. The process inside binds 0.0.0.0 because nothing
       # could reach it otherwise; the published mapping is where exposure is

@@ -151,6 +151,44 @@ The audit row is written *after* eve accepts the answer, so the log never claims
 did not take effect. Retention is unbounded: this is the row you want a year later, when someone
 asks why the agent deleted the thing it deleted.
 
+## What the agent can be told to do
+
+eve advertises every skill in `agent/skills/` to the model and hands it a `load_skill` tool.
+Anything in that directory can put instructions into a live turn without a human seeing them
+first — which is a feature, and is also the reason the **Skills** page scans each one before
+listing it: credential reads, environment dumps, network exfiltration, and the shapes in between.
+`?selftest=1` runs the scanner against a bundled malicious specimen and expects a `critical`
+verdict, so you can tell a scanner that is working from one that is merely quiet.
+
+A clean verdict is not proof of safety and the page says so in as many words. It is pattern
+matching over files; a skill that fetches its instructions at runtime has nothing for it to read.
+
+**Point it at the right directory.** The page reads, in order: `EVESTACK_SKILLS_DIR`, then
+`<cwd>/agent/skills`, then the skills bundled with the evestack template. In a container the
+first two do not exist unless you arrange them, so it falls through to the third — and because
+the bundled skill has the same name the scaffolder writes into your project, the page looks like
+it is reading yours when it is reading the image's own copy. It labels the source (`bundled
+template`, with the absolute path) and says what to do about it.
+
+Both compose files this project ships now arrange it for you:
+
+```yaml
+    environment:
+      EVESTACK_SKILLS_DIR: /agent-skills
+    volumes:
+      - ./agent/skills:/agent-skills:ro
+```
+
+Measured against the published image, with and without those two lines:
+
+| | `resolvedBy` | reads |
+| --- | --- | --- |
+| without | `bundled-template` | `/repo/templates/default/agent/skills` — inside the image |
+| with | `env` | `/agent-skills` — your project, read-only |
+
+If you run the image by hand, pass both or the scanner reports a clean verdict about files
+nobody is running.
+
 ## Running it
 
 **In the project you already have.** `evestack create` writes a `dashboard` service into your
