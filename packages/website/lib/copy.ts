@@ -269,18 +269,33 @@ export const observability = {
   ],
   /* The two committed captures, cropped by scripts/optimize-images.mjs. */
   shots: {
+    /*
+     * Recaptured after the dashboard redesign, against a live agent.
+     *
+     * The alt text is precise about figures on purpose — that is what makes it
+     * checkable, and it is also what makes it go stale. The previous pair
+     * described "30 sessions, 42 turns, 207,300 in / 17,804 out tokens" above a
+     * grid of tiles, which was the OVERVIEW: dashboard v2 moved the tiles to `/`
+     * and made this the session list, so the words and the picture had come
+     * apart. Both are read off the new capture.
+     *
+     * The heights are 1800 rather than the old 1560/1360 because the restyled
+     * pages fill the viewport — scripts/optimize-images.mjs measures where the
+     * content ends now instead of carrying a remembered number, and it reports
+     * no crop for any of the four.
+     */
     sessions: {
       name: "sessions",
       width: 2880,
-      height: 1560,
-      alt: "The evestack dashboard's Sessions page: 30 sessions, 42 turns, 207,300 in / 17,804 out tokens, $0.05 model spend and an Infrastructure tile reading $0.00, above a table of real runs. The gpt-4o-mini row is labelled `unpriced` in orange rather than being counted as free.",
-      caption: "Sessions — the dashboard in this repo, captured running.",
+      height: 1800,
+      alt: "The evestack dashboard's Sessions page: a red banner reading '8 sessions wedged — a turn started and never finished, nothing in eve will notice or retry it' with links to each, above a searchable table of 250 real runs showing outcome, trigger, model, provider, environment, run type and turn count. Rows span openai/gpt-5-mini, anthropic/claude-sonnet-5, ollama/qwen3 and acme/experimental-v1, with two 'failed' rows in red among the 'ok' ones.",
+      caption: "Sessions — the dashboard in this repo, captured running against a live agent.",
     },
     detail: {
       name: "session-detail",
       width: 2880,
-      height: 1360,
-      alt: "A session detail page in the evestack dashboard: a 1500-word essay run showing 1 turn, 5,123 in / 3,704 out tokens, 4,608 cached reads and $0.0077 model spend, above a run tree with one completed turn on openai/gpt-5-mini — 41.0s, 13 tools, $0.0077.",
+      height: 1800,
+      alt: "A session detail page in the evestack dashboard: a scheduled run titled 'Write a detailed essay about database indexing', completed, open 1m 45s end to end, with tiles reading 4 turns, 28.5s turn time, 73,077 tokens in, 6,192 out and $0.02 spend. Below, a timeline of all four turns with their durations and costs, and turn 1 of 4 on openai/gpt-5-mini expanded to show 6.08s duration, 2.47s to first chunk, 343.1 chunks per second, 15,223 tokens in, 2,088 out, 7,744 cache writes, 5 steps, 0 retries and 18 tools offered against 0 called.",
       caption: "One session's run tree — same capture session.",
     },
   },
