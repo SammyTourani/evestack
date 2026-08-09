@@ -70,8 +70,19 @@ export async function FleetBanner() {
 
       {unknown > 0 && (
         <p className={styles.line}>
-          {unknown} session{unknown === 1 ? " could" : "s could"} not be checked — the agent did not
-          answer. {unreachable[0]?.reason}
+          {/*
+            The reason carries its own subject — lib/fleet.ts writes "the agent
+            could not be reached (…)" — so the lead used to end "…the agent did
+            not answer." and then say it again in lower case:
+
+              8 sessions could not be checked — the agent did not answer. the
+              agent could not be reached (Cannot reach the eve agent at …)
+
+            The lead now stops at the count and hands over. Found by looking at
+            a screenshot of this page rather than at this file.
+          */}
+          {unknown} session{unknown === 1 ? " could" : "s could"} not be checked:{" "}
+          {unreachable[0]?.reason ?? "the agent did not answer."}
         </p>
       )}
 
