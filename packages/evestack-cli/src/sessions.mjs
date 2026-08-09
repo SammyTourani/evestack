@@ -26,6 +26,16 @@
  * and this package publishes standalone. Same forced duplication, and same risk,
  * as the pricing table described in packages/evestack-budget/README.md — if the
  * classification changes in one place it must change in both.
+ *
+ * THAT LAST SENTENCE WAS A HOPE, AND IT WAS ALREADY BROKEN WHEN IT WAS WRITTEN.
+ * The candidate query below shipped without fleet.ts's unfinished-turn filter —
+ * the one line its comment credits with removing 166 of 174 false positives —
+ * so `evestack doctor` reported finished conversations as `wedged`. The unit
+ * tests could not see it: they cover classifySession, which was never wrong,
+ * while the query that decides who reaches it needs a database and had none.
+ * contract/contracts/20-fleet-port.contract.mjs now reads both files and fails
+ * when they disagree, which is the only thing that can hold two copies of one
+ * query together.
  */
 
 /**
@@ -127,6 +137,39 @@ export async function quietSessions(client, { workflowSchema, idleMs, limit }) {
      group by s.id, s.attributes, s.created_at, s.updated_at
     having greatest(s.updated_at, coalesce(max(t.updated_at), s.updated_at))
            < (now() at time zone 'utc') - ($1 || ' milliseconds')::interval
+
+       -- AND at least one turn is genuinely unfinished. THIS LINE WAS MISSING,
+       -- and the header above claimed "same candidate query" while it was.
+       --
+       -- Nothing downstream re-checks the question. A session whose turns have
+       -- all closed stays 'running' in the run row, so it was still a candidate;
+       -- eve answers a pruned stream with 200 and x-eve-stream-tail-index: -1,
+       -- readRecentEvents returns [], foldSnapshot([]) gives
+       -- {waiting:false, terminal:false, pendingRequests:[]}, and classifySession
+       -- reads "not waiting and not terminal" as a turn in flight. Past
+       -- STUCK_TURN_MS that is reported as 'wedged' — "a turn started and never
+       -- finished" — about a conversation that finished normally. Measured
+       -- directly: foldSnapshot([]) with a 3h idle classifies wedged.
+       --
+       -- lib/fleet.ts carries this term and its comment names the cost of
+       -- dropping it: "That is the 166-of-174 false positive." The dashboard
+       -- learned it and the port did not, which is exactly what the header
+       -- warned would happen if the classification changed in one place only.
+       --
+       -- COUNT, not "in_flight_since IS NOT NULL": a run created and never
+       -- picked up has completed_at AND started_at null, so MIN() is null on a
+       -- turn that is genuinely open.
+       --
+       -- The type filter is the unit of work. eve writes an untagged companion
+       -- run per session that never completes, and one counted here would report
+       -- the whole fleet as wedged.
+       --
+       -- completed_at IS NULL, never status: a cancelled turn, a failed turn and
+       -- a turn that never reached the provider have all FINISHED.
+       and count(t.id) filter (
+             where t.attributes->>'$eve.type' in ('turn', 'subagent')
+               and t.completed_at is null
+           ) > 0
      order by last_activity asc
      limit $2`,
     [intervalMilliseconds(idleMs), limit],
