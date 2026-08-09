@@ -107,6 +107,20 @@ CREATE TABLE IF NOT EXISTS evestack.alert_state (
 ALTER TABLE evestack.alert_state
   ADD COLUMN IF NOT EXISTS ever_ok boolean NOT NULL DEFAULT false;
 
+-- Backfill, because `DEFAULT false` is wrong for a row that is healthy RIGHT NOW.
+--
+-- On an upgrade every existing row gets ever_ok = false, including monitors
+-- sitting at `ok`. That self-heals on the next tick — writeObservations latches
+-- the moment it records another `ok` — with one exception, and it is the case
+-- the column exists for: a monitor that was healthy before the upgrade and goes
+-- `unknown` on the FIRST tick after it. That tick observes `unknown`, so the
+-- latch never fires, and a page-severity coverage-loss alert is silently missed
+-- exactly once, on exactly the boot where nobody would look for it.
+--
+-- A row whose state is `ok` has, by definition, been seen healthy. Cheap and
+-- idempotent: after the first tick nothing matches, and there are nine rows.
+UPDATE evestack.alert_state SET ever_ok = true WHERE state = 'ok' AND NOT ever_ok;
+
 -- CREATE TABLE IF NOT EXISTS does nothing once the table is there, so a column
 -- added after the first release needs its own statement. See the header.
 ALTER TABLE evestack.alert_state
