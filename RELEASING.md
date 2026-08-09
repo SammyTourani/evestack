@@ -100,20 +100,25 @@ npm publish ./packages/evestack-mcp
 npm publish ./packages/sandbox-opensandbox
 ```
 
-### Two names are not live yet
+### Both names are live — check them anyway
 
-As of 2026-08-05, `README.md` opens with `npx evestack create my-agent` and npm serves
-`evestack@0.0.1` — a 196-byte placeholder with **no `bin` field**, so that command downloads
-something and then fails to find an executable. `create-evestack` is at `0.5.0` on npm while this
-repo is at `0.6.0`.
+This section used to read "Two names are not live yet", and described `evestack@0.0.1` as a
+196-byte placeholder with no `bin` field, with the README's first command therefore broken. That
+was true on 2026-08-05 and stopped being true on 2026-08-07. It then sat here for two days telling
+maintainers the opposite of the truth, which is worse than saying nothing — so what follows is the
+check, not a snapshot.
 
-The first command in the README does not work until step 4 above runs. Check before assuming
-otherwise:
+As of 2026-08-09 both front doors work: `evestack@0.3.0` ships a real `bin`, and `create-evestack`
+is at `0.8.0` on npm, matching this repo. Never take that from this paragraph. Run:
 
 ```bash
 npm view evestack version && npm view evestack bin
 npm view create-evestack version
 ```
+
+Both commands must resolve, and the versions must match `packages/evestack-cli/package.json` and
+`packages/create-evestack/package.json`. A mismatch means step 4 has not run for the current
+commit, and the README's quickstart is describing code npm is not serving.
 
 ## Verify from a stranger's position
 

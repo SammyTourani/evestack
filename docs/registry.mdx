@@ -50,8 +50,9 @@ The memory tools therefore import `lib/memory.ts` by relative path, in `template
 so the tested code and the shipped item are the same code.
 
 Dependencies are pinned to the ranges `templates/default` is tested against, generated from that
-manifest at build time. `@evestack/memory` carries `pg@^8.20.3` and `@ai-sdk/openai@^4.0.0` —
-only what its own files import, not the template's whole dependency list. A bare, unversioned
+manifest at build time. `@evestack/memory` carries `pg@^8.20.3`, `@ai-sdk/openai@^4.0.0` and
+`ai-sdk-ollama@^4.1.0` — only what its own files import, not the template's whole dependency
+list, and the third is there because the memory tools take either embedding provider. A bare, unversioned
 name would resolve to whatever npm calls latest on the day you run it, and the pin is what stops
 an item installing a major version the code was never exercised against.
 

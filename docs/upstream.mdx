@@ -45,8 +45,9 @@ ls node_modules/eve/docs
 node -p "require('eve/package.json').version"
 ```
 
-Against the version this repo pins, that is **82 Markdown pages in 12 subdirectories, 864 KB**,
-matching `eve@0.30.6` exactly. Some practical uses:
+Against the version this repo pins today — `eve@0.30.8` — that is **82 Markdown pages in 12
+subdirectories, 872 KB**. These figures move with the pin; the two commands above are how you
+re-measure them rather than trusting this paragraph. Some practical uses:
 
 ```bash
 # every page mentioning the auth primitive you're debugging — 43 hits in 12 files
@@ -55,7 +56,7 @@ grep -rn "localDev" node_modules/eve/docs
 # the guide for the version you actually run, not the version eve.dev documents
 less node_modules/eve/docs/guides/auth-and-route-protection.md
 
-# the changelog ships too — 992 lines of it
+# the changelog ships too — 1,008 lines of it at 0.30.8, and it grows every release
 less node_modules/eve/CHANGELOG.md
 ```
 

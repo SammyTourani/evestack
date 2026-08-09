@@ -44,7 +44,7 @@ is the same bet the rest of evestack makes: a few hundred lines you can read bea
 | --- | --- | --- |
 | `list_sessions` | `/api/health/detail` | **Five most recent only** — that route's limit, not a choice made here. |
 | `get_session` | `/api/control/sessions/:id/approve` + `/api/budget` + `/api/health/detail` | Live waiting state, pending approval requests, usage, and the verbatim budget-stop reason. |
-| `list_approvals` | `/api/approvals` | **Route does not exist yet.** See below. |
+| `list_approvals` | `/api/approvals` | Who decided what, and how the identity was established. |
 | `get_costs` | `/api/budget` + `/api/health/detail` | Caps, per-principal daily spend, stops, lifetime totals. |
 | `promote_session_to_eval` | `/api/evals/promote/:id` | Generates eval source and returns it. Writes nothing. |
 
@@ -160,18 +160,19 @@ these tools declare. The server asserts at startup that no schema uses a keyword
 enforce, so the subset can never silently stop covering the schemas — an advertised constraint that is not
 actually checked is a lie told to a model.
 
-## Missing routes
+## When a route is missing
 
-`list_approvals` is advertised but **its route does not exist yet**. The data does: the rows are in
-`evestack.approvals`, and `packages/dashboard/lib/approvals.ts` already exports `listApprovals()` and
-`listApprovalsForSession()`. What is missing is a handler at
-`packages/dashboard/app/api/approvals/route.ts` that calls them — today only the `/approvals` HTML page
-reads that data, and this package does not get to add routes to the dashboard.
+This section used to say `list_approvals` had no route. **It has one** —
+`packages/dashboard/app/api/approvals/route.ts`, added in `5c49f3a` on 2026-08-05, before the first
+published dashboard image — so the tool works against any build you can actually pull. The paragraph
+outlived the gap it described by four days, which is the failure mode this whole package is built to
+avoid: a confident statement about another component that nobody re-checked.
 
-The tool is advertised anyway, and returns a tool-execution error naming exactly that file, because a
-model that can tell its operator *"the audit log needs one route handler in the dashboard"* is more useful
-than one that was never told the capability was intended. It will start working the moment the route
-lands, with no change here.
+The mechanism it describes is still real and still worth keeping, because this package and the
+dashboard version independently. Every tool that depends on a route degrades the same way: a 404 comes
+back as a tool-execution error that names the missing handler, rather than as an empty result. An empty
+approval log and an absent approval log are opposite answers to *"who approved this?"*, and a model
+handed the first when the second is true will tell its operator that nobody did.
 
 Also owed by the dashboard, and the reason for the caveats above:
 

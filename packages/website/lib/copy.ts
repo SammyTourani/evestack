@@ -126,7 +126,13 @@ export const terminal = {
    same off Vercel. The Dashboard row already carries the real difference. */
 export const comparison = {
   heading: "Same framework. Your infrastructure.",
-  sub: "eve is Apache-2.0 and Vercel documents self-hosting it. evestack ships that path end to end: the durable store, the sandbox, and the dashboard, wired together and tested against every eve release since 0.29.5.",
+  /* The trailing clause was "… and tested against every eve release since
+     0.29.5" — the same sentence deleted from `site.attribution` above, for the
+     same reason: every publishable package declares `eve: ">=0.30.0 <1.0.0"`,
+     which excludes 0.29.5, so it claimed testing on a version the code refuses
+     to install against. It was fixed in one field and left standing here, and
+     shipped live for four days. Both now say the checkable thing instead. */
+  sub: "eve is Apache-2.0 and Vercel documents self-hosting it. evestack ships that path end to end: the durable store, the sandbox, and the dashboard, wired together and pinned to eve by a contract suite that runs on every commit.",
   columns: ["", "Managed", "Self-hosted with evestack"],
   rows: [
     ["Runs on", "Vercel's infrastructure", "Your machine, VPS, or cluster"],
@@ -159,14 +165,15 @@ export const features = {
       demo: "privacy" as const,
     },
     {
-      /* Was "Full-depth tracing … The span tree is the product." Half of that
-         was aspiration: the OTLP endpoint really does receive and store the
-         full tree including prompt bodies and tool arguments
-         (packages/dashboard/lib/traces.ts — parseOtlpTraces, insertSpans,
-         getSpanTree, listModelCalls, listToolCalls), but no dashboard page
-         renders any of it yet. Claim the endpoint, not a screen. */
+      /* Was "Full-depth tracing … The span tree is the product.", corrected
+         down to "queryable today, not yet rendered as a view" on the grounds
+         that "no dashboard page renders any of it yet". That correction has
+         since gone stale in the other direction: app/traces/[id]/page.tsx:72-74
+         calls the exact three functions this comment named as unrendered —
+         getSpanTree, listModelCalls, listToolCalls — and app/traces/page.tsx
+         renders the overview, with Traces in the nav. Claim the screen now. */
       title: "Full-depth trace ingest",
-      body: "agent.session down to every model stream, exported to your own OTLP endpoint and stored in your Postgres — prompts and tool arguments included, queryable today, not yet rendered as a view.",
+      body: "agent.session down to every model stream, exported to your own OTLP endpoint and stored in your Postgres — prompts and tool arguments included, and rendered as a span tree you can open per session.",
       demo: "spans" as const,
     },
     {
@@ -406,9 +413,13 @@ export const integrations = {
        scripts/bootstrap.mjs, the eve dev ready line from FINDINGS.md);
      - the verify panel mirrors templates/default/scripts/verify.mjs exactly —
        the openai path, which is the scaffolder's option 1 with its default
-       model. That run prints these nine checks; the ollama path adds a tenth
-       (`memory`). So no step body counts the checks — a count was wrong here
-       once before (see the git history of this block).
+       model. That run prints these TEN checks. The count was wrong here twice:
+       first as a plain miscount, then as "nine, and the ollama path adds a
+       tenth (`memory`)" — which was also wrong, because verify.mjs:275-276
+       passes `memory` on the openai path too as soon as OPENAI_API_KEY is set
+       (`embeddings via openai/text-embedding-3-small`). The check list is
+       identical on both paths; only memory's detail line differs. docs/cli.mdx
+       :157 has said "ten checks" throughout. So no step body counts the checks.
      - the agent answers on 127.0.0.1 and the dashboard is printed as
        localhost — that asymmetry is real (verify.mjs builds the dashboard
        URL for a human to click, findAgent probes loopback).
@@ -468,6 +479,7 @@ export const quickstart = {
       { name: "schema", detail: "workflow tables exist" },
       { name: "pgvector", detail: "installed — long-term memory can store vectors" },
       { name: "model", detail: "openai/gpt-5-mini, OPENAI_API_KEY is set" },
+      { name: "memory", detail: "embeddings via openai/text-embedding-3-small" },
       { name: "agent", detail: "answering at http://127.0.0.1:2000" },
       { name: "dashboard", detail: "answering at http://localhost:4000, database connected" },
       { name: "traces", detail: "the agent's ingest token is accepted by the dashboard" },

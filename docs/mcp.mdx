@@ -1,0 +1,94 @@
+---
+title: The dashboard as MCP tools
+description: Point Claude Code at your fleet and ask it questions in English. Read-only until you say otherwise.
+---
+
+`@evestack/mcp` speaks [MCP](https://modelcontextprotocol.io) on top of the dashboard's HTTP routes,
+so an agent can answer *"why did last night's run stop?"* against your own Postgres instead of you
+opening nine tabs.
+
+It is a **thin client**, deliberately. No database connection, no SQL, no price table, no copy of
+eve's protocol — every tool is a projection of a route `@evestack/dashboard` already serves. The
+alternative is a second implementation of the cost calculation that disagrees with the UI you are
+looking at within a week. The consequence is stated rather than hidden: **if the dashboard has no
+route for something, this package has no tool for it.**
+
+## Setup
+
+```jsonc
+// .mcp.json, or claude_desktop_config.json
+{
+  "mcpServers": {
+    "evestack": {
+      "command": "npx",
+      "args": ["-y", "@evestack/mcp"],
+      "env": { "EVESTACK_MCP_DASHBOARD_URL": "http://localhost:4000" }
+    }
+  }
+}
+```
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `EVESTACK_MCP_DASHBOARD_URL` | `http://localhost:4000` | Where the dashboard is. |
+| `EVESTACK_MCP_DASHBOARD_AUTH` | — | `user:password` for the dashboard. Every route is behind it. |
+| `EVESTACK_MCP_ALLOW_CONTROL` | unset | `1` advertises the four mutating tools. See below. |
+| `EVESTACK_MCP_APPROVER` | — | The name recorded in the audit log for decisions this server makes. |
+| `EVESTACK_MCP_TIMEOUT_MS` | — | Per-request timeout against the dashboard. |
+
+## The tools
+
+Read-only, always available:
+
+| Tool | Answers |
+| --- | --- |
+| `list_sessions` | What has run recently. |
+| `get_session` | One session: live waiting state, pending approval requests, usage, and the verbatim budget-stop reason. |
+| `list_approvals` | Who approved or denied what, and how that identity was established. |
+| `get_costs` | Caps, per-principal daily spend, stops, lifetime totals. |
+| `promote_session_to_eval` | Generates eval source from a real session. Writes nothing. |
+
+Advertised only with `EVESTACK_MCP_ALLOW_CONTROL=1`:
+
+| Tool | Effect |
+| --- | --- |
+| `start_session` | Starts a real run. **Spends money.** |
+| `send_message` | Another turn on a live session. **Spends money.** |
+| `approve_or_deny` | **Runs the gated tool for real.** Audited. |
+| `cancel_run` | Cooperative stop between steps; the in-flight model call still bills. |
+
+## Why the default is read-only
+
+`approve_or_deny` lets one model approve a tool call another model is parked on. That is the exact
+gate a human was asked to stand at — the whole reason eve pauses the turn — so enabling it by
+default would quietly delete the human from human-in-the-loop.
+
+The mutating half is therefore **withheld from `tools/list` entirely**, not merely refused on call.
+A model cannot plan around a capability it has never been told exists, so there is no prompt that
+talks the server into using one.
+
+<Warning>
+  Turning on `EVESTACK_MCP_ALLOW_CONTROL` means an agent can approve shell commands on your machine
+  and start runs that cost money. Set `EVESTACK_MCP_APPROVER` with it, so the audit log on
+  [Approvals](/docs/dashboard) records which agent decided rather than `unidentified`.
+</Warning>
+
+## What it tells you when a route is missing
+
+This package and the dashboard version independently, so a tool can outrun the deployment it is
+pointed at. When that happens a 404 comes back as a tool-execution error naming the missing handler,
+never as an empty result — because an empty approval log and an absent approval log are opposite
+answers to "who approved this?", and a model handed the first when the second is true will report
+that nobody did.
+
+If you see one, the fix is upgrading the dashboard image, not this package.
+
+## Provenance
+
+Hand-rolled against the MCP spec: no SDK, **no dependencies at all**, `node:` builtins only — the
+same bet the rest of evestack makes, that a few hundred lines you can read beats a dependency you
+cannot. Read-only versus mutating is declared three ways, because different clients surface
+different ones: the first word of every description, `annotations.readOnlyHint`, and whether the
+tool appears in `tools/list` at all.
+
+Source and the full tool reference: [`packages/evestack-mcp`](https://github.com/SammyTourani/evestack/tree/main/packages/evestack-mcp#readme).
