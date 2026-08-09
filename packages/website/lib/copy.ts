@@ -23,7 +23,7 @@ export const site = {
   subhead:
     "Durable sessions, sandboxing, memory, approvals, schedules, 1,070 tool integrations, and a dashboard that drives the agent. One command scaffolds it and offers to bring it up.",
   eyebrow: "Open source · Apache-2.0",
-  command: "npx create-evestack",
+  command: "npx evestack create",
   github: "https://github.com/SammyTourani/evestack",
   /* Was "… tested against every eve release since 0.29.5". Every package here
      declares `eve: ">=0.30.0 <1.0.0"`, which EXCLUDES 0.29.5 — they will not
@@ -92,7 +92,7 @@ export const scrambleStat = "100% yours";
    Anything typed here should be copy-pasteable into a fresh project and work.
    If it cannot be, it does not belong in the artwork. */
 export const terminal = {
-  prompt: "npx create-evestack",
+  prompt: "npx evestack create",
   lines: [
     { text: "… prompts for a model key, writes .env.local, installs deps", kind: "dim" as const },
     { text: "docker compose up -d postgres", kind: "cmd" as const },
@@ -140,7 +140,7 @@ export const comparison = {
     ["Run history", "Retained by the platform", "As long as you keep the rows"],
     ["Dashboard", "Agent Runs, hosted", "Included, and it drives the agent"],
     ["Where your data sits", "Vercel's platform", "Inside your network, always"],
-    ["Setup", "Deploy to Vercel", "npx create-evestack, then four commands"],
+    ["Setup", "Deploy to Vercel", "npx evestack create, then four commands"],
   ],
 } as const;
 
@@ -437,7 +437,7 @@ export const quickstart = {
     {
       slug: "scaffold",
       title: "Scaffold",
-      commands: [{ pre: "npx ", cmd: "create-evestack" }],
+      commands: [{ pre: "npx ", cmd: "evestack create" }],
       /* The scaffolder's last ok() before "Done." — picked over its longer
          `Generated .env.local with a unique auth password and trace-ingest
          token`, which wrapped to two lines and made this step taller than

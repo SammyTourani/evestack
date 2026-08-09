@@ -53,11 +53,11 @@ test.describe("evestack landing page", () => {
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
     await page.goto("/");
     await page
-      .getByRole("button", { name: 'Copy "npx create-evestack"' })
+      .getByRole("button", { name: 'Copy "npx evestack create"' })
       .first()
       .click();
     const clip = await page.evaluate(() => navigator.clipboard.readText());
-    expect(clip).toBe("npx create-evestack");
+    expect(clip).toBe("npx evestack create");
   });
 
   test("reduced motion renders full content, no canvas", async ({ browser }) => {
