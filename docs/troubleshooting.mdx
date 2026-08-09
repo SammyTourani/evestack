@@ -9,6 +9,61 @@ description: Grouped by symptom — see local-setup for the setup-time issues.
 `eve` 0.29.x requires the `5.0.0-beta` protocol line and rejects anything else outright. Pin
 the dependency to the `beta` tag.
 
+## "The agent will not start any more, with `Invalid input: expected undefined`"
+
+The symptom is a boot that never completes, every time, with one or both of:
+
+```
+Invalid input: expected undefined, received Date          path: completedAt
+Invalid input: expected undefined, received Uint8Array    path: output
+```
+
+**One row in `workflow.workflow_runs` is in a shape eve's own read schema forbids**: a
+non-terminal `status` (`pending` or `running`) on a row that also carries `completed_at`,
+`output_cbor` or `error_cbor`. `WorkflowRunSchema` is a discriminated union whose
+pending/running branch declares all three as `undefined`, and `world.start()` re-enqueues
+active runs by listing and parsing *every* such row before it filters anything. One bad row
+aborts recovery, so the deployment is dead — and stays dead, because the same row is read on
+every start.
+
+It is also invisible to the obvious query. The dashboard defines an in-flight turn as
+`completed_at IS NULL`, and the poisoned row *has* a `completed_at` — so a database in this
+state can report **zero open runs** while refusing to boot.
+
+Find it:
+
+```sql
+SELECT id, status, completed_at, output_cbor IS NOT NULL AS has_output,
+       error_cbor IS NOT NULL AS has_error
+  FROM workflow.workflow_runs
+ WHERE status IN ('pending', 'running')
+   AND (completed_at IS NOT NULL OR output_cbor IS NOT NULL OR error_cbor IS NOT NULL);
+```
+
+Repair it by making the status agree with the payload the row already carries — the run really
+did finish, only the status says otherwise:
+
+```sql
+UPDATE workflow.workflow_runs
+   SET status = CASE WHEN error_cbor IS NOT NULL THEN 'failed' ELSE 'completed' END
+ WHERE status IN ('pending', 'running')
+   AND (completed_at IS NOT NULL OR output_cbor IS NOT NULL OR error_cbor IS NOT NULL);
+```
+
+<Warning>
+  Back the table up first, and read the rows before you write. This is your durable session
+  state, and the statement above is a judgement — that a run holding an output or an error
+  finished — not something the engine can confirm after the fact.
+</Warning>
+
+**How a row gets that way.** Anything that writes `status` back over a row the engine owns,
+without checking the engine has not moved on in between. Our own runtime probe did exactly that
+and has been fixed. Upstream there is a narrower race with the same outcome:
+`@workflow/world-postgres` guards `run_completed`, `run_failed` and `run_cancelled` with
+`notInArray(status, TERMINAL_WORKFLOW_RUN_STATUSES)` and does **not** guard `run_started`, so two
+workers racing on one run can leave a completed row marked `running`. Rare, and worth knowing
+about if you see this without having written to the table yourself.
+
 ## "I changed EVESTACK_MODEL and it's still calling the old provider"
 
 It always will. `EVESTACK_MODEL` names a model; `EVESTACK_PROVIDER` picks who to ask. Set only

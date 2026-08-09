@@ -228,6 +228,8 @@ export default {
     let restored = false;
     let original = null;
     let sessionStatus = null;
+    /** Run ids left in the shape eve's boot-time read schema rejects. Must be empty. */
+    let leftPoisoned = [];
 
     try {
       for (let attempt = 0; attempt < 40 && original === null; attempt += 1) {
@@ -382,26 +384,73 @@ export default {
             },
       );
     } finally {
-      // Put the row back exactly as it was, whatever happened above. This runs
-      // against the agent's live database, and a probe that leaves a turn
-      // permanently open would hand every later reader a wedged session that
-      // never existed.
+      // Put the row back exactly as it was — but ONLY if the engine has not
+      // moved it on in the meantime.
+      //
+      // ── the bug this guard exists for, which cost an afternoon ─────────────
+      //
+      // These two restores used to be unconditional `WHERE id = $1`. The probe
+      // reads `status` at the top, forces 'running', then spends several seconds
+      // calling the fleet API — and this probe's own header says the turn fails
+      // at the model call "in well under a second" without a provider key. So
+      // world-postgres settles the run inside that window and writes
+      // status='failed', completed_at=now() and error_cbor=<bytea> in one
+      // statement. The restore then put the stale 'running' back on top of it.
+      //
+      // The row that leaves behind is status='running' WITH completed_at and
+      // error_cbor set, and `WorkflowRunSchema` (@workflow/world runs.ts:135-137)
+      // is a discriminatedUnion whose pending/running branch declares all three
+      // as `z.undefined().optional()`. Reproduced against the real schema:
+      //
+      //   ["output"]      Invalid input: expected undefined, received Uint8Array
+      //   ["completedAt"] Invalid input: expected undefined, received Date
+      //
+      // `world.start()` calls reenqueueActiveRuns → runs.list({status:'running'}),
+      // which parses EVERY row before filtering, outside the try that wraps the
+      // enqueue. One such row and the deployment never boots again — the same
+      // row is re-read on every start, so it is permanent and deterministic.
+      // That is the whole of PR #36's "0.31.3 fails to boot against agent_v31",
+      // and it has nothing to do with 0.31.3: eve 0.30.8 bundles the identical
+      // union. The database was poisoned by this probe.
+      //
+      // Naming the expected current value in the WHERE is the fix: if the engine
+      // has written anything else, the row is the engine's now and we leave it.
       if (original !== null) {
-        await client
+        const turn = await client
           .query(
-            `UPDATE workflow.workflow_runs SET completed_at = $2, started_at = $3, status = $4 WHERE id = $1`,
+            `UPDATE workflow.workflow_runs SET completed_at = $2, started_at = $3, status = $4
+              WHERE id = $1 AND status = 'running' AND completed_at IS NULL`,
             [original.id, original.completed_at, original.started_at, original.status],
           )
-          .catch(() => {});
+          .catch(() => null);
+        let session = { rowCount: 1 };
         if (sessionStatus !== null) {
-          await client
-            .query(`UPDATE workflow.workflow_runs SET status = $2 WHERE id = $1`, [
-              body.sessionId,
-              sessionStatus,
-            ])
-            .catch(() => {});
+          session = await client
+            .query(
+              `UPDATE workflow.workflow_runs SET status = $2
+                WHERE id = $1 AND status = 'running' AND completed_at IS NULL`,
+              [body.sessionId, sessionStatus],
+            )
+            .catch(() => null);
         }
-        restored = true;
+        // From the rows actually affected, not from having reached this line.
+        // `restored = true` used to be unconditional after two `.catch(() => {})`,
+        // so a probe that had just bricked the agent's database still reported
+        // "the fixture leaves nothing behind". That is why the poisoning was
+        // silent for four days.
+        restored = (turn?.rowCount ?? 0) > 0 && (session?.rowCount ?? 0) > 0;
+
+        // The post-condition, asserted rather than assumed: no non-terminal run
+        // may carry a terminal payload. This is the invariant eve's read schema
+        // enforces, checked here where we can still name the probe that broke it.
+        const { rows: poisoned } = await client
+          .query(
+            `SELECT id FROM workflow.workflow_runs
+              WHERE status IN ('pending', 'running')
+                AND (completed_at IS NOT NULL OR output_cbor IS NOT NULL OR error_cbor IS NOT NULL)`,
+          )
+          .catch(() => ({ rows: [] }));
+        leftPoisoned = poisoned.map((r) => r.id);
       }
       await client.end().catch(() => {});
     }
@@ -409,7 +458,24 @@ export default {
     t.ok(
       restored,
       "the reopened turn row was restored, so the fixture leaves nothing behind",
-      restored ? {} : { expected: "the original completed_at and status put back", actual: "not restored" },
+      restored
+        ? {}
+        : {
+            expected: "both restore statements to affect their row",
+            actual:
+              "one or both matched nothing — the engine settled the run first, so the row was left as the engine wrote it (correct, but the fixture no longer controls it)",
+          },
+    );
+
+    t.ok(
+      leftPoisoned.length === 0,
+      "no pending/running run carries a terminal payload — the shape eve refuses to boot against",
+      leftPoisoned.length === 0
+        ? {}
+        : {
+            expected: "0 rows with status IN ('pending','running') AND (completed_at|output_cbor|error_cbor) NOT NULL",
+            actual: `${leftPoisoned.length}: ${leftPoisoned.slice(0, 5).join(", ")} — this database will not boot`,
+          },
     );
   },
 };
