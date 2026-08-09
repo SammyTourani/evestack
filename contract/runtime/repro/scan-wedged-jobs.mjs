@@ -46,7 +46,7 @@ const GW = args.find((a) => a.startsWith("--schema="))?.slice(9) ?? "graphile_wo
 const WF = args.find((a) => a.startsWith("--workflow="))?.slice(11) ?? "workflow";
 
 const note = (d) => process.stdout.write(`       ${d}\n`);
-const section = (t) => process.stdout.write(`\n${"=".repeat(78)}\n${t}\n${"=".repeat(78)}\n`);
+const section = (t) => process.stdout.write(`\n${t} ${"\u2500".repeat(Math.max(0, 77 - t.length))}\n\n`);
 
 function fmt(v) {
   if (v === null || v === undefined) return "NULL";

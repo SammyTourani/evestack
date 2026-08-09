@@ -57,13 +57,18 @@ test("`--` ends the options, so a directory really called --help is reachable", 
 
 test("the flags create does have are all accepted", () => {
   assert.deepEqual(parseCreateArgs(["my-agent", "--yes"]), {
-    positional: ["my-agent"], yes: true, help: false, version: false, error: null,
+    positional: ["my-agent"], yes: true, verbose: false, help: false, version: false, error: null,
   });
   assert.equal(parseCreateArgs(["-y"]).yes, true);
   assert.equal(parseCreateArgs(["--help"]).help, true);
   assert.equal(parseCreateArgs(["-h"]).help, true);
   assert.equal(parseCreateArgs(["--version"]).version, true);
   assert.equal(parseCreateArgs(["-V"]).version, true);
+  // --verbose puts the raw npm/docker streams back. Without it those commands
+  // are captured and reported as one row each, which is the whole point — but
+  // a failing install has to be debuggable, so the escape hatch is a real flag.
+  assert.equal(parseCreateArgs(["--verbose"]).verbose, true);
+  assert.equal(parseCreateArgs(["my-agent"]).verbose, false);
 });
 
 test("two names are refused rather than one being ignored", () => {

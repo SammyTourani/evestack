@@ -16,15 +16,11 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
-const C = {
-  reset: "\x1b[0m",
-  bold: "\x1b[1m",
-  dim: "\x1b[2m",
-  red: "\x1b[31m",
-  green: "\x1b[32m",
-  yellow: "\x1b[33m",
-  cyan: "\x1b[36m",
-};
+// The shared design system, from the package that already carries the template.
+// This file declared its own copy of the colour table, as did shared.mjs and the
+// template's checks.mjs — three tables, none of which asked whether stdout was a
+// terminal before emitting an escape.
+import { c, g, heading } from "create-evestack/ui";
 
 /**
  * The env files eve itself loads, in the order it loads them — `.env.local` last,
@@ -84,13 +80,15 @@ function dependsOnEve(dir) {
   }
 }
 
-function notAProject(stderr) {
+/** Exported: `status` and `tour` refuse in exactly the same place, for exactly
+ *  the same reason, and three copies of this paragraph would drift. */
+export function notAProject(stderr) {
   stderr.write(
-    `${C.red}evestack: this is not an evestack project${C.reset} — no .env.local here or above,\n` +
-      `  and no .env beside a package.json that depends on eve.\n\n` +
-      `  ${C.bold}cd${C.reset} into the directory ${C.bold}evestack create${C.reset} made, or into the one you ran\n` +
-      `  ${C.bold}evestack attach${C.reset} in, or make a new one:\n\n` +
-      `      ${C.bold}npx evestack create my-agent${C.reset}\n\n`,
+    `\n  ${c.redBold("This is not an evestack project.")}\n` +
+      `  ${c.dim("No .env.local here or above, and no .env beside a package.json that needs eve.")}\n\n` +
+      `  ${c.dim(`${g.arrow} `)}${c.bold("cd")} into the directory ${c.bold("evestack create")} made, or the one you ran\n` +
+      `    ${c.bold("evestack attach")} in — or start a new one:\n\n` +
+      `      ${c.bold("npx evestack create my-agent")}\n\n`,
   );
   return 2;
 }
@@ -177,8 +175,22 @@ Exit codes
   2  not an evestack project
 `;
 
+/**
+ * Every value this project configures, merged in eve's own load order.
+ *
+ * Exported because `status` needs the same view `open` does, and the merge has
+ * a rule in it worth keeping in one place: `.env.local` wins over `.env`, and
+ * the real environment wins over both — a container deployment sets these as
+ * variables and has no file at all.
+ */
+export function projectEnv(found) {
+  const merged = {};
+  for (const file of found.envFiles) Object.assign(merged, readEnvFile(join(found.dir, file)));
+  return (key) => process.env[key] || merged[key] || undefined;
+}
+
 /** Was help asked for, ignoring anything after `--`? */
-function wantsHelp(argv) {
+export function wantsHelp(argv) {
   for (const arg of argv) {
     if (arg === "--") return false;
     if (arg === "--help" || arg === "-h") return true;
@@ -203,14 +215,14 @@ export async function verify(argv, { stdout = process.stdout, stderr = process.s
   const script = findVerifyScript(projectDir);
   if (!script) {
     stderr.write(
-      `${C.red}evestack: could not find the verify script.${C.reset}\n\n` +
-        `  From inside the project this is also:  ${C.bold}npm run verify${C.reset}\n\n`,
+      `\n  ${c.redBold("Could not find the verify script.")}\n\n` +
+        `  ${c.dim("From inside the project this is also:")}  ${c.bold("npm run verify")}\n\n`,
     );
     return 2;
   }
 
   if (projectDir !== process.cwd()) {
-    stdout.write(`${C.dim}  checking ${projectDir}${C.reset}\n`);
+    stdout.write(`  ${c.dim(`checking ${projectDir}`)}\n`);
   }
 
   // Inherited stdio: verify prints colour, asks one question, and its exit code
@@ -249,13 +261,10 @@ export async function open(argv, { stdout = process.stdout, stderr = process.std
 
   const found = findProjectEnv();
   if (!found) return notAProject(stderr);
-  const projectDir = found.dir;
 
   // Merged in eve's order, so .env.local wins — and so an attached project that
   // keeps its configuration in `.env` is read at all.
-  const env = {};
-  for (const file of found.envFiles) Object.assign(env, readEnvFile(join(projectDir, file)));
-  const value = (key) => process.env[key] || env[key] || undefined;
+  const value = projectEnv(found);
 
   // The ingest URL is the one place the chosen dashboard port is recorded, and
   // the scaffolder now picks that port rather than assuming 4000.
@@ -282,27 +291,39 @@ export async function open(argv, { stdout = process.stdout, stderr = process.std
     healthy = false;
   }
 
-  stdout.write(`\n  ${C.bold}${url}${C.reset}\n`);
+  stdout.write("\n");
+  heading("dashboard", healthy ? "" : "not running yet");
+  stdout.write("\n");
+  stdout.write(`      ${c.brandBold(url)}\n`);
   if (password) {
-    stdout.write(`  ${C.dim}sign in${C.reset}  ${user} ${C.dim}/${C.reset} ${password}\n`);
+    stdout.write(`      ${c.dim("sign in")}  ${c.bold(user)} ${c.dim("/")} ${c.bold(password)}\n`);
   } else {
     stdout.write(
-      `  ${C.yellow}EVESTACK_AUTH_PASSWORD is not set${C.reset}${C.dim}, so every route answers 503.${C.reset}\n`,
+      `      ${c.yellow("EVESTACK_AUTH_PASSWORD is not set")}${c.dim(", so every route answers 503.")}\n`,
     );
   }
+  stdout.write("\n");
 
   if (!healthy) {
+    stdout.write(`  ${c.dim(`${g.arrow} `)}${c.bold("docker compose --profile dashboard up -d")}\n\n`);
     stdout.write(
-      `\n  ${C.yellow}Nothing is answering there yet.${C.reset} Start it:\n\n` +
-        `      ${C.bold}docker compose --profile dashboard up -d${C.reset}\n\n` +
-        `  ${C.dim}then \`evestack open\` again. \`evestack verify\` checks the whole stack.${C.reset}\n\n`,
+      `  ${c.dim("Then `evestack open` again. `evestack status` says what else is down.")}\n\n`,
     );
     return 1;
   }
 
-  stdout.write(`  ${C.green}healthy${C.reset}\n\n`);
-
-  if (argv.includes("--no-open")) return 0;
+  // Say that it is alive, and say what just happened to the browser.
+  //
+  // The restyle dropped the old `healthy` line and replaced it with nothing, so
+  // the happy path ended on the password with no confirmation and no trailing
+  // context — a live run of `evestack open --no-open` printed three lines and
+  // stopped, which reads like it was cut off. Both branches now end in a
+  // sentence about the state of the world.
+  if (argv.includes("--no-open")) {
+    stdout.write(`  ${c.green("Answering.")}${c.dim(" Run `evestack open` without --no-open to launch it.")}\n\n`);
+    return 0;
+  }
+  stdout.write(`  ${c.green("Answering.")}${c.dim(" Opening it now…")}\n\n`);
   launchBrowser(url);
   return 0;
 }

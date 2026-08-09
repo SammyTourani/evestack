@@ -29,8 +29,23 @@ export function table(rows, { indent = "    " } = {}) {
   );
 }
 
-export function section(title) {
-  return `\n${"=".repeat(78)}\n${title}\n${"=".repeat(78)}\n`;
+/**
+ * A section heading: `queue ─────────────────`.
+ *
+ * This was a title sandwiched between two 78-character rules of `=`, which is
+ * five lines of furniture per section and a different visual language from
+ * every other evestack command. The label-plus-rule form is the one `ui.mjs`
+ * uses everywhere else, and it survives the same trip: a monospace paste with
+ * no colour.
+ *
+ * KEEP contract/runtime/repro/*.mjs IN STEP. Those scripts each carry their own
+ * copy of this helper, on purpose — they are standalone and must not depend on
+ * a published package — and the reason the shapes match is so that output
+ * pasted from either into an issue looks like it came from one tool. It did.
+ */
+export function section(title, width = 78) {
+  const head = `${title} `;
+  return `\n${head}${"─".repeat(Math.max(0, width - head.length))}\n\n`;
 }
 
 /** Durations read by a human under pressure: "3h 12m", not "11520000". */

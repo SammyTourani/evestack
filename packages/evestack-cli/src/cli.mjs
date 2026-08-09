@@ -41,7 +41,7 @@ const SCAFFOLD_COMMANDS = new Set(["create", "attach"]);
  * their own flags. `evestack verify --json` must reach the checker, not die on
  * doctor's parser calling --json unknown for a command it does not handle.
  */
-const PROJECT_COMMANDS = new Set(["verify", "open"]);
+const PROJECT_COMMANDS = new Set(["status", "verify", "open", "tour"]);
 
 /**
  * Which scaffolder command this argv is, or null for everything else.
@@ -59,43 +59,34 @@ export function projectCommand(argv) {
   return PROJECT_COMMANDS.has(argv[0]) ? argv[0] : null;
 }
 
+/**
+ * The command list, and nothing else.
+ *
+ * This used to be thirty-eight lines: five commands, then a six-line quickstart
+ * that repeated what `create` prints when it finishes, then a paragraph about
+ * `doctor` being read-only. All of it true, none of it what someone typing
+ * `evestack --help` is looking for — they want the verb. The quickstart is now
+ * printed by the thing that owns it (`create`, at the moment it finishes), and
+ * every command's own `--help` carries its own detail.
+ *
+ * Ordered by when you need them, not alphabetically.
+ */
 export const USAGE = `evestack — the whole eve stack, on your own machine
 
-  evestack create [name]        scaffold an agent + dashboard into a new directory
-  evestack verify               check every part of the stack and say what to fix
-  evestack open                 print the dashboard URL and sign-in, and open it
-  evestack attach [dir]         add evestack to an eve project you already have
-  evestack doctor               explain why a durable job is dead
+  evestack create [name]     scaffold an agent, a database and a dashboard
+  evestack status            is it up? what do I run?
+  evestack tour              a guided first run, on a stack that is already up
+  evestack open              the dashboard URL and its password, in a browser
+  evestack verify            check every part and name the fix for anything broken
+  evestack attach [dir]      add evestack to an eve project you already have
+  evestack doctor            a run stopped moving — read-only forensics
 
-  \`npx create-evestack [name]\` is the same scaffolder under the name npm's
-  create-* convention expects. Same code, same flags, either one.
+  -h, --help                 this, or COMMAND --help for one command's options
+  -V, --version              print the version
 
-Getting started
-
-  npx evestack create my-agent                 # offers to do the next three for you
-  cd my-agent
-  docker compose up -d postgres                # durable sessions
-  npm run db:bootstrap                         # create the schema
-  docker compose --profile dashboard up -d     # the dashboard
-  npm run dev                                  # the agent
-
-Then, in another terminal:
-
-  evestack verify                              # is it working? what do I fix?
-  evestack open                                # take me to the dashboard
-
-Both work from anywhere inside the project directory.
-
-Options
-
-  -h, --help                    this, or a command's own options:
-                                \`evestack create --help\`, \`verify --help\`, and so
-                                on. Asking never writes, starts or opens anything
-  -V, --version                 print the version
-
-\`evestack doctor\` is read-only: it never writes to your database, and when
-there is something to fix it prints the SQL and lets you decide. Run
-\`evestack doctor --help\` for its options.
+  Asking for help never writes, starts or opens anything.
+  \`npx create-evestack [name]\` is \`evestack create\` under npm's create-*
+  convention — same code, same flags, either one.
 `;
 
 export const DOCTOR_USAGE = `evestack doctor — explain why a durable job is dead
@@ -216,6 +207,63 @@ async function printVersion(stdout) {
   return 0;
 }
 
+/** Every verb this binary answers to, for the router and for did-you-mean. */
+export const COMMANDS = ["create", "status", "tour", "open", "verify", "attach", "doctor"];
+
+/**
+ * Edit distance, capped at 2.
+ *
+ * Two is the whole point: it catches a transposition and a slip
+ * (`verfiy`, `statsu`, `docter`) and refuses to guess at `deploy`. A suggestion
+ * that fires on anything vaguely similar teaches people to ignore suggestions.
+ */
+function near(input, candidate) {
+  const a = input.toLowerCase();
+  const b = candidate;
+  if (Math.abs(a.length - b.length) > 2) return false;
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 0; j <= b.length; j += 1) d[0][j] = j;
+  for (let i = 1; i <= a.length; i += 1) {
+    for (let j = 1; j <= b.length; j += 1) {
+      d[i][j] = Math.min(
+        d[i - 1][j] + 1,
+        d[i][j - 1] + 1,
+        d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    }
+  }
+  return d[a.length][b.length] <= 2;
+}
+
+export function unknownCommand(input) {
+  const suggestion = COMMANDS.find((name) => near(input, name));
+  const head = `Unknown command ${JSON.stringify(input)}.`;
+  return suggestion
+    ? `${head} Did you mean \`evestack ${suggestion}\`?\n\n${USAGE}`
+    : `${head}\n\n${USAGE}`;
+}
+
+/**
+ * The project-scoped commands, each in its own module so that `doctor` — the
+ * one someone runs against a wedged production queue — never loads a checker
+ * that talks to Docker, nor a tour that wants to spend tokens.
+ */
+async function runProjectCommand(name, argv, { stdout, stderr }) {
+  const MODULES = {
+    status: () => import("./status.mjs"),
+    tour: () => import("./tour.mjs"),
+    verify: () => import("./project.mjs"),
+    open: () => import("./project.mjs"),
+  };
+  try {
+    const module = await MODULES[name]();
+    return await module[name](argv, { stdout, stderr });
+  } catch (error) {
+    stderr.write(`${error?.message ?? error}\n`);
+    return 1;
+  }
+}
+
 export async function main(argv, { stdout = process.stdout, stderr = process.stderr } = {}) {
   // Before everything, including the router: a runtime this CLI does not support
   // should be one sentence, not a failure inside pg or a scaffolded project.
@@ -236,15 +284,7 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
   if ((project || scaffold) && wantsVersion(argv.slice(1))) {
     return printVersion(stdout);
   }
-  if (project) {
-    const commands = await import("./project.mjs");
-    try {
-      return await commands[project](argv.slice(1), { stdout, stderr });
-    } catch (error) {
-      stderr.write(`${error?.message ?? error}\n`);
-      return 1;
-    }
-  }
+  if (project) return runProjectCommand(project, argv.slice(1), { stdout, stderr });
 
   if (scaffold) {
     const scaffolder = await import("./scaffold.mjs");
@@ -267,23 +307,30 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
     return 2;
   }
 
-  if (options.help || (options.command === null && !options.version)) {
+  if (options.help) {
     // `evestack doctor --help` gets doctor's flags; a bare `--help` gets the
     // command list. Printing the 30-line doctor block to someone who typed
-    // `evestack --help` buries the two commands they are more likely to want.
+    // `evestack --help` buries the commands they are more likely to want.
     stdout.write(options.command === "doctor" ? DOCTOR_USAGE : USAGE);
-    return options.help ? 0 : 2;
+    return 0;
   }
   if (options.version) {
     return printVersion(stdout);
   }
+
+  // A bare `evestack` printed the whole usage block and exited 2 — an error code
+  // for typing the program's name. Inside a project the question it is standing
+  // in for has an answer, so answer it; outside one, the command list IS the
+  // answer, and it is not a failure.
+  if (options.command === null) {
+    const { findProject } = await import("./project.mjs");
+    if (findProject()) return runProjectCommand("status", [], { stdout, stderr });
+    stdout.write(USAGE);
+    return 0;
+  }
+
   if (options.command !== "doctor") {
-    // Named in full. This said "create, attach or doctor" while the binary
-    // shipped five commands, so the two a stuck user most wants — `verify` and
-    // `open` — were missing from the one message they see after mistyping.
-    stderr.write(
-      `Unknown command "${options.command}". Try create, verify, open, attach or doctor.\n\n${USAGE}`,
-    );
+    stderr.write(unknownCommand(options.command));
     return 2;
   }
 

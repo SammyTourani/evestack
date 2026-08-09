@@ -133,7 +133,7 @@ const ok = (passed, detail, extra) => {
   if (extra) process.stdout.write(`       ${extra}\n`);
 };
 const note = (d) => process.stdout.write(`       ${d}\n`);
-const section = (t) => process.stdout.write(`\n${"=".repeat(78)}\n${t}\n${"=".repeat(78)}\n`);
+const section = (t) => process.stdout.write(`\n${t} ${"\u2500".repeat(Math.max(0, 77 - t.length))}\n\n`);
 
 function fmt(v) {
   if (v === null || v === undefined) return "NULL";

@@ -5,15 +5,30 @@
  * found. The human report leads with what was looked at and what could not be —
  * an incident tool that quietly skips a check is worse than one that fails.
  */
+import { c as color, g } from "create-evestack/ui";
+
 import { table, section, duration, fmt } from "./format.mjs";
 
-const MARK = { critical: "  FAULT ", warning: "   WARN ", info: "   note " };
+/**
+ * The gutter, in the same three states everything else reports in.
+ *
+ * The words stay — a doctor report gets pasted into an incident channel where
+ * "FAULT" is scannable and a glyph alone is not — but the glyph and the colour
+ * are now the ones `verify` and `status` use, so the three commands agree about
+ * what red means.
+ */
+const MARK = {
+  critical: `  ${g.FAIL} ${color.redBold("FAULT")}`,
+  warning: `  ${g.WARN} ${color.yellowBold("WARN")} `,
+  info: `  ${g.SKIP} ${color.dim("note")} `,
+};
 
 function header(report) {
   const c = report.connection;
   const s = report.schemas;
   const lines = [
-    "evestack doctor",
+    `  ${g.MARK} ${color.bold("doctor")}   ${color.dim("read-only · nothing here writes to your database")}`,
+    "",
     `  postgres   ${c.target}`,
     `             ${c.database ?? "?"} as ${c.user ?? "?"}, server ${c.serverVersion ?? "?"}`,
     `             session is ${
@@ -54,7 +69,7 @@ function header(report) {
 
 function queueSection(report) {
   const h = report.health;
-  let out = section("QUEUE");
+  let out = section("queue");
   out += table(
     [
       {
@@ -80,7 +95,7 @@ function queueSection(report) {
 }
 
 function findingsSection(report) {
-  let out = section("FINDINGS");
+  let out = section("findings");
   if (report.findings.length === 0) {
     out +=
       "  Nothing to act on. No run is stranded behind a job that cannot be claimed,\n" +
@@ -88,19 +103,19 @@ function findingsSection(report) {
     return out;
   }
   for (const f of report.findings) {
-    out += `\n${MARK[f.severity] ?? "        "} ${f.title}\n`;
-    out += `         ${f.action}\n`;
-    if (f.evidence.length > 0) out += `\n${table(f.evidence, { indent: "         " })}`;
+    out += `\n${MARK[f.severity] ?? " ".repeat(9)} ${color.bold(f.title)}\n`;
+    out += `           ${f.action}\n`;
+    if (f.evidence.length > 0) out += `\n${table(f.evidence, { indent: "           " })}`;
     // The detail block is the "why", and it needs air between it and the
     // evidence table or the two read as one run-on paragraph.
-    if (f.detail.length > 0) out += `\n${f.detail.map((line) => `         ${line}\n`).join("")}`;
+    if (f.detail.length > 0) out += `\n${f.detail.map((line) => color.dim(`           ${line}`) + "\n").join("")}`;
   }
   return out;
 }
 
 function verdict(report) {
   const critical = report.findings.filter((f) => f.severity === "critical");
-  let out = section("VERDICT");
+  let out = section("verdict");
   if (critical.length === 0) {
     out +=
       "  Nothing is currently costing you a run.\n" +
@@ -126,7 +141,7 @@ export function renderText(report) {
   out += findingsSection(report);
   out += verdict(report);
   if (report.remediation) {
-    out += section("REMEDIATION SQL — not run, print with --sql to pipe it somewhere");
+    out += section("remediation sql — not run; `--sql` prints only this, to pipe");
     out += `${report.remediation}\n`;
   }
   return out;
@@ -155,7 +170,7 @@ export function renderJson(report) {
 /** `--verbose` dumps the rows behind the findings, for pasting into an issue. */
 export function renderVerbose(report) {
   let out = "";
-  out += section("DEAD JOBS (attempts exhausted — can never be claimed again)");
+  out += section("dead jobs — attempts exhausted, can never be claimed again");
   out += table(
     report.dead.map((j) => ({
       id: j.id,
@@ -168,7 +183,7 @@ export function renderVerbose(report) {
     })),
     { indent: "  " },
   );
-  out += section("LOCKED RIGHT NOW");
+  out += section("locked right now");
   out += table(
     report.locked.map((j) => ({
       id: j.id,
@@ -180,7 +195,7 @@ export function renderVerbose(report) {
     { indent: "  " },
   );
   if (report.sessions && report.sessions.entries.length > 0) {
-    out += section("SESSIONS");
+    out += section("sessions");
     out += table(
       report.sessions.entries.map((e) => ({
         session: e.sessionId,

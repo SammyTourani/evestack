@@ -83,7 +83,16 @@ npm publish ./packages/create-evestack
 npm view create-evestack version
 
 # 4. then the CLI, which depends on the scaffolder published in step 3.
-npm publish ./packages/evestack-cli
+#    pnpm, NOT npm — and this is the one package where it matters. `evestack`
+#    declares `create-evestack: workspace:^`, npm has never implemented that
+#    protocol, and `npm publish` would ship the range verbatim so that every
+#    install ends at `Unsupported URL Type "workspace:"`. pnpm resolves it as it
+#    packs. packages/evestack-cli/scripts/prepack.mjs refuses the npm form
+#    rather than letting it through, so the wrong command fails loudly here
+#    instead of quietly on every user — but this line said `npm publish` for
+#    long enough to be worth correcting.
+pnpm --filter evestack publish --access public
+npm view evestack version
 
 # Independent of the chain — no other published package names them, so these can
 # go at any point.

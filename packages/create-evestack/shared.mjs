@@ -13,6 +13,8 @@ import { createConnection } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { blank, c, C, g, say } from "./ui.mjs";
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 export const REPO = "https://github.com/SammyTourani/evestack";
@@ -55,10 +57,13 @@ export const DASHBOARD_IMAGE = `ghcr.io/sammytourani/evestack-dashboard:${DASHBO
  * branch nobody exercises.
  */
 
-export const C = {
-  reset: "\x1b[0m", dim: "\x1b[2m", bold: "\x1b[1m",
-  cyan: "\x1b[36m", green: "\x1b[32m", yellow: "\x1b[33m", red: "\x1b[31m",
-};
+/**
+ * Re-exported so the ~100 call sites in create.mjs and attach.mjs that already
+ * write `${C.dim}…${C.reset}` keep working — and become NO_COLOR-correct without
+ * being touched, because ui.mjs decides whether those strings are escapes or
+ * empty. The table used to be declared here, and identically in two other files.
+ */
+export { C, c, g };
 
 /**
  * The Node this package is tested on, and the floor every manifest already
@@ -145,11 +150,11 @@ export function packageVersion() {
   }
 }
 
-export const say = (s = "") => console.log(s);
-export const step = (s) => say(`${C.cyan}▚${C.reset} ${s}`);
-export const ok = (s) => say(`  ${C.green}✓${C.reset} ${s}`);
-export const warn = (s) => say(`  ${C.yellow}!${C.reset} ${s}`);
-export const dim = (s) => say(`  ${C.dim}${s}${C.reset}`);
+export { say, blank };
+export const step = (s) => say(`  ${g.MARK} ${c.bold(s)}`);
+export const ok = (s) => say(`  ${g.OK} ${s}`);
+export const warn = (s) => say(`  ${g.WARN} ${s}`);
+export const dim = (s) => say(`  ${c.dim(s)}`);
 
 export function basename(p) {
   return p.split(/[\\/]/).filter(Boolean).pop() ?? "agent";
