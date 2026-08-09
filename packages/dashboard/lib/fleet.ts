@@ -99,7 +99,14 @@ export type SessionHealth =
    * process died mid-flight. Nothing in eve will ever notice or retry it.
    */
   | "wedged"
-  /** The agent could not be reached, so nothing can be said about this session. */
+  /**
+   * Nothing can be said about this session. Two causes, and the `reason` on the
+   * entry separates them because they send a reader to different places: the
+   * agent could not be reached at all, or it answered and its event stream
+   * stopped before the session's state could be read. Reporting the second as
+   * the first sent operators to check a healthy network — see the catch in
+   * inspectFleet.
+   */
   | "unknown";
 
 export interface FleetEntry {
@@ -445,7 +452,7 @@ export async function inspectFleet(
           pendingCount: 0,
           reason:
             error instanceof StreamTruncatedError
-              ? `the agent answered but sent no events to judge this session by (${error.message})`
+              ? `the agent answered but its stream stopped before this session's state could be read (${error.message})`
               : `the agent could not be reached (${error instanceof Error ? error.message : String(error)})`,
         };
       }

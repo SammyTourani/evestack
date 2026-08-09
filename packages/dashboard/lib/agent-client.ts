@@ -472,7 +472,7 @@ export async function readRecentEvents(
 }
 
 /**
- * The agent answered, and then its stream gave us nothing.
+ * The agent answered, and then its stream stopped mid-way.
  *
  * Distinct from "the agent could not be reached", and the distinction is the
  * whole reason this class exists. Both used to arrive at lib/fleet.ts as an
@@ -480,13 +480,15 @@ export async function readRecentEvents(
  * sending an operator to check a network — for a session whose response HEADERS
  * had already arrived and been read. The headers are proof of reachability.
  *
- * What it means for the caller: the session exists and its state is unknown.
- * That is a real answer, and a different one from "I could not ask".
+ * What it means for the caller: the session exists, and its state could not be
+ * established. That is a real answer, and a different one from "I could not
+ * ask". It is deliberately not "here is some of it": see readNdjson for why
+ * partial data from this particular stream is worse than none.
  */
 export class StreamTruncatedError extends Error {
   constructor(cause: unknown) {
     super(
-      "the agent answered but its event stream ended before any event could be read " +
+      "the agent answered but its event stream ended part-way through " +
         `(${cause instanceof Error ? cause.message : String(cause)})`,
     );
     this.name = "StreamTruncatedError";
@@ -507,34 +509,42 @@ async function readNdjson(body: ReadableStream<Uint8Array>, limit: number): Prom
         chunk = await reader.read();
       } catch (error) {
         /*
-         * A DROPPED CONNECTION MID-READ IS NOT "THE AGENT IS UNREACHABLE".
+         * A TRUNCATED READ IS NOT AN ANSWER, however much of it arrived.
          *
-         * The response headers have already arrived — that is where `limit` came
-         * from — so the agent answered. If the body then stops short, what we
-         * have is a PARTIAL read, and the callers of this can work from partial:
-         * getSessionSnapshot only needs to know whether the session is waiting,
-         * terminal, or holding requests.
+         * This first returned whatever had been collected, on the reasoning that
+         * the headers had already proved the agent reachable so a short body was
+         * still useful. That reasoning is wrong here, and the direction it is
+         * wrong in is the dangerous one.
          *
-         * Letting the rejection through instead made lib/fleet.ts report
-         * `unknown`, whose reason string is "the agent could not be reached" —
-         * about an agent that had just answered. On the fleet banner that reads
-         * as a network problem, so an operator goes and checks a network that is
-         * fine while the session it could not classify sits there.
+         * `startIndex: -lookback` reads the window from its OLDEST end forward,
+         * so a partial read holds the FIRST events and is missing the last ones.
+         * getSessionSnapshot folds them with latest-wins semantics — `waiting`,
+         * `terminal` and `pendingRequests` are each whatever the most recent
+         * event said. Feed it the first three of seven and it reports the state
+         * from the middle of the turn as though it were current: a session that
+         * has since finished comes back `waiting` with a pending request, and
+         * lib/fleet.ts renders that as "parked on a decision nobody has made".
          *
-         * Reproduced against a stub of eve's stream endpoint, which is also what
-         * narrowed it: of eight shapes, exactly one throws — the server
-         * advertising a tail index HIGHER than the number of lines it then
-         * writes, and closing the socket rather than ending the response. A
-         * clean end that is equally short already returned what it had, which is
-         * the behaviour this brings the abrupt case into line with.
+         * A phantom approval on the fleet banner is precisely the cry-wolf
+         * failure that module's header says it was rewritten to avoid, and it
+         * would be a REGRESSION introduced by a fix for a misleading message.
+         * The other two callers are worse: app/api/evals/promote and
+         * app/evals/[id] replay a session's messages, and a silently-truncated
+         * transcript makes an eval that looks complete and is not.
          *
-         * Zero events is the exception and still throws. Headers alone say the
-         * session exists; they say nothing about its state, so classifying it
-         * from an empty list would invent a verdict. `unknown` is the honest
-         * answer there and this lets the caller reach it.
+         * So it throws, as it always did — but TYPED, which is the part that was
+         * actually needed. The old anonymous rejection reached lib/fleet.ts as
+         * "the agent could not be reached", about an agent whose response headers
+         * had just been parsed, and sent operators to check a healthy network.
+         *
+         * Narrowed against a stub of eve's stream endpoint: of eight shapes,
+         * exactly one produces this — the server advertising a tail index HIGHER
+         * than the number of lines it then writes, and closing the socket rather
+         * than ending the response. A clean end that is equally short is not an
+         * error at all; the reader simply sees `done` and returns what there was,
+         * which is eve saying "that is all of it".
          */
-        if (events.length === 0) throw new StreamTruncatedError(error);
-        break;
+        throw new StreamTruncatedError(error);
       }
       const { done, value } = chunk;
       if (done) break;

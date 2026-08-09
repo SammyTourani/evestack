@@ -19,8 +19,8 @@ import { readRecentEvents } from "../lib/agent-client.ts";
  *
  * A stub of eve's stream endpoint narrowed it to one shape out of eight: the
  * server advertises a tail index HIGHER than the number of lines it then writes,
- * and closes the socket instead of ending the response. Every other shape,
- * including a clean end that is equally short, already returned what it had.
+ * and closes the socket instead of ending the response. A clean end that is
+ * equally short is not an error at all — that is eve saying "that is all of it".
  *
  * The stub is here rather than in contract/runtime because none of this needs an
  * agent — the question is what THIS code does with a given sequence of bytes,
@@ -83,20 +83,31 @@ test("a finished session's stream ends cleanly and is read in full", async () =>
 });
 
 test("a short stream that ends cleanly returns what it had", async () => {
-  // The header promised 7; only 3 arrived. This already worked, and is the
-  // behaviour the abrupt case below is brought into line with.
+  // The header promised 7; only 3 arrived and the server then said "that is
+  // all of it". A clean end is eve's word that the stream is complete, so this
+  // is an answer — unlike the abrupt case below, where nobody said anything.
   const out = await read("end_6_3");
   assert.equal(out.events.length, 3);
   assert.equal(out.tailIndex, 6);
 });
 
-test("a short stream whose socket DROPS also returns what it had", async () => {
-  // THE REGRESSION. This threw `TypeError: terminated`, which lib/fleet.ts
-  // reports as "the agent could not be reached" — about an agent whose response
-  // headers are the very thing that told us to expect 7 lines.
-  const out = await read("destroy_6_3");
-  assert.equal(out.events.length, 3, "a partial read is still an answer");
-  assert.equal(out.tailIndex, 6);
+test("a short stream whose socket DROPS is an error, not a partial answer", async () => {
+  // THE CASE, and the one whose first fix was wrong in the dangerous direction.
+  //
+  // Returning the 3 events that arrived looks generous and is not: the window is
+  // read from its OLDEST end, so a partial read holds the FIRST events and is
+  // missing the last. getSessionSnapshot folds with latest-wins semantics, so it
+  // would report the middle of a turn as the current state — a finished session
+  // comes back `waiting` with a pending request, and the fleet banner renders a
+  // phantom approval. That is the cry-wolf failure lib/fleet.ts exists to avoid,
+  // introduced by a fix for a misleading sentence.
+  await assert.rejects(
+    () => read("destroy_6_3"),
+    (error) => {
+      assert.equal(error.name, "StreamTruncatedError");
+      return true;
+    },
+  );
 });
 
 test("a full read is unaffected by the socket dropping afterwards", async () => {
@@ -107,20 +118,17 @@ test("a full read is unaffected by the socket dropping afterwards", async () => 
   assert.equal(out.events.length, 7);
 });
 
-test("a stream that drops before ANY event throws a TYPED error", async () => {
-  // The exception that makes the rest safe. Headers prove the session exists;
-  // they say nothing about its state, so returning an empty list would let
-  // classifySession invent a verdict — it would read "not waiting, not
-  // terminal, nothing pending" and call a session active or wedged on no
-  // evidence at all. `unknown` is the honest answer, and this is how the caller
-  // reaches it.
+test("a stream that drops before any event throws the same typed error", async () => {
+  // Zero events and three events are the same answer — "I could not establish
+  // this session's state" — so they are the same error. The count was briefly a
+  // branch here, which is how the partial-read regression above got in.
   await assert.rejects(() => read("destroy_6_0"), (error) => {
     // Typed, not anonymous. lib/fleet.ts branches on this to say "the agent
     // answered but sent no events" instead of "the agent could not be
     // reached" — the second sends an operator to check a healthy network,
     // and the response headers this read got are proof it is healthy.
     assert.equal(error.name, "StreamTruncatedError");
-    assert.match(error.message, /ended before any event could be read/);
+    assert.match(error.message, /ended part-way through/);
     return true;
   });
 });
