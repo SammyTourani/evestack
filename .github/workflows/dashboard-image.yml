@@ -460,6 +460,29 @@ jobs:
             console.log(`skills selftest: armed, canary verdict ${j.canary.verdict}`);
           '
 
+          # And ONE SKILL BY NAME, which nothing exercised. /api/skills/:name is
+          # the route the Skills page links to, and it called decodeURIComponent
+          # on a param Next had already decoded — so a name carrying a literal
+          # `%` produced an unhandled URIError and a 500 rather than a 404. The
+          # steps above could not see it: they only ever asked for the list.
+          name="$(node -e 'console.log(require("/tmp/skills.json").skills[0].name)')"
+          curl -sf "${A[@]}" "http://localhost:4000/api/skills/$name" > /tmp/one.json || {
+            echo "::error::/api/skills/$name failed"; docker logs dash; exit 1; }
+          node -e '
+            const j = require("/tmp/one.json");
+            if (j.ok !== true || !j.skill?.name) { console.error("::error::a named skill did not come back"); process.exit(1); }
+            console.log(`skills/:name: ${j.skill.name}`);
+          '
+
+          # A name that is not a skill must be a 404, and a name that survives one
+          # decode and not two must ALSO be a 404 rather than a 500. `a%25b`
+          # arrives at the handler as `a%b`; decoding that again throws.
+          for probe in "definitely-not-a-skill" "a%25b"; do
+            code="$(curl -s -o /dev/null -w '%{http_code}' "${A[@]}" "http://localhost:4000/api/skills/$probe")"
+            [ "$code" = "404" ] || { echo "::error::/api/skills/$probe answered $code, expected 404"; docker logs dash; exit 1; }
+          done
+          echo "skills/:name: unknown names and undecodable ones are both 404"
+
       # ---------------------------------------------------------------------
       # instrumentation.ts, sql/alerts.sql, and an outbound POST
       # ---------------------------------------------------------------------

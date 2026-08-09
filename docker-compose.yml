@@ -72,6 +72,14 @@ services:
     #
     # The tag tracks packages/dashboard/package.json `version`; the publish
     # workflow refuses to release when they disagree.
+    #
+    # That sentence was false for this file until the gate learned to scan.
+    # publish-dashboard.yml compared the version against the git tag and against
+    # DASHBOARD_IMAGE_TAG in create-evestack/shared.mjs, and read nothing else —
+    # so a release could ship 0.2.0 while this line, and docs/self-hosting.mdx,
+    # went on telling readers to pull 0.1.0. It now `git grep`s every written-out
+    # `evestack-dashboard:<version>` in the tree and requires them all to agree,
+    # which is why the claim above is safe to make.
     image: ${EVESTACK_DASHBOARD_IMAGE:-ghcr.io/sammytourani/evestack-dashboard:0.1.0}
     build:
       # The REPOSITORY ROOT, not packages/dashboard. The dashboard depends on

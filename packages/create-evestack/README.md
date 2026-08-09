@@ -91,12 +91,6 @@ Nothing to clone and nothing to build: the service pulls
 reaches the same Postgres. Sign in with the `EVESTACK_AUTH_USER` / `EVESTACK_AUTH_PASSWORD` the
 scaffolder generated — it prints them when it finishes.
 
-> **Not published yet.** The image lands with evestack's first dashboard release; until then
-> that command fails with `manifest unknown`. Build the exact tag once —
-> `docker build -t ghcr.io/sammytourani/evestack-dashboard:0.1.0 -f packages/dashboard/Dockerfile .`
-> from a clone of the [evestack repository](https://github.com/SammyTourani/evestack), context
-> at the repo **root** — and Docker finds it locally with nothing in your project to change.
-
 Set `EVESTACK_DASHBOARD_IMAGE` to run an image of your own instead.
 
 ## Documentation

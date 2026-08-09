@@ -20,8 +20,21 @@ export async function GET(
   context: { params: Promise<{ name: string }> },
 ): Promise<Response> {
   try {
+    // NOT decodeURIComponent(name). Next has already decoded the dynamic
+    // segment by the time a handler sees it, so this decoded twice — and the
+    // second one throws on anything the first produced that is not valid
+    // percent-encoding. Measured against the built dashboard:
+    //
+    //   GET /api/skills/memory-hygiene   200
+    //   GET /api/skills/a%25b            500 {"error":"URI malformed"}
+    //   GET /api/skills/has%2520percent  404 for `has percent`, not `has%20percent`
+    //
+    // The 500 is the one that matters: a name carrying a literal `%` is an
+    // unhandled URIError, not a 404. None of the other eight dynamic routes in
+    // this app decodes — memories/[id], schedules/[name], evals/promote/[id]
+    // and the five control/sessions/[id] routes all use the param as given.
     const { name } = await context.params;
-    const skill = await getSkill(decodeURIComponent(name));
+    const skill = await getSkill(name);
     if (!skill) {
       return jsonError(
         `No skill "${name}" in the configured skills directory. Set ${SKILLS_DIR_ENV} if the dashboard is looking in the wrong place.`,

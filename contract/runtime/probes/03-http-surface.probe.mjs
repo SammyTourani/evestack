@@ -136,6 +136,38 @@ export default {
     t.note(`probing ${BASE}`);
 
     /* ---------------------------------------------------------------------- */
+    /* POSITIVE CONTROL, and it has to come first                              */
+    /* ---------------------------------------------------------------------- */
+
+    // EVERY OTHER ASSERTION IN THIS FILE IS A REFUSAL.
+    //
+    // "not 200", "status >= 400", "not ok:true" — read them together and the
+    // probe says nothing about eve at all: a server that answered 401, or 404,
+    // to every request in the world satisfied all seven checks and reported
+    // green. That is the failure this tier is built to refuse, written into the
+    // tier itself. `available()` did not close it either; it only required that
+    // something answered / within 5s, at any status.
+    //
+    // So: one assertion that eve is up AND doing the right thing, before any
+    // number of assertions about it doing the wrong thing correctly.
+    //
+    // /eve/v1/health rather than / — it is under the same prefix as every route
+    // below, so a process that serves a landing page while the eve API is
+    // unmounted or refusing fails here instead of sailing through. And it costs
+    // nothing: no model call, no session, no row, which is the constraint the
+    // header sets for this whole file.
+    const alive = await request("/eve/v1/health");
+    const healthy = alive.status >= 200 && alive.status < 300;
+    t.ok(healthy, "the agent answers its own /eve/v1/health with a 2xx", {
+      ...(healthy
+        ? { actual: `${alive.status}` }
+        : {
+            expected: "2xx — otherwise every refusal below is satisfied by a server that refuses everything",
+            actual: `${alive.status} ${alive.text.slice(0, 160)}`,
+          }),
+    });
+
+    /* ---------------------------------------------------------------------- */
     /* an unknown session must not be silently adopted                         */
     /* ---------------------------------------------------------------------- */
 
@@ -181,26 +213,33 @@ export default {
 
     t.note(`stream of an unknown session answered ${streamed.status}`);
 
-    if (streamed.status >= 400) {
-      // The unambiguous good outcome: refused outright.
-      t.ok(true, "streaming an unknown session is refused with an error status");
-    } else {
-      // A 2xx here is not automatically wrong — but then it must SAY something.
-      // A stream that reports success and then emits nothing, forever, is the
-      // failure: a dashboard tab waits on an event that can never arrive, with
-      // no error to render and nothing to retry.
-      t.ok(
-        streamed.ended || streamed.bytes > 0,
-        `a ${streamed.status} stream for an unknown session either ends or emits something ` +
-          `within ${STREAM_TIMEOUT_MS / 1000}s`,
-        streamed.ended || streamed.bytes > 0
-          ? { actual: streamed.ended ? "the stream ended" : `${streamed.bytes} bytes emitted` }
-          : {
-              expected: "a terminal event, or the stream closing",
-              actual: "held open with zero bytes — a dashboard tab would wait forever with nothing to show",
-            },
-      );
-    }
+    // One assertion covering both acceptable outcomes, rather than a branch
+    // whose refusal arm was a literal `t.ok(true, ...)`. That arm was not wrong
+    // — the `if` was doing the checking — but an assertion whose expression
+    // cannot be false reads as a pass in the output and proves nothing on its
+    // own line, which is the habit this tier exists to break.
+    //
+    // Refused outright is the unambiguous good outcome. A 2xx is not
+    // automatically wrong, but then it must SAY something: a stream that reports
+    // success and emits nothing, forever, leaves a dashboard tab waiting on an
+    // event that can never arrive, with no error to render and nothing to retry.
+    const refused = streamed.status >= 400;
+    const spoke = streamed.ended || streamed.bytes > 0;
+    t.ok(
+      refused || spoke,
+      `a stream for an unknown session is refused, ends, or emits something within ` +
+        `${STREAM_TIMEOUT_MS / 1000}s`,
+      refused || spoke
+        ? {
+            actual: refused
+              ? `refused with ${streamed.status}`
+              : `${streamed.status}, ${streamed.ended ? "stream ended" : `${streamed.bytes} bytes emitted`}`,
+          }
+        : {
+            expected: "an error status, a terminal event, or the stream closing",
+            actual: `${streamed.status} held open with zero bytes — a dashboard tab would wait forever with nothing to show`,
+          },
+    );
 
     /* ---------------------------------------------------------------------- */
     /* cancel answers in the vocabulary the dashboard switches on              */
@@ -211,10 +250,37 @@ export default {
     // The contract pins that CancelTurnStatus still *contains* these strings.
     // This checks that the running server actually answers in them, which is
     // what packages/dashboard/lib/agent-client.ts branches on.
+    // `status === null` USED TO BE ACCEPTED HERE, and it made this assertion
+    // unfailable in the one case it exists for. Any response without a `status`
+    // field counted as "a status the dashboard knows how to read" — a 401, a
+    // 404, a 500, all of them — and the passing detail rendered it out loud as
+    //
+    //     401 (no status field)
+    //
+    // printed under a green check. So the outcome is split by what actually
+    // decides whether lib/agent-client.ts can do its job:
+    //
+    //   2xx  the dashboard will switch on `status`, so one of the two strings
+    //        has to be there. A 200 with no status field is the exact shape that
+    //        falls through that switch, and it now fails.
+    //   4xx/5xx  a refusal for an id that does not exist is a legitimate answer;
+    //        the dashboard never reaches the switch. Passes, and says so.
+    //
+    // Anything else — a 3xx, or a 0 from a timeout — is neither and fails.
     const status = cancel.json?.status ?? null;
-    const known = status === null || status === "accepted" || status === "no_active_turn";
-    t.ok(known, "cancel answers with a status the dashboard knows how to read", {
-      ...(known ? { actual: `${cancel.status} ${status ?? "(no status field)"}` } : { expected: '"accepted" | "no_active_turn"', actual: `${cancel.status} ${status}` }),
+    const answered = cancel.status >= 200 && cancel.status < 300;
+    const known = answered
+      ? status === "accepted" || status === "no_active_turn"
+      : cancel.status >= 400;
+    t.ok(known, "cancel either refuses, or answers in the vocabulary the dashboard switches on", {
+      ...(known
+        ? { actual: answered ? `${cancel.status} ${status}` : `refused with ${cancel.status}` }
+        : {
+            expected: answered
+              ? '2xx carrying "accepted" or "no_active_turn"'
+              : "a 4xx/5xx refusal, or a 2xx carrying a known status",
+            actual: `${cancel.status} ${status ?? "(no status field)"}`,
+          }),
     });
 
     /* ---------------------------------------------------------------------- */

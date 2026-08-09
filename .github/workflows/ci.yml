@@ -529,11 +529,46 @@ jobs:
       - name: every publishable package carries a README and a LICENSE
         # A package published without a README renders "This package does not
         # have a README" on the one page the whole launch funnels through.
+        #
+        # THE LIST IS DERIVED, and it used to be three names typed here:
+        #
+        #     for pkg in create-evestack evestack-composio sandbox-opensandbox
+        #
+        # There are seven publishable packages. @evestack/budget, evestack (the
+        # CLI), @evestack/mcp and @evestack/schedules are every bit as publishable
+        # — none carries `private: true` — and none of them was checked, under a
+        # step named "every". All four happen to have both files, so this widening
+        # is not a fix for a missing README; it is a fix for a check that was
+        # asserting something four sevenths less than it claimed.
+        #
+        # It is also the exact failure this workflow already has a note about, in
+        # the typecheck job: "this broke twice, both times because a new package
+        # was added and nobody remembered to extend a hardcoded list. A list that
+        # must be maintained by memory is a list that will be wrong." That lesson
+        # was applied to `pnpm -r --if-present` and not here.
+        #
+        # `private: true` is the same signal `pnpm -r publish` obeys, so this asks
+        # the question npm will ask rather than a paraphrase of it.
         run: |
-          for pkg in create-evestack evestack-composio sandbox-opensandbox; do
-            test -f "packages/$pkg/README.md" || { echo "packages/$pkg/README.md missing"; exit 1; }
-            test -f "packages/$pkg/LICENSE"   || { echo "packages/$pkg/LICENSE missing"; exit 1; }
+          set -euo pipefail
+          count=0
+          for manifest in packages/*/package.json; do
+            dir="$(dirname "$manifest")"
+            name="$(node -p "const p=require('./$manifest'); p.private ? '' : p.name")"
+            [ -n "$name" ] || continue
+            count=$((count + 1))
+            test -f "$dir/README.md" || { echo "::error::$dir/README.md is missing, and $name is published"; exit 1; }
+            test -f "$dir/LICENSE"   || { echo "::error::$dir/LICENSE is missing, and $name is published"; exit 1; }
+            echo "  $name — README and LICENSE present"
           done
+          # Anti-vacuity: a glob that matched nothing, or a `private` check that
+          # started excluding everything, would sail through the loop having
+          # verified nothing at all — which is the shape of the bug above.
+          if [ "$count" -lt 5 ]; then
+            echo "::error::only $count publishable packages were found; the derivation is broken and this step checked almost nothing"
+            exit 1
+          fi
+          echo "$count publishable packages checked"
 
       - name: generated .env.local is actually ignored by git
         # The file existing is not the point — git refusing to stage it is.
