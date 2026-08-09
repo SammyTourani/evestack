@@ -580,8 +580,29 @@ export function publicOrigin(request: Request): string {
  *
  * `//evil.example` and `/\evil.example` are both read as protocol-relative URLs
  * by browsers, so "starts with a slash" is not enough to keep a redirect local.
+ *
+ * ── and neither is checking the string you were handed ───────────────────────
+ *
+ * The WHATWG URL parser STRIPS tab, LF and CR from a URL before parsing it, so
+ * the string a browser resolves is not the string this function was given. That
+ * turned the two prefix checks above into a formality:
+ *
+ *   given                  guard returned         browser resolved to
+ *   "/\t/evil.example"     "/\t/evil.example"     https://evil.example
+ *   "/\n/evil.example"     "/\n/evil.example"     https://evil.example
+ *   "/\r/evil.example"     "/\r/evil.example"     https://evil.example
+ *
+ * Measured with Node's own WHATWG implementation. An attacker needed a link to
+ * `/signin?next=/%09/evil.example`, and the dashboard sent the operator off-site
+ * immediately after they typed the deployment password — the one moment a
+ * convincing clone is worth the most.
+ *
+ * Stripping first means the string validated is the string emitted. Doing it
+ * before every other check, so `//`, `/\` and the /signin loop all see the same
+ * normalised value.
  */
-export function safeNextPath(raw: string | null | undefined): string {
+export function safeNextPath(input: string | null | undefined): string {
+  const raw = typeof input === "string" ? input.replace(/[\t\n\r]/g, "") : input;
   if (!raw) return "/";
   if (!raw.startsWith("/")) return "/";
   if (raw.startsWith("//") || raw.startsWith("/\\")) return "/";

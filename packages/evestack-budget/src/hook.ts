@@ -172,6 +172,40 @@ export function budgetHook(options: BudgetOptions = {}): HookDefinition {
         const inputTokens = usage.inputTokens ?? 0;
         const outputTokens = usage.outputTokens ?? 0;
         const cacheReadTokens = usage.cacheReadTokens ?? 0;
+        /**
+         * Cache WRITES are billed, usually at a premium, and this hook was not
+         * charging for them.
+         *
+         * `costUsd` takes five arguments and was being called with four, so
+         * `cacheWriteTokens` fell to its `= 0` default on every step. eve
+         * reports the number — its own `ZERO_TOKEN_USAGE` is
+         * `{cacheReadTokens, cacheWriteTokens, inputTokens, outputTokens}` — and
+         * pricing.ts:376 has always taken it. Only the call site dropped it.
+         *
+         * Cache reads and writes are PARTS of `inputTokens`, not additions to
+         * it — `costUsd` subtracts both to get the non-cached remainder — so the
+         * miss is the difference between the two rates, not a whole extra
+         * charge. Measured against the shipped catalog, 1M input tokens of which
+         * 400k were cache writes:
+         *
+         *   anthropic/claude-sonnet-5   charged $2.000, correct $2.200   (-10%)
+         *   openai/gpt-5-mini           charged $0.250, correct $0.250   (none)
+         *
+         * Anthropic prices a write at 1.25x input; gpt-5-mini publishes no write
+         * rate, so pricing.ts falls back to the input rate and the two buckets
+         * cost the same. The bug therefore undercharges on Anthropic and is a
+         * no-op on the default provider — which is exactly why it survived.
+         *
+         * It still matters: `cost` is what the cap is measured against, so an
+         * Anthropic prompt-caching workload passes its limit before anything
+         * trips.
+         *
+         * NOTE: `budget_steps` has no cache_write_tokens column, so the count is
+         * still not stored per step — only its cost is now counted. Adding the
+         * column means a migration against tables created with CREATE TABLE IF
+         * NOT EXISTS, which is a bigger change than the money bug needs.
+         */
+        const cacheWriteTokens = usage.cacheWriteTokens ?? 0;
 
         const priced = isPriced(config.model);
         if (!priced && !warnedUnpriced.has(config.model)) {
@@ -187,7 +221,9 @@ export function budgetHook(options: BudgetOptions = {}): HookDefinition {
         // `usage.costUsd` when the call went through Vercel's AI Gateway, so
         // this branch is dead for a self-hosted agent today — but when it is
         // live it beats our table, and it is one `??` to be ready for it.
-        const cost = usage.costUsd ?? costUsd(config.model, inputTokens, outputTokens, cacheReadTokens);
+        const cost =
+          usage.costUsd ??
+          costUsd(config.model, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens);
 
         const principalId = principalOf(ctx);
 

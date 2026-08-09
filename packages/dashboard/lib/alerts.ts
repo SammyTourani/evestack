@@ -49,6 +49,7 @@
 
 import { dailySpendCap } from "./budget-env";
 import { query } from "./db";
+import { STUCK_TURN_MS } from "./facts";
 import { freshFacts } from "./metrics";
 import { getMonitorSummary } from "./monitors";
 import { getSchedules } from "./schedules";
@@ -330,7 +331,21 @@ function unknownFrom(id: string, title: string, severity: Severity, reason: unkn
 
 /* -------------------------------------------------------------------------- */
 
+/**
+ * "1 hour", "15 minutes" — the shared threshold, in words, so the prose cannot
+ * drift from the number the query uses.
+ */
+function describeMs(ms: number): string {
+  const minutes = Math.round(ms / 60_000);
+  if (minutes % 60 === 0) {
+    const hours = minutes / 60;
+    return `${hours} hour${hours === 1 ? "" : "s"}`;
+  }
+  return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+}
+
 async function wedged(): Promise<AlertResult> {
+  const stuckLabel = describeMs(STUCK_TURN_MS);
   try {
     const [row] = await query<{ n: string }>(
       `SELECT count(*)::text AS n
@@ -358,7 +373,16 @@ async function wedged(): Promise<AlertResult> {
           -- carries the same conversion because "the CLI port of this file hit
           -- it for real: a session quiet for three hours looked five hours in
           -- the future and the sweep returned nothing".
-          AND started_at < (now() AT TIME ZONE 'utc') - interval '15 minutes'`,
+          --
+          -- The threshold is the SHARED one, not a number typed here. It was
+          -- a literal 15 minutes while facts.sql, lib/fleet.ts and the
+          -- wedged outcome all use STUCK_TURN_MS = 1 hour, so three surfaces
+          -- disagreed about the same turn: this alert counted turns the fleet
+          -- banner called healthy, and its own look-at-these link, which
+          -- filters the sessions list on the wedged outcome, led to a shorter
+          -- list than the number it had just reported.
+          AND started_at < (now() AT TIME ZONE 'utc') - make_interval(secs => $1)`,
+      [STUCK_TURN_MS / 1000],
     );
     const n = Number(row?.n ?? 0);
     return {
@@ -368,9 +392,9 @@ async function wedged(): Promise<AlertResult> {
       state: n >= THRESHOLDS.wedgedSessions ? "firing" : "ok",
       detail:
         n > 0
-          ? `${n} turn${n === 1 ? "" : "s"} started over 15 minutes ago and never finished. Nothing in eve notices or retries these.`
-          : "Every turn that started has finished or is still within its first 15 minutes.",
-      threshold: "none stalled past 15 minutes",
+          ? `${n} turn${n === 1 ? "" : "s"} started over ${stuckLabel} ago and never finished. Nothing in eve notices or retries these.`
+          : `Every turn that started has finished or is still within its first ${stuckLabel}.`,
+      threshold: `none stalled past ${stuckLabel}`,
       href: "/sessions?outcome=wedged",
     };
   } catch (error) {
