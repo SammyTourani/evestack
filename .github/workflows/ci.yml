@@ -197,10 +197,23 @@ jobs:
 
       # Postgres-only and filesystem-only probes first. They are fast, they need
       # no agent, and if they fail there is no point booting one.
+      # --exclude=seam, and the reason is worth writing down because the obvious
+      # version of this step is subtly broken.
+      #
+      # `--require` is greedy on purpose: a probe is required when ANY of its
+      # `needs` is named, which is what stops one skipping past a prerequisite
+      # that is actually present. seam/trace-ingest-lands-in-postgres needs
+      # postgres AND the dashboard, so this step demanded it and it failed on a
+      # dashboard that is not booted until two steps later.
+      #
+      # The tempting fix — drop `postgres` from that probe's `needs` so the
+      # greedy rule stops catching it — would put a lie in the one field the
+      # runner uses to decide what is safe to demand. The group is excluded here
+      # instead, and demanded in the step that provides both.
       - name: probes that need only Postgres
         env:
           WORKFLOW_POSTGRES_URL: postgres://evestack:evestack@localhost:5433/evestack_probe
-        run: node contract/runtime/run.mjs --require=postgres,typescript
+        run: node contract/runtime/run.mjs --require=postgres,typescript --exclude=seam
 
       # A FRESH database for the agent, created per run, so nothing is ever
       # re-enqueued from a previous job. That is not tidiness: re-enqueued runs

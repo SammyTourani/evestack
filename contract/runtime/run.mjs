@@ -34,6 +34,7 @@
  * Usage:
  *   node contract/runtime/run.mjs                 all probes
  *   node contract/runtime/run.mjs --only=memory   probes whose id matches
+ *   node contract/runtime/run.mjs --exclude=seam  probes whose id does not
  *   node contract/runtime/run.mjs --format=json   machine-readable
  *   node contract/runtime/run.mjs --list          names only, run nothing
  *
@@ -55,6 +56,23 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
 const format = (args.find((a) => a.startsWith("--format="))?.slice(9) ?? "human").toLowerCase();
 const only = args.find((a) => a.startsWith("--only="))?.slice(7) ?? null;
+/**
+ * The inverse of --only, and it exists because --require is deliberately greedy.
+ *
+ * A probe is required when ANY of its `needs` is in --require, which is the
+ * right rule — it is what stops a probe skipping past a prerequisite that IS
+ * present. But it makes a probe needing two things unrunnable in a step that
+ * provides one: `seam/trace-ingest-lands-in-postgres` needs postgres AND the
+ * dashboard, so the Postgres-only step forced it and it failed on a dashboard
+ * that had not been booted yet.
+ *
+ * The alternative was to under-declare that probe's `needs` so the greedy rule
+ * would not catch it, which would have been a lie in the one field the runner
+ * uses to decide what is safe to demand. Excluding a group by name at the call
+ * site is the honest version: the probe still says what it needs, and the step
+ * says what it is not the moment for.
+ */
+const exclude = args.find((a) => a.startsWith("--exclude="))?.slice(10) ?? null;
 const listOnly = args.includes("--list");
 const required = new Set(
   (args.find((a) => a.startsWith("--require="))?.slice(10) ?? "")
@@ -108,7 +126,8 @@ async function loadProbes() {
 
 async function main() {
   const all = await loadProbes();
-  const selected = only === null ? all : all.filter((p) => p.id.includes(only));
+  const matched = only === null ? all : all.filter((p) => p.id.includes(only));
+  const selected = exclude === null ? matched : matched.filter((p) => !p.id.includes(exclude));
 
   if (listOnly) {
     for (const p of selected) process.stdout.write(`${p.id.padEnd(40)} needs: ${p.needs.join(", ")}\n`);
