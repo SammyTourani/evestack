@@ -179,6 +179,38 @@ const READS = [
 ];
 
 /**
+ * The FIFTH form, and this contract's reverse direction is what found it.
+ *
+ * `lib/skills.ts` does
+ *
+ *     export const SKILLS_DIR_ENV = "EVESTACK_SKILLS_DIR";
+ *     const configured = process.env[SKILLS_DIR_ENV]?.trim();
+ *
+ * so the name is never adjacent to `process.env` anywhere, and none of the four
+ * patterns above can see it. Naming the variable once and using the constant is
+ * good practice — the page renders it in its own error text — and it made the
+ * variable invisible to the check that exists to keep names honest.
+ *
+ * It surfaced the moment docs/dashboard.mdx documented it: the docs→code
+ * direction reported a variable nothing reads, about a variable read twice.
+ * Rather than special-case it, the pattern is resolved properly — find every
+ * `process.env[IDENT]`, then find that IDENT's string-literal binding IN THE
+ * SAME FILE. Same-file only, deliberately: a cross-module version would need a
+ * resolver, and every instance in this workspace declares the constant beside
+ * the read.
+ */
+function constIndirectedReads(source) {
+  const names = new Set();
+  for (const use of source.matchAll(/process\.env\[\s*([A-Za-z_$][\w$]*)\s*\]/g)) {
+    const binding = new RegExp(
+      `\\b${use[1]}\\s*(?::\\s*[^=]+)?=\\s*["'](EVESTACK_[A-Z0-9_]+)["']`,
+    ).exec(source);
+    if (binding) names.add(binding[1]);
+  }
+  return names;
+}
+
+/**
  * ── THE OTHER DIRECTION ──────────────────────────────────────────────────────
  *
  * Everything above asks "does the code read a name nobody documents". The
@@ -272,6 +304,10 @@ export default {
           const name = match[1];
           if (!found.has(name)) found.set(name, rel);
         }
+      }
+      // `process.env[SOME_CONST]` — see constIndirectedReads.
+      for (const name of constIndirectedReads(source)) {
+        if (!found.has(name)) found.set(name, rel);
       }
     }
 
