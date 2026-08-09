@@ -250,6 +250,18 @@ jobs:
           export SLACK_BOT_TOKEN=xoxb-ci-probe-not-a-real-token
           export SLACK_SIGNING_SECRET=ci-slack-signing-secret
 
+          # THE SAME PAIR THE DASHBOARD USES, and it has to be the same pair.
+          # lib/auth.ts is explicit that create-evestack generates one
+          # EVESTACK_AUTH_USER / EVESTACK_AUTH_PASSWORD for the agent and
+          # lib/agent-client.ts sends it onward as Basic — one secret to rotate,
+          # not two that drift. Booting the agent without it while the dashboard
+          # has it is a configuration no real install has, and it showed up
+          # exactly where you would expect: every fleet sweep classified its
+          # sessions `unknown`, which is the honest report of "I could not reach
+          # the agent" for a mismatch this job created.
+          export EVESTACK_AUTH_USER=probe
+          export EVESTACK_AUTH_PASSWORD=probe-password-not-a-secret
+
           # No model key on purpose — see the note above the job.
           npx eve dev --port 2999 > /tmp/eve-dev.log 2>&1 &
           echo $! > /tmp/eve-dev.pid

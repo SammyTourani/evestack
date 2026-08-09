@@ -61,8 +61,35 @@ CREATE TABLE IF NOT EXISTS evestack.alert_state (
   -- a delivery path that has been failing for a day must be visible on the page,
   -- because an alerting system nobody can see is the failure it exists to catch.
   delivery_error    text,
-  delivery_attempts integer   NOT NULL DEFAULT 0
+  delivery_attempts integer   NOT NULL DEFAULT 0,
+
+  -- PER SINK, because "delivered" is not one fact when there is more than one
+  -- place to deliver to.
+  --
+  -- This started as a single `notified_state` and the all-or-nothing rule that
+  -- went with it: a transition counted as delivered only once EVERY sink had
+  -- accepted it. That reasoning was sound in isolation — with two sinks
+  -- configured, marking it done because one worked means the other never
+  -- receives that alert — and it produced a worse failure than the one it
+  -- prevented. One permanently-broken sink meant the transition was never
+  -- consumed, so every HEALTHY sink received the identical alert again on every
+  -- tick, forever. A channel paged every sixty seconds about one incident is
+  -- muted within the hour, which is the exact outcome this whole module is
+  -- written to avoid, arrived at by way of being careful.
+  --
+  -- So the state is kept per sink: `{"<key>": "firing"}`. A sink that is down
+  -- misses nothing — its own entry does not advance, so it is retried — and a
+  -- sink that is healthy is told once. `notified_state` above is retained as the
+  -- state EVERY sink has acknowledged, which is what the panel reads.
+  --
+  -- The key is a hash of the URL rather than the URL: this column is rendered.
+  notified_sinks    jsonb     NOT NULL DEFAULT '{}'::jsonb
 );
+
+-- CREATE TABLE IF NOT EXISTS does nothing once the table is there, so a column
+-- added after the first release needs its own statement. See the header.
+ALTER TABLE evestack.alert_state
+  ADD COLUMN IF NOT EXISTS notified_sinks jsonb NOT NULL DEFAULT '{}'::jsonb;
 
 -- Every POST we made, whether or not it worked.
 --

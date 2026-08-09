@@ -175,7 +175,14 @@ export async function evaluateAlerts(): Promise<AlertResult[]> {
       state: cap === null ? "unknown" : total > cap ? "firing" : "ok",
       detail:
         cap === null
-          ? `${usd(total)} so far today. Both EVESTACK_ALERT_DAILY_SPEND_USD and @evestack/budget's daily cap are switched off, so there is nothing to compare it to.`
+          ? // Which one is off, not "both". `dailySpendCap` returns null from two
+            // different places — the operator set EVESTACK_ALERT_DAILY_SPEND_USD
+            // to `false`, or budgets are disabled entirely — and telling someone
+            // who deliberately switched off spend alerting that their budget cap
+            // is also gone would send them to check a setting that is fine.
+            scope === "install"
+            ? `${usd(total)} so far today. Spend alerting is switched off with EVESTACK_ALERT_DAILY_SPEND_USD=false, so there is nothing to compare it to.`
+            : `${usd(total)} so far today. @evestack/budget has no daily cap — either EVESTACK_BUDGET_DAILY_USD=false or budgets are disabled — and EVESTACK_ALERT_DAILY_SPEND_USD is unset, so there is nothing to compare it to.`
           : `${usd(total)} of ${usd(cap)} spent today.${scopeNote}`,
       threshold:
         cap === null ? "set EVESTACK_ALERT_DAILY_SPEND_USD to enable" : `under ${usd(cap)}/day`,

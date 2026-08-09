@@ -320,7 +320,16 @@ export default {
           ? {}
           : {
               expected: "no `unknown` entries against a live agent",
-              actual: `${entries.filter((e) => e.health === "unknown").length} of ${entries.length} — the sweep is failing to reach an agent this probe just talked to`,
+              // The reason, not just the count. `unknown` always carries the
+              // error that produced it, and without it a failure here says only
+              // "the sweep could not reach the agent" — which is the one thing
+              // already known, and sends the reader to look at the network
+              // instead of at the credential mismatch or the 2s probe timeout
+              // that actually caused it.
+              actual: `${entries.filter((e) => e.health === "unknown").length} of ${entries.length} — ${entries
+                .filter((e) => e.health === "unknown")
+                .map((e) => e.reason)
+                .join(" | ")}`,
             },
       );
 

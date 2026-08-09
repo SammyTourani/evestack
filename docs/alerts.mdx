@@ -120,9 +120,13 @@ a captured POST replays forever. Reject anything older than your own tolerance.
   sink returns 2xx, so a receiver that is down replays it on the next tick rather than losing it.
   A receiver that accepts the POST and then drops it is indistinguishable from one that delivered
   it — that is the correct place to give up.
-- **With several sinks configured, all of them must accept before a transition counts as
-  delivered.** Marking it done because one worked would mean the other never receives that alert,
-  and the reason to configure two is that you do not trust one.
+- **Delivery is tracked per sink, so one broken channel does not spam the others.** Each sink has
+  its own record of what it has been told. A sink that is down is retried until it accepts; a sink
+  that is healthy is told once and then left alone. The first version of this required *every*
+  sink to accept before a transition counted as delivered — which sounds careful and meant that a
+  single permanently-broken webhook re-sent the identical alert to every healthy channel on every
+  tick, forever. That is the muted channel this whole page is about, arrived at by way of being
+  careful about the other thing.
 - **Two dashboards will not double-send.** A short lease row in `evestack.alert_lease` gives one
   instance the tick; it expires rather than being released, so a crash mid-send is picked up by the
   other one interval later.
@@ -134,7 +138,7 @@ that is off costs nothing, including a table.
 
 | Table | What it holds |
 | --- | --- |
-| `evestack.alert_state` | one row per monitor: what was last **seen**, and what was last **delivered** |
+| `evestack.alert_state` | one row per monitor: what was last **seen**, what was last **delivered**, and what each sink has acknowledged |
 | `evestack.alert_deliveries` | every POST, whether it worked, the status, and how long it took. Pruned at 30 days |
 | `evestack.alert_lease` | which instance is sending |
 

@@ -41,7 +41,7 @@
  * receiver and a broken agent is one that never gets exercised.
  */
 
-import { createHmac, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -58,6 +58,23 @@ export interface Remembered {
   readonly notifiedState: AlertState | null;
   readonly notifiedAt: string | null;
   readonly since: string | null;
+  /**
+   * Per sink, keyed by `sinkKey()`. The authority for what to send where; the
+   * two fields above are the union across sinks, kept for the panel.
+   */
+  readonly notifiedSinks?: Readonly<Record<string, { state: AlertState; at: string | null }>>;
+}
+
+/**
+ * A stable id for a sink that is safe to store and render.
+ *
+ * The URL itself cannot be the key: Slack and Discord both carry a working
+ * credential in the path, and this ends up in a jsonb column the dashboard
+ * renders. The kind alone cannot be either — two Slack webhooks would collide
+ * and each would be told the other's transitions had already been delivered.
+ */
+export function sinkKey(url: string): string {
+  return createHash("sha256").update(url).digest("hex").slice(0, 16);
 }
 
 export type TransitionKind = "fired" | "resolved" | "stale" | "renotify";
@@ -139,7 +156,23 @@ export function planNotifications(
     const prior = remembered.get(alert.id);
     const from = prior?.notifiedState ?? null;
     const to = alert.state;
-    const forMs = elapsed(prior?.since, options.now);
+
+    /*
+     * How long it has been in the state being ANNOUNCED — which is only a
+     * knowable number when the state did not just change.
+     *
+     * `prior.since` is read before this tick's observation is written, so on a
+     * transition it is when the monitor entered the state it is LEAVING. Using
+     * it there made a brand-new alert say "(2.1d)", reporting how long
+     * everything had been fine as though it were the length of the outage. The
+     * number was not merely wrong, it was wrong in the direction that makes an
+     * operator think they missed two days of it.
+     *
+     * A monitor that just started firing has been firing for approximately no
+     * time, and the honest rendering of that is nothing at all.
+     */
+    const unchanged = prior?.state === to;
+    const forMs = unchanged ? elapsed(prior?.since, options.now) : null;
 
     if (from === to) {
       // Unchanged. The only reason to speak is a re-notify interval, and only
@@ -171,7 +204,27 @@ export function planNotifications(
       continue;
     }
 
-    if (to === "unknown" && (from === "firing" || (from === "ok" && alert.severity === "page"))) {
+    /*
+     * Coverage lost.
+     *
+     * The `ok` half tests `prior.state` — what was last SEEN — not `from`, which
+     * is what was last DELIVERED. A healthy monitor is never delivered (that is
+     * the whole no-first-boot-spam rule), so its `notifiedState` stays null
+     * forever, and a rule written as `from === "ok"` could not fire on any
+     * monitor that had never fired. The one case it was written for — a `page`
+     * check that has been fine all along and then stops being answerable — was
+     * exactly the case it could not reach.
+     *
+     * `from !== "unknown"` is what stops it repeating: once the stale notice is
+     * delivered, notified_state is `unknown` and the next tick falls into the
+     * unchanged branch above.
+     */
+    const wasOk = prior?.state === "ok";
+    if (
+      to === "unknown" &&
+      from !== "unknown" &&
+      (from === "firing" || (wasOk && alert.severity === "page"))
+    ) {
       out.push({ alert, kind: "stale", from, to, forMs });
       continue;
     }
@@ -446,7 +499,11 @@ export async function readRemembered(): Promise<Map<string, Remembered>> {
     notified_state: AlertState | null;
     notified_at: string | Date | null;
     since: string | Date | null;
-  }>(`SELECT id, state, notified_state, notified_at, since FROM evestack.alert_state`);
+    notified_sinks: Record<string, { state: AlertState; at: string | null }> | null;
+  }>(
+    `SELECT id, state, notified_state, notified_at, since, notified_sinks
+       FROM evestack.alert_state`,
+  );
 
   return new Map(
     rows.map((r) => [
@@ -456,6 +513,7 @@ export async function readRemembered(): Promise<Map<string, Remembered>> {
         notifiedState: r.notified_state,
         notifiedAt: iso(r.notified_at),
         since: iso(r.since),
+        notifiedSinks: r.notified_sinks ?? {},
       },
     ]),
   );
@@ -497,15 +555,64 @@ async function writeObservations(alerts: readonly AlertResult[]): Promise<void> 
   );
 }
 
-/** Only after a sink accepted it. See the note on the table. */
-async function markNotified(ids: readonly string[]): Promise<void> {
-  if (ids.length === 0) return;
+/**
+ * Only after a sink accepted it. See the note on the table.
+ *
+ * The state is passed in PER ID rather than written as `notified_state = state`.
+ * That reads the column back, and the column is not what was delivered: another
+ * tick (a forced one from /api/alerts, or an overlapping timer tick) can write a
+ * newer observation between this tick's plan and this statement. Stamping the
+ * re-read value marks a transition delivered that nobody was ever sent — which
+ * is precisely the silent-loss this table's two columns exist to prevent,
+ * reintroduced by the one line that updates them.
+ */
+async function recordAcknowledgements(
+  acknowledged: ReadonlyMap<string, ReadonlyMap<string, AlertState>>,
+  allSinkKeys: readonly string[],
+): Promise<void> {
+  if (acknowledged.size === 0) return;
+
+  const at = new Date().toISOString();
+  for (const [key, byId] of acknowledged) {
+    const ids = [...byId.keys()];
+    const patches = ids.map((id) => JSON.stringify({ [key]: { state: byId.get(id), at } }));
+    // `||` merges at the top level, so one sink's entry is replaced and every
+    // other sink's is left exactly as it was. Writing the whole object would
+    // make two sinks racing the same row lose each other's acknowledgements.
+    await query(
+      `UPDATE evestack.alert_state AS a
+          SET notified_sinks = a.notified_sinks || v.patch::jsonb,
+              delivery_error = NULL, delivery_attempts = 0
+         FROM unnest($1::text[], $2::text[]) AS v(id, patch)
+        WHERE a.id = v.id`,
+      [ids, patches],
+    );
+  }
+
+  /*
+   * `notified_state` is the state EVERY configured sink has acknowledged.
+   *
+   * It is derived rather than written directly because it is a summary, and the
+   * panel is its only reader. A monitor that reached one of two sinks is not
+   * "delivered" in the sense the panel means, so it stays at whatever both last
+   * agreed on until the lagging sink catches up.
+   */
   await query(
-    `UPDATE evestack.alert_state
-        SET notified_state = state, notified_at = now(),
-            delivery_error = NULL, delivery_attempts = 0
-      WHERE id = ANY($1::text[])`,
-    [ids],
+    `UPDATE evestack.alert_state AS a
+        SET notified_state = sub.state, notified_at = now()
+       FROM (
+         SELECT id,
+                min(notified_sinks -> k ->> 'state') AS state,
+                count(*) FILTER (WHERE notified_sinks ? k) AS covered,
+                count(DISTINCT notified_sinks -> k ->> 'state') AS distinct_states
+           FROM evestack.alert_state, unnest($1::text[]) AS k
+          GROUP BY id
+       ) AS sub
+      WHERE a.id = sub.id
+        AND sub.covered = $2
+        AND sub.distinct_states = 1
+        AND a.notified_state IS DISTINCT FROM sub.state`,
+    [allSinkKeys, allSinkKeys.length],
   );
 }
 
@@ -616,6 +723,44 @@ export async function deliverOnce(options?: {
   readonly force?: boolean;
   readonly config?: SinkConfig;
 }): Promise<DeliveryOutcome> {
+  /*
+   * ONE AT A TIME IN THIS PROCESS, and the reason is a bug that was reproduced
+   * rather than reasoned about.
+   *
+   * `setInterval(() => void tick(), …)` does not await the previous tick, and
+   * `claimLease` grants on elapsed time without checking WHO holds it — its
+   * WHERE names `claimed_at` and never `holder` — so a process re-wins its own
+   * lease. Meanwhile `notified_state` does not advance until every sink has been
+   * posted. Line those three up and one dashboard pages the on-call twice for
+   * one transition: measured at a 15s interval with three sinks whose successful
+   * posts totalled 19s, the same "FIRING" message arrived at t=0 and t=15.
+   *
+   * The forced path from POST /api/alerts had the same shape from the other
+   * direction — it skips the lease entirely, so an operator running the curl
+   * from docs/alerts.mdx while a tick was mid-send got a second copy.
+   *
+   * Serialising here fixes both, and it is the right layer: the race is between
+   * two calls in ONE process, which no amount of care in the Postgres lease can
+   * see. A second caller waits for the one in flight and then runs — by which
+   * time the transition is recorded, so it correctly plans nothing.
+   */
+  const run = deliveryChain.then(
+    () => runDelivery(options),
+    // A previous delivery that threw must not poison the queue: the next caller
+    // still runs, which is the whole point of retrying a failed send.
+    () => runDelivery(options),
+  );
+  deliveryChain = run.catch(() => {});
+  return run;
+}
+
+/** The tail of the serialised queue. Every deliverOnce chains onto it. */
+let deliveryChain: Promise<unknown> = Promise.resolve();
+
+async function runDelivery(options?: {
+  readonly force?: boolean;
+  readonly config?: SinkConfig;
+}): Promise<DeliveryOutcome> {
   const config = options?.config ?? resolveSinks(process.env);
   if (config.sinks.length === 0) {
     return { evaluated: 0, planned: [], sent: 0, failures: [], skipped: config.disabledReason };
@@ -640,46 +785,101 @@ export async function deliverOnce(options?: {
   const remembered = await readRemembered();
   await writeObservations(live);
 
-  const planned = planNotifications(live, remembered, {
-    now: Date.now(),
-    renotifyMs: config.renotifyMs,
+  /*
+   * One plan PER SINK, from that sink's own record of what it has been told.
+   *
+   * There used to be a single plan and an all-or-nothing rule: a transition
+   * counted as delivered only once every sink had accepted it. The reasoning was
+   * that marking it done because one worked would leave the other never
+   * receiving that alert — true, and it produced a worse failure. A single
+   * permanently-broken sink meant the transition was never consumed, so every
+   * HEALTHY sink was sent the identical alert on every tick, forever. Sixty
+   * seconds apart. About one incident. That is the muted channel this module
+   * exists to prevent, reached by way of being careful about the other thing.
+   */
+  const now = Date.now();
+  const perSink = config.sinks.map((sink) => {
+    const key = sinkKey(sink.url);
+    const view = new Map(
+      [...remembered].map(([id, r]) => {
+        const mine = r.notifiedSinks?.[key];
+        return [id, { ...r, notifiedState: mine?.state ?? null, notifiedAt: mine?.at ?? null }];
+      }),
+    );
+    return {
+      sink,
+      key,
+      plan: planNotifications(live, view, { now, renotifyMs: config.renotifyMs }),
+    };
   });
 
-  if (planned.length === 0) {
+  if (perSink.every((entry) => entry.plan.length === 0)) {
     return { evaluated: live.length, planned: [], sent: 0, failures: [], skipped: null };
   }
 
   const dashboardUrl = process.env.EVESTACK_PUBLIC_URL?.trim() || null;
   const sentAt = new Date().toISOString();
   const failures: { sink: SinkKind; target: string; error: string }[] = [];
+  const acknowledged = new Map<string, Map<string, AlertState>>();
+  const failedIds = new Set<string>();
   let delivered = 0;
 
-  for (const sink of config.sinks) {
+  for (const { sink, key, plan } of perSink) {
+    if (plan.length === 0) continue;
+
     const started = Date.now();
-    const result = await post(sink, planned, dashboardUrl, sentAt);
+    const result = await post(sink, plan, dashboardUrl, sentAt);
     const durationMs = Date.now() - started;
 
     await recordDelivery({
       sink: sink.kind,
       target: redactUrl(sink.url),
-      transitions: planned,
+      transitions: plan,
       ok: result.ok,
       httpStatus: result.status,
       error: result.error,
       durationMs,
     });
 
-    if (result.ok) delivered += 1;
-    else failures.push({ sink: sink.kind, target: redactUrl(sink.url), error: result.error ?? "" });
+    if (result.ok) {
+      delivered += 1;
+      acknowledged.set(key, new Map(plan.map((t) => [t.alert.id, t.to])));
+    } else {
+      for (const t of plan) failedIds.add(t.alert.id);
+      failures.push({ sink: sink.kind, target: redactUrl(sink.url), error: result.error ?? "" });
+    }
   }
 
-  const ids = planned.map((t) => t.alert.id);
-  // EVERY sink must accept it before the transition counts as delivered. With
-  // two sinks configured, marking it done because one worked would mean the
-  // other never receives that alert at all — and the whole reason to configure
-  // two is that you do not trust one.
-  if (failures.length === 0) await markNotified(ids);
-  else await markFailed(ids, failures.map((f) => `${f.sink}: ${f.error}`).join("; "));
+  await recordAcknowledgements(acknowledged, config.sinks.map((s) => sinkKey(s.url)));
+
+  if (failedIds.size > 0) {
+    await markFailed([...failedIds], failures.map((f) => `${f.sink}: ${f.error}`).join("; "));
+  }
+
+  /*
+   * Clear the error on anything that is no longer waiting to be sent.
+   *
+   * A monitor can fail to deliver and then stop needing to: it fires, the POST
+   * 500s, and by the next tick it has resolved, so the plan for it is empty and
+   * nothing will ever retry it. Without this the row keeps its `delivery_error`
+   * forever and /monitors shows "1 monitor could not be delivered" about an
+   * incident that ended — a permanent red banner describing nothing, which is
+   * how a reader learns to stop believing the banner.
+   */
+  const stillPending = new Set(perSink.flatMap((e) => e.plan.map((t) => t.alert.id)));
+  const settled = live.map((a) => a.id).filter((id) => !stillPending.has(id));
+  if (settled.length > 0) {
+    await query(
+      `UPDATE evestack.alert_state
+          SET delivery_error = NULL, delivery_attempts = 0
+        WHERE id = ANY($1::text[]) AND delivery_error IS NOT NULL`,
+      [settled],
+    );
+  }
+
+  // The union, for the caller's report. A monitor appears once even when two
+  // sinks were both told about it.
+  const planned = [...new Map(perSink.flatMap((e) => e.plan).map((t) => [t.alert.id, t])).values()];
 
   return {
     evaluated: live.length,
@@ -727,9 +927,28 @@ async function post(
     return {
       ok: false,
       status: null,
-      error: error instanceof Error ? error.message : String(error),
+      // REDACTED, and this is not paranoia. undici puts the request URL into the
+      // message of most network failures — "request to https://hooks.slack.com/
+      // services/T0/B0/XXXXsecret failed, reason: ECONNREFUSED" — and a Slack or
+      // Discord webhook carries its whole credential in that path. This string
+      // is written to evestack.alert_deliveries, rendered on /monitors, returned
+      // by GET /api/alerts and printed to the boot log, so leaving it raw would
+      // publish a working webhook to four places at once, and only ever on the
+      // day something is already going wrong.
+      error: scrubUrls(error instanceof Error ? error.message : String(error)),
     };
   }
+}
+
+/**
+ * Replace any absolute URL in a string with its redacted form.
+ *
+ * Deliberately not "remove the one URL we know about": the message may name a
+ * redirect target, a proxy, or a URL we never configured, and a blocklist of one
+ * would pass all three through.
+ */
+export function scrubUrls(text: string): string {
+  return text.replace(/https?:\/\/[^\s"']+/gi, (match) => redactUrl(match));
 }
 
 /**
