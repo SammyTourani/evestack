@@ -48,13 +48,23 @@ disclosure.
   on every interface the host has. And one shared secret per deployment is not per-person auth:
   there is no lockout, no rate limit and no second factor, so still put something you already
   trust (reverse-proxy OAuth, Tailscale, a VPN) in front before it leaves loopback.
-- **Postgres is the surface that is still published on every interface.** Both the repo's
-  `docker-compose.yml` and the one `create-evestack` generates map `5433:5432` with no host
-  address, and both default the password to `evestack` (`${POSTGRES_PASSWORD:-evestack}` and a
-  literal, respectively). That database holds every prompt, tool call and result the agent has
-  produced. `create-evestack attach` is the one path that gets this right — it generates a
-  password and publishes on `127.0.0.1` — so on the other two, set `POSTGRES_PASSWORD` and
-  narrow the mapping before running anywhere but a laptop.
+- **Postgres is on loopback by every path, and the repo's own compose still has a weak default
+  password.** That database holds every prompt, tool call and result the agent has produced, so
+  it is worth being exact about:
+  - `create-evestack` generates `127.0.0.1:<port>:5432` and a per-project password from
+    `randomBytes(18)`. Nothing to change.
+  - `create-evestack attach` does the same.
+  - The repo's own `docker-compose.yml` publishes `${POSTGRES_BIND:-127.0.0.1}:${POSTGRES_PORT:-5433}:5432`
+    — loopback unless a contributor deliberately overrides `POSTGRES_BIND` — but still defaults
+    to `POSTGRES_PASSWORD=evestack`. That is a contributor's dev database on loopback, which is
+    why it is a default at all; set `POSTGRES_PASSWORD` if you widen the bind.
+
+  This bullet used to say Postgres was "still published on every interface" by both compose
+  files, with `attach` as "the one path that gets this right". That was true when it was
+  written and had been fixed in all three paths by the time anyone read it. It is left
+  described rather than silently rewritten because a security document that overstates an
+  exposure is not harmlessly cautious: the first false claim a reader checks is the one that
+  costs every true claim beside it its weight.
 - **Composio's managed OAuth** shows users a Composio-branded consent screen and shares rate
   limits across all Composio customers. Fine for personal use and prototypes; read Composio's
   own docs on registering your own OAuth app before onboarding other people's accounts in

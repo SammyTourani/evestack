@@ -23,7 +23,7 @@ process is built rather than `eve dev`, and something other than you can reach t
 | --- | --- | --- | --- |
 | Agent, `eve dev` | 2000 | all interfaces | Auto-increments if 2000 is taken; read the startup log |
 | Agent, `eve start` | `$PORT`, else **3000** | `--host`, default all interfaces | Not 2000 — see below |
-| Postgres | host **5433** → container 5432 | all interfaces | 5433 so it never collides with a local Postgres on 5432 |
+| Postgres | host **5433** → container 5432 | `127.0.0.1` in compose | 5433 so it never collides with a local Postgres on 5432. Override with `POSTGRES_BIND` |
 | Dashboard | 4000 | `127.0.0.1` in compose | A control plane; see [Expose the dashboard last](#expose-the-dashboard-last) |
 
 <Note>
@@ -33,11 +33,21 @@ process is built rather than `eve dev`, and something other than you can reach t
   `EVESTACK_AGENT_URL` to wherever it actually landed.
 </Note>
 
-Note the asymmetry in the compose file: the dashboard's port mapping is written
-`127.0.0.1:4000:4000`, Postgres's is written `5433:5432`. Docker publishes the second on every
-interface. On a laptop behind a router that is unremarkable; on a host with a public address it
-means your session store is reachable from the internet with the default credentials in
-`.env.example`. Change them, or prefix the mapping with `127.0.0.1:` too.
+Both mappings in the compose file are on loopback: the dashboard's is written
+`127.0.0.1:${DASHBOARD_PORT:-4000}:4000` and Postgres's is
+`${POSTGRES_BIND:-127.0.0.1}:${POSTGRES_PORT:-5433}:5432`. Set `POSTGRES_BIND` if you
+deliberately need the database reachable from another machine — and set `POSTGRES_PASSWORD`
+in the same breath, because the repo's compose still defaults it to `evestack`, which is
+only defensible while the port is on loopback.
+
+<Note>
+  This paragraph used to describe an asymmetry — the dashboard on `127.0.0.1` and Postgres
+  "published on every interface" — and told you to prefix the mapping yourself. That was true
+  when it was written and is not now: both compose files bind loopback, and the one
+  `create-evestack` generates also writes a per-project password rather than a default. Left
+  visible rather than quietly deleted, because a runbook that overstates an exposure spends
+  the reader's trust on the paragraphs that are still true.
+</Note>
 
 There is no OTLP collector in this topology and nothing listens on 4318. Trace export goes to
 the dashboard's own ingest route (`http://localhost:4000/api/ingest/v1/traces`), because
@@ -367,9 +377,11 @@ export, so the symptom is an empty Traces tab rather than an error. See
   **What the credential does not buy.** It is one shared secret per deployment, so `approver` in
   the audit log names an *installation*, not a person. There is no lockout, no rate limit and no
   second factor in front of it. It is sent as Basic over whatever transport you provide, so
-  without TLS it is on the wire in base64. And it protects HTTP routes, not the database — the
-  compose file publishes Postgres on `5433` on **every** interface, with the password its own
-  `${POSTGRES_PASSWORD:-evestack}` default supplies.
+  without TLS it is on the wire in base64. And it protects HTTP routes, not the database: the
+  credential does nothing for Postgres, which is on loopback in both compose files and carries
+  a per-project password only in the generated one. The repo's own compose still defaults to
+  `${POSTGRES_PASSWORD:-evestack}`, so widening `POSTGRES_BIND` without also setting a password
+  hands the session store to anyone who can route to the host.
 
   So: still put the dashboard behind something you already trust before it leaves loopback — a
   reverse proxy doing OAuth, Cloudflare Access, Tailscale, a VPN. The difference from before is

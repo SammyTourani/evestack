@@ -129,6 +129,11 @@ export default {
     const ts = (await import("typescript")).default;
     const root = mkdtempSync(join(tmpdir(), "evestack-attach-probe-"));
 
+    // How many fixtures attach actually rewrote. Read by the suite-level
+    // assertion after the loop; see the comment there for why counting is the
+    // only thing that survives the `continue` below.
+    let rewritten = 0;
+
     try {
       for (const fixture of FIXTURES) {
         const dir = join(root, fixture.name.replace(/[^a-z0-9]+/gi, "-"));
@@ -204,7 +209,38 @@ export default {
         t.ok(changed, `${fixture.name}: attach actually modified the agent`, {
           ...(changed ? {} : { expected: "a rewritten file", actual: "unchanged" }),
         });
+        if (changed) rewritten += 1;
       }
+
+      // SUITE-LEVEL ANTI-VACUITY, and it exists because the `continue` above
+      // routes around every assertion that matters.
+      //
+      // "attach exited non-zero and left the file alone" is a legitimate
+      // per-fixture outcome, so skipping the parse check for that fixture is
+      // right — there is nothing to parse-check. What was wrong is what the
+      // PROBE then reported: one green check for that fixture and nothing else,
+      // including nothing from the `changed` assertion whose own comment says it
+      // is there so "every assertion above is [not] trivially satisfied by a
+      // no-op". An `evestack attach` that crashed on every shape in this file
+      // produced a probe that was entirely green, one check per fixture.
+      //
+      // That is the same failure the header records for the FIRST version of
+      // this probe — "would have reported a clean pass forever while testing
+      // nothing" — reintroduced by the control flow rather than by the target.
+      //
+      // Every fixture is documented as a shape attach has to survive, so the bar
+      // is all of them. If one legitimately cannot be attached, this fails and
+      // someone writes down why, which is the outcome worth having.
+      t.ok(
+        rewritten === FIXTURES.length,
+        `attach ran and rewrote all ${FIXTURES.length} fixtures`,
+        rewritten === FIXTURES.length
+          ? { actual: `${rewritten}/${FIXTURES.length}` }
+          : {
+              expected: `${FIXTURES.length} rewritten — every fixture here is a shape attach must survive`,
+              actual: `${rewritten}/${FIXTURES.length}. The rest exited non-zero without touching the file, so their assertions never ran and this probe would otherwise be green having checked almost nothing`,
+            },
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

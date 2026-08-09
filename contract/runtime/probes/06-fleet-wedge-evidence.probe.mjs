@@ -13,11 +13,23 @@
  * is why they are asserted against a real server:
  *
  * 1. **Finished means `completed_at IS NOT NULL`, never `status`.** This is
- *    lib/monitors.ts's definition and this probe pins fleet.ts to it. A turn
- *    that errored, one a human cancelled and one that never reached a provider
- *    have all FINISHED; monitors.ts counts two of them as failures. A wedge
- *    test on `status <> 'completed'` would report all three as work in flight —
- *    210 turns in the seeded database, against 8 that are really open.
+ *    lib/monitors.ts's definition. A turn that errored, one a human cancelled
+ *    and one that never reached a provider have all FINISHED; monitors.ts
+ *    counts two of them as failures. A wedge test on `status <> 'completed'`
+ *    would report all three as work in flight — 210 turns in the seeded
+ *    database, against 8 that are really open.
+ *
+ *    THIS PROBE DOES NOT PIN fleet.ts, and that sentence used to say it did.
+ *    The constants below are hand-copied duplicates of the shipped SQL, and
+ *    every assertion here runs the COPY against a fixture table this file
+ *    builds. That is the right shape for the job — these five properties are
+ *    PostgreSQL's semantics and need a real server to settle — but it means the
+ *    probe stays green if lib/fleet.ts is edited and the copies are not. The
+ *    file-to-file comparison is a separate job, and it now exists:
+ *    contract/contracts/20-fleet-port.contract.mjs reads fleet.ts and the CLI's
+ *    port and fails when either loses a term. It was written after the CLI
+ *    shipped without the unfinished-turn filter in item 3 below — exactly the
+ *    drift this comment claimed to be preventing and was not.
  *
  * 2. **Untagged runs are not turns.** eve writes a companion run per session
  *    that never completes. They carry no `$eve.root` today so the join drops

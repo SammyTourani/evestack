@@ -119,9 +119,18 @@ let CI do it.
   cause or don't merge it.
 - Don't add abstraction for a hypothetical second use case. Three similar lines beats a
   premature helper.
-- Match the existing dark-first CSS in `packages/dashboard/app/globals.css` — no CSS
-  frameworks, no external fonts or CDNs. The whole point of this project is a stack that runs
-  with zero network calls; a dashboard that phones a font CDN breaks that.
+- Match the design system in `packages/dashboard/app/globals.css`, and **no external fonts,
+  stylesheets or CDNs of any kind**. The whole point of this project is a stack that runs with
+  zero network calls; a dashboard that phones a font CDN breaks that.
+
+  This rule used to read "no CSS frameworks", and the dashboard has been built on Tailwind 4
+  since the design-system work — `tailwindcss ^4.1.0`, with `theme.css`, `preflight.css` and
+  `utilities.css` imported at the top of `globals.css`. A contributor following the rule
+  literally would have been told to avoid the thing every page in the dashboard is written in.
+
+  The reason behind it survives intact, which is why the rule narrowed instead of going away:
+  Tailwind is a build-time dependency that emits plain CSS and opens no socket at runtime. A
+  font CDN, a hosted stylesheet or a script tag pointing anywhere is still a hard no.
 
 ## Reporting bugs
 

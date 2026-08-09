@@ -83,6 +83,46 @@ jobs:
           fi
           echo "scaffolder pin agrees: $pinned"
 
+          # AND EVERY OTHER PLACE THE TAG IS WRITTEN OUT IN FULL.
+          #
+          # The two checks above cover the git tag and shared.mjs. They were the
+          # whole gate, while `ghcr.io/sammytourani/evestack-dashboard:<version>`
+          # also appears as a literal in docker-compose.yml and in
+          # docs/self-hosting.mdx — neither of which anything read. The comment
+          # above that compose line said "the tag tracks
+          # packages/dashboard/package.json version; the publish workflow refuses
+          # to release when they disagree", which was simply not true of that
+          # file. A release could ship 0.2.0 while the repo's own compose file
+          # and the self-hosting runbook both told readers to pull 0.1.0.
+          #
+          # SCANNED, not listed. A list of files here would need to be extended
+          # by memory every time the tag is written somewhere new, and this
+          # repository has been bitten by that shape twice already — see the note
+          # on the hardcoded package list in ci.yml. `git grep` asks the question
+          # directly instead: find every literal, and require them all to agree.
+          mismatched=0
+          found=0
+          while IFS= read -r hit; do
+            found=$((found + 1))
+            tag="${hit##*evestack-dashboard:}"
+            tag="${tag%%[!0-9.]*}"
+            [ -n "$tag" ] || continue
+            if [ "$tag" != "$version" ]; then
+              echo "::error::$hit pins $tag, but packages/dashboard/package.json is $version"
+              mismatched=1
+            fi
+          done <<< "$(git grep -n -o 'evestack-dashboard:[0-9][0-9.]*' -- . ':!*.lock' ':!pnpm-lock.yaml' || true)"
+
+          [ "$mismatched" = "0" ] || exit 1
+
+          # Anti-vacuity: a grep that stopped matching would report every literal
+          # as agreeing by finding none, and this is a release gate.
+          if [ "$found" -lt 2 ]; then
+            echo "::error::only $found pinned image tags were found in the tree; the scan is broken and this gate checked nothing"
+            exit 1
+          fi
+          echo "$found written-out tags all agree on $version"
+
   # ---------------------------------------------------------------------------
   # build — one native runner per architecture, pushed by digest
   # ---------------------------------------------------------------------------
