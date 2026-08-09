@@ -171,7 +171,7 @@ export async function getMonitorSummary(windowHours = 24): Promise<MonitorSummar
              END AS ms
       FROM workflow.workflow_runs
       WHERE attributes->>'$eve.type' IN ('turn', 'subagent')
-        AND created_at >= now() - $1::interval
+        AND created_at >= (now() AT TIME ZONE 'utc') - $1::interval
     )
     SELECT
       (SELECT count(*) FROM turns) AS total,
@@ -198,7 +198,7 @@ export async function getMonitorSummary(windowHours = 24): Promise<MonitorSummar
              END AS ms
       FROM workflow.workflow_runs
       WHERE attributes->>'$eve.type' = 'session'
-        AND created_at >= now() - $1::interval
+        AND created_at >= (now() AT TIME ZONE 'utc') - $1::interval
     )
     SELECT
       (SELECT count(*) FROM sessions) AS total,
@@ -214,6 +214,25 @@ export async function getMonitorSummary(windowHours = 24): Promise<MonitorSummar
    * width_bucket over epoch seconds rather than date_trunc, because the window
    * is a rolling "last N hours" and date_trunc would produce a short leading
    * bucket whose lower count reads as a dip in throughput.
+   *
+   * THE BOUNDS BELOW USE A BARE now() ON PURPOSE, and it is not an oversight
+   * left behind by the (now() AT TIME ZONE 'utc') conversions in the WHERE
+   * clauses. The two are different operations:
+   *
+   *   COMPARISON   `created_at >= now() - interval` puts a naive timestamp
+   *                beside a timestamptz, so Postgres reads the stored value in
+   *                the server's zone. That is the bug — four hours in
+   *                America/New_York, and in the wrong direction.
+   *   EXTRACT      `extract(epoch from <naive>)` treats the value as UTC, which
+   *                is what it is. Measured against the running database:
+   *                extract(epoch from timestamp '2026-08-09 05:31:00') and
+   *                extract(epoch from timestamptz '2026-08-09 05:31:00+00')
+   *                are the same number, under TimeZone='America/New_York'.
+   *
+   * So `lo`/`hi` and `extract(epoch from created_at)` are already on one scale.
+   * Converting them "for consistency" would subtract the offset from one side
+   * only and shift every bucket boundary — turning a correct chart into a wrong
+   * one while looking like a tidy-up.
    */
   const bucketRows = await query<Record<string, unknown>>(
     `
@@ -231,7 +250,7 @@ export async function getMonitorSummary(windowHours = 24): Promise<MonitorSummar
              END AS ms
       FROM workflow.workflow_runs
       WHERE attributes->>'$eve.type' IN ('turn', 'subagent')
-        AND created_at >= now() - $1::interval
+        AND created_at >= (now() AT TIME ZONE 'utc') - $1::interval
     )
     SELECT bucket,
            count(*) AS turns,

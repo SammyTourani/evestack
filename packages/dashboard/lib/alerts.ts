@@ -337,7 +337,27 @@ async function wedged(): Promise<AlertResult> {
         WHERE attributes->>'$eve.type' IN ('turn','subagent')
           AND completed_at IS NULL
           AND started_at IS NOT NULL
-          AND started_at < now() - interval '15 minutes'`,
+          -- (now() AT TIME ZONE 'utc'), never a bare now(). workflow_runs
+          -- timestamps are 'timestamp without time zone' holding UTC (checked
+          -- against the running database, not assumed), and comparing one to a
+          -- timestamptz makes Postgres read the stored value in the SERVER's
+          -- zone. In America/New_York that is a four-hour shift and it points
+          -- the wrong way: a turn started twenty minutes ago reads as starting
+          -- three hours and forty minutes in the FUTURE, so the comparison
+          -- below against a bare now() is false and this alert could never fire.
+          --
+          -- No backticks in here, ever: this is a template literal, and one
+          -- inside the SQL ends the string with a parse error nowhere near the
+          -- cause. lib/fleet.ts warns about it in the sibling query; that
+          -- warning was written because someone did it, and it has now caught
+          -- two more attempts in this file and in the CLI's port.
+          --
+          -- Not hypothetical, and not exotic: ci.yml runs the whole suite with
+          -- TZ=America/New_York precisely to catch this class, and lib/fleet.ts
+          -- carries the same conversion because "the CLI port of this file hit
+          -- it for real: a session quiet for three hours looked five hours in
+          -- the future and the sweep returned nothing".
+          AND started_at < (now() AT TIME ZONE 'utc') - interval '15 minutes'`,
     );
     const n = Number(row?.n ?? 0);
     return {
@@ -379,9 +399,18 @@ async function dailySpend(): Promise<{ total: number; unpriced: string[]; unpric
 
 async function ingestHealth(): Promise<{ activeTurns: number; spansLastHour: number }> {
   const [turns] = await query<{ n: string }>(
+    // (now() AT TIME ZONE 'utc') — see the wedged() query above for why.
+    // workflow_runs.created_at is naive UTC; this one shifts the other way and
+    // over-counts, so the "turns ran but no spans arrived" comparison is made
+    // against a turn count from the wrong window.
+    //
+    // The span half below is deliberately NOT converted: evestack.spans is our
+    // table and received_at is `timestamp with time zone`, so a bare now() is
+    // already correct there. Converting both because they sit next to each
+    // other would introduce the bug into the half that never had it.
     `SELECT count(*)::text AS n FROM workflow.workflow_runs
       WHERE attributes->>'$eve.type' IN ('turn','subagent')
-        AND created_at >= now() - interval '1 hour'`,
+        AND created_at >= (now() AT TIME ZONE 'utc') - interval '1 hour'`,
   );
   let spansLastHour = 0;
   try {

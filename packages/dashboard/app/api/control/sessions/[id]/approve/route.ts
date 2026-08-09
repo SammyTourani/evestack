@@ -5,6 +5,7 @@ import {
   type InputResponse,
 } from "@/lib/agent-client";
 import { identifyApprover, recordApproval, requiresApprover } from "@/lib/approvals";
+import { describeDbError } from "@/lib/db";
 import {
   handleRouteError,
   isResponse,
@@ -175,8 +176,29 @@ export async function POST(
           });
         }),
       );
-    } catch {
+    } catch (error) {
+      // Swallowed on purpose — the decision has already reached the agent and
+      // failing the request now would report failure for something that
+      // succeeded — but NOT silently, which is what this was.
+      //
+      // `audited: false` goes into the response body and nothing reads it:
+      // app/chat/chat-client.tsx is the only in-repo caller, it checks
+      // `response.ok` and discards the body, and no other file in the dashboard
+      // mentions the field. So a failed audit write produced a 200, no log line,
+      // and no signal anywhere — for an approval, which is the most
+      // audit-worthy action in the product and the one thing `approver` in the
+      // audit log exists to record.
+      //
+      // lib/memories.ts had the identical empty catch and was fixed for the
+      // identical reason; its comment is worth repeating here because it applies
+      // word for word: the surrounding prose promised the failure would be
+      // "visible in the log" while the block was an empty catch, "so nothing was
+      // ever written anywhere".
       audited = false;
+      console.warn(
+        `[evestack] session ${result.sessionId} was answered by ${identity.approver} ` +
+          `but the approval audit row could not be written: ${describeDbError(error)}`,
+      );
     }
 
     return jsonOk({
