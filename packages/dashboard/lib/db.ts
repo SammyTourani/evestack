@@ -180,6 +180,29 @@ export function getPool(): Pool {
 }
 
 /**
+ * End the pool AND forget it, which `getPool().end()` on its own does not.
+ *
+ * pg's `end()` leaves the object alive and permanently unusable — every later
+ * query rejects with "Cannot use a pool after calling end on the pool" — while
+ * the global above still points at it, so the next `getPool()` hands back the
+ * corpse instead of building a replacement.
+ *
+ * Nothing in the running dashboard closes the pool, which is why this went
+ * unnoticed. It surfaced in the probe runner, where every probe shares one
+ * process: `08-metric-query` finishes with `db.getPool().end()`, and the next
+ * probe to import a lib module that queries — `16-schedule-streaks` — threw
+ * before its first assertion. Ordering decided it, so it was invisible to
+ * `--only=schedules` and appeared the first time the whole tier ran together.
+ *
+ * Callers that own the process lifetime should use this instead of `end()`.
+ */
+export async function closePool(): Promise<void> {
+  const existing = globalThis.__evestackPool;
+  globalThis.__evestackPool = undefined;
+  if (existing) await existing.end();
+}
+
+/**
  * Flattens whatever pg threw into a single readable sentence.
  *
  * A refused connection surfaces as an `AggregateError` whose `errors` property
