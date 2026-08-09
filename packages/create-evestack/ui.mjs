@@ -208,6 +208,30 @@ export function visible(s) {
   return String(s).replace(ANSI, "").length;
 }
 
+/** The same string with every escape removed. */
+export function plain(s) {
+  return String(s).replace(ANSI, "");
+}
+
+/**
+ * Colour is decided from stdout. This is how a message bound for a DIFFERENT
+ * stream stops inheriting that decision.
+ *
+ * `color` above is one module-level constant read from `stdout.isTTY`, which is
+ * right for the thing it was built for and wrong for stderr: run
+ * `evestack status 2> err.log` in a terminal and stdout is still a TTY, so the
+ * error written to the redirected stream carried raw `\x1b[31m` into the file —
+ * the exact failure the colour rewrite was written to kill, surviving on the
+ * one stream nobody checked.
+ *
+ * Deliberately not "turn colour off when either stream is redirected": that
+ * would strip colour from a perfectly good terminal on every `2>/dev/null`.
+ * The stream being written to is the only thing that can answer this.
+ */
+export function forStream(stream, text) {
+  return stream && stream.isTTY ? text : plain(text);
+}
+
 export function pad(s, n) {
   return `${s}${" ".repeat(Math.max(0, n - visible(s)))}`;
 }
@@ -219,11 +243,11 @@ export function spread(left, right, w = width() - 2) {
   return gap < 1 ? `${left}  ${right}` : `${left}${" ".repeat(gap)}${right}`;
 }
 
-/** Shorten to `max` printable characters. Only safe on uncoloured text. */
-export function truncate(s, max) {
-  const text = String(s);
-  return text.length <= max ? text : `${text.slice(0, Math.max(0, max - 1))}${G.ellip}`;
-}
+/* `truncate(s, max)` used to live here. It was exported by both copies of this
+   file and called by nothing — not by create, attach, shared, verify, checks,
+   project, render, status or tour, not internally, and not by a test. Shipped
+   with the design system on the assumption something would want it; nothing
+   did. `pad` and `spread` beside it are both used, which is the difference. */
 
 /* -------------------------------------------------------------------------- */
 /* printing                                                                    */

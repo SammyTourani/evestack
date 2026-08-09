@@ -24,7 +24,7 @@
  */
 import { spawn } from "node:child_process";
 
-import { blank, c, forHumans, g, heading, fix, rule, row, say } from "create-evestack/ui";
+import { blank, c, fix, forHumans, forStream, g, heading, row, rule, say } from "create-evestack/ui";
 
 import { findProjectEnv, notAProject, projectEnv, wantsHelp } from "./project.mjs";
 import { probeAll } from "./status.mjs";
@@ -46,6 +46,10 @@ the same turn in the dashboard.
 That one message is a real model call — a fraction of a cent on gpt-5-mini,
 free and slower on Ollama. Nothing else in the tour calls a model.
 
+It asks before sending. With no terminal to ask — CI, a pipe, a wrapper — it
+refuses and exits 3 rather than assuming yes; pass --yes to accept the charge
+up front.
+
 Options
   --yes, -y         do not ask before sending the message
   --message=TEXT    send something other than the default question
@@ -56,6 +60,7 @@ Exit codes
   0  the tour finished
   1  the stack is not up, or the turn failed — it printed which
   2  not an evestack project
+  3  it would have sent a paid message with nobody to ask — pass --yes
 `;
 
 /* -------------------------------------------------------------------------- */
@@ -77,8 +82,36 @@ export async function tour(argv, { stdout = process.stdout, stderr = process.std
   if (!found) return notAProject(stderr);
   const env = projectEnv(found);
 
-  const yes = argv.includes("--yes") || argv.includes("-y") || !process.stdin.isTTY;
+  /**
+   * Not a terminal is NOT consent.
+   *
+   * This read `|| !process.stdin.isTTY`, so every non-interactive run — CI, a
+   * wrapper script, `evestack tour < /dev/null` — was treated as if the operator
+   * had typed `--yes`, and the confirmation at step 2 was skipped twice over
+   * (`confirm()` also returned true off a TTY). The tour then sent a real,
+   * billable model call that nobody had agreed to, and no help text or doc said
+   * it would.
+   *
+   * The sibling default below is the same test pointing the other way and stays:
+   * `--no-open` defaults on without a terminal because NOT launching a browser
+   * is the harmless direction. Spending money is not.
+   */
+  const yes = argv.includes("--yes") || argv.includes("-y");
   const noOpen = argv.includes("--no-open") || !process.stdout.isTTY;
+
+  if (!yes && !process.stdin.isTTY) {
+    stderr.write(
+      forStream(
+        stderr,
+        `\n  ${g.FAIL} ${c.bold("evestack tour sends a real model call, and there is nobody here to ask.")}\n` +
+          `      Re-run it in a terminal, or pass --yes to accept the charge up front.\n\n`,
+      ),
+    );
+    // 3, not 1: nothing is broken and nothing needs fixing. A CI step that gets
+    // this back asked for a paid action without saying so, and the distinct code
+    // is what lets a caller tell that apart from "the stack is down".
+    return 3;
+  }
   const custom = argv.find((a) => a.startsWith("--message="))?.slice("--message=".length);
   const message = custom || DEFAULT_MESSAGE;
 
@@ -335,7 +368,12 @@ export async function streamReply(base, sessionId, env, stdout) {
 /* -------------------------------------------------------------------------- */
 
 async function confirm(question) {
-  if (!process.stdin.isTTY) return true;
+  // No terminal, no answer, so take the side that does nothing. This returned
+  // `true` — an unattended run answering yes on the operator's behalf, which is
+  // the wrong default for a prompt and was one of the two ways step 2 sent a
+  // paid turn nobody approved. `tour()` now refuses earlier, so the send path
+  // no longer reaches this; "Open it?" still can, and declining is right there.
+  if (!process.stdin.isTTY) return false;
   const { createInterface } = await import("node:readline/promises");
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   // Raced against close for the same reason shared.mjs races it: after stdin

@@ -15,9 +15,12 @@
  */
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
-import { startSession, streamReply } from "../src/tour.mjs";
+import { startSession, streamReply, tour } from "../src/tour.mjs";
 
 /** Collects what the tour would have printed. */
 function sink() {
@@ -143,4 +146,36 @@ test("a 401 names the credentials rather than the status code", async () => {
       /401 .* EVESTACK_AUTH_\* in \.env\.local/s,
     );
   }, { status: 401, body: { ok: false, error: "Unauthorized" } });
+});
+
+/**
+ * Not a terminal is not consent.
+ *
+ * `yes` was `--yes || -y || !process.stdin.isTTY`, so CI, a pipe, or
+ * `evestack tour < /dev/null` skipped the "Send it?" gate and billed a real
+ * model call nobody approved — and `confirm()` returned true off a TTY as well,
+ * so removing either bypass alone would have left the other. Exit 3 is the
+ * whole signal here: nothing is broken, the command declined to spend money.
+ */
+test("off a TTY the tour refuses to send rather than assuming yes", async () => {
+  // A real project directory, because the not-a-project check runs first and
+  // correctly returns 2 before any of this is reached. `.env.local` is the
+  // marker findProjectEnv looks for.
+  const dir = mkdtempSync(join(tmpdir(), "evestack-tour-"));
+  writeFileSync(join(dir, ".env.local"), "EVESTACK_AGENT_PORT=2000\n");
+  const cwd = process.cwd();
+  const stdin = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+  Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true });
+  process.chdir(dir);
+  try {
+    const err = sink();
+    const code = await tour([], { stdout: sink(), stderr: err });
+    assert.equal(code, 3, "a refusal to spend is not exit 0, and not exit 1 either");
+    assert.match(err.text, /--yes/, "must name the flag that grants consent");
+    assert.match(err.text, /real model call/i, "must say why it stopped");
+  } finally {
+    process.chdir(cwd);
+    if (stdin) Object.defineProperty(process.stdin, "isTTY", stdin);
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

@@ -20,7 +20,7 @@ import { dirname, join, resolve } from "node:path";
 // This file declared its own copy of the colour table, as did shared.mjs and the
 // template's checks.mjs — three tables, none of which asked whether stdout was a
 // terminal before emitting an escape.
-import { c, g, heading } from "create-evestack/ui";
+import { c, forStream, g, heading } from "create-evestack/ui";
 
 /**
  * The env files eve itself loads, in the order it loads them — `.env.local` last,
@@ -84,11 +84,14 @@ function dependsOnEve(dir) {
  *  the same reason, and three copies of this paragraph would drift. */
 export function notAProject(stderr) {
   stderr.write(
-    `\n  ${c.redBold("This is not an evestack project.")}\n` +
-      `  ${c.dim("No .env.local here or above, and no .env beside a package.json that needs eve.")}\n\n` +
-      `  ${c.dim(`${g.arrow} `)}${c.bold("cd")} into the directory ${c.bold("evestack create")} made, or the one you ran\n` +
-      `    ${c.bold("evestack attach")} in — or start a new one:\n\n` +
-      `      ${c.bold("npx evestack create my-agent")}\n\n`,
+    forStream(
+      stderr,
+      `\n  ${c.redBold("This is not an evestack project.")}\n` +
+        `  ${c.dim("No .env.local here or above, and no .env beside a package.json that needs eve.")}\n\n` +
+        `  ${c.dim(`${g.arrow} `)}${c.bold("cd")} into the directory ${c.bold("evestack create")} made, or the one you ran\n` +
+        `    ${c.bold("evestack attach")} in — or start a new one:\n\n` +
+        `      ${c.bold("npx evestack create my-agent")}\n\n`,
+    ),
   );
   return 2;
 }
@@ -215,13 +218,21 @@ export async function verify(argv, { stdout = process.stdout, stderr = process.s
   const script = findVerifyScript(projectDir);
   if (!script) {
     stderr.write(
-      `\n  ${c.redBold("Could not find the verify script.")}\n\n` +
-        `  ${c.dim("From inside the project this is also:")}  ${c.bold("npm run verify")}\n\n`,
+      forStream(
+        stderr,
+        `\n  ${c.redBold("Could not find the verify script.")}\n\n` +
+          `  ${c.dim("From inside the project this is also:")}  ${c.bold("npm run verify")}\n\n`,
+      ),
     );
     return 2;
   }
 
-  if (projectDir !== process.cwd()) {
+  // Not on the --json path. The child inherits stdio, so this lands on the same
+  // stream ahead of the payload and `evestack verify --json | jq` from any
+  // subdirectory died on "checking /path" before reaching the first brace. The
+  // line is an orientation aid for a human who typed the command somewhere
+  // below the project root; a parser is not that reader.
+  if (projectDir !== process.cwd() && !argv.includes("--json")) {
     stdout.write(`  ${c.dim(`checking ${projectDir}`)}\n`);
   }
 

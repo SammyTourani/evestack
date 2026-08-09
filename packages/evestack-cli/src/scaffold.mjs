@@ -22,26 +22,28 @@
  */
 
 /**
- * Turn a missing dependency into a sentence rather than a stack trace.
+ * Lazy, so `create` and `attach` pay for the scaffolder only when they run.
  *
- * Reachable in exactly one situation that matters — a partial or hand-assembled
- * install where node_modules/create-evestack is absent — and there the useful
- * information is the workaround, because `npx create-evestack` needs nothing
- * from this package at all.
+ * ── the handler that used to be here, and why it is gone ─────────────────────
+ *
+ * This caught ERR_MODULE_NOT_FOUND and rethrew a sentence explaining that
+ * `create-evestack` was missing and that `npx create-evestack` works without
+ * this package. Careful, well-worded, and unreachable: `cli.mjs` statically
+ * imports project.mjs, status.mjs, tour.mjs and render.mjs, and every one of
+ * them imports `create-evestack/ui` at the top level — so a missing copy fails
+ * during module resolution, before `main()` is called, and there is no frame
+ * left to catch it in. Verified by removing the package: the binary exits 1 on
+ * a seven-frame ERR_MODULE_NOT_FOUND without reaching a line of this file.
+ *
+ * Making it reachable would mean lazy-loading the design system in five
+ * modules to improve one broken-install message. `create-evestack` is a
+ * declared, non-optional dependency (`package.json` → `create-evestack:
+ * workspace:^`, published as a real range), so its absence is an install that
+ * did not complete, and npm's own error names the package correctly. Deleting
+ * the pretence beats maintaining it.
  */
 async function load(subpath) {
-  try {
-    return await import(`create-evestack/${subpath}`);
-  } catch (error) {
-    if (error?.code !== "ERR_MODULE_NOT_FOUND" && error?.code !== "MODULE_NOT_FOUND") throw error;
-    throw new Error(
-      "evestack: the `create-evestack` package is missing, so `create` and `attach` " +
-        "cannot run.\n" +
-        "  Reinstall this CLI (`npm i -g evestack`), or use the scaffolder directly:\n" +
-        "    npx create-evestack my-agent\n" +
-        "    npx create-evestack attach .",
-    );
-  }
+  return import(`create-evestack/${subpath}`);
 }
 
 export async function create(argv) {

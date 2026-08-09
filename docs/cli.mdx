@@ -107,8 +107,10 @@ and CI scaffolds from an `npx`-shaped directory on every PR.
 evestack status [--json]
 ```
 
-The glance. Four probes in parallel — the agent, Postgres, the dashboard and the model
-configuration — with the command that fixes anything that is down printed under it. Read-only:
+The glance. Four parts — the agent, Postgres and the dashboard probed in parallel, plus the model
+configuration, which is read from `.env.local` rather than called, because a status command that
+spends money is one people stop typing — with the command that fixes anything that is down
+printed under it. Read-only:
 the Postgres connection is pinned `default_transaction_read_only = on` by the same helper
 `doctor` uses, so it is safe to point at production.
 
@@ -138,9 +140,13 @@ links you to that same turn in the dashboard and explains what each surface just
 That one message is a real model call — a fraction of a cent on `gpt-5-mini`, free and slower on
 Ollama. Nothing else in the tour calls a model, and it says so before it sends anything.
 
+**With no terminal to ask, it refuses and exits 3.** In CI, under a pipe, or with stdin closed,
+the confirmation has nobody to answer it — so the tour stops rather than treating silence as
+consent, and names `--yes` as the way to accept the charge up front. It used to send the message.
+
 | Flag | Effect |
 | --- | --- |
-| `--yes` / `-y` | Don't ask before sending the message. |
+| `--yes` / `-y` | Don't ask before sending the message. Required when stdin is not a terminal. |
 | `--message=TEXT` | Send something other than the default question. |
 | `--no-open` | Never launch a browser. |
 

@@ -21,7 +21,7 @@
  */
 import { spawnSync } from "node:child_process";
 
-import { c, fixLine, forHumans, g, headingLine, rowLine, shortPath } from "create-evestack/ui";
+import { c, fixLine, forHumans, g, headingLine, plain, rowLine, shortPath } from "create-evestack/ui";
 
 import { connect, DoctorError } from "./db.mjs";
 import { findProjectEnv, notAProject, projectEnv, wantsHelp } from "./project.mjs";
@@ -34,9 +34,10 @@ export const STATUS_USAGE = `evestack status — is the stack up, and if not, wh
 
   evestack status [--json]
 
-Four probes in parallel — the agent, Postgres, the dashboard and the model
-configuration — and the command that fixes anything that is down. Read-only:
-nothing is started, stopped or written. Works from anywhere inside the project.
+Four parts — the agent, Postgres and the dashboard probed in parallel, plus the
+model configuration, which is read rather than called — and the command that
+fixes anything that is down. Read-only: nothing is started, stopped or written.
+Works from anywhere inside the project.
 
 Options
   --json          machine-readable
@@ -93,22 +94,53 @@ async function probeAgent(env) {
   }
   const health = await reachable(new URL("/eve/v1/health", base));
   return health.ok
-    ? { part: "agent", state: "ok", where: `:${new URL(base).port || 80}`, detail: "answering" }
-    : { part: "agent", state: "fail", where: `:${new URL(base).port || 80}`,
+    ? { part: "agent", state: "ok", where: portLabel(base), detail: "answering" }
+    : { part: "agent", state: "fail", where: portLabel(base),
         detail: "not answering", fix: "npm run dev" };
+}
+
+/**
+ * A URL only if it is one we can actually fetch.
+ *
+ * `new URL` accepts any scheme, so it is not a validator on its own — see the
+ * note in probeDashboard about `localhost:4000`.
+ */
+function httpUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:" ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The `:port` a human would recognise, defaulted from the scheme.
+ *
+ * `new URL("https://dash.example.com").port` is the empty string — the port is
+ * implied, not absent — so `|| 80` reported every https deployment as `:80`.
+ * The row was otherwise correct, which is what made it easy to read past.
+ */
+function portLabel(base) {
+  const url = new URL(base);
+  return `:${url.port || (url.protocol === "https:" ? 443 : 80)}`;
 }
 
 async function probeDashboard(env) {
   const ingest = env("EVESTACK_DASHBOARD_URL");
   let base = "http://127.0.0.1:4000";
   if (ingest) {
-    try {
-      base = new URL(ingest).origin;
-    } catch {
-      /* keep the default; verify is the command that complains about the value */
-    }
+    const parsed = httpUrl(ingest);
+    // Only when it parsed AND speaks http(s). `new URL("localhost:4000")` — the
+    // single most likely way to get this variable wrong — does NOT throw: it
+    // parses as protocol `localhost:` with origin "null", so the old try/catch
+    // never fired, `new URL("/api/health", "null")` threw one frame later, and
+    // `evestack status` died with a bare "Invalid URL" and exit 1. The guard was
+    // written for exactly this value and could not see it.
+    if (parsed) base = parsed.origin;
+    /* otherwise keep the default; verify is the command that complains about it */
   }
-  const port = `:${new URL(base).port || 80}`;
+  const port = portLabel(base);
   const health = await reachable(new URL("/api/health", base));
   if (health.ok) return { part: "dashboard", state: "ok", where: port, detail: "healthy", url: base };
   if (health.status === 503) {
@@ -197,7 +229,7 @@ async function probePostgres(env) {
  * verify command people stop running" — and status is meant to be typed often.
  */
 function probeModel(env) {
-  const provider = (env("EVESTACK_PROVIDER") || "openai").toLowerCase();
+  const provider = (env("EVESTACK_PROVIDER")?.trim() || "openai").toLowerCase();
   const model =
     env("EVESTACK_MODEL") ||
     { openai: "gpt-5-mini", anthropic: "claude-sonnet-5", ollama: "qwen3" }[provider] ||
@@ -239,7 +271,23 @@ export async function status(argv, { stdout = process.stdout, stderr = process.s
 
   if (argv.includes("--json")) {
     const down = results.filter((r) => r.state === "fail");
-    stdout.write(`${JSON.stringify({ ok: down.length === 0, project: name, dir: found.dir, results }, null, 2)}\n`);
+    /**
+     * Strip presentation before serialising, or `--json` is not machine-readable.
+     *
+     * Two probes build their `detail` for a human: probeModel appends
+     * `c.dim("(local)")` on the ollama path, and probePostgres joins its parts
+     * with the `g.skip` separator glyph. Both went into the payload verbatim, so
+     * with colour on — a real terminal, or FORCE_COLOR in CI — the JSON carried
+     * `"detail": "qwen3 \\u001b[2m(local)\\u001b[22m"`. Valid JSON, and a value
+     * no consumer can compare, match or print.
+     *
+     * Stripped here rather than at the source because the human report wants
+     * those escapes; this is the boundary where they stop being wanted.
+     */
+    const clean = results.map((r) => ({ ...r, detail: plain(r.detail), where: plain(r.where) }));
+    stdout.write(
+      `${JSON.stringify({ ok: down.length === 0, project: name, dir: found.dir, results: clean }, null, 2)}\n`,
+    );
     return down.length === 0 ? 0 : 1;
   }
 
