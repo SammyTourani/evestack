@@ -67,6 +67,28 @@
 }
 .dot { opacity: 0.5; }
 
+/* The agent's own clock reading beside the UTC instant, or a hedge when its run
+   history could not pin a zone. Same chip treatment as `.caught`: a qualifier
+   on the value it follows, not a value of its own. */
+.zone {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 10px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+/* "unconfirmed" is a different claim from "assumed UTC": the zone IS narrowed,
+   the candidates left just disagree about this particular fire, which is what a
+   daylight-saving transition inside the projection window looks like. It is
+   still only a qualifier, so it borrows `.zone` and only leans on the dashed
+   border to say the number beside it is not settled. */
+.unconfirmed {
+  border-style: dashed;
+}
+
 .expand {
   margin-left: auto;
   padding: 2px 8px;

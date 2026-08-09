@@ -1,6 +1,7 @@
 import { DatabaseError } from "@/app/db-error";
 import { listMemories } from "@/lib/memories";
 import { MemoryList } from "./memory-client";
+import { MEMORY_PAGE_LIMIT } from "./truncation";
 import styles from "./memory.module.css";
 
 export const dynamic = "force-dynamic";
@@ -17,7 +18,10 @@ export default async function MemoryPage(props: PageProps<"/memory">) {
 
   let page: Awaited<ReturnType<typeof listMemories>>;
   try {
-    page = await listMemories({ ...(search ? { search } : {}), limit: 200 });
+    // The constant, not a literal: ./truncation.ts quotes this same number back
+    // to the reader as "showing the most recent N", and the two drifting apart
+    // would turn an honest footnote into a specific lie.
+    page = await listMemories({ ...(search ? { search } : {}), limit: MEMORY_PAGE_LIMIT });
   } catch (error) {
     return <DatabaseError error={error} />;
   }
@@ -73,7 +77,7 @@ export default async function MemoryPage(props: PageProps<"/memory">) {
               </p>
             </div>
           ) : (
-            <MemoryList rows={page.rows} />
+            <MemoryList rows={page.rows} total={page.total} searching={Boolean(search)} />
           )}
         </>
       )}

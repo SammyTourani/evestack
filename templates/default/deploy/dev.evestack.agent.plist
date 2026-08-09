@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd LaunchAgent for the evestack agent. macOS hosts.
+
+    cp deploy/dev.evestack.agent.plist ~/Library/LaunchAgents/
+    $EDITOR ~/Library/LaunchAgents/dev.evestack.agent.plist    # every /ABSOLUTE/PATH
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.evestack.agent.plist
+    launchctl print gui/$(id -u)/dev.evestack.agent | head -20
+    tail -f /ABSOLUTE/PATH/TO/PROJECT/logs/agent.log
+
+  To stop, and to reload after an edit:
+
+    launchctl bootout gui/$(id -u)/dev.evestack.agent
+
+  A LaunchAgent (per-user, ~/Library/LaunchAgents), NOT a LaunchDaemon. Two
+  reasons, both about Docker: Docker Desktop only runs while a user is logged
+  in, so a boot-time daemon would come up before the thing it depends on and
+  fail every sandbox command; and the docker socket is owned by that user's
+  session. The cost is real and worth knowing — log out and the agent stops.
+  A Mac that must serve while nobody is logged in wants Linux and the systemd
+  unit beside this file.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.evestack.agent</string>
+
+  <!--
+    Exactly what `npm start` runs (see package.json), minus the npm wrapper:
+      "start": "node --env-file-if-exists=.env.local scripts/start.mjs"
+
+    launchd does not search PATH for the first argument, so node must be an
+    absolute path: `command -v node`. Homebrew on Apple Silicon puts it at
+    /opt/homebrew/bin/node, Intel at /usr/local/bin/node, nvm under
+    ~/.nvm/versions/node/<version>/bin/node.
+
+    scripts/start.mjs resolves ./node_modules/.bin/eve by absolute path, so this
+    does not depend on npm's PATH injection — see eveBinary() in
+    scripts/checks.mjs for the failure that made that necessary.
+  -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/node</string>
+    <string>--env-file-if-exists=.env.local</string>
+    <string>scripts/start.mjs</string>
+  </array>
+
+  <!-- The project root. .env.local, .output/ and .eve/ resolve against it. -->
+  <key>WorkingDirectory</key>
+  <string>/ABSOLUTE/PATH/TO/PROJECT</string>
+
+  <!--
+    THE ONE THAT CATCHES EVERYONE. eve's Docker sandbox backend spawns the
+    `docker` CLI by name, with no shell
+    (eve/dist/src/execution/sandbox/bindings/docker-cli.js —
+    `process.env.EVE_DOCKER_PATH ?? "docker"`). launchd's default PATH is
+    /usr/bin:/bin:/usr/sbin:/sbin, and Docker Desktop installs the CLI to
+    /usr/local/bin/docker while Homebrew's cask puts it in /opt/homebrew/bin.
+    Verified on a Homebrew Mac: `env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin
+    command -v docker` finds nothing.
+
+    So the agent starts, serves, and fails every bash tool call with
+    DockerUnavailableError until PATH says where docker is. Fix it here, or set
+    EVE_DOCKER_PATH to the binary outright — `command -v docker` on your Mac.
+  -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!--
+    Restart on ANY exit, including a clean one. `<true/>` rather than
+    {SuccessfulExit: false}, because a supervised agent that exits 0 has still
+    stopped answering, and there is no exit code from `eve start` that means
+    "this was meant to be the end".
+  -->
+  <key>KeepAlive</key>
+  <true/>
+
+  <!--
+    launchd's own floor is 10 seconds between respawns and it enforces it
+    whatever you write here; stating it makes the behaviour visible rather than
+    surprising when a crash loop does not spin.
+  -->
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <!--
+    LAUNCHD DOES NOT ROTATE THESE. Unlike systemd's journal and unlike the
+    containers in docker-compose.yml (which now carry max-size/max-file), these
+    two files grow until the disk is full. Create the directory first
+    (`mkdir -p logs`) — launchd will not create it and the job fails to spawn
+    with a path error that names no cause.
+
+    Rotate them with newsyslog, which is already running on every Mac. Write
+    /etc/newsyslog.d/evestack.conf as root:
+
+      # logfilename                                   [owner:group] mode count size when flags
+      /ABSOLUTE/PATH/TO/PROJECT/logs/agent.log         you:staff     644  5     10240 *    J
+
+    5 generations of 10 MB, gzip-compressed. Check the syntax without waiting a
+    day: `sudo newsyslog -nvv`.
+  -->
+  <key>StandardOutPath</key>
+  <string>/ABSOLUTE/PATH/TO/PROJECT/logs/agent.log</string>
+  <key>StandardErrorPath</key>
+  <string>/ABSOLUTE/PATH/TO/PROJECT/logs/agent.log</string>
+
+  <!--
+    Keep the agent off the App Nap / low-priority path. launchd's default
+    ProcessType for a LaunchAgent is Standard; "Interactive" asks for no
+    throttling, which is what you want for a process serving HTTP.
+  -->
+  <key>ProcessType</key>
+  <string>Interactive</string>
+</dict>
+</plist>

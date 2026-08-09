@@ -8,7 +8,7 @@
  *
  * Still dependency-free, for the reason index.mjs gives.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -111,6 +111,58 @@ export function shellQuote(value) {
   if (text === "") return "''";
   if (/^[A-Za-z0-9._+@%/:=,-]+$/.test(text)) return text;
   return `'${text.split("'").join(`'\\''`)}'`;
+}
+
+/**
+ * The mode every generated credential file gets, and why `writeFileSync` alone
+ * does not get there.
+ *
+ * Both wizards generate real secrets — a dashboard sign-in password, a trace
+ * ingest token, a Postgres password — and both wrote them with a plain
+ * `writeFileSync`, which means the process umask decides who can read them.
+ * Measured on this machine (umask 022) by scaffolding into a temp directory and
+ * stat-ing the result:
+ *
+ *     -rw-r--r--  .env        EVESTACK_DB_PASSWORD
+ *     -rw-r--r--  .env.local  EVESTACK_AUTH_PASSWORD, EVESTACK_INGEST_TOKEN,
+ *                             WORKFLOW_POSTGRES_URL (password inline), API key
+ *
+ * World-readable. On a shared box that is every other account on it, and the
+ * dashboard password is a control plane that starts agent runs and approves
+ * gated shell commands — the same reasoning that pins its port to 127.0.0.1.
+ *
+ * TWO CALLS, NOT ONE, and this is the part that is easy to get wrong. The `mode`
+ * option on writeFileSync is passed to `open(2)` with O_CREAT, so it applies
+ * only when the file is CREATED; overwriting an existing 0644 file leaves it at
+ * 0644 and the option is silently ignored.
+ *
+ * Which of the two calls does the work depends on the caller. `create` refuses a
+ * directory that is not empty (create.mjs:360), so its files are always new and
+ * the `mode` option is enough there. `attach` is the opposite case: it APPENDS
+ * its block to an env file the project usually already has, so for the command
+ * that most needs this, the chmod is the only half that does anything.
+ *
+ * The chmod is best-effort on purpose. It can fail for reasons that have nothing
+ * to do with this package — a file owned by another user, a mount that does not
+ * carry Unix modes, Windows, a container bind mount — and none of those is worth
+ * aborting a scaffold half way through, after the file itself has been written
+ * correctly. The caller is told, so the user can fix it, and the run continues.
+ *
+ * Returns null on success, or the message to warn with.
+ */
+export const SECRET_FILE_MODE = 0o600;
+
+export function writeSecretFile(path, contents) {
+  writeFileSync(path, contents, { mode: SECRET_FILE_MODE });
+  try {
+    chmodSync(path, SECRET_FILE_MODE);
+    return null;
+  } catch (error) {
+    return (
+      `Could not restrict ${path} to owner-only (0600) — ${error?.message ?? error}\n` +
+      `  It holds generated credentials. Tighten it yourself: chmod 600 ${shellQuote(path)}`
+    );
+  }
 }
 
 /**

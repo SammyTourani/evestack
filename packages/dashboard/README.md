@@ -23,10 +23,13 @@ pauses schedules and deletes memories, and the container binds `0.0.0.0`.
 and that `create-evestack` generates. One secret per deployment, not two that
 drift apart.
 
-With `EVESTACK_AUTH_PASSWORD` unset the dashboard serves nothing: every route
-answers `503` naming the two variables, `/api/health` reports unhealthy, and the
-sign-in page explains the problem. There is deliberately no bypass flag —
-that is the switch nobody turns back on.
+With `EVESTACK_AUTH_PASSWORD` unset the dashboard serves nothing usable: every
+route answers `503` naming the two variables, except `GET /signin`, which renders
+the same explanation and no sign-in form, and `GET /api/health`, whose handler
+answers its own `503 {"status":"unconfigured"}` so the container reports
+unhealthy. (`GET /api/auth/session` and `GET /api/auth/signout` also pass the
+gate and answer `405` — both routes are POST-only.) There is deliberately no
+bypass flag — that is the switch nobody turns back on.
 
 ### Signing in
 
@@ -106,7 +109,7 @@ Added by the auth work; the full list is in [`.env.example`](./.env.example).
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `EVESTACK_AUTH_USER` | — | **Required.** Sign-in user; same value as the agent's. Not defaulted, because `lib/agent-client.ts` only sends Basic to the agent when both halves are set. |
-| `EVESTACK_AUTH_PASSWORD` | — | **Required.** Either unset means the dashboard refuses every request. |
+| `EVESTACK_AUTH_PASSWORD` | — | **Required.** Either unset means the dashboard refuses every request but `GET /signin`, which then renders no sign-in form. |
 | `EVESTACK_SESSION_SECRET` | derived from the password | Set to rotate cookies without rotating the password, or to let replicas accept each other's cookies. |
 | `EVESTACK_SESSION_TTL_HOURS` | `168` | Session cookie lifetime. |
 | `EVESTACK_TRUSTED_PROXY` | unset | `1` when a proxy you control terminates every request and strips inbound `X-Forwarded-*`; or a comma-separated list of IPs/IPv4 CIDRs the nearest hop must match. Until set, forwarded identity headers are not read. |

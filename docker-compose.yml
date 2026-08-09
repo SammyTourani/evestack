@@ -20,9 +20,61 @@
 #
 # Use the SAME pair your agent has in its .env.local. It is one secret per
 # deployment: the dashboard signs you in with it and presents it to the agent.
-# Without it the container comes up, answers 503 to everything, and reports
-# unhealthy in `docker ps` — which is the intended, visible failure, not a bug.
+# Without it the container comes up, answers 503 to everything but `GET /signin`
+# — which renders the reason and no sign-in form, so there is nothing to sign in
+# with — and reports unhealthy in `docker ps`, which is the intended, visible
+# failure, not a bug.
+#
+# ── THE AGENT IS NOT A SERVICE IN THIS FILE, AND THAT IS THE DESIGN ──────────
+#
+# Two containers here restart themselves; the process that does the actual work
+# is not one of them. That asymmetry is deliberate and it is documented, not
+# hand-waved — supervise the agent with systemd or launchd instead. The unit
+# and the plist ship as real files at templates/default/deploy/, and the
+# reasoning is in docs/operations.mdx. In one line: `docker()` is the default
+# sandbox backend (templates/default/agent/sandbox/sandbox.ts), so the agent
+# drives the host's Docker daemon to create one `eve-sbx-…` container per
+# session. Putting the agent in a container means handing it
+# /var/run/docker.sock, which is root on the host — for the one process whose
+# shell is written by a language model. There is also no agent image to run:
+# nothing publishes one, and `build:`ing the template on every deploy is a cost
+# this file should not impose by existing.
 name: evestack
+
+# ── Log rotation ─────────────────────────────────────────────────────────────
+#
+# Docker's default `json-file` driver has NO max-size and NO max-file. Both
+# services below carry `restart: unless-stopped`, which is a promise to keep
+# running for months, and for months the daemon appends to
+# /var/lib/docker/containers/<id>/<id>-json.log until the disk is full. Nothing
+# in Docker warns first, and a full disk stops Postgres, which stops everything.
+#
+# 10 MB × 3 files is a 30 MB ceiling per container, 60 MB for the pair. The
+# number is chosen, not measured under load: a mostly-idle Postgres in this
+# stack wrote 8.5 KB in its first eight hours (`docker logs` byte count on a
+# running pgvector:pg17 container on 2026-08-09), so 30 MB is weeks of quiet
+# operation, while a container in a crash loop — the case that actually fills
+# disks — is capped in minutes rather than never.
+#
+# `driver: json-file` is stated rather than inherited on purpose. A host daemon
+# configured with a different default (journald, local, awslogs) would otherwise
+# silently ignore max-size/max-file, which is the failure this block exists to
+# prevent. Resize the ceiling from `.env` — `LOG_MAX_FILE=1` keeps a single
+# file — and edit the driver here if you ship logs somewhere else, because
+# changing the driver changes which options are even legal.
+#
+# Unprefixed, like POSTGRES_BIND / POSTGRES_PORT / DASHBOARD_PORT beside it, and
+# unlike the EVESTACK_* names elsewhere in this file. Those are read by the app
+# at run time; these are interpolated by Compose on the host before the file is
+# parsed, and they never reach a container. contract 19 asserts that every
+# documented EVESTACK_* name has a reader in the workspace, which one of these
+# would not have — and an allowlist entry claiming a reader it does not have is
+# a worse answer than a name that says what it is.
+x-logging: &container-logs
+  driver: json-file
+  options:
+    max-size: "${LOG_MAX_SIZE:-10m}"
+    max-file: "${LOG_MAX_FILE:-3}"
 
 services:
   # Durable session storage. pgvector image (not plain postgres) because the
@@ -30,6 +82,7 @@ services:
   postgres:
     image: pgvector/pgvector:pg17
     restart: unless-stopped
+    logging: *container-logs
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-evestack}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-evestack}
@@ -91,6 +144,7 @@ services:
       context: .
       dockerfile: packages/dashboard/Dockerfile
     restart: unless-stopped
+    logging: *container-logs
     depends_on:
       postgres:
         condition: service_healthy

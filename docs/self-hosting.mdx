@@ -96,13 +96,20 @@ reach it. See [Observability](/docs/observability).
 
   <Step title="Build and start">
     ```bash
-    npm run build          # eve build  -> .output/
-    PORT=2000 npm start    # eve start
+    npm run build    # eve build  -> .output/
+    npm start        # eve start, on EVESTACK_AGENT_PORT
     ```
 
     Every `eve` command loads `.env`/`.env.local` from the app root first, `eve start` included,
-    so the same file that drives `eve dev` drives the built server. Run it under whatever process
-    manager already supervises your Node services; eve does not supervise itself.
+    so the same file that drives `eve dev` drives the built server. No `PORT=` prefix is needed
+    and this page used to print one: `scripts/start.mjs` passes `EVESTACK_AGENT_PORT` through as
+    `--port`, which beats `$PORT` and eve's own default of 3000. That is the number `npm run
+    verify` probes and the number the generated compose file points the dashboard at, so there is
+    one answer to "where is the agent" rather than three.
+
+    eve does not supervise itself. A unit and a plist ship in the project at `deploy/` — see
+    [Operations](/docs/operations#run-the-agent-as-a-service), which also covers why the agent is
+    not a compose service beside Postgres and the dashboard.
   </Step>
 
   <Step title="Put the proxy in front">
@@ -281,10 +288,16 @@ than falling back to either side, because `allow_all` and `none` are typos and g
 gives you either a broken shell or an open one.
 
 One further limit worth knowing before you plan network policy: the Docker backend honours only
-`allow-all` and `deny-all`. Domain allow-lists need `microsandbox()` (macOS on Apple Silicon, or
-Linux with KVM). There is also
+`allow-all` and `deny-all`. A domain allow-list needs a different backend. `microsandbox()` (macOS
+on Apple Silicon, or Linux with KVM) is one. The other is
 [`@evestack/sandbox-opensandbox`](https://github.com/SammyTourani/evestack/tree/main/packages/sandbox-opensandbox),
-which runs the sandbox on an OpenSandbox server you host instead of on your Docker daemon.
+which runs the sandbox on an OpenSandbox server you host instead of on your Docker daemon, and
+which takes a domain allow-list from 0.4.0 on — but only as `opensandbox({ networkPolicy })`, fixed
+for that sandbox's whole life. OpenSandbox sets a sandbox's default action when the sandbox is
+created and its run-time egress API preserves it, so on that backend `session.setNetworkPolicy()`
+rejects instead of half-applying a restriction, `subnets` (IP/CIDR) and per-domain `transform` /
+`forwardURL` rules throw when the backend is constructed rather than being dropped, and changing
+the policy afterwards means a new session rather than a re-egressed sandbox.
 
 Be precise about what that buys you, because isolation is the reason people reach for it. An
 OpenSandbox **server** can be configured on a gVisor, Kata or Firecracker runtime — but which
@@ -369,8 +382,10 @@ address, and `docker run -p 4000:4000` on the image by hand puts the control pla
 interface the host has.
 
 **The credential.** Every route requires `EVESTACK_AUTH_USER` and `EVESTACK_AUTH_PASSWORD`, and
-with either missing the dashboard serves nothing: `503` on every route, `/api/health` unhealthy,
-and a sign-in page that says why. There is no bypass flag. Browsers get a signed `HttpOnly`
+with either missing the dashboard serves nothing usable: `503` on every request except
+`GET /signin`, which renders the reason and no sign-in form, and `GET /api/health`, whose own
+handler answers `503 {"status":"unconfigured"}` and so reports the container unhealthy. There is
+no bypass flag. Browsers get a signed `HttpOnly`
 session cookie from `/signin`; scripts send HTTP Basic. Details in
 [`packages/dashboard/README.md`](https://github.com/SammyTourani/evestack/tree/main/packages/dashboard#auth).
 
@@ -416,6 +431,10 @@ is still a SQL read. See [The dashboard](/docs/dashboard).
 
 ## Operations
 
+Everything below is about the deployment you already have. Three things that only matter once you
+leave it running — supervising the agent, capping container logs, and pruning a `workflow` schema
+that nothing prunes for you — have a page of their own: [Operations](/docs/operations).
+
 ### Restarts
 
 State never lives in the process, so restarting is not an event. On boot against Postgres,
@@ -430,6 +449,11 @@ the Postgres container, restarted the agent, and a follow-up on a pre-restart se
 first message verbatim. Ordering follows from that — Postgres has to be accepting connections
 before the agent starts, which is what the compose healthcheck and its `service_healthy`
 condition enforce for the dashboard.
+
+The agent has no such condition because it is not a compose service. Under a unit it exits fast
+and the restart policy retries, which is the same guarantee reached differently; see
+[Operations](/docs/operations#run-the-agent-as-a-service) for why the restart limiter has to be
+disabled for that to work.
 
 ### Backups
 
@@ -448,6 +472,13 @@ Two schema-specific notes. `evestack.approvals` is retained forever by design �
 someone wants a year later, when they ask why the agent deleted the thing it deleted. And the
 agent's `evestack.memories` table is created lazily on the first `remember` call, so a restore
 into an empty database is fine; the table comes back on use, HNSW index and all.
+
+A third that is easy to assume the wrong way round: **the `workflow` schema has no retention at
+all.** `evestack.spans` expires on a 30-day window and prunes itself, which makes it natural to
+assume the rest of the database does something similar. It does not — world-postgres deletes
+nothing, so every run, event and step is still there. Roughly 11 MB per month at 700 sessions,
+measured. [Operations](/docs/operations#retention-the-workflow-schema-is-never-pruned) has the
+opt-in pruning procedure and, more importantly, what is safe to delete and what eve still needs.
 
 <Note>
   A backup you have never restored is a hypothesis. Restoring into a scratch database and pointing
@@ -468,6 +499,9 @@ you wire up trace export; delete the file to get it back. Details in
 [Observability](/docs/observability).
 
 <CardGroup cols={2}>
+  <Card title="Operations" icon="gear" href="/docs/operations">
+    Supervising the agent, bounding the logs, and pruning a schema nothing prunes for you.
+  </Card>
   <Card title="Local setup" icon="wrench" href="/docs/local-setup">
     Docker, Ollama, and the setup-time failures that are not deployment failures.
   </Card>

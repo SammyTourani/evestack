@@ -63,11 +63,49 @@ jobs:
       # Needs no install and no build — node, fs and crypto only.
       - run: node packages/dashboard/scripts/gen-pricing.mjs --check
 
+      # CHANGELOG.md has to be REACHABLE, not merely present.
+      #
+      # It was written on 2026-08-09 and linked from nothing. README.md and
+      # llms.txt are the two front doors — the first is what a person lands on,
+      # the second is the file published so that language models index this repo
+      # accurately — and neither mentioned it, so the only way to find 28
+      # documented releases was to already know the filename.
+      #
+      # Nothing caught that, and the near-miss is instructive:
+      # contract/contracts/16-documented-paths.contract.mjs DOES check
+      # reachability in this exact direction ("a docs page that nothing links to
+      # is invisible"), but it walks `docs/*.mdx` only, so a root-level document
+      # is outside it in both directions — its PATH_PATTERN is anchored to
+      # docs|packages|contract|templates|registry|scripts|.github, and
+      # `CHANGELOG.md` starts with none of those. That contract is the right
+      # long-term home for this rule; this step is the version of it that exists
+      # today, and it is deliberately dumber: two greps, no Node, no install.
+      #
+      # Grepping for the FILENAME rather than a full markdown link on purpose.
+      # README.md links it relatively (`./CHANGELOG.md`) and llms.txt links it as
+      # an absolute github.com blob URL; a pattern strict enough to match both
+      # would be strict enough to break on a reformat, and the question here is
+      # only "can a reader get there from here".
+      - name: CHANGELOG.md is reachable from both front doors
+        run: |
+          set -euo pipefail
+          missing=0
+          for door in README.md llms.txt; do
+            if grep -q 'CHANGELOG\.md' "$door"; then
+              echo "$door links CHANGELOG.md"
+            else
+              echo "::error file=$door::$door does not link CHANGELOG.md. It is one of the two front doors to this repository; a changelog nothing links to is a changelog nobody reads."
+              missing=1
+            fi
+          done
+          [ "$missing" = "0" ] || exit 1
+
   # The workspace's own tests. `pnpm test` at the root is
-  # `node contract/run.mjs && pnpm -r --if-present test`, and docs/upgrading.mdx
-  # has told readers it runs since it was written — but no workflow invoked it,
-  # so the 19 cron-parser tests, create-evestack's syntax checks and the entire
-  # website Playwright suite had never once run in CI. That is now this job.
+  # `node contract/run.mjs && node --test 'contract/runtime/lib/*.test.mjs' &&
+  # pnpm -r --if-present test`, and docs/upgrading.mdx has told readers it runs
+  # since it was written — but no workflow invoked it, so the 19 cron-parser
+  # tests, create-evestack's syntax checks and the entire website Playwright
+  # suite had never once run in CI. That is now this job.
   #
   # Separate from `typecheck` because it needs a browser download and a Next
   # build; folding it in would put two minutes in front of the fast feedback
@@ -85,6 +123,46 @@ jobs:
       # Same cold-checkout rule as every other job: workspace types and the
       # dashboard's cron import both resolve through a gitignored dist/.
       - run: pnpm -r --if-present run build
+
+      # The two contract runners' OWN regression suite, ahead of the browser
+      # download, for the same reason dashboard-build runs the dashboard's unit
+      # tests before `next build`: it takes about five seconds and it guards the
+      # thing everything else in this workflow trusts.
+      #
+      # contract/ is not a pnpm workspace package, so `pnpm -r --if-present test`
+      # never reached this file and neither did any step here — the suite that
+      # proves `--only=seem` (a typo) can no longer print "0 probes, 0 checks —
+      # all green" and exit 0 was itself running nowhere. It is now in the root
+      # `test` script as well, so `pnpm test` below re-runs it; that duplication
+      # is the same deliberate trade dashboard-build documents. This step is the
+      # fast, separately-named signal, and the root script is the promise
+      # docs/upgrading.mdx makes that `pnpm test` runs everything.
+      #
+      # The quotes around the glob are load-bearing: node must do the expansion,
+      # not the shell. Node's --test rejects a bare directory, and an unquoted
+      # pattern that matches nothing would be handed through as a literal path.
+      #
+      # After `pnpm -r --if-present run build` on purpose. The test file itself
+      # imports only node builtins, but it spawns both runners as real
+      # subprocesses — that is the only place an exit code can be observed — and
+      # those load node_modules/eve plus the probe modules.
+      #
+      # Counted before it is run, because `node --test` exits 0 when its glob
+      # matches NOTHING. Measured: `node --test 'nosuchdir/*.test.mjs'` reports
+      # `tests 0 / pass 0 / fail 0` and exits 0. So a renamed directory, or this
+      # suite simply never being staged, turns a step whose name promises
+      # coverage into a green no-op — which is the precise vacuity the suite
+      # below was written to forbid, reproduced in the harness that runs it.
+      - name: contract runner regression suite
+        run: |
+          found=$(ls contract/runtime/lib/*.test.mjs 2>/dev/null | wc -l)
+          if [ "$found" -lt 1 ]; then
+            echo "::error::no contract/runtime/lib/*.test.mjs matched — the suite is not in the commit, and node --test would have exited 0 having run nothing"
+            exit 1
+          fi
+          echo "running $found runner-regression file(s)"
+          node --test 'contract/runtime/lib/*.test.mjs'
+
       # chromium only — the suite pins one browser, and --with-deps pulls the
       # system libraries a bare runner does not have.
       - run: pnpm --filter @evestack/website exec playwright install --with-deps chromium

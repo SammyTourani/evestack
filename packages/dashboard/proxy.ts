@@ -61,7 +61,12 @@ export default function proxy(request: NextRequest): NextResponse {
 
   if (!authConfigured()) {
     // The sign-in page is allowed through so it can explain the problem in a
-    // browser rather than leaving the operator with a bare 503.
+    // browser rather than leaving the operator with a bare 503. The exception is
+    // the whole sign-in TIER and only its GETs, so three paths pass here, not
+    // one: `/signin` renders (with no form — app/signin/page.tsx branches on
+    // authConfigured()), and `/api/auth/session` and `/api/auth/signout` export
+    // POST only, so Next's route module answers them with a bare 405. Every POST
+    // in this tier, sign-in included, takes the 503 below.
     if (tier === "sign-in" && request.method === "GET") return NextResponse.next();
     return deny(request, UNCONFIGURED_MESSAGE, 503, "auth_unconfigured");
   }

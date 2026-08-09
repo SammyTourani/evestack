@@ -1,4 +1,9 @@
 import { log } from "./stdio.js";
+import {
+  DEFAULT_MAX_OUTPUT_BYTES,
+  MAX_OUTPUT_BYTES_ENV,
+  MIN_MAX_OUTPUT_BYTES,
+} from "./truncate.js";
 
 /**
  * Everything this server reads from the environment.
@@ -21,6 +26,8 @@ export interface Config {
   /** Verbatim `Authorization` value, for a dashboard behind a proxy that wants one. */
   readonly authorization: string | null;
   readonly timeoutMs: number;
+  /** Ceiling on the pretty-printed JSON of one tool result. See truncate.ts. */
+  readonly maxOutputBytes: number;
 }
 
 function truthy(value: string | undefined): boolean {
@@ -51,6 +58,32 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error(`EVESTACK_MCP_TIMEOUT_MS must be a positive number of milliseconds, got ${timeoutRaw}.`);
   }
 
+  // The one knob that costs money when it is wrong in either direction: too low
+  // and every answer arrives shortened, too high and one `list_approvals` puts
+  // 140k tokens of audit log into the context window (measured — see the table
+  // in truncate.ts). Rejected rather than clamped, for the same reason
+  // EVESTACK_MCP_TIMEOUT_MS above is: an operator who typed a number meant it,
+  // and silently substituting another one is how a cap gets blamed for
+  // truncating at a size nobody configured.
+  // Read by its literal name, not through MAX_OUTPUT_BYTES_ENV, and not as a
+  // style preference: contract 19 greps the workspace for each documented
+  // variable at a READ site, so an indirected lookup is invisible to it and the
+  // variable reads as documented-but-dead. That contract exists because
+  // EVESTACK_DAILY_BUDGET_USD was a two-word transposition nothing read, and
+  // the spend monitor answered "no cap is configured" on every install for the
+  // life of the file. The constant stays for the messages below, where the name
+  // is being reported rather than looked up.
+  const maxOutputRaw = env.EVESTACK_MCP_MAX_OUTPUT_BYTES?.trim();
+  const maxOutputBytes = maxOutputRaw ? Number(maxOutputRaw) : DEFAULT_MAX_OUTPUT_BYTES;
+  if (!Number.isInteger(maxOutputBytes) || maxOutputBytes < MIN_MAX_OUTPUT_BYTES) {
+    throw new Error(
+      `${MAX_OUTPUT_BYTES_ENV} must be a whole number of bytes >= ${MIN_MAX_OUTPUT_BYTES}, got ` +
+        `${JSON.stringify(maxOutputRaw)}. Below ${MIN_MAX_OUTPUT_BYTES} the truncation notice itself ` +
+        `stops fitting, and a cap that cannot say it truncated is worse than no cap. ` +
+        `The default is ${DEFAULT_MAX_OUTPUT_BYTES} (64 KiB, roughly 16k tokens).`,
+    );
+  }
+
   const approver = env.EVESTACK_MCP_APPROVER?.trim() || null;
   // Deliberately the same variable the dashboard reads, so one line in a shared
   // .env configures both ends of the same handshake. Default matches the header
@@ -64,6 +97,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     approverHeader,
     authorization: env.EVESTACK_MCP_DASHBOARD_AUTH?.trim() || null,
     timeoutMs,
+    maxOutputBytes,
   };
 
   if (config.allowControl && config.approver === null) {

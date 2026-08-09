@@ -1,5 +1,6 @@
 import { DatabaseError } from "@/app/db-error";
-import { getSchedules } from "@/lib/schedules";
+import { getSchedules, type ScheduleRun } from "@/lib/schedules";
+import { projectNextFire, type NextFire } from "./next-fire";
 import { ScheduleList } from "./schedules-client";
 import styles from "./schedules.module.css";
 
@@ -21,6 +22,28 @@ export default async function SchedulesPage() {
   }
 
   const failing = view.schedules.filter((s) => s.failingStreak > 0);
+
+  // "Next run" is computed HERE and shipped down as an instant, not computed in
+  // the list component. `./schedules-client.tsx` is a client component, and
+  // calling a local-time cron walker inside one meant the number was recomputed
+  // in the reader's browser and came out in the reader's timezone — see the
+  // header of ./next-fire.ts for the measured three-zone spread and for why the
+  // agent's zone is derived from its own recorded fires rather than assumed.
+  const now = new Date();
+  const nextFires: Record<string, NextFire | null> = {};
+  for (const schedule of view.schedules) {
+    if (!schedule.cron) {
+      nextFires[schedule.name] = null;
+      continue;
+    }
+    // Only fires recorded under THIS expression. `schedule_runs.cron` is written
+    // per run, so a row from before the cron was edited is evidence about the
+    // old expression and would pin the wrong zone from it.
+    const observed = [schedule.lastRun, ...view.recent.filter((run) => run.name === schedule.name)]
+      .filter((run): run is ScheduleRun => run !== null && run.cron === schedule.cron)
+      .map((run) => run.fireAt);
+    nextFires[schedule.name] = projectNextFire(schedule.cron, observed, now);
+  }
 
   return (
     <>
@@ -51,7 +74,7 @@ export default async function SchedulesPage() {
               A schedule that fails quietly is the whole reason this page exists.
             </p>
           )}
-          <ScheduleList schedules={view.schedules} recent={view.recent} />
+          <ScheduleList schedules={view.schedules} recent={view.recent} nextFires={nextFires} />
         </>
       )}
     </>

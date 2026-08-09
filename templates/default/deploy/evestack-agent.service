@@ -1,0 +1,115 @@
+# systemd unit for the evestack agent. Linux hosts.
+#
+#   sudo cp deploy/evestack-agent.service /etc/systemd/system/
+#   sudo $EDITOR /etc/systemd/system/evestack-agent.service   # the four lines below
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now evestack-agent
+#   systemctl status evestack-agent
+#   journalctl -u evestack-agent -f
+#
+# EDIT FOUR THINGS: User, Group, WorkingDirectory, and the node path in
+# ExecStart. Everything else is chosen for this stack and explained inline.
+#
+# Why a unit and not a compose service: the agent drives the host's Docker
+# daemon to build one sandbox container per session (agent/sandbox/sandbox.ts),
+# so containerising the agent means mounting /var/run/docker.sock into it — root
+# on the host, handed to the one process whose shell commands are written by a
+# language model. There is also no published agent image. docs/operations.mdx
+# has the long version.
+
+[Unit]
+Description=evestack agent (eve)
+Documentation=https://github.com/SammyTourani/evestack/blob/main/docs/operations.mdx
+Wants=network-online.target
+After=network-online.target
+
+# The sandbox needs a Docker daemon and Postgres usually runs in one. Wants, not
+# Requires: the agent must still start and serve if Docker is down — every turn
+# that touches bash fails, and nothing else does. Delete both lines on a host
+# whose Docker is not a systemd service (Colima, a remote DOCKER_HOST, rootless
+# Docker under a user unit).
+Wants=docker.service
+After=docker.service
+
+# Do not give up. The default rate limiter (5 starts in 10s, then `failed` and a
+# wait for a human) is tuned for a service that fails deterministically; the two
+# things that stop this one at boot — Postgres not accepting connections yet,
+# the model provider timing out — clear on their own. 0 disables the limiter.
+#
+# In [Unit], not [Service]: the pair moved sections in systemd 230, and the
+# modern spelling belongs here. Left in [Service] it is at best a compatibility
+# alias and at worst an "Unknown key name" warning with no rate limiting at all.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=evestack
+Group=evestack
+
+# The project root. `.env.local`, `.output/` and `.eve/` are all resolved
+# relative to it, so this is not optional decoration.
+WorkingDirectory=/srv/evestack/my-agent
+
+# Exactly what `npm start` runs (see package.json), minus the npm wrapper:
+#   "start": "node --env-file-if-exists=.env.local scripts/start.mjs"
+#
+# The path to node must be absolute — `command -v node` on the host tells you
+# which one. /usr/bin/node is a distro or NodeSource install; nvm puts it under
+# /home/<user>/.nvm/versions/node/<version>/bin/node, and a version manager's
+# shims are a bad thing to depend on from a unit that runs at boot.
+#
+# scripts/start.mjs resolves ./node_modules/.bin/eve by absolute path, so this
+# does NOT depend on npm's PATH injection. It did once, and the failure was
+# "eve is not installed in this project" on a project where it was — see the
+# comment on eveBinary() in scripts/checks.mjs.
+ExecStart=/usr/bin/node --env-file-if-exists=.env.local scripts/start.mjs
+
+# The `docker` CLI, BY NAME, is how eve talks to the daemon: its Docker backend
+# spawns `process.env.EVE_DOCKER_PATH ?? "docker"` with no shell
+# (eve/dist/src/execution/sandbox/bindings/docker-cli.js, resolveDockerExecutable).
+# systemd's default PATH is /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:
+# /sbin:/bin, which covers a package-managed Docker. If yours is somewhere else,
+# either extend PATH here or name it outright:
+#
+#   Environment=EVE_DOCKER_PATH=/usr/local/bin/docker
+#
+# Without it the agent boots and answers, and every sandbox command fails with
+# DockerUnavailableError — a partial failure, which is the expensive kind.
+
+# The user must be able to reach the daemon socket. Membership in the `docker`
+# group is equivalent to root on this host; that is a property of Docker, not of
+# this unit, and it is the reason the agent runs as its own user rather than
+# as one that owns anything else.
+#   sudo usermod -aG docker evestack
+
+Restart=always
+RestartSec=5s
+
+# A turn can run for minutes and cancellation is cooperative (~90s tail, see
+# docs/architecture). 120s gives an in-flight turn a chance to land before
+# SIGKILL. Nothing is lost either way — state is in Postgres, and world-postgres
+# re-enqueues active runs on the next boot ("Re-enqueued N active run(s) on
+# startup") — so this is about tidiness, not durability.
+TimeoutStopSec=120
+
+# Logs go to the journal, which rotates itself (SystemMaxUse in
+# journald.conf). This is the half of log rotation Linux gives you for free;
+# the containers in docker-compose.yml do not get it, which is why that file
+# sets max-size/max-file explicitly.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=evestack-agent
+
+# Modest hardening. NOT a sandbox for the agent's own shell — that is what the
+# eve sandbox container is for. These only limit the supervisor-side process.
+#
+# ReadWritePaths must include the project directory: eve writes .output/ at
+# build time and .eve/ at run time. Add more, or drop ProtectSystem, if your
+# layout puts state elsewhere.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ReadWritePaths=/srv/evestack/my-agent
+
+[Install]
+WantedBy=multi-user.target

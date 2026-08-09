@@ -28,7 +28,7 @@ import {
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   basename, C, DASHBOARD_IMAGE, detectPm, dim, freePort, makePrompter, ok,
-  packageVersion, REPO, say, shellQuote, step, templateDir, warn,
+  packageVersion, REPO, say, shellQuote, step, templateDir, warn, writeSecretFile,
 } from "./shared.mjs";
 import { blank, box, c, g, row, rule, shortPath, task, wordmark } from "./ui.mjs";
 
@@ -606,7 +606,10 @@ export async function create(argv) {
   // with nothing anywhere saying so. Recording the port turns three guesses
   // into one fact.
   const agentPort = await freePort(2000);
-  writeFileSync(
+  // 0600, not the umask. Everything below the "Route auth" heading is a live
+  // credential, and this file measured -rw-r--r-- before — see writeSecretFile()
+  // for the reading and for why that matters more than the .gitignore does.
+  const envLocalWarning = writeSecretFile(
     join(target, ".env.local"),
     [
       "# evestack — generated. Never commit this file.",
@@ -643,6 +646,7 @@ export async function create(argv) {
     ].join("\n"),
   );
   done("credentials", ".env.local — a unique auth password and trace-ingest token");
+  if (envLocalWarning) warn(envLocalWarning);
 
   // Compose only accepts [a-z0-9][a-z0-9_-]* as a project name, and a directory
   // name is not constrained to that — so normalise rather than emit a file that
@@ -682,8 +686,11 @@ export async function create(argv) {
   // both interpolated from here. docker-compose.yml stays committable and
   // carries no secret; this file and .env.local are both ignored by the
   // .gitignore written above.
-  writeFileSync(join(target, ".env"), composeEnvFile(dbPassword));
+  // 0600 for the same reason .env.local is: git ignores this file, and the mode
+  // is what stops the account at the next desk reading it out of the filesystem.
+  const envWarning = writeSecretFile(join(target, ".env"), composeEnvFile(dbPassword));
   done("database", ".env — the generated password, read by Compose, ignored by git");
+  if (envWarning) warn(envWarning);
 
   writeFileSync(join(target, "docker-compose.yml"), composeFile(composeProject, { pgPort, dashboardPort, agentPort }));
   done("compose", "docker-compose.yml — Postgres, dashboard behind a profile");
@@ -1126,6 +1133,17 @@ export function composeEnvFile(dbPassword) {
     "# To run your own dashboard image instead of the published one:",
     `# EVESTACK_DASHBOARD_IMAGE=${DASHBOARD_IMAGE}`,
     "",
+    // Written commented-out so the names are discoverable from the file Compose
+    // actually reads. The defaults are in docker-compose.yml's `x-logging`
+    // anchor — 10 MB × 3 files per container — and they exist because Docker's
+    // json-file driver rotates nothing by default while both services here are
+    // `restart: unless-stopped`. Unprefixed on purpose: an EVESTACK_* name would
+    // claim the app reads it, and Compose consumes both of these on the host
+    // before a container exists.
+    "# The container log ceiling, per container. Compose reads these from here.",
+    "# LOG_MAX_SIZE=10m",
+    "# LOG_MAX_FILE=3",
+    "",
   ].join("\n");
 }
 
@@ -1184,10 +1202,47 @@ export function composeFile(projectName, { pgPort = 5433, dashboardPort = 4000, 
 # .env, or export it in your shell.
 name: ${projectName}
 
+# ── Log rotation ─────────────────────────────────────────────────────────────
+#
+# Docker's default \`json-file\` driver has NO max-size and NO max-file. Both
+# services below carry \`restart: unless-stopped\`, which is a promise to keep
+# running for months, and for months the daemon appends to
+# /var/lib/docker/containers/<id>/<id>-json.log until the disk is full. Nothing
+# in Docker warns first, and a full disk stops Postgres, which stops everything.
+#
+# 10 MB × 3 files is a 30 MB ceiling per container, 60 MB for the pair. Resize
+# it from the .env beside this file — \`LOG_MAX_SIZE=50m\`, or \`LOG_MAX_FILE=1\`
+# to keep a single file. Those two names are unprefixed, like DASHBOARD_PORT: an
+# EVESTACK_* name would imply the app reads it, and nothing does. Compose
+# interpolates both on the host before it parses this file, and neither ever
+# reaches a container.
+#
+# \`driver: json-file\` is stated rather than inherited on purpose. Without it the
+# daemon's default driver is used, and WHICH options are legal depends on the
+# driver — max-size/max-file belong to json-file, and a host whose daemon
+# defaults to journald or awslogs would not apply them. Naming the driver is what
+# makes this ceiling mean the same thing on every machine. Change it here if you
+# ship logs somewhere else, and change the options with it.
+#
+# One anchor rather than the same four lines under each service, and the same
+# shape the evestack repository's own docker-compose.yml uses, so the two files
+# can be read against each other. A YAML alias is resolved at parse time, not by
+# Compose — \`docker compose config\` prints the ceiling expanded under both
+# services — so this is a way of writing the value once, not an extra layer to
+# debug. Verified with Compose v5.1.0: both services report max-size 10m /
+# max-file 3, and \`LOG_MAX_SIZE=50m LOG_MAX_FILE=1 docker compose config\` moves
+# both of them together.
+x-logging: &container-logs
+  driver: json-file
+  options:
+    max-size: "\${LOG_MAX_SIZE:-10m}"
+    max-file: "\${LOG_MAX_FILE:-3}"
+
 services:
   postgres:
     image: pgvector/pgvector:pg17
     restart: unless-stopped
+    logging: *container-logs
     environment:
       POSTGRES_USER: evestack
       # From .env, never from here. Compose resolves this on the host before it
@@ -1223,14 +1278,28 @@ services:
     image: \${EVESTACK_DASHBOARD_IMAGE:-${DASHBOARD_IMAGE}}
     profiles: ["dashboard"]
     restart: unless-stopped
+    logging: *container-logs
     depends_on:
       postgres:
         condition: service_healthy
     # The generated credentials, without a second copy of them in a second file.
     # EVESTACK_AUTH_USER and EVESTACK_AUTH_PASSWORD are what the dashboard signs
-    # you in with AND what it presents to your agent; with either missing it
-    # answers 503 to every request and reports unhealthy, by design — it starts
-    # agent runs, approves gated shell commands and deletes memories.
+    # you in with AND what it presents to your agent. With either missing it
+    # refuses to work, by design — it starts agent runs, approves gated shell
+    # commands and deletes memories — and it refuses like this:
+    #
+    #   GET /signin        200, and the page says which two variables are unset.
+    #                      It renders NO sign-in form, so there is nothing to
+    #                      sign in with; the gate lets this one through so an
+    #                      operator sees prose instead of a bare 503.
+    #   GET /api/health    503 {"status":"unconfigured"}, which is what makes
+    #                      \`docker ps\` show this container as unhealthy.
+    #   GET /api/auth/session, GET /api/auth/signout
+    #                      405. The gate lets any GET on the sign-in tier
+    #                      through, and both routes export POST only.
+    #   everything else    503, naming the two variables — every POST included,
+    #                      so the two routes above cannot be reached the way
+    #                      they are meant to be called either.
     #
     # EVESTACK_INGEST_TOKEN rides along in the same file, and that is the whole
     # reason it can be generated once: your agent runs on the host and reads

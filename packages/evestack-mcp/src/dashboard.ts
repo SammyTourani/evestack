@@ -54,6 +54,20 @@ export class DashboardClient {
     return this.#config.dashboardUrl;
   }
 
+  /**
+   * The tool-result cap server.ts will apply to whatever a handler returns.
+   *
+   * Exposed because one handler has to know it. promote_session_to_eval returns
+   * a TypeScript file the caller is told to save, and a file clipped to fit a
+   * byte cap does not compile — so that tool refuses when its result would be
+   * cut rather than handing back source that cannot be used. It needs the same
+   * number `#toolResult` will measure against, not a guess at it. See
+   * tools.ts:promoteSessionToEval.
+   */
+  get maxOutputBytes(): number {
+    return this.#config.maxOutputBytes;
+  }
+
   identifyClient(name: string, version: string): void {
     const clean = (value: string) => value.replace(/[^\w.\-/ ]/g, "").slice(0, 64) || "unknown";
     this.#clientLabel = `${clean(name)}/${clean(version)}`;

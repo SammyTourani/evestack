@@ -36,18 +36,39 @@ Find it:
 SELECT id, status, completed_at, output_cbor IS NOT NULL AS has_output,
        error_cbor IS NOT NULL AS has_error
   FROM workflow.workflow_runs
- WHERE status IN ('pending', 'running')
-   AND (completed_at IS NOT NULL OR output_cbor IS NOT NULL OR error_cbor IS NOT NULL);
+ WHERE (status IN ('pending', 'running')
+          AND (completed_at IS NOT NULL OR output_cbor IS NOT NULL OR error_cbor IS NOT NULL))
+    OR (status IN ('completed', 'failed', 'cancelled') AND completed_at IS NULL);
 ```
+
+The second half of that `WHERE` catches the mirror-image shape, which is equally fatal and far
+less obvious: a **terminal** row whose `completed_at` is NULL. Every terminal branch of the union
+requires `completedAt`. A NULL column reaches the schema as `undefined` rather than null, because
+world-postgres maps one to the other in `compact()` — and where `null` would have been quietly
+coerced to 1970-01-01 and booted, `undefined` builds an Invalid Date and throws.
 
 Repair it by making the status agree with the payload the row already carries — the run really
 did finish, only the status says otherwise:
 
 ```sql
 UPDATE workflow.workflow_runs
-   SET status = CASE WHEN error_cbor IS NOT NULL THEN 'failed' ELSE 'completed' END
+   SET status = (CASE WHEN error_cbor IS NOT NULL THEN 'failed' ELSE 'completed' END)::workflow.status
  WHERE status IN ('pending', 'running')
    AND (completed_at IS NOT NULL OR output_cbor IS NOT NULL OR error_cbor IS NOT NULL);
+```
+
+The `::workflow.status` cast is required, not decorative: `status` is an enum, and without it
+Postgres refuses the statement with `column "status" is of type workflow.status but expression is
+of type text`. The version first published here omitted it and did not run.
+
+For the mirror-image shape, give the row the completion time it should already have had. `updated_at`
+is the closest honest value — it is when the engine last wrote the row, which is when it finished:
+
+```sql
+UPDATE workflow.workflow_runs
+   SET completed_at = updated_at
+ WHERE status IN ('completed', 'failed', 'cancelled')
+   AND completed_at IS NULL;
 ```
 
 <Warning>
@@ -63,6 +84,61 @@ and has been fixed. Upstream there is a narrower race with the same outcome:
 `notInArray(status, TERMINAL_WORKFLOW_RUN_STATUSES)` and does **not** guard `run_started`, so two
 workers racing on one run can leave a completed row marked `running`. Rare, and worth knowing
 about if you see this without having written to the table yourself.
+
+## "Under systemd/launchd it says eve is not installed, but it is"
+
+```
+  eve is not installed in this project.
+
+  Run npm install, then npm run build before npm run start.
+```
+
+The message is wrong and the install is fine. `npm run start` prepends `node_modules/.bin` to
+PATH; a service manager does not — systemd's default is
+`/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`, launchd's is shorter — so
+`scripts/start.mjs` spawning the bare name `eve` found nothing and reported the only cause it knew
+about.
+
+Fixed in the template: `eveBinary()` in `scripts/checks.mjs` resolves `node_modules/.bin/eve` by
+absolute path, and the message now prints the path it looked for. If you see this on an older
+scaffold, either update `scripts/start.mjs` and `scripts/checks.mjs` from
+[templates/default](https://github.com/SammyTourani/evestack/tree/main/templates/default/scripts),
+or add the directory to the unit's `Environment=PATH=…`.
+
+## "The agent runs as a service but every bash command fails"
+
+```
+DockerUnavailableError: The Docker sandbox backend requires Docker,
+but the `docker` CLI was not found.
+```
+
+The agent boots, serves HTTP and calls the model perfectly well — only the sandbox is dead, which
+is why this is easy to miss until someone asks the agent to run something.
+
+eve spawns the `docker` CLI **by name** (`process.env.EVE_DOCKER_PATH ?? "docker"`, no shell), so
+it needs it on the supervised process's PATH. Docker Desktop installs it to `/usr/local/bin` and
+Homebrew to `/opt/homebrew/bin`; launchd's default PATH (`/usr/bin:/bin:/usr/sbin:/sbin`) contains
+neither. Set PATH in the unit or plist — the shipped `deploy/dev.evestack.agent.plist` already does
+— or name the binary outright with `EVE_DOCKER_PATH=$(command -v docker)`. See
+[Operations](/docs/operations#the-two-traps-that-only-appear-under-a-supervisor).
+
+## "npm run db:prune says there is nothing to prune"
+
+Almost always one run stuck in `running`. A session is pruned whole or not at all, and any run in
+it that is `pending` or `running` protects the whole family — deliberately, because that is also
+exactly what an open session looks like.
+
+```sql
+SELECT COALESCE(attributes ->> '$rootRunId', id) AS session_id,
+       id, status, name, updated_at
+  FROM workflow.workflow_runs
+ WHERE status IN ('pending', 'running')
+ ORDER BY updated_at;
+```
+
+A genuinely open session is fine and should stay. A row that finished months ago and still says
+`running` is the defect above under "Invalid input: expected undefined" — same repair, same
+warning about backing the table up first.
 
 ## "I changed EVESTACK_MODEL and it's still calling the old provider"
 

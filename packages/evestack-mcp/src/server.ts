@@ -13,6 +13,7 @@ import {
 import { assertSupported, validateArguments } from "./schema.js";
 import { log } from "./stdio.js";
 import { TOOLS, ToolFailure, type ToolDefinition } from "./tools.js";
+import { fitToolPayload } from "./truncate.js";
 
 /**
  * MCP method dispatch.
@@ -52,6 +53,11 @@ const INSTRUCTIONS = [
   "Tools whose description starts with MUTATING act on a live agent: they spend money, execute tools in",
   "the agent's sandbox, or answer an approval prompt a human was supposed to answer. Confirm with the",
   "person you are working with before calling one — especially approve_or_deny, which is the gate.",
+  "",
+  "Results are capped in size (EVESTACK_MCP_MAX_OUTPUT_BYTES, 64 KiB by default). A capped result carries",
+  "a `_truncated` object as its FIRST key, listing every array and string that was shortened and by how",
+  "much. When you see one the answer you have is partial: say so, and narrow the question (list_approvals",
+  "takes sessionId and limit) instead of reporting a shortened list as the whole list.",
 ].join("\n");
 
 interface HandlerResult {
@@ -245,7 +251,7 @@ export class McpServer {
 
     try {
       const value = await tool.handle(args, this.#client);
-      return toolResult(value, false);
+      return this.#toolResult(name, value, false);
     } catch (error) {
       if (error instanceof RpcError) throw error;
       if (
@@ -257,7 +263,8 @@ export class McpServer {
         // on — a stale session id, a turn that already ended, an ambiguous
         // approval. Those belong in the result so the model sees them, per the
         // spec's split between protocol errors and tool execution errors.
-        return toolResult(
+        return this.#toolResult(
+          name,
           {
             error: error.message,
             ...(error instanceof DashboardError
@@ -272,23 +279,45 @@ export class McpServer {
       throw new RpcError(INTERNAL_ERROR, `Tool '${name}' failed unexpectedly.`);
     }
   }
-}
 
-/**
- * Both shapes, always.
- *
- * `structuredContent` is what a client should read; the serialized copy in a
- * text block is what the spec asks for so a pre-2025-06-18 client — or a model
- * whose client drops unknown fields — still sees the data.
- */
-function toolResult(value: unknown, isError: boolean): unknown {
-  const structured =
-    value && typeof value === "object" && !Array.isArray(value)
-      ? (value as Record<string, unknown>)
-      : { value };
-  return {
-    content: [{ type: "text", text: JSON.stringify(structured, null, 2) }],
-    structuredContent: structured,
-    isError,
-  };
+  /**
+   * Both shapes, always — and the only place a tool result becomes text.
+   *
+   * `structuredContent` is what a client should read; the serialized copy in a
+   * text block is what the spec asks for so a pre-2025-06-18 client — or a model
+   * whose client drops unknown fields — still sees the data.
+   *
+   * It is also where the output cap is enforced, because it is the single choke
+   * point every handler funnels through: `#callTool`'s success path and its
+   * error path both land here, so no tool can grow a way to return an uncapped
+   * result without going around this method. Both fields carry the SAME fitted
+   * payload rather than a fitted text block over a full structured one — a
+   * client that reads `structuredContent` (the spec's preference) must not be
+   * the one client that still gets the unbounded version. The consequence, said
+   * plainly: the JSON-RPC frame on the wire is up to twice `maxOutputBytes`,
+   * because the payload is deliberately sent twice.
+   */
+  #toolResult(name: string, value: unknown, isError: boolean): unknown {
+    const structured =
+      value && typeof value === "object" && !Array.isArray(value)
+        ? (value as Record<string, unknown>)
+        : { value };
+    const fitted = fitToolPayload(structured, this.#config.maxOutputBytes);
+    if (fitted.notice) {
+      // stderr as well as the payload. The model is told so it does not report a
+      // partial answer as a whole one; the operator is told because they are the
+      // only one who can raise the cap, and they are reading the client's server
+      // log rather than the model's context.
+      log(
+        `${name}: result truncated from ${fitted.notice.originalBytes} to ` +
+          `${fitted.notice.returnedBytes} bytes ` +
+          `(EVESTACK_MCP_MAX_OUTPUT_BYTES=${this.#config.maxOutputBytes}).`,
+      );
+    }
+    return {
+      content: [{ type: "text", text: fitted.text }],
+      structuredContent: fitted.payload,
+      isError,
+    };
+  }
 }

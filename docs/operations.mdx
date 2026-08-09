@@ -1,0 +1,385 @@
+---
+title: Operations
+description: Leaving it running — supervising the agent, bounding the logs, and pruning a schema that nothing prunes for you.
+---
+
+[Self-hosting](/docs/self-hosting) gets the stack deployed. This page is about the
+week after: the agent surviving a closed laptop, the logs not filling the disk, and a
+`workflow` schema that grows forever because nothing in eve, in `@workflow/world-postgres`,
+or in evestack ever deletes from it.
+
+Three things, in the order they bite.
+
+## Run the agent as a service
+
+`docker-compose.yml` gives Postgres and the dashboard `restart: unless-stopped`. Nothing gives
+the agent anything: it is `npm run dev` in a terminal, or `npm start` in a terminal, and the one
+component that does the work is the only one that does not come back.
+
+The scaffolded project carries the fix as real files, not as snippets in a doc that drifts:
+
+| File | Host |
+| --- | --- |
+| `deploy/evestack-agent.service` | Linux, systemd |
+| `deploy/dev.evestack.agent.plist` | macOS, launchd |
+| `deploy/README.md` | the short version of this section, inside the project |
+
+### Why not a compose service
+
+The obvious answer is an `agent:` service beside the other two. It is the wrong one here, and
+the reasons are specific to this stack rather than general.
+
+**The sandbox is the host's Docker daemon.** `agent/sandbox/sandbox.ts` selects eve's `docker()`
+backend, and that backend shells out to the `docker` CLI — `process.env.EVE_DOCKER_PATH ?? "docker"`,
+spawned with no shell, in eve's `dist/src/execution/sandbox/bindings/docker-cli.js` — to create one
+long-lived `eve-sbx-…` container per session. An agent inside a container can only do that with
+`/var/run/docker.sock` bind-mounted, and access to that socket is equivalent to root on the host.
+It would be granted to the single process in the system whose shell commands are written by a
+language model, which is the thing the sandbox exists to prevent.
+
+**There is no agent image.** Nothing publishes one. A compose service would therefore need
+`build:`, and every deploy would build your project into an image before it could start.
+
+**A supervisor needs nothing installed.** systemd and launchd are already on the host, the agent
+stays a normal Node process with the Docker CLI on its PATH, and `scripts/start.mjs` was already
+written for this: it is deliberately thinner than `scripts/dev.mjs`, runs no preflight, and exits
+with eve's own status code so a restart policy sees what eve saw.
+
+<Note>
+  The compose file says the same thing, in a comment where somebody about to add an `agent:`
+  service will read it. If you have a reason to containerise anyway — an image you build in CI, a
+  remote `DOCKER_HOST` for the sandbox so the socket is not the local one — those reasons are
+  real. The default should not assume them.
+</Note>
+
+### systemd
+
+<Steps>
+  <Step title="Build once, by hand">
+    ```bash
+    npm run build       # eve build -> .output/
+    npm start           # exactly what the unit runs
+    ```
+
+    A unit that fails at boot and a build that never happened are the same line in
+    `systemctl status`. Prove the second before you enable the first.
+  </Step>
+
+  <Step title="Install the unit">
+    ```bash
+    sudo cp deploy/evestack-agent.service /etc/systemd/system/
+    sudo $EDITOR /etc/systemd/system/evestack-agent.service
+    ```
+
+    Four things to edit and no more: `User`, `Group`, `WorkingDirectory` (the project root —
+    `.env.local`, `.output/` and `.eve/` all resolve against it), and the absolute path to `node`
+    in `ExecStart`. `command -v node` tells you the last one; a version manager's shim is a bad
+    thing to depend on from a unit that runs at boot.
+  </Step>
+
+  <Step title="Give it the Docker socket">
+    ```bash
+    sudo usermod -aG docker evestack
+    ```
+
+    The sandbox needs it. That group is root-equivalent on the host, which is why the unit runs
+    as a user of its own rather than as one that owns anything else.
+  </Step>
+
+  <Step title="Enable it">
+    ```bash
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now evestack-agent
+    systemctl status evestack-agent
+    journalctl -u evestack-agent -f
+    ```
+  </Step>
+</Steps>
+
+### launchd
+
+Same shape, one structural difference: it is a **LaunchAgent** in `~/Library/LaunchAgents`, not a
+LaunchDaemon. Docker Desktop only runs while a user is logged in, so a boot-time daemon would
+start before the daemon it depends on and fail every sandbox command. The cost is honest — log
+out and the agent stops. A Mac that must serve while nobody is logged in wants the Linux unit.
+
+```bash
+mkdir -p logs                     # launchd will not create it, and the job fails if it is missing
+cp deploy/dev.evestack.agent.plist ~/Library/LaunchAgents/
+$EDITOR ~/Library/LaunchAgents/dev.evestack.agent.plist    # every /ABSOLUTE/PATH, and node's
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.evestack.agent.plist
+launchctl print gui/$(id -u)/dev.evestack.agent | head -20
+```
+
+`launchctl bootout gui/$(id -u)/dev.evestack.agent` stops it, and is also how you reload after an
+edit.
+
+### The two traps that only appear under a supervisor
+
+<Warning>
+  **PATH is not what you think it is.** npm prepends `node_modules/.bin` to PATH for the command
+  it runs. systemd and launchd do not — systemd's default is
+  `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`, launchd's is shorter still.
+
+  Half of this is fixed for you. `scripts/start.mjs` used to spawn the bare name `eve`, so under a
+  unit it printed *"eve is not installed in this project — run `npm install`"* on a project where
+  eve was installed perfectly well. Measured with the real script and a stub binary: with
+  `node_modules/.bin` on PATH it ran `eve start --port 2000`; without it, that message. It now
+  resolves `node_modules/.bin/eve` by absolute path (`eveBinary()` in `scripts/checks.mjs`).
+
+  The other half is not automatic. eve spawns **`docker`** by name for every sandbox, and on a Mac
+  the CLI lives in `/usr/local/bin` (Docker Desktop) or `/opt/homebrew/bin` (Homebrew) — neither of
+  which is on launchd's default PATH. The shipped plist sets PATH for exactly this; `EVE_DOCKER_PATH`
+  names the binary outright if you prefer. Get it wrong and the failure is *partial*: the agent
+  boots, serves, answers model calls, and fails every bash tool call with `DockerUnavailableError`.
+</Warning>
+
+The second trap is the restart limiter. systemd's default is five starts in ten seconds, then
+`failed` and a wait for a human — sensible for a service that fails deterministically, wrong for
+one whose two boot-time failures (Postgres not accepting connections yet, a provider timing out)
+clear by themselves. The shipped unit sets `StartLimitIntervalSec=0`, in `[Unit]`, where it has
+belonged since systemd 230.
+
+<Note>
+  Both files were written against this stack's actual requirements — each non-obvious line cites
+  the file it comes from — and the PATH behaviour above was measured. Neither has been booted by a
+  real systemd or launchd from this repository: the plist is checked with `plutil -lint`, the unit
+  is not machine-checked at all. Run `systemd-analyze verify` on yours after editing it, and expect
+  to adjust `ReadWritePaths` if your layout differs.
+</Note>
+
+## Bound the logs
+
+Docker's default `json-file` driver has no `max-size` and no `max-file`. Two containers with
+`restart: unless-stopped` therefore append to
+`/var/lib/docker/containers/<id>/<id>-json.log` until the disk is full, with no warning first —
+and a full disk stops Postgres, which stops everything.
+
+`docker-compose.yml` now caps both at 10 MB × 3 files through a shared `x-logging` anchor:
+
+```yaml
+x-logging: &container-logs
+  driver: json-file
+  options:
+    max-size: "${LOG_MAX_SIZE:-10m}"
+    max-file: "${LOG_MAX_FILE:-3}"
+```
+
+30 MB per container, 60 MB for the pair. The number is a choice rather than a measurement of your
+traffic: a mostly idle Postgres in this stack wrote 8.5 KB of log in its first eight hours, so
+30 MB is weeks of quiet operation — while a container in a crash loop, which is the case that
+actually fills disks, is capped in minutes instead of never.
+
+`driver: json-file` is stated rather than inherited on purpose. On a host whose daemon defaults to
+`journald` or `local`, `max-size` and `max-file` would be silently ignored, which is the exact
+failure the block exists to prevent. Resize the ceiling from the `.env` beside the compose file;
+changing the *driver* means editing the block, because a different driver takes different options.
+
+Those two names carry no `EVESTACK_` prefix, deliberately, and neither do `POSTGRES_BIND`,
+`POSTGRES_PORT` or `DASHBOARD_PORT` beside them: Compose interpolates them on the host before it
+parses the file, so unlike the `EVESTACK_*` variables they never reach a container and no code
+reads them.
+
+The agent's own logs are the supervisor's problem, and the two platforms differ:
+
+- **systemd** writes to the journal, which rotates itself (`SystemMaxUse` in `journald.conf`).
+  Nothing to do.
+- **launchd** writes to the file you name in `StandardOutPath` and rotates **nothing**. The shipped
+  plist's header carries a ready-made `/etc/newsyslog.d/evestack.conf` line — 5 generations of
+  10 MB, gzipped — and `sudo newsyslog -nvv` checks the syntax without waiting a day.
+
+eve's own trace spool under `.eve/traces/v1` is already bounded (7 days, 512 MB, newest 20 kept)
+and is written only by local dev. See [Self-hosting](/docs/self-hosting#the-trace-spool-expires-your-database-does-not).
+
+## Retention: the `workflow` schema is never pruned
+
+<Warning>
+  Everything in this section deletes conversation history permanently. There is no undo, no
+  tombstone and no soft delete. Take a `pg_dump` first, and read
+  [Backups](/docs/self-hosting#backups) — a backup you have never restored is a hypothesis.
+</Warning>
+
+Half of this database expires and half does not, which is the part worth knowing before you
+assume either way.
+
+| Table | Retention | Driven by |
+| --- | --- | --- |
+| `evestack.spans` | 30 days by default | `EVESTACK_TRACE_RETENTION_DAYS`, applied hourly on ingest via `evestack.prune_spans` |
+| `evestack.alert_deliveries` | 30 days | the alert dispatcher |
+| `evestack.fact_turn`, `fact_tool_call` | none — but derived, and rebuildable | — |
+| `evestack.approvals` | **forever, by design** | it is the row someone wants a year later |
+| `workflow.*` | **none at all** | — |
+
+`@workflow/world-postgres` ships no retention: its only use of the word is a check that a hook's
+`tokenRetentionUntil` is not too *far* in the future. So `workflow_runs`, `workflow_events`,
+`workflow_steps`, `workflow_hooks`, `workflow_waits` and `workflow_stream_chunks` keep everything
+they have ever been given.
+
+Measured against a database holding one realistic month — 3,322 runs across 700 sessions:
+
+```
+workflow_events    32,994 rows   6,280 kB
+workflow_steps     10,046 rows   2,864 kB
+workflow_runs       3,322 rows   2,216 kB
+                                 ─────────
+                                 ~11.2 MB / month, 4.75 runs per session
+```
+
+Small, and monotonic. The point is not that it is urgent; it is that nothing ever makes it go
+down, and the same database has a table that does expire, so "retention is handled" is an easy and
+wrong conclusion to draw.
+
+### What is safe to delete, and what eve still needs
+
+**Prune whole sessions or nothing.** Deleting old *turns* out of a session leaves eve a history
+with holes in it, and there is no supported way to ask whether it minds. A session is the unit a
+person thinks in anyway.
+
+Three facts shape the query, and each one is a way to get this wrong:
+
+<Steps>
+  <Step title="There are no foreign keys">
+    Zero. Verified against a live database (`pg_constraint` has no `contype = 'f'` row in the
+    `workflow` namespace) and in world-postgres's own migrations, which declare none. A
+    `DELETE FROM workflow.workflow_runs` therefore orphans that run's events, steps, hooks, waits
+    and stream chunks **silently** — they are joined by `run_id` with nothing enforcing it. Every
+    table has to be named.
+  </Step>
+
+  <Step title="Nothing non-terminal may be touched">
+    A run in `pending` or `running` is work world-postgres will re-enqueue on the next boot
+    ("Re-enqueued 2 active run(s) on startup"). It is also what an **open session** looks like:
+    eve's session run is `workflow//eve//workflowEntry` and it stays `running` for as long as the
+    session is open. One live run anywhere in a session protects the whole session.
+  </Step>
+
+  <Step title="Lineage is `$rootRunId`, not `$eve.parent`">
+    `$rootRunId` is set by the workflow runtime on any run started from inside another run, so it
+    is present on turns, on subagents, **and** on the untagged `sessionTimeoutWorkflow` companion
+    eve starts once per session — which carries no `$eve.*` attributes at all. Group on
+    `$eve.parent` instead and you leave one orphan run, plus its events, behind for every session
+    you prune. On the same 3,322-row database, grouping by `COALESCE($rootRunId, id)` produced
+    exactly 700 groups, all 700 rooted in an `$eve.type = 'session'` run, with every row accounted
+    for.
+  </Step>
+</Steps>
+
+Not deleted, and not by accident:
+
+- `evestack.approvals` — the audit trail. Kept forever on purpose.
+- `evestack.memories` — long-term memory is not session state. `forget` is the tool for it.
+- `graphile_worker.*` — the job queue. world-postgres and graphile-worker clean up after themselves.
+- `workflow_drizzle.*` — the migration ledger. Six rows; deleting them re-runs migrations.
+
+### The procedure
+
+```bash
+npm run db:prune -- --older-than=90d                  # dry run. Always start here.
+npm run db:prune -- --older-than=90d --apply          # asks, then deletes
+npm run db:prune -- --older-than=90d --apply --yes    # no prompt, for a maintenance window
+```
+
+Nothing runs it for you, and nothing schedules it. The dry run is the default, `--older-than` has
+no default, and `--apply` refuses off a TTY without `--yes` — a destructive command that reads
+stdin from a cron job either hangs forever or answers itself.
+
+A dry run reports what would go:
+
+```
+  Sessions with no activity for 90 days  postgres://evestack:***@127.0.0.1:5433/evestack
+
+    sessions                1
+    runs                    5
+    events                  4
+    steps                   2
+    hooks                   1
+    waits                   1
+    stream chunks           1
+
+  oldest 2026-01-21 15:50:07 · newest 2026-01-21 15:50:07 (UTC)
+```
+
+Other flags: `--batch=<n>` (sessions per transaction, default 200 — the command loops, so each
+batch commits on its own rather than holding locks over a year of backlog) and `--keep-facts`.
+
+<Note>
+  **"Nothing to prune" with plenty of old sessions** almost always means a run stuck in `running`.
+  One is enough to protect its whole session, which is the intended behaviour, and a row whose
+  status disagrees with the payload it carries is a known failure with a known repair — see
+  [Troubleshooting](/docs/troubleshooting#the-agent-will-not-start-any-more-with-invalid-input-expected-undefined).
+</Note>
+
+### The query itself
+
+`scripts/retention.mjs` builds it, so what you inspect is what runs. Every clause is load-bearing:
+
+```sql
+WITH prunable AS (
+  SELECT COALESCE(r.attributes ->> '$rootRunId', r.id) AS session_id
+    FROM workflow.workflow_runs r
+   GROUP BY 1
+  HAVING bool_or(r.attributes ->> '$eve.type' = 'session'
+                 AND r.attributes ->> '$rootRunId' IS NULL)
+     AND count(*) FILTER (WHERE r.status IN ('pending', 'running')) = 0
+     AND max(r.updated_at) < (now() AT TIME ZONE 'utc') - $1::interval
+   ORDER BY max(r.updated_at)
+   LIMIT $2
+),
+doomed AS (
+  SELECT r.id
+    FROM workflow.workflow_runs r
+    JOIN prunable p ON p.session_id = COALESCE(r.attributes ->> '$rootRunId', r.id)
+),
+del_events AS (DELETE FROM workflow.workflow_events        e WHERE e.run_id IN (SELECT id FROM doomed) RETURNING 1),
+del_steps  AS (DELETE FROM workflow.workflow_steps         s WHERE s.run_id IN (SELECT id FROM doomed) RETURNING 1),
+del_hooks  AS (DELETE FROM workflow.workflow_hooks         h WHERE h.run_id IN (SELECT id FROM doomed) RETURNING 1),
+del_waits  AS (DELETE FROM workflow.workflow_waits         w WHERE w.run_id IN (SELECT id FROM doomed) RETURNING 1),
+del_chunks AS (DELETE FROM workflow.workflow_stream_chunks c WHERE c.run_id IN (SELECT id FROM doomed) RETURNING 1),
+del_runs   AS (DELETE FROM workflow.workflow_runs          r WHERE r.id     IN (SELECT id FROM doomed) RETURNING 1)
+SELECT (SELECT count(*) FROM del_runs) AS runs;
+```
+
+<Warning>
+  `(now() AT TIME ZONE 'utc')`, never a bare `now()`. These columns are `timestamp without time
+  zone` holding UTC, so comparing one to a `timestamptz` makes Postgres reinterpret it in the
+  **server's** zone — measured at four hours under `America/New_York`, in the direction that makes
+  a recent session look old enough to delete. That bug shipped once already, in the dashboard's
+  wedged-turn monitor, and `contract/contracts/21-naive-timestamps.contract.mjs` exists so it
+  cannot again.
+
+  And `--older-than=90` is not ninety days. Postgres reads a bare number as **seconds**. The
+  command rejects it rather than guessing, and rejects `6m` too, because that reads as minutes to
+  Postgres and as months to most people — a factor of 43,200, in the direction that deletes
+  everything.
+</Warning>
+
+One statement, therefore one transaction: six deletes across six unrelated tables cannot
+half-apply. Verified against 3,322 real rows inside a rolled-back transaction — 50 sessions
+selected, 245 runs, 2,442 events and 740 steps removed, and a follow-up count of events whose
+`run_id` no longer resolved returned zero.
+
+### Afterwards
+
+**Derived rows.** `evestack.fact_turn` has no delete path anywhere in the dashboard —
+`evestack.refresh_facts` is an upsert keyed on `run_id` — so pruned runs would keep feeding every
+chart while vanishing from the session list. `db:prune` clears the orphans by default (they are
+pure derivations of `workflow_runs` and `evestack.spans`, which is what makes it safe);
+`--keep-facts` opts out.
+
+**Spans.** `evestack.spans` prunes on its own 30-day window. If you keep sessions for 90 days,
+their traces are already gone at day 31, and the dashboard labels those turns
+`span_coverage = 'none'` rather than pretending. Raise `EVESTACK_TRACE_RETENTION_DAYS` to keep the
+two aligned, and see [Observability](/docs/observability).
+
+**Disk.** Postgres does not return the space to the filesystem. Autovacuum makes it reusable, which
+is enough if the deployment keeps running; `VACUUM FULL` is what actually shrinks the files, and it
+takes an exclusive lock and needs room for a second copy of the table.
+
+<CardGroup cols={2}>
+  <Card title="Self-hosting" icon="server" href="/docs/self-hosting">
+    Deploying it in the first place: schema, proxy, auth off Vercel, backups.
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/docs/troubleshooting">
+    Symptoms, including the stuck run that stops a prune finding anything.
+  </Card>
+</CardGroup>

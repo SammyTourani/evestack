@@ -23,8 +23,9 @@ export const dynamic = "force-dynamic";
  * anyone's data.
  *
  * Reporting unhealthy when auth is unconfigured is deliberate. The process is
- * up, but it is refusing every other request, and a container that answers "ok"
- * while serving nothing is how that misconfiguration survives to production.
+ * up, but the only thing it will serve is a sign-in page with no form on it, and
+ * a container that answers "ok" while serving nothing usable is how that
+ * misconfiguration survives to production.
  * An unhealthy HEALTHCHECK marks the container; it does not restart it, so this
  * surfaces the problem without a crash loop.
  */

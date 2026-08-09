@@ -3,14 +3,29 @@
 import { useState } from "react";
 import type { MemoryRow } from "@/lib/memories";
 import { stamp } from "@/lib/time";
+import { truncationNote } from "./truncation";
 import styles from "./memory.module.css";
 
 /**
  * The list is a client component only because deleting needs local state:
  * a confirm step, an in-flight marker, and removing the row without a reload.
  * Everything else on this page is server-rendered.
+ *
+ * The truncation footnote lives here rather than in `page.tsx` for the same
+ * reason: deleting a row changes both numbers in it, and a note rendered on the
+ * server would keep quoting the count from page load while rows disappeared
+ * above it.
  */
-export function MemoryList({ rows }: { rows: readonly MemoryRow[] }) {
+export function MemoryList({
+  rows,
+  total,
+  searching = false,
+}: {
+  rows: readonly MemoryRow[];
+  /** Matching rows in the database, which is not `rows.length` — see ./truncation.ts. */
+  total: number;
+  searching?: boolean;
+}) {
   const [removed, setRemoved] = useState<ReadonlySet<string>>(new Set());
   const [confirming, setConfirming] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -37,6 +52,11 @@ export function MemoryList({ rows }: { rows: readonly MemoryRow[] }) {
   }
 
   const visible = rows.filter((row) => !removed.has(row.id));
+  // Both sides net of what has been deleted in this session: the rows are gone
+  // from the screen and from the table, so a footnote that took `total` from
+  // the server unchanged would start over-counting the moment anything is
+  // forgotten.
+  const note = truncationNote(visible.length, total - removed.size, searching);
 
   return (
     <>
@@ -103,6 +123,14 @@ export function MemoryList({ rows }: { rows: readonly MemoryRow[] }) {
       </ul>
       {visible.length === 0 && (
         <p className="faint">Every memory on this page has been deleted.</p>
+      )}
+      {note && (
+        <p className={`faint ${styles.note}`}>
+          {note}{" "}
+          {searching
+            ? "Narrow the search to reach the rest — the list is capped, not the table."
+            : "Search content or tags to reach the rest — the list is capped, not the table."}
+        </p>
       )}
     </>
   );

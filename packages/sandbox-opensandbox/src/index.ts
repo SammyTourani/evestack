@@ -1,5 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { Sandbox } from "@alibaba-group/opensandbox";
-import type { CommandExecution, FileInfo } from "@alibaba-group/opensandbox";
+import type { FileInfo } from "@alibaba-group/opensandbox";
 import type {
   SandboxBackend,
   SandboxBackendCreateInput,
@@ -19,7 +20,20 @@ import type {
   SandboxWriteTextFileOptions,
 } from "eve/sandbox";
 import type { SandboxCommandResult } from "eve/sandbox";
-import { WORKSPACE, joinOutput, resolvePath } from "./translate.js";
+import type { OpenSandboxNetworkPolicy } from "./translate.js";
+import {
+  KILLED_EXIT_CODE,
+  WORKSPACE,
+  exitCodeOf,
+  joinOutput,
+  killProcessTreeCommand,
+  networkPolicyKey,
+  resolvePath,
+  sameNetworkPolicyKey,
+  spawnPidFilePath,
+  spawnWrapperCommand,
+  toOpenSandboxNetworkPolicy,
+} from "./translate.js";
 
 /**
  * An eve `SandboxBackend` backed by Alibaba OpenSandbox.
@@ -201,6 +215,22 @@ export interface OpenSandboxOptions {
   /** Idle lifetime. eve reattaches by id, so a short value is safe and cheap. */
   readonly timeoutSeconds?: number;
   /**
+   * Egress policy applied when the sandbox is CREATED, and fixed for its life.
+   *
+   * `"deny-all"`, or an allow-list which denies everything it does not name.
+   * OpenSandbox fixes a sandbox's `defaultAction` at creation — that is why
+   * `session.setNetworkPolicy()` rejects on this backend (see below) — so this
+   * is the only place a policy can be honoured, and it is honoured completely
+   * or not at all: `subnets` and per-domain `transform` / `forwardURL` rules
+   * have no OpenSandbox equivalent and throw here rather than being dropped.
+   *
+   * Passing it also pins the sandbox: `create()` refuses to reattach to a
+   * sandbox that was created under a different policy, because the reattached
+   * sandbox would keep the old egress rules while the operator reads the new
+   * ones in their source.
+   */
+  readonly networkPolicy?: SandboxNetworkPolicy;
+  /**
    * There is deliberately no `workingDirectory` here.
    *
    * 0.2.0 accepted one and it did nothing measurable: it was passed to
@@ -221,14 +251,6 @@ export interface OpenSandboxOptions {
 // ---------------------------------------------------------------------------
 // Session plumbing
 // ---------------------------------------------------------------------------
-
-/**
- * A null `exitCode` means the process was killed rather than exiting. Reporting
- * 0 there would tell the model a failed command succeeded.
- */
-function exitCodeOf(execution: CommandExecution): number {
-  return execution.exitCode ?? (execution.error ? 1 : 0);
-}
 
 /**
  * Duck-typed rather than `instanceof SandboxApiException`: the SDK keeps its own
@@ -432,21 +454,74 @@ function wrapSession(sandbox: Sandbox): SandboxSessionLike {
      * command promise, with `skipAccumulation` so a long-running process does not
      * also buffer its whole output in the SDK — the streams are the output. Shape
      * mirrors eve's own `adaptMultiplexedCommandToSandboxProcess`.
+     *
+     * `kill()` is the part that did not work. It called `AbortController.abort()`
+     * and nothing else, which closes OUR SSE connection to execd; whether execd
+     * then reaps the command is a server-side detail the SDK does not promise,
+     * and the SDK ships a separate termination API precisely because hanging up
+     * is not a kill. Measured against the previous build with a stubbed SDK:
+     * `kill()` made zero further calls to the sandbox, and `wait()` afterwards
+     * rejected with `AbortError` rather than reporting a terminated process.
+     *
+     * So the process is now killed from inside the sandbox, by pid, the same way
+     * eve's own `docker()` backend does it (`DOCKER_KILL_TREE_SCRIPT`): the
+     * command is wrapped to record its pid, and `kill()` runs a second command
+     * that walks /proc and SIGKILLs that pid and every descendant. See
+     * `spawnWrapperCommand` / `killProcessTreeCommand` in translate.ts.
+     *
+     * Not `commands.interrupt()`, which is the SDK's own termination call, on
+     * purpose: it is `DELETE /command?id=<sessionId>` and its OpenAPI parameter
+     * is documented as the "Session ID of the execution context" — a bash
+     * session from `createSession()`, which this backend does not use. Whether a
+     * server accepts an id from a plain `POST /command` there is untested and
+     * unstated, and a termination call aimed at the wrong id is a kill that
+     * silently does nothing. Killing by pid needs nothing from the server beyond
+     * running a command, which is the one thing already verified to work.
      */
     async spawn(options) {
       options.abortSignal?.throwIfAborted();
 
       const stdout = byteSink();
       const stderr = byteSink();
+      const pidFile = spawnPidFilePath(randomUUID());
+      const killTree = async (): Promise<void> => {
+        await sandbox.commands.run(killProcessTreeCommand(pidFile), {
+          workingDirectory: WORKSPACE,
+        });
+      };
+
       // `kill()` has to work without a caller-supplied signal, and an external
       // abort has to reach the same place, so both funnel through one controller.
       const controller = new AbortController();
-      options.abortSignal?.addEventListener("abort", () => controller.abort(options.abortSignal?.reason), {
-        once: true,
-      });
+      options.abortSignal?.addEventListener(
+        "abort",
+        () => {
+          // eve documents an aborted signal as killing the running process, and
+          // does exactly this in its docker backend: fire-and-forget, because an
+          // abort handler has nowhere to report to.
+          void killTree().catch(() => undefined);
+          controller.abort(options.abortSignal?.reason);
+        },
+        { once: true },
+      );
+
+      // Set by kill() BEFORE IT AWAITS ANYTHING, so the rejection handler below
+      // can tell "we terminated this on purpose" from "the stream broke".
+      //
+      // "Before it aborts" is what the previous version said and it was not
+      // enough — see the ordering bug called out in kill() at the bottom of this
+      // method.
+      // A count, not a flag. Two concurrent kill() calls where the first
+      // succeeds and the second fails would, with a boolean, have the failing
+      // one set it back to false underneath the succeeding one — reviving the
+      // exact bug the intent-before-await ordering below exists to fix. No
+      // in-repo caller kills concurrently, so this is closing the door rather
+      // than reporting a fire, but the whole point of the flag is that it
+      // survives a race.
+      let killIntents = 0;
 
       const execution = sandbox.commands.run(
-        options.command,
+        spawnWrapperCommand(options.command, pidFile),
         runOptions(options),
         {
           skipAccumulation: true,
@@ -463,6 +538,17 @@ function wrapSession(sandbox: Sandbox): SandboxSessionLike {
           return { exitCode: exitCodeOf(result) };
         },
         (error: unknown) => {
+          if (killIntents > 0) {
+            // The process is already dead inside the sandbox; this rejection is
+            // just our own abort landing afterwards. eve's contract for `wait()`
+            // is that it RESOLVES with the process's exit code (only the
+            // abortSignal path is documented as rejecting), and reporting a
+            // termination is the whole point of the fix above — so the streams
+            // end cleanly and the code says killed, never 0.
+            stdout.close();
+            stderr.close();
+            return { exitCode: KILLED_EXIT_CODE };
+          }
           // A reader blocked on stdout must fail rather than hang, and eve
           // documents `wait()` rejecting with the abort reason.
           stdout.error(error);
@@ -479,6 +565,44 @@ function wrapSession(sandbox: Sandbox): SandboxSessionLike {
         stderr: stderr.stream,
         wait: () => finished,
         kill: async () => {
+          // The intent is recorded BEFORE the round trip, and that ordering is
+          // the whole point.
+          //
+          // The previous version was `await killTree(); killedByCaller = true;`
+          // (src/index.ts:561-562 before this change), which left the flag false
+          // for the entire duration of the kill request — and that window is
+          // exactly when the target's SSE stream dies, because the kill it is
+          // waiting on is what kills the process. `killTree()` returns only
+          // after the server has answered, and the server kills the process
+          // before it answers. So `finished` took the "the stream broke
+          // unexpectedly" branch below for a kill that WORKED: it errored both
+          // byte sinks and rethrew, and `wait()` rejected. Reproduced against
+          // that build with a stubbed SDK whose kill command ends the spawned
+          // command's stream before its own response lands:
+          //   wait() REJECTED: Error: stream closed: process terminated
+          //   stdout stream ERRORED: Error: stream closed: process terminated
+          // README.md meanwhile stated the opposite as fact ("`wait()` after a
+          // successful `kill()` resolves with `137`").
+          killIntents += 1;
+          try {
+            // Let a failure propagate. If the kill request never reached the
+            // sandbox the process may still be running, and reporting a
+            // successful kill there is the bug this method already had. Nothing
+            // is aborted on that path either: our stream is the only remaining
+            // way to observe a process we failed to stop — which is also why
+            // this intent is withdrawn. A stream that breaks after a kill we know
+            // did not land is not explained by that kill, and answering 137 for
+            // it would be the same lie in a different place. (If the stream had
+            // already broken while the request was in flight, `finished` has
+            // settled as killed and this cannot un-settle it: the request went
+            // out and the stream died with it, so "killed" is the better of the
+            // two available answers, and kill() still throws so the caller is
+            // told the acknowledgement never came.)
+            await killTree();
+          } catch (error) {
+            killIntents -= 1;
+            throw error;
+          }
           controller.abort();
           await finished.catch(() => undefined);
         },
@@ -509,8 +633,8 @@ function wrapSession(sandbox: Sandbox): SandboxSessionLike {
           `policy implies a default action, and OpenSandbox fixes a sandbox's defaultAction at ` +
           `creation: its run-time egress API can only add or remove per-domain rules and preserves ` +
           `the existing default, so applying an allow-list here would leave egress open while ` +
-          `reporting success. OpenSandbox does accept a full policy at sandbox creation, which this ` +
-          `adapter does not expose yet; for a policy that changes during a turn use vercel() or ` +
+          `reporting success. A policy fixed for the sandbox's life is supported — pass it as ` +
+          `opensandbox({ networkPolicy }); for a policy that changes during a turn use vercel() or ` +
           `microsandbox(), and for coarse egress control use docker().`,
       );
     },
@@ -632,7 +756,65 @@ function wrapSession(sandbox: Sandbox): SandboxSessionLike {
   };
 }
 
+/**
+ * Every option this backend reads. Anything else is rejected at construction —
+ * see `assertKnownOptions`.
+ */
+const KNOWN_OPTION_KEYS: ReadonlyArray<keyof OpenSandboxOptions> = [
+  "image",
+  "domain",
+  "apiKey",
+  "timeoutSeconds",
+  "networkPolicy",
+];
+
+/**
+ * Refuses an option this backend does not implement, instead of ignoring it.
+ *
+ * TypeScript's excess-property check already catches `opensandbox({ typo: 1 })`
+ * written as a literal, and catches nothing else: a JavaScript caller, a spread
+ * (`opensandbox({ ...config })`), or a config loaded from JSON all reach here
+ * unchecked. That is fine for a misspelt `image`, which fails loudly on the
+ * next line, and it is not fine for a misspelt network policy —
+ * `opensandbox({ initialNetworkPolicy: "deny-all" })` used to build a sandbox
+ * with wide-open egress and say nothing at all. Verified against the previous
+ * build: the option went in and `Sandbox.create` was called with
+ * `{"image":"ubuntu"}`.
+ *
+ * The correct name is called out by name because that is the mistake worth
+ * catching: getting a locked-down network wrong in the silent direction is the
+ * one failure the caller cannot detect from the outside.
+ */
+function assertKnownOptions(options: OpenSandboxOptions): void {
+  const unknown = Object.keys(options).filter(
+    (key) => !(KNOWN_OPTION_KEYS as ReadonlyArray<string>).includes(key),
+  );
+  if (unknown.length === 0) return;
+  const networkish = unknown.filter((key) => /network|egress|firewall/i.test(key));
+  throw new Error(
+    `opensandbox() was given ${unknown.length} option${unknown.length === 1 ? "" : "s"} it does not ` +
+      `implement: ${unknown.map((key) => `\`${key}\``).join(", ")}. Supported options are ` +
+      `${KNOWN_OPTION_KEYS.map((key) => `\`${key}\``).join(", ")}.` +
+      (networkish.length > 0
+        ? ` The egress policy option is named \`networkPolicy\`, and it is rejected rather than ignored ` +
+          `because a sandbox that was asked for a restricted network and silently got an open one cannot ` +
+          `be told apart from one that was never asked.`
+        : ""),
+  );
+}
+
 export function opensandbox(options: OpenSandboxOptions = {}): SandboxBackendLike {
+  assertKnownOptions(options);
+
+  // Translated once, here, so an unrepresentable policy fails when the backend
+  // is constructed — at `eve build`, in the operator's face — rather than on the
+  // first turn that happens to need a sandbox.
+  const networkPolicy: OpenSandboxNetworkPolicy | undefined =
+    options.networkPolicy === undefined
+      ? undefined
+      : toOpenSandboxNetworkPolicy(options.networkPolicy);
+  const policyKey = networkPolicyKey(networkPolicy);
+
   const connectionConfig =
     options.domain || options.apiKey
       ? {
@@ -659,6 +841,16 @@ export function opensandbox(options: OpenSandboxOptions = {}): SandboxBackendLik
       }
 
       const previousId = existingMetadata?.sandboxId;
+
+      // What this session's sandbox was created under. A session persisted
+      // before this option existed has no key and reads as "unset", which is
+      // also what a backend with no networkPolicy records — see
+      // `sameNetworkPolicyKey`, which is what decides whether two of these are
+      // the same egress.
+      const previousPolicyKey =
+        typeof existingMetadata?.networkPolicyKey === "string"
+          ? existingMetadata.networkPolicyKey
+          : "unset";
 
       // Reattach before creating. eve keys sandboxes to durable sessions, so a
       // server restart must land back in the same filesystem rather than
@@ -689,12 +881,51 @@ export function opensandbox(options: OpenSandboxOptions = {}): SandboxBackendLik
             sandbox = null;
           }
         }
+
+        // The egress check happens HERE, after the ladder, and only for a
+        // sandbox that was actually recovered.
+        //
+        // A sandbox's egress is fixed when it is created (see `networkPolicy` on
+        // OpenSandboxOptions), so handing back one created under a different
+        // policy would run the agent under the OLD rules while the operator
+        // reads the new ones in their source. That is the same class of silent
+        // divergence as the reconnect bug above, pointed at the network instead
+        // of the filesystem, so it refuses rather than guessing.
+        //
+        // It used to refuse BEFORE the ladder ran (src/index.ts:810-826 before
+        // this change), on the strength of a persisted id alone, and that turned
+        // a recoverable state into a dead session: if the sandbox had been
+        // reaped upstream there was nothing to diverge from, nothing to protect,
+        // and no sandbox — yet create() threw on every turn, for good, because
+        // the metadata that triggered it is the metadata eve keeps handing back.
+        // Reproduced against that build with a stubbed SDK whose connect/resume
+        // both 404: `create() THREW ... Sandbox.create calls: 0`. The fresh
+        // sandbox it refused to build would have been created under the NEW
+        // policy, which is what the operator asked for.
+        if (sandbox !== null && !sameNetworkPolicyKey(previousPolicyKey, policyKey)) {
+          // Put it back the way shutdown() would leave it. We may have just
+          // woken it with resume(), and no turn is going to use it now, so
+          // resuming and then walking away is a running sandbox nobody owns.
+          await sandbox.pause().catch(() => undefined);
+          throw new Error(
+            `Sandbox "${previousId}" for session "${sessionKey}" was created with network policy ` +
+              `[${previousPolicyKey}], and opensandbox() now asks for [${policyKey}]. OpenSandbox fixes a ` +
+              `sandbox's egress default action at creation and its run-time egress API preserves it, so ` +
+              `this sandbox cannot be changed to match — reattaching would run the agent under the old ` +
+              `policy while your source says otherwise. Start a new session to get a sandbox under the new ` +
+              `policy, or restore the previous networkPolicy to keep using this one.`,
+          );
+        }
       }
 
       sandbox ??= await Sandbox.create({
         image: options.image ?? "ubuntu",
         ...(options.timeoutSeconds ? { timeoutSeconds: options.timeoutSeconds } : {}),
         ...(connectionConfig ? { connectionConfig } : {}),
+        // Creation is the only point at which OpenSandbox accepts one, and it is
+        // spread rather than always passed so a backend with no policy keeps
+        // sending exactly the request it sent before.
+        ...(networkPolicy ? { networkPolicy } : {}),
       });
 
       const live = sandbox;
@@ -709,8 +940,11 @@ export function opensandbox(options: OpenSandboxOptions = {}): SandboxBackendLik
         captureState: async () => ({
           backendName: BACKEND_NAME,
           // The id is the whole reconnect story; without persisting it every
-          // restart would orphan a running sandbox and start a fresh one.
-          metadata: { sandboxId: String(live.id) },
+          // restart would orphan a running sandbox and start a fresh one. The
+          // policy key rides along because a sandbox's egress cannot be changed
+          // after creation, so the reattach above has to know what this one was
+          // created under before it hands it back.
+          metadata: { sandboxId: String(live.id), networkPolicyKey: policyKey },
           // eve keys captured state to the durable session it came from, and
           // omitting this is silent in exactly the way the reconnect ladder
           // above was: `SandboxBackendSessionState` requires it (eve
