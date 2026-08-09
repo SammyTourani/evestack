@@ -234,6 +234,131 @@ test("the same directory always gets the same project name", () => {
   assert.equal(projectNameFor(path), projectNameFor(path));
 });
 
+/* -------------------------------------------------------------------------- */
+/* log rotation                                                                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The disk this file fills if nothing here holds.
+ *
+ * Docker's json-file driver has no max-size and no max-file unless a compose
+ * file says so, and BOTH services here are `restart: unless-stopped` — so the
+ * daemon appends to /var/lib/docker/containers/<id>/<id>-json.log for as long
+ * as the project is up, and a full disk stops Postgres, which stops everything.
+ *
+ * This test exists because the first fix went to the wrong file. The limits were
+ * added to the repository's own docker-compose.yml — the CONTRIBUTOR's stack,
+ * the one you run for an afternoon while changing the dashboard — and not to
+ * this one, which is the deployment the audited defect was actually about.
+ * `awk '/function composeFile/,/^}/' create.mjs | grep -c logging` returned 0.
+ * Nothing in that file's test suite noticed, because nothing asserted it.
+ */
+test("every service in the generated compose has a bounded log", () => {
+  const text = compose();
+  // Service keys are two-space-indented under `services:`; anything deeper is a
+  // field. Parsed rather than hardcoded so a third service cannot be added
+  // without a ceiling — which is the failure mode of a per-service copy-paste.
+  // Bounded at the next top-level key, or `evestack-pgdata` under `volumes:` is
+  // read as a third service — the first version of this test said exactly that.
+  const afterServices = text.slice(text.indexOf("\nservices:\n") + 1);
+  const end = afterServices.search(/\n[a-z][a-z0-9_-]*:\s*\n/);
+  const body = end === -1 ? afterServices : afterServices.slice(0, end + 1);
+  const services = [...body.matchAll(/^ {2}([a-z][a-z0-9_-]*):$/gm)].map((m) => m[1]);
+  assert.deepEqual(services, ["postgres", "dashboard"], `service list is stale: ${services}`);
+  for (const name of services) {
+    const start = body.indexOf(`\n  ${name}:\n`);
+    const rest = body.slice(start + 1);
+    const next = rest.search(/\n {2}[a-z][a-z0-9_-]*:\n|\nvolumes:\n/);
+    const block = next === -1 ? rest : rest.slice(0, next);
+    assert.match(block, /^ {4}logging: \*container-logs$/m, `service "${name}" has no log ceiling:\n${block}`);
+  }
+});
+
+test("the anchor the services alias is actually defined, and bounds both size and count", () => {
+  const text = compose();
+  // An alias whose anchor is missing is not a missing ceiling, it is a file that
+  // will not parse at all: Compose v5.1.0 answers `yaml: line N, column M:
+  // unknown anchor 'container-logs' referenced` and refuses the project.
+  // Observed against a two-line fixture, which is why the alias above is checked
+  // against a definition here rather than on its own.
+  const anchor = /^x-logging: &container-logs\n {2}driver: json-file\n {2}options:\n {4}max-size: "(\S+)"\n {4}max-file: "(\S+)"$/m;
+  const match = anchor.exec(text);
+  assert.ok(match, `no x-logging anchor in the generated compose:\n${text.slice(0, 2000)}`);
+  // Both halves matter. max-size alone rotates for ever and bounds nothing;
+  // max-file alone caps a count of unbounded files.
+  assert.equal(match[1], "${LOG_MAX_SIZE:-10m}");
+  assert.equal(match[2], "${LOG_MAX_FILE:-3}");
+  // `driver:` is stated and not inherited on purpose — a host daemon defaulting
+  // to journald would otherwise ignore both options — and the anchor is defined
+  // before the services that alias it, because YAML resolves in document order.
+  assert.ok(
+    text.indexOf("x-logging: &container-logs") < text.indexOf("*container-logs"),
+    "the anchor is defined after its first use",
+  );
+});
+
+test("the two names Compose reads for the ceiling are in the .env it writes", () => {
+  // Commented out, like EVESTACK_DASHBOARD_IMAGE beside them: the point is that
+  // someone who wants a different ceiling can find the names in the file Compose
+  // actually interpolates from, rather than having to reverse them out of the
+  // compose file. Unprefixed on purpose — contract 19 requires every documented
+  // EVESTACK_* name to have a reader in the workspace, and these two are consumed
+  // by Compose on the host and never reach a container.
+  const env = composeEnvFile(PASSWORD);
+  assert.match(env, /^# LOG_MAX_SIZE=10m$/m, env);
+  assert.match(env, /^# LOG_MAX_FILE=3$/m, env);
+  // The defaults in the two files have to agree, or the .env documents a ceiling
+  // the compose file does not apply.
+  assert.match(compose(), /max-size: "\$\{LOG_MAX_SIZE:-10m\}"/);
+  assert.match(compose(), /max-file: "\$\{LOG_MAX_FILE:-3\}"/);
+});
+
+/* -------------------------------------------------------------------------- */
+/* what the file tells the reader about a dashboard with no credentials        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * This file is generated into every scaffolded project, so a false sentence in
+ * it is a false sentence shipped to users.
+ *
+ * It carried one. "with either missing it answers 503 to every request" is not
+ * what the dashboard does, and the first exception is the route an operator hits
+ * first. Measured by importing packages/dashboard/proxy.ts with
+ * EVESTACK_AUTH_USER and EVESTACK_AUTH_PASSWORD deleted from process.env: four
+ * path/method combinations pass the gate, all GET, because proxy.ts gates the
+ * sign-in tier on the METHOD — `/signin`, `/api/auth/session`,
+ * `/api/auth/signout` and `/api/health`; `GET /`, `/sessions`,
+ * `/api/health/detail`, `POST /signin`, `POST /api/auth/session`,
+ * `POST /api/auth/signout` and `POST /api/ingest/v1/traces` are 503. The two
+ * /api/auth routes export POST only (their route.ts modules export POST and
+ * `dynamic`, nothing else), so Next's autoImplementMethods answers a bare 405.
+ * /api/health's own handler then returns 503 {"status":"unconfigured"}, which is
+ * what makes `docker ps` report unhealthy — so the "reports unhealthy" half of
+ * the old sentence was right and the "every request" half was not.
+ *
+ * The first correction stopped at two exceptions and left "everything else 503"
+ * standing over the other two, which is why the 405 assertion below exists.
+ */
+test("the generated compose does not claim the sign-in page answers 503", () => {
+  const text = compose();
+  assert.doesNotMatch(
+    text,
+    /503 to every request/,
+    "the generated compose still tells users every request is refused, including /signin",
+  );
+  assert.match(text, /GET \/signin\s+200/, "the sign-in exception is not stated");
+  assert.match(text, /GET \/api\/health\s+503/, "the health route's own 503 is not stated");
+  assert.match(
+    text,
+    /GET \/api\/auth\/session[\s\S]{0,120}405/,
+    "the two POST-only auth routes answer 405 on GET, and the file does not say so",
+  );
+  // The conclusion the old sentence was there to support has to survive the
+  // correction: with no credentials the dashboard is unusable, and the reason it
+  // is unusable via /signin is that the page renders no form.
+  assert.match(text, /renders NO sign-in form/);
+});
+
 test("a directory name Compose would reject is normalised, and still unique", () => {
   const weird = projectNameFor("/tmp/My Agent!! (v2)");
   assert.match(weird, /^[a-z0-9][a-z0-9_-]*$/, "must satisfy Compose's project-name grammar");

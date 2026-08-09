@@ -310,7 +310,10 @@ export async function open(argv, { stdout = process.stdout, stderr = process.std
     stdout.write(`      ${c.dim("sign in")}  ${c.bold(user)} ${c.dim("/")} ${c.bold(password)}\n`);
   } else {
     stdout.write(
-      `      ${c.yellow("EVESTACK_AUTH_PASSWORD is not set")}${c.dim(", so every route answers 503.")}\n`,
+      `      ${c.yellow("EVESTACK_AUTH_PASSWORD is not set")}${c.dim(", so the dashboard 503s")}\n`,
+    );
+    stdout.write(
+      `      ${c.dim("everything but /signin, which renders no sign-in form without it.")}\n`,
     );
   }
   stdout.write("\n");

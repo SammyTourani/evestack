@@ -17,7 +17,18 @@
 # this Dockerfile exists. For as long as that comment stood, the honest summary
 # of PR-time image coverage was: none.
 #
-#   git tag dashboard-v0.1.0 && git push origin dashboard-v0.1.0
+#   git tag -a '@evestack/dashboard@0.3.0' -m 'dashboard 0.3.0'
+#   git push origin '@evestack/dashboard@0.3.0'
+#
+# That is the repository's tag convention — `<package name>@<version>` — and it
+# is written down once, in RELEASING.md ("Tag convention"), not here. The two
+# releases that exist used `dashboard-v0.1.0` and `dashboard-v0.2.0`, which
+# predate the decision. Those tags are public and are not renamed, so BOTH forms
+# are still accepted below: the old one exists so `dashboard-v0.2.0` can be
+# re-run from the Actions tab, and for no other reason. Nothing new should use
+# it. Verified that git accepts the scoped form, `/` and leading `@` included:
+# `git check-ref-format refs/tags/@evestack/dashboard@0.3.0` passes, and the tag
+# round-trips through `tag -l`, `rev-parse` and `describe`.
 #
 # The tag has to agree with packages/dashboard/package.json and with the tag the
 # scaffolder writes into every generated docker-compose.yml. Both are checked
@@ -29,9 +40,15 @@ name: Publish dashboard image
 on:
   push:
     tags:
+      # `*` does not match `/` in these filters, and there is no `/` after the
+      # last one in either pattern, so both are exact-prefix matches on the
+      # version.
+      - "@evestack/dashboard@*"
       - "dashboard-v*"
   # For the first publish, and for re-running one that failed after the tag
-  # already existed. Same checks; nothing is skipped for a manual run.
+  # already existed. Same checks; nothing is skipped for a manual run — except
+  # the GitHub release, which needs a tag to attach to and is therefore gated on
+  # `github.ref_type == 'tag'` rather than on the event.
   workflow_dispatch:
 
 concurrency:
@@ -61,12 +78,25 @@ jobs:
           # The tag, when there is one. workflow_dispatch has no tag to check —
           # it publishes whatever packages/dashboard/package.json says, which is
           # the only sane reading of a manual run.
+          #
+          # Two accepted forms, and only two. `@evestack/dashboard@<version>` is
+          # the convention (RELEASING.md, "Tag convention"). `dashboard-v<version>`
+          # is what the first two releases used; it stays accepted so that
+          # dashboard-v0.1.0 and dashboard-v0.2.0 remain re-runnable, and should
+          # be deleted from this case when neither is worth re-running. The error
+          # names only the convention, because a NEW tag in the old form is a
+          # mistake even though the check would let it through.
           if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
-            expected="dashboard-v$version"
-            if [ "$GITHUB_REF_NAME" != "$expected" ]; then
-              echo "::error::tag $GITHUB_REF_NAME does not match packages/dashboard/package.json ($expected). Bump one of them."
-              exit 1
-            fi
+            case "$GITHUB_REF_NAME" in
+              "@evestack/dashboard@$version") ;;
+              "dashboard-v$version")
+                echo "::warning::$GITHUB_REF_NAME uses the superseded tag form. New releases should be tagged @evestack/dashboard@$version."
+                ;;
+              *)
+                echo "::error::tag $GITHUB_REF_NAME does not match packages/dashboard/package.json ($version). Expected @evestack/dashboard@$version. Bump one of them."
+                exit 1
+                ;;
+            esac
           fi
 
           # And the tag the scaffolder pins every generated compose file to.
@@ -100,6 +130,20 @@ jobs:
           # repository has been bitten by that shape twice already — see the note
           # on the hardcoded package list in ci.yml. `git grep` asks the question
           # directly instead: find every literal, and require them all to agree.
+          # CHANGELOG.md is excluded, and it is the one exclusion that is about
+          # meaning rather than noise. Every other literal in the tree is an
+          # instruction — "pull this" — and must therefore track the release. A
+          # changelog line is a HISTORICAL statement: the 0.2.0 entry records the
+          # image tag the scaffolder pinned at the time, and it will still record
+          # it after the next release ships. Without the exclusion, the first
+          # release cut after the changelog landed would fail on a sentence that is
+          # permanently correct, and the only way to make it pass would be to
+          # falsify history.
+          #
+          # Note the shape of this comment: no version literal appears in it. An
+          # earlier draft spelled the pin out as an example and the scan promptly
+          # found its own explanation, adding a fifth "mismatched" hit inside this
+          # very file. Do not name a concrete tag here.
           mismatched=0
           found=0
           while IFS= read -r hit; do
@@ -111,7 +155,7 @@ jobs:
               echo "::error::$hit pins $tag, but packages/dashboard/package.json is $version"
               mismatched=1
             fi
-          done <<< "$(git grep -n -o 'evestack-dashboard:[0-9][0-9.]*' -- . ':!*.lock' ':!pnpm-lock.yaml' || true)"
+          done <<< "$(git grep -n -o 'evestack-dashboard:[0-9][0-9.]*' -- . ':!*.lock' ':!pnpm-lock.yaml' ':!CHANGELOG.md' || true)"
 
           [ "$mismatched" = "0" ] || exit 1
 
@@ -122,6 +166,54 @@ jobs:
             exit 1
           fi
           echo "$found written-out tags all agree on $version"
+
+      # -----------------------------------------------------------------------
+      # THE RELEASE NOTES MUST EXIST BEFORE ANYTHING IS PUBLISHED.
+      #
+      # This check was written in the `release:` job below (the "cut the GitHub
+      # release from CHANGELOG.md" step, publish-dashboard.yml:369 as it stood),
+      # and that is too late to be a gate. `release` needs `merge`, and `merge`
+      # is the job that runs `imagetools create` — so by the time the
+      # "CHANGELOG.md has no section" error fired, `:<version>` was already in
+      # GHCR and `:latest` had already been moved onto it. The version tag is
+      # immutable in practice (every scaffolded docker-compose.yml pins it), so
+      # the only recovery was to write the changelog entry and re-run, leaving a
+      # published image that no release page ever described. A gate that fires
+      # after publication is not a gate; it is a report.
+      #
+      # Runs on EVERY invocation, including workflow_dispatch on a branch. It
+      # briefly carried `if: github.ref_type == 'tag'`, mirroring `release`, on
+      # the reasoning that a manual run "cuts no release at all, so demanding
+      # release notes from it would invent a failure". That reasoning named the
+      # wrong artifact. What this gate protects is the IMAGE, and `merge`
+      # pushes `:<version>` and moves `:latest` whatever triggered the run — so
+      # the condition exempted precisely the path the header above calls "the
+      # first publish, and re-running one that failed", which is the path most
+      # likely to be missing its changelog entry. The step only reads
+      # CHANGELOG.md, so there is no cost to always running it.
+      #
+      # The awk program here is a deliberate copy of the one in `release`. It
+      # has to be: this job must answer "is there a section" WITHOUT producing
+      # the notes, and that job must produce the notes it publishes. They are
+      # two uses of one rule, so if the heading format ever changes, both
+      # change — and `release` keeps its own emptiness check as a backstop
+      # rather than trusting this one to have run.
+      - name: the CHANGELOG section this release publishes from must already exist
+        env:
+          VERSION: ${{ steps.read.outputs.version }}
+        run: |
+          set -euo pipefail
+          heading="### @evestack/dashboard@${VERSION}"
+          awk -v h="$heading" '
+            index($0, h " ") == 1 || $0 == h { found = 1; next }
+            found && /^###? / { exit }
+            found { print }
+          ' CHANGELOG.md > "${RUNNER_TEMP}/notes-probe.md"
+          if ! grep -q '[^[:space:]]' "${RUNNER_TEMP}/notes-probe.md"; then
+            echo "::error::CHANGELOG.md has no '${heading}' section, so this release would have no notes. Add one before tagging — nothing has been published yet."
+            exit 1
+          fi
+          echo "release notes found under '${heading}'"
 
   # ---------------------------------------------------------------------------
   # build — one native runner per architecture, pushed by digest
@@ -269,3 +361,105 @@ jobs:
             exit 1
           fi
           echo "anonymous pull works"
+
+  # ---------------------------------------------------------------------------
+  # release — the GitHub release, written from CHANGELOG.md, only ever on a tag
+  # ---------------------------------------------------------------------------
+  # Added because this project published twenty-six npm versions and two images
+  # with ZERO GitHub releases and one abandoned draft, so the only way to learn
+  # what changed between two versions was to read the git log. The notes are not
+  # generated from commit subjects: they are lifted verbatim out of CHANGELOG.md,
+  # which is written by hand and reviewed, so the release page and the changelog
+  # cannot drift into two different accounts of the same version.
+  #
+  # It cannot publish anything the rest of this workflow has not already
+  # published: it needs `merge`, so a failed or unpullable image never gets a
+  # release page, and `if: github.ref_type == 'tag'` plus `--verify-tag` mean it
+  # only ever attaches to a tag that already exists. A workflow_dispatch on a
+  # branch skips it entirely.
+  #
+  # Which is also why "is there a CHANGELOG section for this version" is NOT
+  # decided here any more. That question has to be answered before `merge`
+  # pushes the tag, so it is asked in `version` instead; see the comment on that
+  # job's "the CHANGELOG section this release publishes from must already exist"
+  # step. By the time this job runs, the answer is already known to be yes.
+  release:
+    needs: [version, merge]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      # The only job here that can write to the repository, and the only thing
+      # it writes is a release.
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: cut the GitHub release from CHANGELOG.md
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          # The changelog is grouped by package and every version heading is
+          # exactly the tag name for that release, which is what makes this an
+          # exact string match rather than a regex over a format that will drift.
+          # The heading is keyed on the VERSION rather than on $TAG so that both
+          # accepted tag forms resolve to the same section — dashboard-v0.2.0 and
+          # @evestack/dashboard@0.2.0 are the same release.
+          heading="### @evestack/dashboard@${VERSION}"
+          awk -v h="$heading" '
+            index($0, h " ") == 1 || $0 == h { found = 1; next }
+            # Stop at the next release or package heading. "#### Added" and the
+            # other Keep-a-Changelog subheadings are four hashes and are kept.
+            found && /^###? / { exit }
+            found { print }
+          ' CHANGELOG.md > "${RUNNER_TEMP}/notes.md"
+
+          # Anti-vacuity, the same rule as the tag scan above: an extractor that
+          # silently matched nothing would publish an empty release, and an empty
+          # release is worse than no release — it looks like the answer.
+          #
+          # This is now the BACKSTOP, not the gate. The gate is the identical
+          # check in the `version` job ("the CHANGELOG section this release
+          # publishes from must already exist"), which runs before `build` and
+          # `merge` and therefore before anything reaches GHCR. This copy stays
+          # because the two answer different questions: the gate asks whether a
+          # section exists, this one asks whether the notes actually extracted
+          # here are non-empty — and only the second one can catch an awk that
+          # drifted out of step with the gate's.
+          if ! grep -q '[^[:space:]]' "${RUNNER_TEMP}/notes.md"; then
+            echo "::error::CHANGELOG.md has no '${heading}' section, so there are no notes to publish. The version job's gate should have caught this before the image was pushed — if it did not, the two awk programs have drifted."
+            exit 1
+          fi
+
+          # The artifact this release is actually about. The notes describe the
+          # code; this line is how someone runs it.
+          {
+            echo
+            echo "---"
+            echo
+            echo "\`\`\`"
+            echo "docker pull ${IMAGE}:${VERSION}"
+            echo "\`\`\`"
+            echo
+            echo "Multi-arch: \`linux/amd64\` and \`linux/arm64\`. Also tagged \`:latest\`."
+          } >> "${RUNNER_TEMP}/notes.md"
+
+          # Idempotent, because a re-run of a failed publish must not fail here
+          # on "release already exists" after it has done the expensive part.
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release edit "$TAG" \
+              --title "dashboard ${VERSION}" \
+              --notes-file "${RUNNER_TEMP}/notes.md"
+            echo "updated the existing release for $TAG"
+          else
+            # --verify-tag: gh will CREATE a tag if one does not exist, which is
+            # exactly the thing this workflow must never do. Refuse instead.
+            gh release create "$TAG" \
+              --verify-tag \
+              --title "dashboard ${VERSION}" \
+              --notes-file "${RUNNER_TEMP}/notes.md"
+            echo "created the release for $TAG"
+          fi

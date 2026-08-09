@@ -23,8 +23,20 @@ export const dynamic = "force-dynamic";
  * denial-of-service handle — anyone can spend someone else's budget of attempts
  * — so the cost of a wrong guess is a delay that grows with consecutive
  * failures across the process and resets on the first success. That is enough
- * to make online guessing hopeless against the 24 hex characters
- * `create-evestack` generates, and it cannot lock the operator out.
+ * to make online guessing hopeless against the password `create-evestack`
+ * generates: `randomBytes(18).toString("base64url")`
+ * (packages/create-evestack/create.mjs:543), which is 24 characters of
+ * base64url — 18 random bytes, 144 bits.
+ *
+ * This comment said "24 hex characters" until it was checked against the
+ * generator. It is the right count of the wrong alphabet, and hex would make it
+ * a much weaker claim than the truth: 24 hex characters is 12 bytes, 96 bits.
+ * The digit that matters in a delay argument is the size of the space being
+ * guessed, so a security note that understates it by 48 bits is not a typo.
+ *
+ * The 144-bit figure holds only for a generated password. An operator who edits
+ * EVESTACK_AUTH_PASSWORD by hand can put anything there, and the growing delay
+ * is the whole of what protects a short one.
  */
 
 const BASE_FAILURE_DELAY_MS = 150;

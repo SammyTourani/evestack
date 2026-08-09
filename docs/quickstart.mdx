@@ -138,9 +138,10 @@ Every session you just created is already there, read straight out of the same P
 ingest step required for the session list itself.
 
 <Warning>
-  If the container comes up but every page answers `503` and `docker ps` shows it unhealthy, the
-  credential did not reach it. The compose service reads `.env.local`, so that is the file to
-  check — both halves are required, and a blank password counts as unset.
+  If the container comes up, `docker ps` shows it unhealthy, and every page answers `503` except
+  `/signin` — which renders an error and no sign-in form — the credential did not reach it. The
+  compose service reads `.env.local`, so that is the file to check — both halves are required,
+  and a blank password counts as unset.
 </Warning>
 
 To hack on the dashboard rather than run it, install and build from the repository root — not

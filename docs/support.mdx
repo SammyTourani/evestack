@@ -1,0 +1,141 @@
+---
+title: Support
+description: Which versions get fixes, what the version numbers promise, and which platforms are actually tested — including the one that is not.
+---
+
+This page is deliberately unambitious. Everything on it is a statement about what CI runs and
+what the manifests declare, so you can check it yourself rather than take it on trust. Where
+something is untested, it says so.
+
+## Which versions get fixes
+
+The newest published version of the affected package. Nothing else.
+
+Fixes land on `main` and go out in that package's next release. There is no long-term-support
+line, no maintenance branch per version, and nothing is backported. If you are two versions
+behind and hit a bug, the answer will be "upgrade" — see [Upgrading](/docs/upgrading).
+
+Three things ship on separate clocks, which matters when you read "fixed in":
+
+| What | How it reaches you | Consequence |
+| --- | --- | --- |
+| The npm packages (`evestack`, `create-evestack`, `@evestack/budget`, `@evestack/composio`, `@evestack/schedules`, `@evestack/mcp`, `@evestack/sandbox-opensandbox`) | `npm install` | Ordinary. Your lockfile decides. |
+| The dashboard | A container tag, `ghcr.io/sammytourani/evestack-dashboard:<version>` | Your project pins a tag, so nothing changes until you repoint and repull |
+| The agent itself (`templates/default`) | Copied into your project once, at scaffold time | Never updates on its own. Fixes to it are applied by hand |
+
+That third row is the one that surprises people. `create-evestack` copies the template into your
+directory and then has no further relationship with it. There is no `evestack upgrade` command —
+`packages/evestack-cli/src/` has no such module — so [Upgrading](/docs/upgrading) describes the
+diff-and-apply routine that stands in for one.
+
+## What the version numbers promise
+
+Every published package is `0.x`. Under npm's own rules a caret range on a `0.x` version only
+admits patch releases — `^0.2.0` will take `0.2.1` and will not take `0.3.0` — and that is the
+promise being relied on here rather than worked around.
+
+- **A minor bump (`0.2.x` → `0.3.0`) may break you.** Pre-1.0, that is what the minor position is
+  for.
+- **A patch bump is fixes only.**
+- **No package has reached 1.0**, so nothing here is claiming API stability yet.
+
+<Note>
+  One compatibility promise is machine-checked rather than declared. `@evestack/budget`,
+  `@evestack/composio`, `@evestack/schedules` and `@evestack/sandbox-opensandbox` each declare
+  `peerDependencies.eve` as `>=0.30.0 <1.0.0`, so npm refuses to install them beside an eve that
+  is too old to have the `localDev()` fix ([SECURITY.md](https://github.com/SammyTourani/evestack/blob/main/SECURITY.md)
+  explains why that version in particular). `contract/contracts/01-version.contract.mjs` fails
+  the suite if one installed eve cannot satisfy every range this repo declares, and the
+  `eve-watch` job is forbidden from widening a peer range on its own — see
+  [Upgrading](/docs/upgrading).
+</Note>
+
+`evestack`, `create-evestack` and `@evestack/mcp` declare no eve peer range, because they do not
+import eve. The scaffolder ships the template; the CLI and the MCP server talk to a dashboard
+over HTTP.
+
+## Platforms
+
+### Node
+
+**Node 24.** All seven published packages declare `"engines": { "node": ">=24" }`, as do the
+repository root and the template a scaffold gets, and it is the only version CI installs — all
+six `actions/setup-node` steps in `.github/workflows/ci.yml` pin `node-version: 24`. No other
+major is tested.
+
+The floor is enforced rather than merely advertised: `nodeVersionProblem()` in
+`packages/create-evestack/shared.mjs` refuses an older runtime with a message naming the version,
+because `engines` is advice that npm prints and installs through anyway. The generated project's
+scripts use `--env-file-if-exists` (Node 20.12+) and its checks call `URL.parse` (Node 22.1+), so
+an older Node fails several commands later in a message that never names the real cause.
+
+### Operating systems
+
+| Platform | Status | What that is based on |
+| --- | --- | --- |
+| Linux `x86_64` | Tested | Every job in `ci.yml` runs on `ubuntu-latest`, including the runtime tier that boots Postgres, an agent and a Docker sandbox |
+| Linux `arm64` | Image only | `publish-dashboard.yml` builds `linux/arm64` on an `ubuntu-24.04-arm` runner. The multi-arch image is exercised; the CLI and template are not tested there by CI |
+| macOS | Untested by CI | No workflow runs a macOS runner. The surface is small — the only `darwin` branches are the three helpers that shell out to `open` to launch a browser — but a macOS-only regression reaches a user before it reaches CI |
+| **Windows** | **Untested** | See below |
+
+### Windows
+
+<Warning>
+  **Windows is untested. There is no CI job on any Windows runner, and there never has been.**
+  Nine `process.platform === "win32"` branches ship in the code and not one of them is exercised
+  anywhere in the repository. Use WSL2, where the Linux paths run.
+</Warning>
+
+This is stated bluntly because the code *looks* like it supports Windows. The nine branches, so
+you can judge the risk yourself:
+
+- **Opening a browser** — `packages/evestack-cli/src/project.mjs:353`,
+  `packages/evestack-cli/src/tour.mjs:395`, `templates/default/scripts/verify.mjs:571` each pick
+  `cmd /c start` over `open` / `xdg-open`.
+- **Spawning `npm` and `docker`** — `packages/create-evestack/create.mjs:142` and `:805`,
+  `templates/default/scripts/dev.mjs:76`, `templates/default/scripts/start.mjs:44` pass
+  `shell: true`, which is how a `.cmd` shim gets found on Windows.
+- **Terminal glyphs** — `packages/create-evestack/ui.mjs:68` and
+  `templates/default/scripts/ui.mjs:68` fall back to ASCII outside Windows Terminal. That file's
+  own comment is the honest summary: the failure mode is "mojibake in a legacy Windows code page
+  — one nobody here can reproduce."
+
+`packages/create-evestack/test/attach-writes.test.mjs` gates its file-permission assertions on
+`process.platform !== "win32"`, so even if you ran the suite on Windows, the checks on credential
+file modes would skip rather than fail.
+
+If Windows matters to you, a CI job on `windows-latest` is the contribution that would change
+this row — not a bug report saying it did not work.
+
+### Everything else
+
+- **Docker.** Both compose files run Postgres in it, and the scaffolded sandbox is
+  `eve/sandbox/docker` (`templates/default/agent/sandbox/sandbox.ts`), so every tested path has
+  it. Pointing the agent at a Postgres you host elsewhere is not tested here.
+- **Postgres** is tested as `pgvector/pgvector:pg17` — the image both compose files run, and the
+  one CI's `services:` block starts. The `vector` extension is not optional if you use memory:
+  `templates/default/lib/memory.ts` runs `CREATE EXTENSION IF NOT EXISTS vector` and stores a
+  `vector(n)` column.
+- **Browsers.** The dashboard is a Next app and has no browser test matrix. The only browser CI
+  ever launches is Chromium, and that is for the marketing site's Playwright suite, not the
+  dashboard.
+- **eve** is pinned at `^0.30.8` in `templates/default/package.json`. Below `0.30.0` is a
+  security floor, not a preference.
+
+## What "supported" means here
+
+evestack is a small open-source project with a contract suite, not a vendor with an SLA. What you
+can rely on:
+
+1. **Reported bugs get read.** Open an issue at
+   [github.com/SammyTourani/evestack](https://github.com/SammyTourani/evestack/issues).
+2. **Security reports get a reply within 72 hours**, and a fix or mitigation before public
+   disclosure. See
+   [SECURITY.md](https://github.com/SammyTourani/evestack/blob/main/SECURITY.md).
+3. **Assumptions about eve are checked by machine, not by memory.** `contract/` is 22 contracts
+   that go red when eve's behaviour drifts under them, and `eve-watch` runs them against every
+   new eve release daily. That is the closest thing here to a compatibility guarantee, and it is
+   stronger than a promise because it is executable.
+
+What you should not rely on: a response time on a feature request, a deprecation window, or a
+version staying installable forever.

@@ -225,9 +225,127 @@ export default {
      * holds against the real thing.
      */
     const client = await connect();
-    let restored = false;
     let original = null;
-    let sessionStatus = null;
+    /** Pre-fixture values of every row this probe writes, keyed by run id. */
+    const held = new Map();
+    /** What `finally` actually managed to do with each held row. */
+    let restoreOutcomes = [];
+    /** Run ids left in a shape eve's boot-time read schema rejects. Must be empty. */
+    let leftPoisoned = [];
+    /** Held rows still carrying the fixture's backdating afterwards. Must be empty. */
+    let leaked = [];
+
+    /**
+     * Reopen a run into the shape the sweep exists to classify — a turn whose
+     * process died mid-flight — without ever leaving behind a row eve cannot
+     * read back.
+     *
+     * ── the invariant, and why two separate UPDATEs cannot satisfy it ────────
+     *
+     * `WorkflowRunSchema` (@workflow/world runs.ts:131-160) is a
+     * discriminatedUnion on `status`, and every branch constrains the other
+     * three columns:
+     *
+     *   pending | running   output, error and completedAt must ALL be absent
+     *   cancelled           completedAt REQUIRED, output/error absent
+     *   completed           completedAt REQUIRED, output REQUIRED
+     *   failed              completedAt REQUIRED, error REQUIRED
+     *
+     * So `status`, `completed_at`, `output_cbor` and `error_cbor` are one value
+     * in four columns. The old fixture wrote them separately — each statement a
+     * valid half of a write that is only valid whole:
+     *
+     *   SET completed_at = NULL      on the turn row, leaving status alone
+     *   SET status = 'running'       on the session row, leaving the payload alone
+     *
+     * Run against a row the engine had already settled — and this probe's own
+     * header notes the turn settles "in well under a second" with no provider
+     * key — the first leaves `failed` with completed_at NULL, and the second
+     * leaves `running` carrying completed_at and error_cbor. Both were measured
+     * against the installed schema, and both are rejected:
+     *
+     *   running,  completedAt Date       ["completedAt"] expected undefined, received Date
+     *   running,  error Uint8Array       ["error"]       expected undefined, received Uint8Array
+     *   failed,   completed_at NULL      ["completedAt"] expected date, received Date
+     *
+     * The third is not obvious and is worth spelling out: a NULL column reaches
+     * the schema as `undefined`, not as null, because world-postgres runs every
+     * row through `compact()` (util.js:8-19), which maps null to undefined. Fed
+     * null directly, `z.coerce.date()` would quietly coerce to 1970-01-01 and
+     * boot; fed undefined it produces `new Date(undefined)` — an Invalid Date —
+     * and throws. So the null-payload shape is a hard blocker too, by way of a
+     * helper three files away.
+     *
+     * `world.start()` → reenqueueActiveRuns → runs.list({status:'running'})
+     * parses every row before filtering, outside the try that wraps the enqueue,
+     * so one such row and the deployment never boots again — deterministically,
+     * on every subsequent start. That is the whole of PR #36's "0.31.3 will not
+     * boot against agent_v31", and it was never about 0.31.3: 0.30.8 bundles the
+     * identical union. This probe poisoned the database.
+     *
+     * The fix is to write the whole branch in one statement. Whatever the row
+     * was, it becomes a valid `running`; the previous values come back out via
+     * the CTE so `release()` can put them back.
+     */
+    async function reopen(id, backdateMinutes) {
+      const { rows } = await client.query(
+        `WITH before AS (
+           SELECT id, status, started_at, completed_at, output_cbor, error_cbor
+             FROM workflow.workflow_runs WHERE id = $1 FOR UPDATE
+         )
+         UPDATE workflow.workflow_runs r
+            SET status       = 'running',
+                completed_at = NULL,
+                output_cbor  = NULL,
+                error_cbor   = NULL,
+                started_at   = CASE
+                                 WHEN $2::int IS NULL THEN r.started_at
+                                 ELSE (now() AT TIME ZONE 'utc') - make_interval(mins => $2::int)
+                               END
+           FROM before b
+          WHERE r.id = b.id
+        RETURNING b.status, b.started_at, b.completed_at, b.output_cbor, b.error_cbor`,
+        [id, backdateMinutes],
+      );
+      if (rows.length > 0) held.set(id, rows[0]);
+      return rows[0] ?? null;
+    }
+
+    /**
+     * Put a held row back — but only if it is still the row we left.
+     *
+     * If the engine settled it while the fleet sweep was running, that row is
+     * the engine's now: it is already a coherent shape, and overwriting it with
+     * our snapshot would put a finished run back into `running` for the next
+     * reenqueue sweep to pick up. So the WHERE names every column we set, and a
+     * row the engine has touched simply does not match.
+     *
+     * `started_at` is the exception, restored either way. It is
+     * `z.coerce.date().optional()` on the base schema, so no branch constrains
+     * it and putting it back cannot poison anything — but leaving ours in place
+     * would report a ten-minute duration for a turn that took a second, in every
+     * fact table that measures one.
+     */
+    async function release(id) {
+      const before = held.get(id);
+      if (!before) return `${id.slice(0, 12)}…=never-held`;
+      const { rowCount } = await client.query(
+        `UPDATE workflow.workflow_runs
+            SET status = $2, started_at = $3, completed_at = $4, output_cbor = $5, error_cbor = $6
+          WHERE id = $1
+            AND status = 'running'
+            AND completed_at IS NULL
+            AND output_cbor IS NULL
+            AND error_cbor IS NULL`,
+        [id, before.status, before.started_at, before.completed_at, before.output_cbor, before.error_cbor],
+      );
+      if (rowCount > 0) return `${id.slice(0, 12)}…=restored`;
+      await client.query(`UPDATE workflow.workflow_runs SET started_at = $2 WHERE id = $1`, [
+        id,
+        before.started_at,
+      ]);
+      return `${id.slice(0, 12)}…=engine-settled-it`;
+    }
 
     try {
       for (let attempt = 0; attempt < 40 && original === null; attempt += 1) {
@@ -255,25 +373,12 @@ export default {
 
       if (original === null) return;
 
-      await client.query(
-        `UPDATE workflow.workflow_runs
-            SET completed_at = NULL,
-                started_at = (now() AT TIME ZONE 'utc') - interval '10 minutes'
-          WHERE id = $1`,
-        [original.id],
-      );
+      // Ten minutes back, so the turn reads as long-running rather than fresh.
+      await reopen(original.id, 10);
       // The sweep only considers sessions whose own row still says running, so
-      // the session has to be reopened too — and its previous value kept, or the
-      // restore below would put back only half the fixture.
-      const { rows: sessionRows } = await client.query(
-        `SELECT status FROM workflow.workflow_runs WHERE id = $1`,
-        [body.sessionId],
-      );
-      sessionStatus = sessionRows[0]?.status ?? null;
-      await client.query(
-        `UPDATE workflow.workflow_runs SET status = 'running' WHERE id = $1`,
-        [body.sessionId],
-      );
+      // the session has to be reopened too. No backdating — only its status
+      // matters here — but the same whole-branch write, for the same reason.
+      await reopen(body.sessionId, null);
 
       // idleMinutes=0 so the session just created is a candidate; the default 30
       // would exclude it and this whole section would assert over an empty list.
@@ -382,34 +487,88 @@ export default {
             },
       );
     } finally {
-      // Put the row back exactly as it was, whatever happened above. This runs
-      // against the agent's live database, and a probe that leaves a turn
-      // permanently open would hand every later reader a wedged session that
-      // never existed.
-      if (original !== null) {
-        await client
-          .query(
-            `UPDATE workflow.workflow_runs SET completed_at = $2, started_at = $3, status = $4 WHERE id = $1`,
-            [original.id, original.completed_at, original.started_at, original.status],
-          )
-          .catch(() => {});
-        if (sessionStatus !== null) {
-          await client
-            .query(`UPDATE workflow.workflow_runs SET status = $2 WHERE id = $1`, [
-              body.sessionId,
-              sessionStatus,
-            ])
-            .catch(() => {});
-        }
-        restored = true;
+      for (const id of held.keys()) {
+        restoreOutcomes.push(await release(id).catch((error) => `${id.slice(0, 12)}…=error:${error.message}`));
       }
+
+      /*
+       * The post-condition, asserted rather than assumed.
+       *
+       * Both halves of the union's contract, over the WHOLE table rather than
+       * only the rows this probe touched — the point is that the database eve
+       * boots against is readable, and a probe is not the only thing that can
+       * make it otherwise. Upstream's `run_started` transition is the one of
+       * four that carries no `notInArray(status, TERMINAL_WORKFLOW_RUN_STATUSES)`
+       * guard, so a plain race mints the first shape with no probe involved.
+       *
+       * Deliberately NOT asserted: `completed` without output_cbor, or `failed`
+       * without error_cbor. Those are rejected by the union too, but payloads
+       * can legitimately live outside the column depending on the resolveData
+       * path, and a check that fires on a healthy database is worse than no
+       * check. These two shapes need no such qualification.
+       */
+      const { rows: poisoned } = await client
+        .query(
+          `SELECT id, status FROM workflow.workflow_runs
+            WHERE (status IN ('pending', 'running')
+                    AND (completed_at IS NOT NULL OR output_cbor IS NOT NULL OR error_cbor IS NOT NULL))
+               OR (status IN ('completed', 'failed', 'cancelled') AND completed_at IS NULL)`,
+        )
+        .catch(() => ({ rows: [] }));
+      leftPoisoned = poisoned.map((r) => `${r.id} (${r.status})`);
+
+      // And that the fixture itself is gone: no row this probe reopened may
+      // still be sitting in the backdated `running` state it was put into, which
+      // the sweep would otherwise report as a wedged turn forever.
+      for (const [id, before] of held) {
+        const { rows } = await client
+          .query(`SELECT status, started_at FROM workflow.workflow_runs WHERE id = $1`, [id])
+          .catch(() => ({ rows: [] }));
+        const now = rows[0];
+        if (!now) continue;
+        const backdatedStill =
+          now.status === "running" &&
+          before.started_at !== null &&
+          now.started_at?.getTime?.() !== before.started_at?.getTime?.();
+        if (backdatedStill) leaked.push(id);
+      }
+
       await client.end().catch(() => {});
     }
 
+    /*
+     * Reported, not asserted.
+     *
+     * `engine-settled-it` is a correct outcome, not a failure: the turn is
+     * expected to finish inside the window this probe holds it open, and when it
+     * does, the engine's row is the right one to keep. An earlier version
+     * asserted `restored` here and went red in CI for doing exactly the right
+     * thing. What matters is not who won the race but whether the row that came
+     * out of it is readable — which is the next two assertions.
+     */
+    t.note(`restore: ${restoreOutcomes.join(", ") || "(nothing held)"}`);
+
     t.ok(
-      restored,
-      "the reopened turn row was restored, so the fixture leaves nothing behind",
-      restored ? {} : { expected: "the original completed_at and status put back", actual: "not restored" },
+      leftPoisoned.length === 0,
+      "every run row still satisfies its status branch, so the database this probe ran against can still boot",
+      leftPoisoned.length === 0
+        ? {}
+        : {
+            expected:
+              "0 rows that are pending/running with a terminal payload, or terminal without completed_at",
+            actual: `${leftPoisoned.length}: ${leftPoisoned.slice(0, 5).join(", ")} — world.start() will throw on this database until the row is repaired (docs/troubleshooting.mdx)`,
+          },
+    );
+
+    t.ok(
+      leaked.length === 0,
+      "and no row is left holding this probe's fixture, which the sweep would report as a wedged turn forever",
+      leaked.length === 0
+        ? {}
+        : {
+            expected: "0 reopened rows still running with the backdated started_at",
+            actual: `${leaked.length}: ${leaked.slice(0, 5).join(", ")}`,
+          },
     );
   },
 };

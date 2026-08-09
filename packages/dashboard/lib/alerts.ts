@@ -49,10 +49,11 @@
 
 import { dailySpendCap } from "./budget-env";
 import { query } from "./db";
+import { STUCK_TURN_MS } from "./facts";
 import { freshFacts } from "./metrics";
 import { getMonitorSummary } from "./monitors";
 import { getSchedules } from "./schedules";
-import { concerns, listSandboxes } from "./sandboxes";
+import { ORPHAN_AFTER_MS, concerns, listSandboxes } from "./sandboxes";
 
 export type AlertState = "ok" | "firing" | "unknown";
 export type Severity = "page" | "warn" | "info";
@@ -77,7 +78,23 @@ export const THRESHOLDS = {
   failureRate: 0.1,
   latencyP95Ms: 60_000,
   wedgedSessions: 1,
-  sandboxLongLivedHours: 1,
+  /**
+   * DERIVED, not typed. This was a literal `1` while lib/sandboxes.ts:294 held
+   * its own `ORPHAN_AFTER_MS = 60 * 60 * 1000`, and the two were kept in step
+   * only by an assertion in test/alerts-evaluate.test.mjs that they matched.
+   *
+   * That is the same split the wedge threshold had — a test can prove two
+   * numbers are equal today, it cannot make them equal tomorrow. The number
+   * that DECIDES is ORPHAN_AFTER_MS: `concerns()` filters on it (sandboxes.ts:321)
+   * and this alert only counts the rows that filter returned. Everything this
+   * file prints about the limit is therefore the filter's own number, so raising
+   * ORPHAN_AFTER_MS to 90 minutes can no longer leave the page stating an hour
+   * while showing sandboxes it stopped flagging until ninety.
+   *
+   * STUCK_TURN_MS is shared out of lib/facts.ts for exactly this reason, and the
+   * same rule applies here: one definition, every reader imports it.
+   */
+  sandboxLongLivedHours: ORPHAN_AFTER_MS / 3_600_000,
   scheduleFailingStreak: 3,
 } as const;
 
@@ -260,7 +277,11 @@ export async function evaluateAlerts(): Promise<AlertResult[]> {
       detail:
         long.length > 0
           ? `${long.length} sandbox${long.length === 1 ? " has" : "es have"} been up over ${THRESHOLDS.sandboxLongLivedHours}h. eve keeps one container per session and applies no idle timeout, so they accumulate until something stops them.`
-          : "No sandbox has been up longer than an hour.",
+          : // The passing sentence spelled the limit out in English while the
+            // firing one above it read the constant, so this line was the last
+            // place on the page that could still contradict the filter: move
+            // ORPHAN_AFTER_MS and it would go on naming sixty minutes.
+            `No sandbox has been up longer than ${THRESHOLDS.sandboxLongLivedHours}h.`,
       threshold: `under ${THRESHOLDS.sandboxLongLivedHours}h`,
       href: "/sandboxes",
     });
@@ -330,6 +351,19 @@ function unknownFrom(id: string, title: string, severity: Severity, reason: unkn
 
 /* -------------------------------------------------------------------------- */
 
+/**
+ * "1 hour", "15 minutes" — the shared threshold, in words, so the prose cannot
+ * drift from the number the query uses.
+ */
+function describeMs(ms: number): string {
+  const minutes = Math.round(ms / 60_000);
+  if (minutes % 60 === 0) {
+    const hours = minutes / 60;
+    return `${hours} hour${hours === 1 ? "" : "s"}`;
+  }
+  return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+}
+
 async function wedged(): Promise<AlertResult> {
   try {
     const [row] = await query<{ n: string }>(
@@ -358,24 +392,78 @@ async function wedged(): Promise<AlertResult> {
           -- carries the same conversion because "the CLI port of this file hit
           -- it for real: a session quiet for three hours looked five hours in
           -- the future and the sweep returned nothing".
-          AND started_at < (now() AT TIME ZONE 'utc') - interval '15 minutes'`,
+          --
+          -- The threshold is the SHARED one, not a number typed here. It was
+          -- a literal 15 minutes while facts.sql, lib/fleet.ts and the
+          -- wedged outcome all use STUCK_TURN_MS = 1 hour, so three surfaces
+          -- disagreed about the same turn: this alert counted turns the fleet
+          -- banner called healthy, and its own look-at-these link, which
+          -- filters the sessions list on the wedged outcome, led to a shorter
+          -- list than the number it had just reported.
+          AND started_at < (now() AT TIME ZONE 'utc') - make_interval(secs => $1)`,
+      [STUCK_TURN_MS / 1000],
     );
-    const n = Number(row?.n ?? 0);
-    return {
-      id: "wedged",
-      title: "Wedged turns",
-      severity: "page",
-      state: n >= THRESHOLDS.wedgedSessions ? "firing" : "ok",
-      detail:
-        n > 0
-          ? `${n} turn${n === 1 ? "" : "s"} started over 15 minutes ago and never finished. Nothing in eve notices or retries these.`
-          : "Every turn that started has finished or is still within its first 15 minutes.",
-      threshold: "none stalled past 15 minutes",
-      href: "/sessions?outcome=wedged",
-    };
+    return wedgedAlert(Number(row?.n ?? 0));
   } catch (error) {
     return unknownFrom("wedged", "Wedged turns", "page", error);
   }
+}
+
+/**
+ * The wedge count, turned into a state and a sentence by ONE condition.
+ *
+ * This was two. The state came from `n >= THRESHOLDS.wedgedSessions` and the
+ * prose from `n > 0` — lib/alerts.ts:392 and :394 as this file stood before the
+ * change, checked against `git show HEAD:` rather than remembered. They are
+ * the same test only while the threshold is exactly 1 — which it is, so the bug
+ * was invisible and would have appeared the moment anyone tuned the number.
+ * With a threshold of 3 and two wedged turns the alert said `ok` while printing,
+ * word for word, the sentence it prints when it fires: "2 turns started over 1
+ * hour ago and never finished. Nothing in eve notices or retries these." An
+ * operator reading a green row and a paging sentence has to guess which half to
+ * believe.
+ *
+ * `firing` is now computed once and the prose branches on that variable rather
+ * than re-deriving the question, so the two cannot disagree again.
+ *
+ * The below-threshold sentence is NOT the zero sentence. Collapsing them would
+ * have fixed the contradiction by inventing a different lie — "every turn that
+ * started has finished" is false when two are stalled and the alert simply is
+ * not paging about them yet. So there are three sentences behind two states: it
+ * is fired, it is stalled but under the bar, or there is nothing stalled.
+ *
+ * `threshold` is a parameter, defaulted to the shipped one, purely so a test can
+ * exercise a value other than 1 — the configuration in which the old split was
+ * observable. Nothing in the product passes it.
+ */
+export function wedgedAlert(n: number, threshold: number = THRESHOLDS.wedgedSessions): AlertResult {
+  const stuckLabel = describeMs(STUCK_TURN_MS);
+  const firing = n >= threshold;
+  const stalled = `${n} turn${n === 1 ? "" : "s"} started over ${stuckLabel} ago and never finished.`;
+  return {
+    id: "wedged",
+    title: "Wedged turns",
+    severity: "page",
+    state: firing ? "firing" : "ok",
+    detail: firing
+      ? `${stalled} Nothing in eve notices or retries these.`
+      : n > 0
+        ? `${stalled} That is under the ${threshold} it takes to fire, but nothing in eve notices or retries them either.`
+        : `Every turn that started has finished or is still within its first ${stuckLabel}.`,
+    // Derived from `threshold`, not hardcoded. alerts-panel.tsx:51 renders this
+    // as "healthy: <text>", so it states the condition under which the row is
+    // green — and a fixed "none stalled" is only that condition while the
+    // threshold is 1. At 3, `wedgedAlert(2, 3)` rendered state `ok` and
+    // "healthy: none stalled past 1 hour" directly above a detail line reading
+    // "2 turns started over 1 hour ago and never finished". Fixing the earlier
+    // state/prose split moved the contradiction into this field rather than
+    // removing it; the sweep never reads `threshold`, so nothing caught it.
+    threshold:
+      threshold === 1
+        ? `none stalled past ${stuckLabel}`
+        : `under ${threshold} stalled past ${stuckLabel}`,
+    href: "/sessions?outcome=wedged",
+  };
 }
 
 async function dailySpend(): Promise<{ total: number; unpriced: string[]; unpricedTurns: number }> {
@@ -394,7 +482,45 @@ async function dailySpend(): Promise<{ total: number; unpriced: string[]; unpric
    * cheap: a no-op refresh is ~20ms against a 60s default loop interval.
    */
   await freshFacts();
-  const rows = await query<{ model: string | null; priced: boolean; cost: string | null; n: string }>(
+  /**
+   * `priced` IS NOT A BOOLEAN. It is a three-state column and this loop read it
+   * as a two-way branch.
+   *
+   * sql/facts.sql:155-158 says what the three states mean, and sql/facts.sql:515
+   * is where they are written: `CASE WHEN model IS NULL THEN NULL ELSE rate IS
+   * NOT NULL END`. TRUE the catalog priced it, FALSE the catalog has no entry for
+   * the model that ran, NULL no model call happened at all — a turn that failed,
+   * was cancelled, or was stopped by the budget before it reached a provider.
+   *
+   * `if (r.priced) … else …` put that third state in the `else`, so every turn
+   * that never reached a provider was counted as UNPRICED SPEND. Two things came
+   * out of it, both wrong in the loud direction:
+   *
+   *   - `unpriced_spend` fires. Its own comment two hundred lines up says one
+   *     unpriced turn is enough, so a single failed turn — on an install where
+   *     every model that actually ran is priced — is a standing `firing` row the
+   *     operator can do nothing about.
+   *   - The sentence has an empty parenthetical. Those rows group under a NULL
+   *     `model` (same CASE: NULL priced only ever happens with a NULL model), so
+   *     the `r.model !== null` guard below correctly refuses to name them and the
+   *     prose renders "62 turns today ran a model with no catalog price ()."
+   *     Reproduced against the stub pool before this fix, verbatim.
+   *
+   * Not a rare shape either: on the seeded month app/page.tsx:35 describes, 62 of
+   * 1,922 turns never called a model, so this alert would have stood permanently
+   * red on a stack where nothing was actually mispriced.
+   *
+   * So the branch is explicit on all three. NULL is in neither total: it is not
+   * spend, and it is not a missing price. `no_model_call` is already counted, by
+   * name, in the turn-failure-rate check at the top of this file — which is where
+   * an operator can act on it.
+   */
+  const rows = await query<{
+    model: string | null;
+    priced: boolean | null;
+    cost: string | null;
+    n: string;
+  }>(
     `SELECT model, priced, sum(cost_usd)::text AS cost, count(*)::text AS n
        FROM evestack.fact_turn
       WHERE created_at >= date_trunc('day', now())
@@ -404,11 +530,12 @@ async function dailySpend(): Promise<{ total: number; unpriced: string[]; unpric
   const unpriced: string[] = [];
   let unpricedTurns = 0;
   for (const r of rows) {
-    if (r.priced) total += Number(r.cost ?? 0);
-    else {
+    if (r.priced === true) total += Number(r.cost ?? 0);
+    else if (r.priced === false) {
       unpricedTurns += Number(r.n ?? 0);
       if (r.model !== null && !unpriced.includes(r.model)) unpriced.push(r.model);
     }
+    // r.priced === null — no model call. Deliberately in neither total.
   }
   return { total, unpriced, unpricedTurns };
 }

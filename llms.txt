@@ -113,9 +113,19 @@ on advertising them.
 - [CLI](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/cli.mdx)
 - [MCP](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/mcp.mdx)
 - [Troubleshooting](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/troubleshooting.mdx)
+- [Operations](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/operations.mdx)
+- [Support](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/support.mdx)
 
 ## Repository
 
+The changelog is grouped by **package**, not by date: seven npm packages and one container
+image ship from this repository and each is versioned independently, so "the latest evestack
+release" is not a thing that exists. A version heading opens with the git tag that release
+would carry (`create-evestack@0.8.0`, `@evestack/dashboard@0.2.0`) and then the date — but only
+four tags were ever cut, so most headings name a tag that does not exist. Do not report a
+version as tagged, or as released, on the strength of a heading alone.
+
 - [README](https://github.com/SammyTourani/evestack/blob/main/README.md)
+- [CHANGELOG](https://github.com/SammyTourani/evestack/blob/main/CHANGELOG.md)
 - [CONTRIBUTING](https://github.com/SammyTourani/evestack/blob/main/CONTRIBUTING.md)
 - [SECURITY](https://github.com/SammyTourani/evestack/blob/main/SECURITY.md)

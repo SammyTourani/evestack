@@ -28,7 +28,7 @@
 // module holds the arithmetic behind every tile on the front door — the part
 // most worth being able to run under `node --test` without one. Same reason
 // components/ui/format.ts gives for its own imports.
-import { runMetricQuery, type MetricResult } from "../lib/metrics";
+import { MetricQueryError, runMetricQuery, type MetricResult } from "../lib/metrics";
 
 /** Windows the overview offers, in hours. Matches lib/monitors.ts's set. */
 export const OVERVIEW_WINDOWS = [1, 6, 12, 24, 24 * 7, 24 * 30] as const;
@@ -224,7 +224,10 @@ export async function stacked(
       dimensions: [dimension],
       timeDimension: { from: window.from, to: window.to, granularity: window.granularity },
     });
-  } catch {
+  } catch (error) {
+    // Same rule as `ranked` below: a query this file built wrong is a bug and
+    // must be seen; a database that is unreachable degrades to an empty chart.
+    if (error instanceof MetricQueryError) throw error;
     return { series: [], truncated: false };
   }
 
@@ -306,8 +309,22 @@ export async function ranked(
       // no `agg_measure` key to sort on.
       orderBy: [{ field: valueKey, direction: "desc" }],
       limit: options.limit ?? 8,
+      // A bounded ordered list is what this function IS, so it says so and the
+      // catalog can keep refusing high-cardinality dimensions on chart axes.
+      // Without it /costs' "most expensive sessions" compiled to a throw.
+      topN: true,
     });
-  } catch {
+  } catch (error) {
+    // A malformed query is a bug in this file, not a condition of the data, and
+    // returning [] for one renders "Nothing to rank" — indistinguishable from a
+    // quiet month. That is how the /costs panel stayed empty on every install
+    // since it shipped: the dimension was refused, the error became an empty
+    // array, and the UI had a sentence ready for it.
+    //
+    // Runtime failures still degrade, because a chart is not worth taking a page
+    // down for. MetricQueryError is deterministic and reachable in CI, so it is
+    // raised where someone will see it.
+    if (error instanceof MetricQueryError) throw error;
     return [];
   }
 

@@ -137,7 +137,19 @@ async function decompose(from: string, to: string): Promise<Decomposition> {
   for (const r of rows) {
     const model = typeof r.model === "string" ? r.model : null;
     const turns = n(r.turns);
-    if (r.priced !== true) {
+    // `priced` has THREE states, and `!== true` folded two of them together.
+    // sql/facts.sql:155 says it outright: TRUE priced, FALSE the catalog has no
+    // entry, NULL no model call happened at all. A turn that failed before it
+    // reached a provider is NULL, and counting it as unpriced spend produced the
+    // warning above this table — "N turns ran a model with no catalog price ()"
+    // — with an empty parenthetical, because a turn that called no model has no
+    // model name to list. The empty brackets were the visible tell.
+    //
+    // NULL belongs in neither total: nothing was spent, and nothing is unknown.
+    // lib/alerts.ts:522-527 was corrected the same way; this is the surface a
+    // user actually reads.
+    if (r.priced === null || r.priced === undefined) continue;
+    if (r.priced === false) {
       unpricedTurns += turns;
       if (model !== null && !unpricedModels.includes(model)) unpricedModels.push(model);
       continue;

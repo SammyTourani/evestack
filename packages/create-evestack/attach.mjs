@@ -25,7 +25,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { projectNameFor } from "./create.mjs";
 import {
   C, DASHBOARD_IMAGE, detectPm, dim, freePort, makePrompter, ok, packageVersion,
-  REPO, say, shellQuote, step, templateDir, warn,
+  REPO, say, shellQuote, step, templateDir, warn, writeSecretFile,
 } from "./shared.mjs";
 
 /**
@@ -410,7 +410,7 @@ function buildPlan({
   const plan = {
     target, pm, envFileName, port, dashboardPort, agentPort,
     adds: [], changes: [], skips: [], manual: [], notes: [], alerts: [],
-    dbUrl: null, composeFile: null, reusedCompose: null,
+    dbUrl: null, composeFile: null, reusedCompose: null, ingestToken: null,
   };
   const add = (path, what, undo, write) => plan.adds.push({ path, what, undo, write });
   const change = (path, what, undo, write) => plan.changes.push({ path, what, undo, write });
@@ -604,6 +604,32 @@ function buildPlan({
   }
 
   // ---- instrumentation -----------------------------------------------------
+  //
+  // THE TOKEN THE PROJECT ALREADY HAS WINS, and this is read before the branches
+  // below because every one of them ends in a `docker run` that has to name it.
+  //
+  // What used to happen: the token was minted inside the `wantTraces` branch and
+  // nowhere else, so a second attach against a project that already had one
+  // disagreed with itself two ways. Both reproduced against a temp project:
+  //
+  //   instrumentation.ts deleted and attach re-run — the branch mints a NEW
+  //   token; the env block that would carry it is dropped by the `!env.has(key)`
+  //   filter at the env section below, so .env.local keeps the OLD value while
+  //   the printed `docker run` gets the new one. printSummary then states, in
+  //   writing, "That token is the same one written to .env.local". It was not.
+  //
+  //   instrumentation.ts present and something else left to write — the branch
+  //   never runs, plan.ingestToken stays null, and dashboardRunCommand omits
+  //   `-e EVESTACK_INGEST_TOKEN` entirely while the agent's env file has one.
+  //
+  // Either way the two halves hold different values, and the dashboard's
+  // ingestAuthorized() (packages/dashboard/lib/auth.ts:337) falls back to session
+  // auth when the token does not match — which an OTLP exporter cannot satisfy.
+  // @vercel/otel treats the resulting 401 as a successful export, so the only
+  // symptom is a Traces tab that stays empty forever.
+  const existingToken = env.get("EVESTACK_INGEST_TOKEN");
+  if (existingToken) plan.ingestToken = existingToken;
+
   if (existingInstrumentation) {
     plan.skips.push([`agent/${existingInstrumentation}`, "you already have one — evestack does not overwrite it"]);
   } else if (wantTraces) {
@@ -621,35 +647,65 @@ function buildPlan({
       "rm agent/instrumentation.ts",
       () => writeFileSync(join(target, "agent", "instrumentation.ts"), instrumentation),
     );
-    // Generated here, and it has to be, because there is no working alternative:
-    // the dashboard's ingest route takes this shared secret or a session cookie,
-    // and an OTLP exporter cannot hold a session. Unset on both sides, every span
-    // POST is a 401 — which @vercel/otel reports to the agent as a successful
-    // export, so the only symptom is a permanently empty Traces tab.
+    // Minted only when the project has none, because there is no working
+    // alternative to having one: the dashboard's ingest route takes this shared
+    // secret or a session cookie, and an OTLP exporter cannot hold a session.
+    // Unset on both sides, every span POST is a 401 — which @vercel/otel reports
+    // to the agent as a successful export, so the only symptom is a permanently
+    // empty Traces tab.
     //
     // Unlike `create-evestack`, attach writes no compose file for the dashboard,
     // so nothing carries this value across for you: the dashboard is started from
     // a clone with its own .env.local. printSummary() therefore echoes the line to
     // paste, which is the one manual step this secret costs.
-    plan.ingestToken = randomBytes(32).toString("hex");
+    plan.ingestToken ??= randomBytes(32).toString("hex");
     envAdditions.push(
       ["", ""],
       ["", "# Dashboard trace export — the dashboard's own ingest route, not OTLP 4318"],
       ["EVESTACK_DASHBOARD_URL", dashboardIngest(dashboardPort)],
-      ["", "# The exporter sends this as the `x-evestack-ingest-token` header. The"],
-      ["", "# dashboard needs the SAME value in its own EVESTACK_INGEST_TOKEN, or it"],
-      ["", "# 401s every span while the rest of the dashboard keeps working."],
-      ["EVESTACK_INGEST_TOKEN", plan.ingestToken],
     );
+    if (existingToken) {
+      // The value is already in the file, so the block gets no key — and it must
+      // not get the three explanatory comment lines either. `pending` above drops
+      // keys the env file already has but keeps every comment, so pushing them
+      // would append a paragraph about a variable that is not underneath it.
+      plan.notes.push(
+        `Reusing the EVESTACK_INGEST_TOKEN already in ${envFileName} — the dashboard command ` +
+          `below carries that value, not a fresh one the agent would never send.`,
+      );
+    } else {
+      envAdditions.push(
+        ["", "# The exporter sends this as the `x-evestack-ingest-token` header. The"],
+        ["", "# dashboard needs the SAME value in its own EVESTACK_INGEST_TOKEN, or it"],
+        ["", "# 401s every span while the rest of the dashboard keeps working."],
+        ["EVESTACK_INGEST_TOKEN", plan.ingestToken],
+      );
+    }
   } else {
     plan.notes.push("Skipping trace export — the dashboard still reads sessions, cost and approvals from Postgres.");
   }
 
   // Generated unconditionally, unlike the ingest token: trace export is optional
   // and this is not. The dashboard fails closed — with EVESTACK_AUTH_USER or
-  // EVESTACK_AUTH_PASSWORD unset it answers 503 on every route, including the
-  // sign-in page, so the setup printed below would hand you a dashboard that
-  // cannot be opened at all.
+  // EVESTACK_AUTH_PASSWORD unset the setup printed below would hand you a
+  // dashboard nobody can sign in to.
+  //
+  // The MECHANISM, because this comment used to state it wrongly. It said "503
+  // on every route, including the sign-in page". FOUR path/method combinations
+  // are exceptions, not two routes, because proxy.ts gates the sign-in tier on
+  // the method rather than the path. Measured by importing
+  // packages/dashboard/proxy.ts with both variables deleted from process.env:
+  // `GET /signin`, `GET /api/auth/session`, `GET /api/auth/signout` and
+  // `GET /api/health` pass the gate; `GET /`, `/sessions`, `/api/health/detail`,
+  // `POST /signin`, `POST /api/auth/session`, `POST /api/auth/signout` and
+  // `POST /api/ingest/v1/traces` are all 503. Of the four that pass, the two
+  // /api/auth ones export POST only, so Next answers them with a bare 405, and
+  // /api/health's handler answers 503 `{"status":"unconfigured"}` on its
+  // own check, so the container still reports unhealthy. The sign-in page really
+  // does render — and renders no form at all, only the error
+  // (packages/dashboard/app/signin/page.tsx branches on authConfigured()), which
+  // is why the conclusion above survives the correction and the reason for it
+  // does not.
   //
   // Deliberately NOT written to the agent's env file. attach never wires
   // httpBasic into an existing project's channel — that project owns its own
@@ -712,7 +768,17 @@ function buildPlan({
       undo: existed ? `delete the "evestack attach" block from ${envFileName}` : `rm ${envFileName}`,
       write: () => {
         const before = existed ? readFileSync(envPath, "utf8") : "";
-        writeFileSync(envPath, mergeEnvBlock(before, pending));
+        // 0600. This block carries a generated Postgres password and, when trace
+        // export is on, the ingest token — the two secrets the .gitignore line
+        // below exists for. git was the only reader being kept out; the file
+        // itself landed at the umask (0644 measured on this machine), so every
+        // other account on a shared box could read what git could not.
+        //
+        // This is the append path as well as the create path, so the chmod half
+        // of writeSecretFile() is the half that matters here: the file usually
+        // already exists, and `mode` on writeFileSync applies only at O_CREAT.
+        const warning = writeSecretFile(envPath, mergeEnvBlock(before, pending));
+        if (warning) plan.alerts.push(warning);
       },
     };
     (verb === "add" ? plan.adds : plan.changes).push(action);
@@ -829,7 +895,12 @@ function printSummary(plan) {
     // from one file; here there is no such file, and a dashboard whose
     // EVESTACK_INGEST_TOKEN differs from the agent's 401s every span without
     // either side saying so.
-    dim(`That token is the same one written to ${plan.envFileName}. Both sides need it byte for`);
+    //
+    // "in", not "written to": on a re-run the token is the one already in that
+    // file rather than one this run wrote, and the old wording asserted a match
+    // that the code was not making — see the note above the instrumentation
+    // section for the two ways it came apart.
+    dim(`That token is the same one in ${plan.envFileName}. Both sides need it byte for`);
     dim("byte: the agent sends it as `x-evestack-ingest-token`, and a mismatch is a 401 on");
     dim('every span that shows up only as a Traces tab stuck on "no traces yet".');
   }
@@ -994,6 +1065,42 @@ function composeService({ envFileName, port }) {
     # @evestack/memory later without a second container.
     image: pgvector/pgvector:pg17
     restart: unless-stopped
+    # Docker's json-file driver has NO max-size and NO max-file by default, and
+    # the line above is a promise to keep this container running for months. For
+    # those months the daemon appends to
+    # /var/lib/docker/containers/<id>/<id>-json.log with nothing rotating it, and
+    # a full disk stops this Postgres, which stops the agent's sessions.
+    #
+    # 10 MB × 3 files is a 30 MB ceiling. Override LOG_MAX_SIZE / LOG_MAX_FILE in
+    # the shell or a .env beside this file. Unprefixed on purpose: Compose
+    # interpolates both on the HOST before parsing, so neither reaches the
+    # container, and an EVESTACK_ name would claim the app reads it.
+    # The \`env_file: ${envFileName}\` below is the other mechanism, and what
+    # cannot serve here is that MECHANISM, not that file: env_file sets variables
+    # inside the container, and this ceiling is the daemon's. Compose separately
+    # auto-loads a \`.env\` beside this file for interpolation — so when
+    # ${envFileName} IS that \`.env\` (attach writes to it whenever an untracked
+    # one already exists), a LOG_MAX_SIZE line in it does apply, by interpolation.
+    #
+    # \`driver: json-file\` is stated rather than inherited. Without it the daemon's
+    # default driver is used, and which options are legal depends on the driver —
+    # max-size/max-file belong to json-file, so a host defaulting to journald or
+    # awslogs would not apply them. Naming it is what makes this ceiling mean the
+    # same thing on every machine.
+    #
+    # Written out rather than aliased from an \`x-logging\` anchor, which is what
+    # the two-service file \`evestack create\` writes uses. There is one service
+    # here, so an anchor would save nothing — and this same block is PRINTED for
+    # you to paste into a compose file you already own (attach's "Add Postgres
+    # yourself" branch). An alias whose anchor stayed behind in the terminal is
+    # not a missing log ceiling, it is a file that will not parse: Compose v5.1.0
+    # answers \`yaml: line N, column M: unknown anchor 'container-logs'
+    # referenced\` and refuses the whole project.
+    logging:
+      driver: json-file
+      options:
+        max-size: "\${LOG_MAX_SIZE:-10m}"
+        max-file: "\${LOG_MAX_FILE:-3}"
     environment:
       POSTGRES_USER: evestack
       POSTGRES_DB: evestack
@@ -1067,8 +1174,14 @@ ${composeService({ envFileName, port })}
  *
  * Everything the dashboard fails closed without is passed explicitly. It has no
  * usable default for any of them: EVESTACK_AUTH_* missing means 503 on every
- * route including the sign-in page, and EVESTACK_AGENT_URL defaults to
- * 127.0.0.1:2000, which inside a container is the container.
+ * request but four GETs — `GET /signin` renders the misconfiguration with no
+ * form on it, `GET /api/auth/session` and `GET /api/auth/signout` are POST-only
+ * routes and answer 405, and `GET /api/health` reaches its handler, which
+ * answers its own 503 `{"status":"unconfigured"}` — and EVESTACK_AGENT_URL
+ * defaults to 127.0.0.1:2000, which inside a container is the container. (This
+ * line used to say "503 on every route including the sign-in page", which is the
+ * one route the gate deliberately lets through; see the note beside
+ * plan.dashboardUser above for the measurement.)
  */
 function dashboardRunCommand(plan) {
   const lines = [
@@ -1090,6 +1203,18 @@ function dashboardRunCommand(plan) {
     // does unless this flag adds it, and there the agent is otherwise
     // unreachable from the container.
     "  --add-host host.docker.internal:host-gateway \\",
+    // The same 30 MB log ceiling both generated compose files carry, for the same
+    // reason: `docker run -d` with the default json-file driver rotates nothing,
+    // so a dashboard left up for months grows one unbounded
+    // /var/lib/docker/containers/<id>/<id>-json.log until the disk is full.
+    //
+    // `--log-driver json-file` is not redundant with the daemon default. Which
+    // `--log-opt` keys are legal depends on the driver, and max-size/max-file
+    // belong to json-file and local — a host whose daemon defaults to journald
+    // or awslogs would not quietly ignore them, it would refuse the run. Naming
+    // the driver is what makes this command mean the same thing on every host,
+    // which is the same reason both compose files state it instead of inheriting.
+    "  --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 \\",
     `  -e WORKFLOW_POSTGRES_URL='${fromContainer(plan.dbUrl)}' \\`,
     // `eve dev` listens on 2000 and auto-increments if that port is taken, so
     // this is the first free port from 2000 at the time attach ran — or
@@ -1099,7 +1224,44 @@ function dashboardRunCommand(plan) {
     `  -e EVESTACK_AUTH_USER=${plan.dashboardUser} \\`,
     `  -e EVESTACK_AUTH_PASSWORD='${plan.dashboardPassword}' \\`,
   ];
-  if (plan.ingestToken) lines.push(`  -e EVESTACK_INGEST_TOKEN=${plan.ingestToken} \\`);
+  // The third path 30b4de4 missed.
+  //
+  // That commit gave the mount and the variable that points at it to the repo's
+  // own docker-compose.yml and to the compose file `create` generates
+  // (create.mjs:1268 and :1289). This `docker run` is the only other place a dashboard
+  // gets started by something in this repo, and it did not get either half — so
+  // an attached project's Skills page scanned the template skills baked into the
+  // image and reported on files nobody is running. lib/skills.ts's fallback
+  // always resolves inside the container, and the skill it finds there is called
+  // `memory-hygiene`, so the page looks like it is reading yours.
+  //
+  // Why that page and not another: eve advertises every skill in agent/skills/ to
+  // the model beside a `load_skill` tool, so anything in that directory can put
+  // instructions into a live turn without a human seeing them first. Scanning the
+  // wrong directory is a clean verdict about the wrong files.
+  //
+  // Read-only, matching both compose files: the dashboard has no reason to write
+  // here, and this container already holds a database URL and can start runs.
+  //
+  // Conditional, unlike the compose files — those are generated beside a template
+  // that always ships agent/skills, and attach wraps a project someone else laid
+  // out. `docker run -v` on a host path that does not exist CREATES it, root-owned
+  // on Linux, which is a directory attach would be adding to a project it promises
+  // only to add to reversibly. No directory, no mount: the page then says
+  // "bundled template" with the path, which is at least true.
+  const skillsDir = join(plan.target, "agent", "skills");
+  if (existsSync(skillsDir)) {
+    lines.push(
+      "  -e EVESTACK_SKILLS_DIR=/agent-skills \\",
+      `  -v ${shellQuote(skillsDir)}:/agent-skills:ro \\`,
+    );
+  }
+  // Quoted because this value stopped being ours. It used to be a freshly
+  // minted hex string, where quoting was cosmetic; now that attach reuses the
+  // token already in the project's .env.local, it is whatever the operator put
+  // there. A trailing comment comments out the line-continuation backslash and
+  // breaks the printed command; a value containing $(...) runs it.
+  if (plan.ingestToken) lines.push(`  -e EVESTACK_INGEST_TOKEN=${shellQuote(plan.ingestToken)} \\`);
   lines.push(`  ${DASHBOARD_IMAGE}`);
   return lines;
 }
@@ -1185,7 +1347,28 @@ function readEnvFiles(target) {
   for (const file of [".env", ".env.local"]) {
     const path = join(target, file);
     if (!existsSync(path)) continue;
-    for (const line of readFileSync(path, "utf8").split("\n")) {
+    // `/\r?\n/`, not `"\n"`, and the difference is a second database.
+    //
+    // In JavaScript `.` does not match CR and `$` without the `m` flag anchors
+    // to end of input, so against a CRLF file every line ends in a character
+    // the pattern cannot consume and NOTHING matches — this returned an empty
+    // Map for the whole file. Measured: 0 of 2 lines parsed on CRLF, 2 of 2 on
+    // LF. A .env written on Windows, or checked out with `core.autocrlf=true`,
+    // is enough.
+    //
+    // What an empty Map causes, in the two places it is read:
+    //   :420 `existingUrl` is undefined, so attach takes the else branch and
+    //        adds its own Postgres — the case the comment there says must not
+    //        happen, because "a second Postgres would split the session history
+    //        in half and neither half would be complete".
+    //   :703 every key looks absent, so the block appended to the env file
+    //        re-declares keys that are already in it — and later wins, so the
+    //        new container's URL silently overrides the project's real one.
+    //
+    // The sibling readers in evestack-cli/src/project.mjs and
+    // templates/default/scripts/checks.mjs `.trim()` each line and were never
+    // affected. This one matched the raw line.
+    for (const line of readFileSync(path, "utf8").split(/\r?\n/)) {
       const match = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$/.exec(line);
       if (!match) continue;
       merged.set(match[1], match[2].trim().replace(/^["']|["']$/g, ""));

@@ -1,5 +1,6 @@
 import { UNCONFIGURED_MESSAGE, authConfigured } from "@/lib/auth";
 import { query } from "@/lib/db";
+import { dashboardVersion } from "@/lib/version";
 
 export const dynamic = "force-dynamic";
 
@@ -22,8 +23,9 @@ export const dynamic = "force-dynamic";
  * anyone's data.
  *
  * Reporting unhealthy when auth is unconfigured is deliberate. The process is
- * up, but it is refusing every other request, and a container that answers "ok"
- * while serving nothing is how that misconfiguration survives to production.
+ * up, but the only thing it will serve is a sign-in page with no form on it, and
+ * a container that answers "ok" while serving nothing usable is how that
+ * misconfiguration survives to production.
  * An unhealthy HEALTHCHECK marks the container; it does not restart it, so this
  * surfaces the problem without a crash loop.
  */
@@ -32,7 +34,7 @@ export async function GET(): Promise<Response> {
 
   if (!authConfigured()) {
     return Response.json(
-      { ok: false, status: "unconfigured", error: UNCONFIGURED_MESSAGE },
+      { ok: false, status: "unconfigured", version: dashboardVersion(), error: UNCONFIGURED_MESSAGE },
       { status: 503, headers },
     );
   }
@@ -60,17 +62,18 @@ export async function GET(): Promise<Response> {
           ok: false,
           database: "connected",
           status: "schema-missing",
+          version: dashboardVersion(),
           error:
             "Postgres is reachable but has no agent schema. Run `npm run db:bootstrap` in your agent project.",
         },
         { status: 503, headers },
       );
     }
-    return Response.json({ ok: true, database: "connected" }, { headers });
+    return Response.json({ ok: true, database: "connected", version: dashboardVersion() }, { headers });
   } catch {
     // No error detail here. pg's messages carry the host, port and database
     // name from the connection string, and nothing authenticates this response.
     // The full message is on /api/health/detail.
-    return Response.json({ ok: false, database: "unreachable" }, { status: 503, headers });
+    return Response.json({ ok: false, database: "unreachable", version: dashboardVersion() }, { status: 503, headers });
   }
 }

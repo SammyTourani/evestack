@@ -29,7 +29,12 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
  * surface to get wrong.
  *
  * FAIL CLOSED. With EVESTACK_AUTH_PASSWORD unset the dashboard refuses every
- * request rather than serving one. There is deliberately no bypass flag: an
+ * request but four, and none of the four is useful without credentials. All are
+ * GET, because proxy.ts gates the sign-in tier on the method: `/signin` renders
+ * the error and no form; `/api/auth/session` and `/api/auth/signout` export POST
+ * only, so Next answers a bare 405; `/api/health` reaches its handler, which
+ * answers its own 503 `{"status":"unconfigured"}`. Everything else, every POST
+ * included, is 503. There is deliberately no bypass flag: an
  * escape hatch here is the thing people set once during setup and never unset,
  * and eve itself fails closed on every request including loopback. The 503 body
  * names the two variables to set, so the failure is self-diagnosing.
@@ -61,7 +66,9 @@ const COOKIE_VERSION = "v1";
 const DEFAULT_TTL_HOURS = 168;
 
 export const UNCONFIGURED_MESSAGE =
-  "This dashboard has no credentials configured, so it is refusing every request. " +
+  "This dashboard has no credentials configured, so it is refusing every request except the " +
+  "sign-in page — which renders no sign-in form until this is fixed, so there is nothing to " +
+  "sign in with. " +
   "Set EVESTACK_AUTH_USER and EVESTACK_AUTH_PASSWORD (the same pair the agent uses — " +
   "`create-evestack` generates them) and restart. Running without them would leave " +
   "every route, including the ones that start agent runs and approve tool calls, open " +
@@ -580,8 +587,29 @@ export function publicOrigin(request: Request): string {
  *
  * `//evil.example` and `/\evil.example` are both read as protocol-relative URLs
  * by browsers, so "starts with a slash" is not enough to keep a redirect local.
+ *
+ * ── and neither is checking the string you were handed ───────────────────────
+ *
+ * The WHATWG URL parser STRIPS tab, LF and CR from a URL before parsing it, so
+ * the string a browser resolves is not the string this function was given. That
+ * turned the two prefix checks above into a formality:
+ *
+ *   given                  guard returned         browser resolved to
+ *   "/\t/evil.example"     "/\t/evil.example"     https://evil.example
+ *   "/\n/evil.example"     "/\n/evil.example"     https://evil.example
+ *   "/\r/evil.example"     "/\r/evil.example"     https://evil.example
+ *
+ * Measured with Node's own WHATWG implementation. An attacker needed a link to
+ * `/signin?next=/%09/evil.example`, and the dashboard sent the operator off-site
+ * immediately after they typed the deployment password — the one moment a
+ * convincing clone is worth the most.
+ *
+ * Stripping first means the string validated is the string emitted. Doing it
+ * before every other check, so `//`, `/\` and the /signin loop all see the same
+ * normalised value.
  */
-export function safeNextPath(raw: string | null | undefined): string {
+export function safeNextPath(input: string | null | undefined): string {
+  const raw = typeof input === "string" ? input.replace(/[\t\n\r]/g, "") : input;
   if (!raw) return "/";
   if (!raw.startsWith("/")) return "/";
   if (raw.startsWith("//") || raw.startsWith("/\\")) return "/";

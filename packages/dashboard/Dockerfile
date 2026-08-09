@@ -187,7 +187,8 @@ EXPOSE 4000
 # tier (see lib/auth.ts `tierFor()`), because Docker's HEALTHCHECK has no
 # credential to present. It reports unhealthy when EVESTACK_AUTH_PASSWORD is
 # unset, which is exactly the signal you want: a dashboard that fails closed
-# looks broken in `docker ps` rather than looking fine and 503ing every request.
+# looks broken in `docker ps` rather than looking fine while 503ing everything
+# but a sign-in page it renders without a form.
 HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:4000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 

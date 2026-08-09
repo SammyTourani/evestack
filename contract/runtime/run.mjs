@@ -45,11 +45,16 @@
  *
  *   --require=postgres,agent   fail instead of skipping when these are missing
  *
- * Exit codes: 0 all probes passed · 1 a probe failed · 2 could not start.
+ * A selection that selects nothing is refused (exit 2), not reported green —
+ * see contract/runtime/lib/selection.mjs for the typo that motivated it.
+ *
+ * Exit codes: 0 all probes passed · 1 a probe failed · 2 could not start, or
+ * the flags could never have selected or required anything.
  */
 import { readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { USAGE_EXIT_CODE, emptySelectionError, requirementErrors } from "./lib/selection.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -124,13 +129,51 @@ async function loadProbes() {
 /* main                                                                        */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Write, and do not return until the bytes have left this process.
+ *
+ * Node's stdout is asynchronous when it is a pipe, so `write(text)` followed by
+ * `process.exit()` drops whatever is still buffered past the 64 KiB pipe
+ * buffer. See the long version of this in contract/run.mjs, where it was found:
+ * that runner's --format=json is 100 KB and arrived at its execFileSync
+ * consumer as 65258 bytes of unparseable JSON.
+ *
+ * This tier's report is smaller today — but it grows with every probe and every
+ * check, so the same bug is waiting rather than absent, and it would surface as
+ * "the runtime JSON is corrupt sometimes" long after anyone remembers why.
+ */
+function writeFlushed(stream, text) {
+  return new Promise((resolve) => {
+    // See contract/run.mjs:131 — waiting for the flush keeps this process alive
+    // long enough to receive EPIPE when a reader closes the pipe early, and an
+    // unhandled 'error' event is rethrown.
+    stream.once("error", resolve);
+    stream.write(text, resolve);
+  });
+}
+
 async function main() {
   const all = await loadProbes();
   const matched = only === null ? all : all.filter((p) => p.id.includes(only));
   const selected = exclude === null ? matched : matched.filter((p) => !p.id.includes(exclude));
 
+  // Refused BEFORE --list, not just before running: `--list --only=seem` used
+  // to print nothing and exit 0, which is the same lie in a quieter voice — an
+  // operator checking what a filter matches would conclude the tier is empty
+  // rather than that the filter is wrong.
+  const problems = [emptySelectionError({ all, matched, selected, only, exclude })].filter(Boolean);
+  if (problems.length === 0) problems.push(...requirementErrors({ required, all, selected, only, exclude }));
+  if (problems.length > 0) {
+    await writeFlushed(
+      process.stderr,
+      `\nruntime probes: nothing would have been verified.\n\n  ${problems.join("\n\n  ")}\n\n`,
+    );
+    process.exit(USAGE_EXIT_CODE);
+  }
+
   if (listOnly) {
-    for (const p of selected) process.stdout.write(`${p.id.padEnd(40)} needs: ${p.needs.join(", ")}\n`);
+    const lines = selected.map((p) => `${p.id.padEnd(40)} needs: ${p.needs.join(", ")}\n`);
+    await writeFlushed(process.stdout, lines.join(""));
     process.exit(0);
   }
 
@@ -192,20 +235,28 @@ async function main() {
     });
   }
 
+  const skipped = results.filter((r) => r.status === "skip").length;
   const report = {
     ok: results.every((r) => r.status !== "fail"),
     counts: {
       probes: results.length,
+      // `ran` is the number that actually means something and it was missing:
+      // a consumer reading `probes: 20, failed: 0` from --format=json cannot
+      // tell twenty passes from twenty skips, and eve-watch.yml:234 pastes this
+      // file straight into a pull-request body. Emitted separately from
+      // `probes` rather than replacing it, because that key is already in
+      // artifacts people compare across runs.
+      ran: results.length - skipped,
       failed: results.filter((r) => r.status === "fail").length,
-      skipped: results.filter((r) => r.status === "skip").length,
+      skipped,
       checks: results.reduce((n, r) => n + r.checks.filter((c) => !c.note).length, 0),
       failedChecks: results.reduce((n, r) => n + r.checks.filter((c) => !c.passed).length, 0),
     },
     probes: results,
   };
 
-  if (format === "json") process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-  else process.stdout.write(render(report));
+  if (format === "json") await writeFlushed(process.stdout, `${JSON.stringify(report, null, 2)}\n`);
+  else await writeFlushed(process.stdout, render(report));
 
   process.exit(report.ok ? 0 : 1);
 }
@@ -229,13 +280,22 @@ function render(report) {
     }
     out.push("");
   }
-  const { probes, failed, skipped, checks } = report.counts;
+  const { probes, ran, failed, skipped, checks } = report.counts;
   const skipNote = skipped > 0 ? `, ${skipped} skipped` : "";
-  out.push(
-    report.ok
-      ? `  ${probes - skipped} probes, ${checks} checks — all green${skipNote}`
-      : `  ${failed} of ${probes} probes failed${skipNote}`,
-  );
+  if (!report.ok) {
+    out.push(`  ${failed} of ${probes} probes failed${skipNote}`);
+  } else if (ran === 0) {
+    // The old line here was `0 probes, 0 checks — all green, 3 skipped`, and
+    // the words "all green" in it were doing real damage: an all-skipped run is
+    // a run that verified nothing, and it read as a pass at a glance and in
+    // every log grep. It stays exit 0 — ci.yml:216 deliberately runs the
+    // Postgres tier before the agent exists and needs the agent probes to skip
+    // — but it must not be able to be mistaken for a run that checked anything.
+    out.push(`  NOTHING RAN. ${skipped} of ${probes} probes selected, all skipped, 0 executed.`);
+    out.push("  This is not a green run: no check in this tier was evaluated.");
+  } else {
+    out.push(`  ${ran} probes, ${checks} checks — all green${skipNote}`);
+  }
   if (skipped > 0 && report.ok) {
     out.push("  A skipped probe checked nothing. In CI, pass --require to turn skips into failures.");
   }

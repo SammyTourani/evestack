@@ -92,6 +92,16 @@
 .danger:disabled { opacity: 0.6; cursor: default; }
 .cancel:hover { border-color: var(--accent); color: var(--accent); }
 
+/* The "showing the most recent 200 of N" line. Under the list, not above it:
+   the reader reaches it exactly when they run out of rows and start wondering
+   whether that was all of them. Same placement as the footnote in
+   app/integrations/page.tsx. */
+.note {
+  font-size: 12px;
+  margin: 12px 0 0;
+  max-width: 90ch;
+}
+
 .error {
   border: 1px solid var(--err, #d15b5b);
   border-radius: 6px;

@@ -26,15 +26,22 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ENTRY = join(dirname(fileURLToPath(import.meta.url)), "..", "index.mjs");
 
+/**
+ * Unix modes are the subject of three tests below and Windows does not have
+ * them: NTFS reports 0666 for everything Node can chmod, so an assertion on 0600
+ * there would fail against code that is behaving correctly.
+ */
+const POSIX = process.platform !== "win32";
+
 /** A minimal but real eve project: package.json with eve, and agent/agent.ts. */
-function eveProject({ git = false, envFiles = {} } = {}) {
+function eveProject({ git = false, envFiles = {}, skills = false, instrumentation = false } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "evestack-attach-writes-"));
   mkdirSync(join(dir, "agent"), { recursive: true });
   writeFileSync(
@@ -42,6 +49,16 @@ function eveProject({ git = false, envFiles = {} } = {}) {
     `${JSON.stringify({ name: "my-agent", version: "1.0.0", dependencies: { eve: "^0.30.8" } }, null, 2)}\n`,
   );
   writeFileSync(join(dir, "agent", "agent.ts"), 'export default defineAgent({ model: openai("gpt-5-mini") });\n');
+  if (skills) {
+    mkdirSync(join(dir, "agent", "skills", "my-own-skill"), { recursive: true });
+    writeFileSync(
+      join(dir, "agent", "skills", "my-own-skill", "SKILL.md"),
+      "---\ndescription: a skill that exists only in this project\n---\n\nDo the thing.\n",
+    );
+  }
+  // A project that already exports traces its own way. attach skips it, which is
+  // the branch the ingest token used to fall out of entirely.
+  if (instrumentation) writeFileSync(join(dir, "agent", "instrumentation.ts"), "export function register() {}\n");
   for (const [name, body] of Object.entries(envFiles)) writeFileSync(join(dir, name), body);
   if (git) {
     run(dir, "git", ["init", "-q", "."]);
@@ -233,4 +250,246 @@ test("--dry-run writes nothing, and --help detects nothing", () => {
   assert.equal(help.status, 0, `${help.stdout}${help.stderr}`);
   assert.match(help.stdout, /evestack attach —/);
   assert.doesNotMatch(help.stdout, /Write these changes/);
+});
+
+/**
+ * A .env written on Windows used to be read as if it were empty.
+ *
+ * `readEnvFiles` split on "\n" and matched each line against a regex ending in
+ * `$`. With no `m` flag `$` anchors to end of input and `.` cannot match CR, so
+ * every line of a CRLF file failed and the function returned an empty Map —
+ * measured at 0 of 2 lines. `core.autocrlf=true` is enough to produce one.
+ *
+ * The consequence is not cosmetic. attach reads that Map to answer "does this
+ * project already have a database?", and an empty Map says no, so it attaches a
+ * SECOND Postgres to a project that already had one and appends a
+ * WORKFLOW_POSTGRES_URL that wins over the real one — the agent then writes its
+ * sessions to a new empty database while the operator's own sits untouched.
+ * attach.mjs:424 says in as many words that this must not happen.
+ */
+test("a CRLF env file is read, so attach does not add a second database", () => {
+  const dir = eveProject({
+    envFiles: {
+      ".env.local":
+        "WORKFLOW_POSTGRES_URL=postgres://me:mypw@db.internal:5432/prod\r\n" +
+        "OPENAI_API_KEY=sk-real\r\n",
+    },
+  });
+  const result = attach(dir);
+  assert.equal(result.status, 0, result.stderr);
+
+  const env = read(dir, ".env.local");
+  const urls = [...env.matchAll(/^\s*WORKFLOW_POSTGRES_URL=/gm)].length;
+  assert.equal(urls, 1, `attach re-declared the database URL:\n${env}`);
+  assert.match(env, /db\.internal:5432\/prod/, "the project's own database URL must survive");
+
+  const compose = read(dir, "docker-compose.yml");
+  assert.ok(
+    compose === null || !/\bpostgres:\b/.test(compose),
+    `attach added a second Postgres to a project that already had one:\n${compose}`,
+  );
+});
+
+/* -------------------------------------------------------------------------- */
+/* the mode the credentials land at                                            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * git was the only reader being kept out.
+ *
+ * Everything above is about which FILE the secrets go in and whether git would
+ * carry it. None of it looked at the mode, and the mode was whatever the umask
+ * said: measured at `-rw-r--r--` on a machine with the default umask 022, for a
+ * file holding a Postgres password and a trace-ingest token. On a shared box
+ * that is every other account on it.
+ *
+ * The append path is the one that needs the chmod rather than the `mode` option:
+ * writeFileSync passes `mode` to open(2) with O_CREAT, so it applies on creation
+ * and is silently ignored when the file already exists — which is the normal
+ * case here, because attach adds its block to a file the project may already
+ * have.
+ */
+test("the env file attach writes is owner-only", { skip: POSIX ? false : "POSIX modes only" }, () => {
+  const dir = eveProject();
+  const result = attach(dir);
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+  const mode = statSync(join(dir, ".env.local")).mode & 0o777;
+  assert.equal(mode.toString(8), "600", `.env.local is mode ${mode.toString(8)}`);
+});
+
+test("appending to an existing 0644 env file tightens it", { skip: POSIX ? false : "POSIX modes only" }, () => {
+  // The pre-existing file is the reason the `mode` option alone is not enough,
+  // and a file attach cannot chmod is not a reason to abandon the run — so this
+  // also pins that the write itself still lands.
+  const dir = eveProject({ envFiles: { ".env.local": "LOG_LEVEL=debug\n" } });
+  chmodSync(join(dir, ".env.local"), 0o644);
+  const result = attach(dir);
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+
+  const env = read(dir, ".env.local");
+  assert.match(env, /^LOG_LEVEL=debug$/m, "the project's own line was lost");
+  assert.ok(passwordIn(env), "nothing was appended");
+  const mode = statSync(join(dir, ".env.local")).mode & 0o777;
+  assert.equal(mode.toString(8), "600", `an existing env file stayed at ${mode.toString(8)}`);
+});
+
+test("the compose file is left committable, not tightened", { skip: POSIX ? false : "POSIX modes only" }, () => {
+  // Tightening carries a claim — "this holds a secret" — and the compose file
+  // deliberately does not: the password reaches the container through env_file.
+  // A 0600 file that is meant to be committed would say the opposite.
+  const dir = eveProject();
+  assert.equal(attach(dir).status, 0);
+  writeFileSync(join(dir, "reference.txt"), "");
+  const reference = statSync(join(dir, "reference.txt")).mode & 0o777;
+  const compose = statSync(join(dir, "docker-compose.yml")).mode & 0o777;
+  assert.equal(
+    compose,
+    reference,
+    `docker-compose.yml is ${compose.toString(8)} and an ordinary file here is ${reference.toString(8)}`,
+  );
+});
+
+/* -------------------------------------------------------------------------- */
+/* the dashboard command                                                       */
+/* -------------------------------------------------------------------------- */
+
+/** The `docker run` block attach prints, as one string. */
+function dashboardCommand(stdout) {
+  const start = stdout.indexOf("docker run -d --name");
+  assert.notEqual(start, -1, `no docker run command was printed:\n${stdout}`);
+  const end = stdout.indexOf("evestack-dashboard:", start);
+  return stdout.slice(start, stdout.indexOf("\n", end));
+}
+
+/**
+ * 30b4de4 fixed two of the three places a dashboard gets started.
+ *
+ * It gave the skills mount and EVESTACK_SKILLS_DIR to the repo's own
+ * docker-compose.yml and to the compose file `create` generates, and this
+ * `docker run` — the only other one — got neither. Without them lib/skills.ts
+ * falls back to the template skills baked into the image, which ALWAYS resolves
+ * in a container, so the Skills page scanned a copy of `memory-hygiene` frozen
+ * at image build time while looking like it was reading the project's own.
+ *
+ * That page exists because eve advertises every skill in agent/skills/ to the
+ * model beside a `load_skill` tool, so a scanner pointed at the wrong directory
+ * returns a clean verdict about files nobody is running.
+ */
+test("the printed dashboard command mounts the project's own skills", () => {
+  const dir = eveProject({ skills: true });
+  const result = attach(dir);
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+  const command = dashboardCommand(result.stdout);
+  assert.match(command, /-e EVESTACK_SKILLS_DIR=\/agent-skills/, command);
+  assert.ok(
+    command.includes(`${join(dir, "agent", "skills")}:/agent-skills:ro`),
+    `the mount is missing or not read-only:\n${command}`,
+  );
+});
+
+test("no agent/skills means no mount, rather than a directory docker creates", () => {
+  // `docker run -v` on a host path that does not exist creates it, root-owned on
+  // Linux — a directory attach would be adding to a project it promises only to
+  // add to reversibly.
+  const dir = eveProject();
+  const result = attach(dir);
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+  assert.doesNotMatch(dashboardCommand(result.stdout), /agent-skills/);
+  assert.equal(existsSync(join(dir, "agent", "skills")), false);
+});
+
+/**
+ * The ingest token the dashboard is started with has to be the one the agent
+ * sends, and attach used to mint a fresh one in two situations where the project
+ * already had a perfectly good one.
+ *
+ * Both end the same way. The dashboard's ingestAuthorized() takes this shared
+ * secret or a session cookie, an OTLP exporter cannot hold a session, and
+ * @vercel/otel reports the resulting 401 to the agent as a successful export —
+ * so the only symptom is a Traces tab that stays empty for ever.
+ */
+test("re-running after deleting instrumentation.ts reuses the token on disk", () => {
+  const dir = eveProject();
+  assert.equal(attach(dir).status, 0);
+  const onDisk = /EVESTACK_INGEST_TOKEN=([0-9a-f]+)/.exec(read(dir, ".env.local"))?.[1];
+  assert.ok(onDisk, "the first run wrote no token");
+
+  // Exactly what attach tells you to do to change your mind about trace export,
+  // and then change it back.
+  spawnSync("rm", [join(dir, "agent", "instrumentation.ts")]);
+  const result = attach(dir);
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+
+  assert.equal(
+    /EVESTACK_INGEST_TOKEN=([0-9a-f]+)/.exec(read(dir, ".env.local"))?.[1],
+    onDisk,
+    "the env file's token changed under a project that was not asked to rotate it",
+  );
+  const printed = /-e EVESTACK_INGEST_TOKEN=([0-9a-f]+)/.exec(dashboardCommand(result.stdout))?.[1];
+  assert.equal(printed, onDisk, "the dashboard is started with a token the agent will never send");
+  // And the summary's claim about those two values is now one the code makes true.
+  assert.match(result.stdout, /That token is the same one in \.env\.local/);
+});
+
+test("a project with its own instrumentation still gets its token into the command", () => {
+  // The second shape of the same disagreement: the mint lived inside the
+  // `wantTraces` branch, so a project whose instrumentation attach skips left
+  // plan.ingestToken null and the printed command carried no token at all —
+  // while the agent's env file had one.
+  const token = "deadbeef".repeat(8);
+  const dir = eveProject({ instrumentation: true, envFiles: { ".env.local": `EVESTACK_INGEST_TOKEN=${token}\n` } });
+  const result = attach(dir);
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+  assert.match(dashboardCommand(result.stdout), new RegExp(`-e EVESTACK_INGEST_TOKEN=${token}`));
+});
+
+/* -------------------------------------------------------------------------- */
+/* log rotation                                                                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The third place a long-running evestack container gets started, and the third
+ * that had no log ceiling.
+ *
+ * Docker's json-file driver rotates nothing by default. The Postgres service
+ * attach writes says `restart: unless-stopped`, so the daemon appends to
+ * /var/lib/docker/containers/<id>/<id>-json.log for as long as the project is
+ * up; a full disk stops that Postgres, and with it every durable session the
+ * agent has. The `docker run` printed beside it is the same container-for-months
+ * bargain with the same default.
+ *
+ * Round one fixed only the repository's own docker-compose.yml — the
+ * contributor's stack — and left both deployment paths untouched.
+ */
+test("the Postgres service attach writes has a bounded log", () => {
+  const dir = eveProject();
+  const result = attach(dir);
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+  const compose = read(dir, "docker-compose.yml");
+  assert.ok(compose, "no compose file was written");
+  // Both halves. max-size alone rotates for ever and bounds nothing; max-file
+  // alone caps a count of files that are individually unbounded.
+  assert.match(compose, /^ {4}logging:\n {6}driver: json-file$/m, compose);
+  assert.match(compose, /^ {8}max-size: "\$\{LOG_MAX_SIZE:-10m\}"$/m, compose);
+  assert.match(compose, /^ {8}max-file: "\$\{LOG_MAX_FILE:-3\}"$/m, compose);
+  // Written out rather than aliased, unlike the two-service file `create`
+  // writes. This same block is PRINTED for a user to paste into a compose file
+  // they already own, and an alias whose `x-logging` anchor stayed behind in the
+  // terminal does not lose the ceiling, it stops the file parsing: Compose
+  // v5.1.0 answers `unknown anchor 'container-logs' referenced`.
+  assert.doesNotMatch(compose, /\*container-logs/, "an alias here breaks the paste-it-yourself path");
+});
+
+test("the printed dashboard command bounds its logs too, and names the driver", () => {
+  const dir = eveProject();
+  const result = attach(dir);
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+  const command = dashboardCommand(result.stdout);
+  assert.match(command, /--log-opt max-size=10m/, command);
+  assert.match(command, /--log-opt max-file=3/, command);
+  // `--log-driver json-file` is not redundant with the daemon default. Which
+  // --log-opt keys are legal depends on the driver, so on a host whose daemon
+  // defaults to journald or awslogs this command would be refused outright
+  // rather than quietly run without a ceiling.
+  assert.match(command, /--log-driver json-file/, command);
 });

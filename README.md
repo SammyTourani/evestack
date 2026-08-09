@@ -12,7 +12,7 @@ agent **and drives it**.
 [![npm](https://img.shields.io/npm/v/evestack?color=2563eb&label=evestack)](https://www.npmjs.com/package/evestack)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](./LICENSE)
 
-**[See it running →](https://evestack.vercel.app)** · **[Docs →](https://evestack.vercel.app/docs)**
+**[See it running →](https://evestack.vercel.app)** · **[Docs →](https://evestack.vercel.app/docs)** · **[Changelog →](./CHANGELOG.md)**
 
 </div>
 
@@ -118,9 +118,27 @@ shut down. Budget **both model sizes + 4 GB** free — a `remember` call needs t
 the 274 MB embedding model, not one of them. evestack never picks a local model on its own — you
 have to ask for it.
 
-## Requirements
+## Requirements, and what is actually tested
 
-Node 24+, Docker, and a model API key (or Ollama).
+Node 24, Docker, and a model API key (or Ollama).
+
+"Node 24" is not a floor with a tested range above it — 24 is the only major CI installs, and
+all seven published packages declare `"engines": { "node": ">=24" }`, as do the root manifest
+and the template a scaffold gets. The rest, stated plainly because the code contains platform
+branches that might suggest otherwise:
+
+| | |
+| --- | --- |
+| **Linux x86-64** | Tested. Every job in `.github/workflows/ci.yml` runs on `ubuntu-latest` |
+| **Linux arm64** | The dashboard image is built and published for it; the CLI and template are not tested there |
+| **macOS** | Untested by CI — no workflow runs a macOS runner |
+| **Windows** | **Untested.** Nine `process.platform === "win32"` branches ship and none is exercised anywhere. Use WSL2 |
+| **Postgres** | `pgvector/pgvector:pg17`, which is what both compose files run and what CI starts |
+
+[docs/support.mdx](docs/support.mdx) has the rest of the support statement — which versions get
+fixes (the newest, and only the newest), what a `0.x` bump promises, and where each of the nine
+Windows branches is. [docs/upgrading.mdx](docs/upgrading.mdx) is how you move an existing
+project forward: new dashboard image, new template, new eve pin.
 
 ## Repository layout
 
@@ -141,7 +159,9 @@ registry/                      the @evestack eve registry
 
 `evestack create` and `npx create-evestack` run the same code, so a bug is fixed once. The
 dashboard ships as a container rather than an npm package. Release order is in
-[RELEASING.md](./RELEASING.md).
+[RELEASING.md](./RELEASING.md), and what actually changed in each of those releases is in
+[CHANGELOG.md](./CHANGELOG.md) — grouped by package rather than by date, because the seven npm
+packages and the one container image above are versioned independently.
 
 ## Things that cost us time
 

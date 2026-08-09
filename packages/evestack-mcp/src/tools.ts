@@ -1,5 +1,6 @@
 import { DashboardClient, DashboardError } from "./dashboard.js";
 import type { JsonSchema } from "./schema.js";
+import { fitToolPayload, payloadBytes } from "./truncate.js";
 
 /**
  * The tool surface.
@@ -60,14 +61,30 @@ const optionalStr = (args: Record<string, unknown>, key: string): string | undef
 const path = (sessionId: string, suffix: string): string =>
   `/api/control/sessions/${encodeURIComponent(sessionId)}${suffix}`;
 
-/** Only the shape a control route needs; `undefined` keys are dropped by JSON.stringify. */
+/**
+ * Only the shape a control route needs.
+ *
+ * `null` is dropped as well as `undefined`, because schema.ts:95-99 documents
+ * them as the same thing: "`undefined` cannot survive a JSON round trip, so an
+ * explicit null is the only way a client can spell 'present but empty' — and for
+ * these tools it means the same thing as absent." The validator honours that;
+ * this function did not, and the gap was reachable. `start_session({message,
+ * mode: null})` put `{"message":"…","mode":null}` on the wire, and the control
+ * route rejects that with 400 "Expected 'mode' to be 'conversation' or 'task'"
+ * (app/api/control/sessions/route.ts:23) where the same call with `mode` omitted
+ * succeeds. Same for `decision: null` on the approve route (route.ts:84). A
+ * client spelling "no preference" the only way JSON lets it got an error for it.
+ */
 function body(entries: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(entries)) {
-    if (value !== undefined) out[key] = value;
+    if (value !== undefined && value !== null) out[key] = value;
   }
   return out;
 }
+
+/** The same "null means absent" rule for a query-string value. See `body` above. */
+const absent = (value: unknown): boolean => value === undefined || value === null;
 
 const SESSION_ID: JsonSchema = {
   type: "string",
@@ -206,6 +223,11 @@ const listApprovals: ToolDefinition = {
     "prove possession of the one shared deployment credential, so they name an installation rather than " +
     "a person; 'header', 'forwarded-user' and 'forwarded-email' name a person, but only as well as the " +
     "proxy in front of the dashboard does. Treat 'unidentified' rows as attributable to nobody.\n\n" +
+    "TWO different truncations can shorten this answer and they are reported separately. " +
+    "`moreRowsMayExist: true` means the DASHBOARD returned a full page against its own LIMIT, so there " +
+    "are probably older decisions it did not send — raise `limit` or narrow with `sessionId`. A " +
+    "`_truncated` object means THIS server's byte cap cut the page it did send. Either one makes the " +
+    "list partial; say so rather than reporting it as the whole log.\n\n" +
     "REQUIRES a dashboard build that serves GET /api/approvals. If this tool reports the route is " +
     "missing, the deployment is older than that route and the fix is upgrading the dashboard, not a " +
     "change here.",
@@ -222,7 +244,10 @@ const listApprovals: ToolDefinition = {
         type: "integer",
         minimum: 1,
         maximum: 500,
-        description: "Maximum rows to return. Defaults to the dashboard's own limit.",
+        description:
+          "Maximum rows to return. Omit it for the dashboard's own default, which is 200 rows for the " +
+          "whole log but EVERY decision in the session (up to 1000) when sessionId is set — that is the " +
+          "largest result this server can be asked for, and it will be capped and marked truncated.",
       },
     },
   },
@@ -231,11 +256,33 @@ const listApprovals: ToolDefinition = {
       const response = record(
         await client.get("/api/approvals", {
           sessionId: optionalStr(args, "sessionId"),
-          limit: args.limit === undefined ? undefined : String(args.limit),
+          // `absent`, not `=== undefined`: an explicit `limit: null` used to
+          // become the literal query string `?limit=null`, which the route reads
+          // as `Number("null")` — NaN — and answers 400 "'limit' must be an
+          // integer between 1 and 1000" (app/api/approvals/route.ts:34). Omitting
+          // `limit` is the documented way to get the route's own default, and
+          // schema.ts:95-99 says null means omitted.
+          limit: absent(args.limit) ? undefined : String(args.limit),
         }),
       );
       const approvals = arr(response.approvals ?? response.rows);
-      return { count: approvals.length, approvals };
+      return {
+        count: approvals.length,
+        // The DASHBOARD's truncation, which is a different thing from this
+        // server's byte cap and was being thrown away. /api/approvals returns
+        // `truncated: rows.length >= limit` (route.ts:71) — "a full page came
+        // back, so there may be more" — and dropping it meant a 200-row answer
+        // off an audit log with 40,000 rows in it arrived looking complete. That
+        // is the same defect the `_truncated` notice exists to prevent, one layer
+        // down, and an audit log is the worst place to have it: "who approved
+        // this?" answered from a silently capped page reads as "nobody did".
+        //
+        // Absent rather than `false` when the dashboard did not say, because an
+        // older build that predates the flag has told us nothing, and reporting
+        // "not truncated" on its behalf would be inventing the reassurance.
+        ...(typeof response.truncated === "boolean" ? { moreRowsMayExist: response.truncated } : {}),
+        approvals,
+      };
     } catch (error) {
       if (error instanceof DashboardError && (error.failure.status === 404 || error.failure.code === "not_json")) {
         throw new ToolFailure(
@@ -320,7 +367,11 @@ const promoteSessionToEval: ToolDefinition = {
     "it should have done, so intent assertions come back commented out with the observed value inlined. " +
     "`warnings` lists what could not be recovered. Save `source` to evals/<filename> in the agent project " +
     "— eve derives eval identity from the file path, which is why the generated source carries no id or " +
-    "name field.",
+    "name field.\n\n" +
+    "ALL OR NOTHING. Unlike every other tool here, this one FAILS rather than return a shortened result: " +
+    "a session long enough that its eval would not fit inside EVESTACK_MCP_MAX_OUTPUT_BYTES gets an error " +
+    "naming the size and the two ways to get the file anyway. Half a TypeScript file does not compile, and " +
+    "`source` is meant to be written to disk, not read.",
   inputSchema: {
     type: "object",
     additionalProperties: false,
@@ -332,13 +383,65 @@ const promoteSessionToEval: ToolDefinition = {
     const generated = record(
       await client.get(`/api/evals/promote/${encodeURIComponent(sessionId)}`, { format: "json" }),
     );
-    return {
+    const result = {
       sessionId,
       filename: generated.filename,
       source: generated.source,
       warnings: arr(generated.warnings),
       saveTo: `evals/${String(generated.filename ?? "")}`,
     };
+
+    // WHY THIS TOOL REFUSES WHERE THE OTHERS TRUNCATE.
+    //
+    // Everything else here returns data a model READS, and a shortened list that
+    // says it is shortened is a worse answer but still an answer. This returns a
+    // file a human is told to SAVE — this tool's own description says "Save
+    // `source` to evals/<filename>". Run through the cap, a 72,080-character
+    // eval came back clipped at 61,636 characters, and the last line of the file
+    // the caller was told to save was:
+    //
+    //     await t.send("turn 352: please run the migration and repor
+    //     …[10444 characters dropped by EVESTACK_MCP_MAX_OUTPUT_BYTES; see _truncated]
+    //
+    // — an unterminated string literal inside an unclosed function body. It does
+    // not parse, let alone run. The truncation notice is honest about the bytes
+    // and still leaves the caller holding something that cannot be used, and its
+    // standing advice ("narrow the question") has no meaning for a tool whose
+    // only argument is a session id. So: nothing, plus how to get the file.
+    //
+    // Measured with the same function server.ts will measure with, not an
+    // estimate of it, so this can never refuse a result that would have fitted
+    // or pass one that would not.
+    const cap = client.maxOutputBytes;
+    const resultBytes = payloadBytes(result);
+    if (resultBytes > cap && fitToolPayload(result, cap).notice?.cuts.some((cut) => cut.path === "source")) {
+      // Only when `source` itself is what gets cut. A pathological `warnings`
+      // list is ordinary data and can be shortened like any other array.
+      const sourceCharacters = typeof result.source === "string" ? result.source.length : 0;
+      const download = `${client.baseUrl}/api/evals/promote/${encodeURIComponent(sessionId)}`;
+      throw new ToolFailure(
+        `The eval generated from session ${sessionId} is ${sourceCharacters} characters, and the whole ` +
+          `result is ${resultBytes} bytes against this server's ${cap}-byte cap ` +
+          `(EVESTACK_MCP_MAX_OUTPUT_BYTES). Nothing was returned, deliberately: the only thing that ` +
+          `fits is a fragment of a TypeScript file, and a fragment does not compile. Two ways to get ` +
+          `it: raise EVESTACK_MCP_MAX_OUTPUT_BYTES to at least ${resultBytes} in this server's entry ` +
+          `in the MCP client config and call again, or download the file directly from ${download} ` +
+          `(served as an attachment named ${String(result.filename ?? "the generated eval")}), which ` +
+          `does not pass through this cap at all.`,
+        {
+          sessionId,
+          filename: result.filename ?? null,
+          sourceCharacters,
+          resultBytes,
+          maxOutputBytes: cap,
+          raiseCapTo: resultBytes,
+          downloadUrl: download,
+          warnings: result.warnings,
+        },
+      );
+    }
+
+    return result;
   },
 };
 

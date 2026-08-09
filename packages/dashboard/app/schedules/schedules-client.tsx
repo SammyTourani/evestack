@@ -3,7 +3,8 @@
 import { useState } from "react";
 import type { ScheduleRun, ScheduleSummary } from "@/lib/schedules";
 import { ago, stamp } from "@/lib/time";
-import { describeCron, nextFire } from "@evestack/schedules/cron";
+import { describeCron } from "@evestack/schedules/cron";
+import { agentClock, describeNextFire, formatOffset, type NextFire } from "./next-fire";
 import styles from "./schedules.module.css";
 
 function statusClass(status: string): string {
@@ -22,9 +23,18 @@ function statusClass(status: string): string {
 export function ScheduleList({
   schedules,
   recent,
+  nextFires,
 }: {
   schedules: readonly ScheduleSummary[];
   recent: readonly ScheduleRun[];
+  /**
+   * Next-fire instants by schedule name, computed on the server. This used to
+   * be `nextFire(schedule.cron)` called right here, which walked the calendar
+   * in whichever timezone was rendering — the container during SSR, the
+   * reader's browser during hydration — and printed a different UTC instant in
+   * each. ./next-fire.ts has the measurement and the replacement.
+   */
+  nextFires: Readonly<Record<string, NextFire | null>>;
 }) {
   const [pausing, setPausing] = useState<string | null>(null);
   const [state, setState] = useState<Record<string, boolean>>({});
@@ -57,7 +67,7 @@ export function ScheduleList({
       <ul className={styles.list}>
         {schedules.map((schedule) => {
           const paused = state[schedule.name] ?? schedule.paused;
-          const next = schedule.cron && !paused ? nextFire(schedule.cron) : null;
+          const next = paused ? null : (nextFires[schedule.name] ?? null);
           const runs = recent.filter((run) => run.name === schedule.name);
 
           return (
@@ -90,7 +100,14 @@ export function ScheduleList({
               <div className={styles.meta}>
                 {schedule.cron && (
                   <>
-                    <span className="mono" title={schedule.cron}>
+                    {/* The summary states a wall-clock time ("daily at 09:00")
+                        and cron has no zone of its own, so the tooltip has to
+                        say whose clock that is — the agent's, which is not
+                        necessarily the reader's and not necessarily UTC. */}
+                    <span
+                      className="mono"
+                      title={`${schedule.cron} — wall-clock fields, read in the agent's timezone`}
+                    >
                       {describeCron(schedule.cron)}
                     </span>
                     <span className={styles.dot}>•</span>
@@ -111,8 +128,34 @@ export function ScheduleList({
                 {next && (
                   <>
                     <span className={styles.dot}>•</span>
-                    <span title={next.toISOString()}>
-                      next {stamp(next.toISOString(), "second")}
+                    <span title={describeNextFire(next)}>
+                      next {stamp(next.at, "second")}
+                      {/* Three states, not two. The version this replaces drew
+                          the confident chip whenever `pinned` was true and
+                          "assumed UTC" otherwise, which left no way to say the
+                          third thing — that the agent's zone is narrowed but
+                          the candidates left disagree about THIS fire, which is
+                          what happens either side of a daylight-saving change.
+                          Under the old fixed-offset projection that case came
+                          back `pinned: true` and an hour wrong; see the header
+                          of ./next-fire.ts. */}
+                      {next.pinned ? (
+                        // Both halves, when they differ: the instant answers
+                        // "when", the reading answers "is that the 09:00 I
+                        // wrote?", and printing only one leaves the reader
+                        // doing the subtraction and guessing the offset.
+                        next.offsetMinutes !== 0 && (
+                          <span className={styles.zone}>
+                            {agentClock(next)} {formatOffset(next.offsetMinutes)}
+                          </span>
+                        )
+                      ) : next.source === "assumed" ? (
+                        <span className={styles.zone}>assumed UTC</span>
+                      ) : (
+                        <span className={`${styles.zone} ${styles.unconfirmed}`}>
+                          unconfirmed · {formatOffset(next.offsetMinutes)}
+                        </span>
+                      )}
                     </span>
                   </>
                 )}

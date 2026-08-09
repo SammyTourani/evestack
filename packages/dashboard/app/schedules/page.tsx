@@ -1,5 +1,6 @@
 import { DatabaseError } from "@/app/db-error";
-import { getSchedules } from "@/lib/schedules";
+import { getSchedules, type ScheduleRun } from "@/lib/schedules";
+import { projectNextFire, type NextFire } from "./next-fire";
 import { ScheduleList } from "./schedules-client";
 import styles from "./schedules.module.css";
 
@@ -21,6 +22,43 @@ export default async function SchedulesPage() {
   }
 
   const failing = view.schedules.filter((s) => s.failingStreak > 0);
+
+  // "Next run" is computed HERE and shipped down as an instant, not computed in
+  // the list component. `./schedules-client.tsx` is a client component, and
+  // calling a local-time cron walker inside one meant the number was recomputed
+  // in the reader's browser and came out in the reader's timezone — see the
+  // header of ./next-fire.ts for the measured three-zone spread and for why the
+  // agent's zone is derived from its own recorded fires rather than assumed.
+  const now = new Date();
+  // Collected as entries and built with `Object.fromEntries`, because the keys
+  // are schedule names and a schedule name is chosen by the operator.
+  // `object[name] = value` on a plain literal does not create an own property
+  // when `name` is `__proto__` — it sets the prototype. Measured:
+  //
+  //   const a = {}; a["__proto__"] = {at: "x"};
+  //   Object.hasOwn(a, "__proto__")  ->  false
+  //   JSON.stringify(a)              ->  "{}"
+  //
+  // So a schedule called `__proto__` loses its next-fire silently and takes the
+  // object's prototype with it. `fromEntries` uses CreateDataProperty, which
+  // makes it an ordinary own key and leaves the prototype alone — and unlike
+  // `Object.create(null)` the result is still a plain object, which is what
+  // crosses the server/client boundary to ScheduleList below.
+  const fires: [string, NextFire | null][] = [];
+  for (const schedule of view.schedules) {
+    if (!schedule.cron) {
+      fires.push([schedule.name, null]);
+      continue;
+    }
+    // Only fires recorded under THIS expression. `schedule_runs.cron` is written
+    // per run, so a row from before the cron was edited is evidence about the
+    // old expression and would pin the wrong zone from it.
+    const observed = [schedule.lastRun, ...view.recent.filter((run) => run.name === schedule.name)]
+      .filter((run): run is ScheduleRun => run !== null && run.cron === schedule.cron)
+      .map((run) => run.fireAt);
+    fires.push([schedule.name, projectNextFire(schedule.cron, observed, now)]);
+  }
+  const nextFires: Record<string, NextFire | null> = Object.fromEntries(fires);
 
   return (
     <>
@@ -51,7 +89,7 @@ export default async function SchedulesPage() {
               A schedule that fails quietly is the whole reason this page exists.
             </p>
           )}
-          <ScheduleList schedules={view.schedules} recent={view.recent} />
+          <ScheduleList schedules={view.schedules} recent={view.recent} nextFires={nextFires} />
         </>
       )}
     </>

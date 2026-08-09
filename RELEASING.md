@@ -108,17 +108,37 @@ was true on 2026-08-05 and stopped being true on 2026-08-07. It then sat here fo
 maintainers the opposite of the truth, which is worse than saying nothing — so what follows is the
 check, not a snapshot.
 
-As of 2026-08-09 both front doors work: `evestack@0.3.0` ships a real `bin`, and `create-evestack`
-is at `0.8.0` on npm, matching this repo. Never take that from this paragraph. Run:
+That replacement then went stale itself, forty-four minutes after it was written. It said
+`create-evestack` "is at `0.8.0` on npm, matching this repo" at 06:32 on 2026-08-09, and af49a2a
+bumped the repo to `0.9.0` at 07:16. Same file, same lesson, twice in one week: a version number
+written into prose is a snapshot with an expiry date nobody sets. So this paragraph no longer
+carries one.
+
+What is stable enough to write down: both front doors resolve — `npx evestack` and
+`npx create-evestack` each reach a package with a real `bin` — and this checkout is normally
+*ahead* of npm between a bump and a publish, which is expected rather than a fault. What is never
+stable enough: which versions. Ask the registry.
 
 ```bash
-npm view evestack version && npm view evestack bin
-npm view create-evestack version
+npm view evestack bin        # must print a bin map, not nothing
+
+# every publishable package, local against npm, in one pass
+for f in packages/*/package.json; do
+  node -e "const p=require('./$f'); if (!p.private) console.log(p.name, p.version)"
+done | while read -r name local; do
+  printf '%-34s local %-8s npm %s\n' "$name" "$local" "$(npm view "$name" version 2>/dev/null || echo MISSING)"
+done
 ```
 
-Both commands must resolve, and the versions must match `packages/evestack-cli/package.json` and
-`packages/create-evestack/package.json`. A mismatch means step 4 has not run for the current
-commit, and the README's quickstart is describing code npm is not serving.
+`MISSING` is the emergency: a template dependency that does not resolve breaks every
+`npx create-evestack` (see "Order matters"). A local version *ahead* of npm is a pending publish —
+check it is deliberate, and that CHANGELOG.md's `Unreleased` section describes it. A local version
+*behind* npm should be impossible and means someone published from a stale tree.
+
+A local version that **equals** npm while the code has changed is the dangerous one, because every
+check above goes green: npm and the repository agree on the number and disagree on the contents.
+That is the exact failure af49a2a was written to correct, and the only defence is bumping in the
+same commit as the change.
 
 ## Verify from a stranger's position
 
@@ -131,6 +151,115 @@ cd smoke-test && ls node_modules/eve && ls node_modules/@evestack/composio
 
 The CI `scaffolder` job runs the equivalent against the workspace build on every PR, including
 the `npx`-shaped install path. It cannot check publish order — nothing can except this file.
+
+## Tag convention
+
+**`<package name>@<version>`.** `create-evestack@0.9.0`, `@evestack/mcp@0.2.1`,
+`@evestack/dashboard@0.3.0`. Annotated, never lightweight.
+
+Chosen over the other form this repository has used because **the tag string is also the install
+spec**: `npm i create-evestack@0.9.0` and `git show create-evestack@0.9.0` take the same argument,
+so a tag names exactly one artifact and no lookup table is needed to translate between them. The
+`dashboard-v*` form would force one: five of the seven published packages are scoped, so
+`@evestack/mcp` would have to be tagged `mcp-v0.2.1` — inventing a second name for something npm
+already names, and inventing it once per package, in a repository whose commit log is largely
+about two sources of truth disagreeing.
+
+Verified, because a scoped name puts a `/` and a leading `@` into a ref:
+`git check-ref-format refs/tags/@evestack/dashboard@0.3.0` passes, and such a tag round-trips
+through `git tag -l '@evestack/dashboard@*'`, `git rev-parse` and `git describe`. Quote it in the
+shell.
+
+### The four tags that exist
+
+Two predate this decision. They are public, so they are **not renamed** — a tag that has been
+pushed is an address someone may already have written down.
+
+| tag | commit | status |
+| --- | --- | --- |
+| `create-evestack@0.4.0` | f409414 | the convention |
+| `create-evestack@0.5.0` | 1163186 | the convention |
+| `dashboard-v0.1.0` | d4aee43 | superseded form — keep, do not imitate |
+| `dashboard-v0.2.0` | 751ac5c | superseded form — keep, do not imitate |
+
+`.github/workflows/publish-dashboard.yml` triggers on **both** patterns and accepts either as a
+match for `packages/dashboard/package.json`, so `dashboard-v0.2.0` can still be re-run from the
+Actions tab. The old half exists for those two tags and nothing else; it warns when it matches, and
+it should be deleted from the trigger and the `case` when neither is worth re-running.
+
+The dashboard is not on npm. Its tag names the workspace package — `@evestack/dashboard`, which is
+what the version gate reads out of `package.json` — and the artifact it produces is
+`ghcr.io/sammytourani/evestack-dashboard:<version>`.
+
+Twenty-eight versions have been published and four tags exist. Do not backfill the missing
+twenty-four: a tag invented today would point at whatever commit looks right now, and a tag that
+might be wrong is worse than a gap CHANGELOG.md already documents honestly.
+
+### Cutting a tag
+
+```bash
+# after the publish, from the commit that was published
+git tag -a 'create-evestack@0.9.0' -m 'create-evestack 0.9.0'
+git push origin 'create-evestack@0.9.0'
+```
+
+The dashboard is the one case where the tag comes **first**, because pushing it is what runs the
+publish:
+
+```bash
+git tag -a '@evestack/dashboard@0.3.0' -m 'dashboard 0.3.0'
+git push origin '@evestack/dashboard@0.3.0'
+```
+
+## Release notes
+
+Run `gh release list` first. When this section was written it printed exactly one row —
+"create-evestack 0.5.0", created 2026-08-06, still a **draft** — against twenty-six published
+npm versions and two published images. Publish that draft or delete it, but do not leave it: a draft
+is invisible to everyone but the maintainer, which is the worst of the three states.
+
+`CHANGELOG.md` is the source. Every version heading there is exactly the tag name for that release,
+which is what lets the notes be lifted rather than rewritten — the release page and the changelog
+cannot drift into two accounts of the same version if only one of them is authored.
+
+**Per release, in order:**
+
+1. **Before bumping**, move the package's block out of `## Unreleased` and down into that
+   package's own `##` section, at the top. The heading is already
+   `### <package>@<version> — unreleased`; replace the word with the date. Dates are
+   `America/Los_Angeles`, the timezone every commit here is stamped in.
+2. **Re-read the log before you believe the block is complete.**
+   `git log <last publish commit>..HEAD -- packages/<dir>` — `Unreleased` is written by hand and by
+   definition lags whatever landed most recently.
+3. Bump, publish, tag (above).
+4. Cut the release. For the dashboard this is automatic — see below. For the seven npm packages it
+   is this, and it is deliberately the same extraction the workflow performs:
+
+   ```bash
+   TAG='create-evestack@0.9.0'
+   awk -v h="### $TAG" '
+     index($0, h " ") == 1 || $0 == h { found = 1; next }
+     found && /^###? / { exit }        # a "#### Fixed" subheading is four hashes and is kept
+     found { print }
+   ' CHANGELOG.md > /tmp/notes.md
+
+   # not `test -s`: the section starts with a blank line, so an empty extraction
+   # is one byte long and would pass.
+   grep -q '[^[:space:]]' /tmp/notes.md || { echo "no changelog section for $TAG"; exit 1; }
+   gh release create "$TAG" --verify-tag --title "$TAG" --notes-file /tmp/notes.md
+   ```
+
+   `--verify-tag` matters: without it `gh` creates the tag for you, which turns a typo into a
+   permanent public ref.
+
+**The dashboard release is automatic.** `publish-dashboard.yml` gained a `release` job that runs
+after the image is built, merged into one multi-arch tag and proven anonymously pullable. It pulls
+the `### @evestack/dashboard@<version>` section out of `CHANGELOG.md`, appends the `docker pull`
+line, and creates the release at the pushed tag. It is keyed on the version rather than on the tag
+string, so both accepted tag forms resolve to the same section. Three things it will not do: run
+without a tag (`if: github.ref_type == 'tag'`), create a tag (`--verify-tag`), or publish an empty
+release — a missing changelog section fails the job, because an empty release page looks like an
+answer.
 
 ## Bumping versions
 

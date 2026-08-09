@@ -20,8 +20,9 @@
  *   EVESTACK_CONTRACT_EVE_DIR=path/to/eve node contract/run.mjs
  *       run the same contracts against a different eve install
  *
- * Exit codes: 0 green · 1 a contract failed · 2 the runner could not start ·
- * 3 the suite shrank below contract/floor.json (see contract/lib/floor.mjs).
+ * Exit codes: 0 green · 1 a contract failed · 2 the runner could not start, or
+ * --only matched no contract · 3 the suite shrank below contract/floor.json
+ * (see contract/lib/floor.mjs).
  */
 import { readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -103,6 +104,48 @@ function describe(value) {
 /* run                                                                         */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Write, and do not return until the bytes have left this process.
+ *
+ * On POSIX, Node's stdout is synchronous when it is a file or a TTY and
+ * ASYNCHRONOUS when it is a pipe. `process.stdout.write(json)` immediately
+ * followed by `process.exit(0)` therefore throws away everything still buffered
+ * — which is everything past the 64 KiB pipe buffer, silently, with a zero exit
+ * code.
+ *
+ * That is not hypothetical here. `--format=json` is 100343 bytes. Redirected to
+ * a file it was complete; read through a pipe it arrived as 65258 bytes and
+ * JSON.parse threw:
+ *
+ *   $ node contract/run.mjs --format=json > /tmp/c.json ; wc -c /tmp/c.json
+ *   100343
+ *   $ node contract/run.mjs --format=json | wc -c
+ *   65536
+ *
+ * The consumer is .github/workflows/eve-watch.yml:411-421, which builds the
+ * coverage list for the upgrade advisor with execFileSync + JSON.parse — a
+ * pipe. It has been failing into its own `|| echo "(could not list contract
+ * coverage)"` fallback, so the advisor has been reasoning about every eve
+ * release with no idea what the suite covers, and nothing said so.
+ */
+function writeFlushed(stream, text) {
+  return new Promise((resolve) => {
+    // The error listener is not defensive padding. Waiting for the flush means
+    // this process is still alive when a reader that took what it needed closes
+    // the pipe — `node contract/run.mjs --format=json | head` — and the write
+    // then fails with EPIPE. An 'error' event with no listener is rethrown, so
+    // fixing the truncation without this line swapped a silently short report
+    // for a stack trace. The old fire-and-forget code never saw it only because
+    // it had already called process.exit.
+    //
+    // Resolving on either outcome is the correct behaviour, not a shortcut: a
+    // consumer hanging up early is that consumer's decision, and there is no
+    // one left to report it to.
+    stream.once("error", resolve);
+    stream.write(text, resolve);
+  });
+}
+
 async function loadContracts() {
   const dir = join(HERE, "contracts");
   const files = readdirSync(dir)
@@ -131,6 +174,23 @@ async function main() {
 
   const all = await loadContracts();
   const selected = only === null ? all : all.filter((c) => c.id.includes(only));
+
+  // `--only=auth` when nothing is called auth used to print "0 contracts, 0
+  // assertions — all green against eve 0.30.8" and exit 0. That sentence is the
+  // most dangerous output this file can produce: it is what a fully passing run
+  // looks like, so a mistyped filter in a CI step or in docs/upgrading.mdx's
+  // copy-paste instructions silently turns the whole suite into a no-op that
+  // certifies a release. Exit 2 ("could not start") rather than 1, because
+  // nothing was wrong with eve — the command was wrong.
+  if (selected.length === 0) {
+    const groups = [...new Set(all.map((c) => c.id.split("/")[0]))].sort();
+    process.stderr.write(
+      `--only=${only} matched none of the ${all.length} contracts.\n` +
+        "A filter that selects nothing is a usage error, not a pass.\n" +
+        `Contract groups that exist: ${groups.join(", ")}\n`,
+    );
+    process.exit(2);
+  }
 
   const results = [];
   for (const contract of selected) {
@@ -219,9 +279,12 @@ async function main() {
   // gets ignored.
   const violations = only === null ? checkFloor(report, readFloor()) : [];
 
-  if (format === "json") process.stdout.write(`${JSON.stringify({ ...report, floorViolations: violations }, null, 2)}\n`);
-  else if (format === "markdown") process.stdout.write(renderMarkdown(report));
-  else process.stdout.write(renderHuman(report, verbose));
+  // Awaited, not fire-and-forget: see writeFlushed. Every branch below ends in
+  // process.exit, and an unflushed pipe write does not survive it.
+  if (format === "json")
+    await writeFlushed(process.stdout, `${JSON.stringify({ ...report, floorViolations: violations }, null, 2)}\n`);
+  else if (format === "markdown") await writeFlushed(process.stdout, renderMarkdown(report));
+  else await writeFlushed(process.stdout, renderHuman(report, verbose));
 
   // Reported after the table, and before the exit, because it is a statement
   // about the table itself rather than about eve: everything above may be green
@@ -239,7 +302,7 @@ async function main() {
       "    node contract/run.mjs --write-floor",
       "",
     ];
-    process.stderr.write(`${lines.join("\n")}\n`);
+    await writeFlushed(process.stderr, `${lines.join("\n")}\n`);
     process.exit(FLOOR_EXIT_CODE);
   }
 
@@ -304,11 +367,22 @@ function renderHuman(report, showPasses) {
   const { contracts, failedContracts, skippedContracts, assertions, failedAssertions } = report.counts;
   const ran = contracts - (skippedContracts ?? 0);
   const skipNote = skippedContracts > 0 ? `, ${skippedContracts} skipped` : "";
-  out.push(
-    report.ok
-      ? `  ${ran} contracts, ${assertions} assertions — all green against eve ${report.eve.version}${skipNote}`
-      : `  ${failedContracts} of ${ran} contracts broken (${failedAssertions} of ${assertions} assertions) against eve ${report.eve.version}${skipNote}`,
-  );
+  if (!report.ok) {
+    out.push(
+      `  ${failedContracts} of ${ran} contracts broken (${failedAssertions} of ${assertions} assertions) against eve ${report.eve.version}${skipNote}`,
+    );
+  } else if (ran === 0) {
+    // `EVESTACK_CONTRACT_EVE_DIR=… --only=version` selects one repo-scoped
+    // contract, which then skips by design (see the scope check in main) — and
+    // the old line printed "0 contracts, 0 assertions — all green against eve
+    // 0.29.5". A certification run that skipped everything it selected must not
+    // be describable as green; the exit code stays 0 because the skip itself is
+    // correct, but the sentence has to say what happened.
+    out.push(`  NOTHING RAN. All ${skippedContracts} selected contracts skipped, 0 executed.`);
+    out.push(`  This is not a green result against eve ${report.eve.version}: no assertion was evaluated.`);
+  } else {
+    out.push(`  ${ran} contracts, ${assertions} assertions — all green against eve ${report.eve.version}${skipNote}`);
+  }
   if (!report.ok) out.push("  See docs/upgrading.mdx for what to do next.");
   out.push("");
   return `${out.join("\n")}\n`;
@@ -319,11 +393,18 @@ function renderMarkdown(report) {
   out.push(`### Contract suite vs eve \`${report.eve.version}\``);
   out.push("");
   const ranCount = report.counts.contracts - (report.counts.skippedContracts ?? 0);
+  // This block is pasted into the eve-upgrade pull-request body by
+  // eve-watch.yml:214, which is the highest-stakes place any of these sentences
+  // ends up: "All 0 contracts hold (0 assertions)." next to a version bump
+  // reads as a green certification of a release nothing was run against.
   out.push(
-    report.ok
-      ? `All ${ranCount} contracts hold (${report.counts.assertions} assertions).`
-      : `**${report.counts.failedContracts} of ${ranCount} contracts broken** ` +
-          `(${report.counts.failedAssertions} of ${report.counts.assertions} assertions).`,
+    !report.ok
+      ? `**${report.counts.failedContracts} of ${ranCount} contracts broken** ` +
+          `(${report.counts.failedAssertions} of ${report.counts.assertions} assertions).`
+      : ranCount === 0
+        ? `**Nothing ran.** All ${report.counts.skippedContracts} selected contracts skipped — ` +
+          "no assertion was evaluated, so this is not a green result."
+        : `All ${ranCount} contracts hold (${report.counts.assertions} assertions).`,
   );
   out.push("");
   out.push("| | contract | assertions | pins |");

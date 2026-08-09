@@ -47,6 +47,7 @@ You need a reachable OpenSandbox server. See its
 | `domain` | SDK default (`localhost:8080`) | OpenSandbox server host, with or without a scheme. |
 | `apiKey` | SDK default (`OPEN_SANDBOX_API_KEY`) | API key for that server. |
 | `timeoutSeconds` | server default | Idle lifetime. eve reattaches by id, so a short value is safe. |
+| `networkPolicy` | server default (open) | Egress policy, fixed for the sandbox's life. See below. |
 
 There is no `workingDirectory` option. 0.2.0 had one and it did nothing: it was handed to
 `createDirectories` and then ignored, because paths and commands both hardcoded `/workspace`. It
@@ -63,16 +64,34 @@ every command ran in `/workspace` no matter what was asked for.
   handing the agent an empty one. If the sandbox was reaped upstream, a fresh one is created.
 - **`shutdown()` pauses rather than kills.** eve reattaches on the next turn; killing would
   discard a `/workspace` the session still owns. It falls back to `kill()` if pause fails.
-- **A null exit code is reported as failure**, not success. OpenSandbox returns `null` when a
-  process is killed rather than exiting, and telling the model a killed command succeeded is
-  the worst available answer.
+- **A null exit code is reported as failure**, not success — `137`, the conventional
+  "killed" code. OpenSandbox reports no exit code when a command did not complete (a
+  server-side timeout kill, an OOM, a stream that just ends), and telling the model a killed
+  command succeeded is the worst available answer. Through 0.3.0 it *was* reported as `0`,
+  despite this bullet: the coercion read `exitCode ?? (error ? 1 : 0)`.
 - **`removePath` and `spawn` are implemented natively.** `removePath` refuses a non-empty
   directory unless you pass `recursive: true` (OpenSandbox's `deleteDirectories` has no
   non-recursive mode, so the check happens client-side) and refuses a missing path unless you
   pass `force: true`. `spawn` streams stdout and stderr as the server sends them, so a
   long-running process does not buffer its whole output first.
+- **`kill()` kills the process, not the connection.** A spawned command is wrapped so it
+  records its pid, and `kill()` runs a second command inside the sandbox that SIGKILLs that
+  pid and every descendant — the same `/proc`-walking script eve's own `docker()` backend
+  uses. Through 0.3.0 `kill()` only aborted the local SSE connection, which sends the server
+  nothing at all; whether the command then died was up to execd. `wait()` after a successful
+  `kill()` resolves with `137`, and a `kill()` whose request never reached the sandbox throws
+  rather than reporting a termination that may not have happened.
+
+  That first claim rests on an ordering it is easy to get backwards. The kill is a round trip and
+  the server kills the process *before* it answers, so the spawned command's stream dies while
+  `kill()` is still waiting on the response. The intent is therefore recorded before the request
+  goes out, not after it comes back. Written the other way round — which is how it was first
+  written — a kill that worked perfectly took the "the stream broke unexpectedly" path: `wait()`
+  rejected with the stream's error and both output streams errored under any reader, the exact
+  opposite of the sentence above. `test/adapter.test.mjs` pins it with a stub whose kill command
+  ends the spawned stream before its own response lands.
 - **`setNetworkPolicy()` throws** — see below. It is the one part of eve's session contract this
-  backend cannot honour.
+  backend cannot honour. A policy fixed at creation is supported, as `networkPolicy`.
 
 ### `prewarm`, `bootstrap()` and `seedFiles` are NOT supported, and now say so
 
@@ -89,7 +108,7 @@ create), so this is buildable; until it is built, refusing beats degrading.
 If your sandbox has no `bootstrap()` and no seed files, eve never asks for a template and nothing
 here changes.
 
-### `setNetworkPolicy()` throws
+### Network policy: fixed at creation, and `setNetworkPolicy()` throws
 
 Every eve network policy implies a default action — `"deny-all"`, or an allow-list, which denies
 everything it does not name. OpenSandbox fixes a sandbox's `defaultAction` when the sandbox is
@@ -99,9 +118,42 @@ still *allow* would report success having restricted nothing — on the one call
 purpose is to restrict. Per-domain `transform` header injection is not expressible either; that is
 OpenSandbox's Credential Vault, a different model.
 
-So the call rejects, the way eve's own `justbash()` backend rejects it. OpenSandbox does accept a
-full policy at sandbox *creation*, which this adapter does not expose yet. For a policy that has
-to change mid-turn, use `vercel()` or `microsandbox()`.
+So `session.setNetworkPolicy()` rejects, the way eve's own `justbash()` backend rejects it. For a
+policy that has to change mid-turn, use `vercel()` or `microsandbox()`.
+
+A policy that holds for the sandbox's whole life *is* supported, because creation is where
+OpenSandbox accepts one:
+
+```ts
+opensandbox({ networkPolicy: { allow: ["github.com", "*.npmjs.org"] } });
+opensandbox({ networkPolicy: "deny-all" });
+```
+
+It is honoured completely or not at all. An allow-list becomes `defaultAction: "deny"` plus one
+allow rule per domain; anything with no OpenSandbox equivalent — `subnets` (its egress model does
+not support IP/CIDR) or a per-domain `transform` / `forwardURL` / `match` rule — **throws when the
+backend is constructed** rather than being quietly dropped. A restriction that is half-applied is
+worse than one that is refused.
+
+Two consequences worth knowing:
+
+- **Passing it pins a sandbox that still exists.** The policy is recorded with the sandbox id, and
+  `create()` refuses to reattach to a sandbox that was created under a different one — that
+  sandbox's egress cannot be changed to match, so reattaching would run the agent under the old
+  policy while your source says otherwise. Changing the policy means starting a new session.
+
+  Two limits on that refusal, both of which it was missing at first and both of which turned a
+  guard into an outage. It is checked **after** the reconnect attempt and only for a sandbox that
+  was actually recovered: a session whose sandbox has been reaped upstream has nothing to diverge
+  from, and now gets a fresh one under the new policy instead of throwing on every turn for ever.
+  And `allow-all` and no policy at all are the same egress — "passing an empty object or null
+  results in allow-all behavior at startup", the SDK's own `NetworkPolicy` schema — so writing
+  `networkPolicy: "allow-all"` down explicitly is a no-op, not something that detaches every live
+  session. Only a real change of egress (to or from `deny-all` or an allow-list) refuses.
+- **Misspelling it is an error, not a shrug.** `opensandbox()` rejects any option it does not
+  implement. Before, `opensandbox({ initialNetworkPolicy: "deny-all" })` built a sandbox with
+  wide-open egress and said nothing — and a caller who asked for a locked-down network and
+  silently got an open one has no way to tell from the outside.
 
 ## Status
 
@@ -129,11 +181,36 @@ arrive identically and both come back as `"a\nb"`. It is dropped rather than gue
 wrong corrupts the short outputs, which are most of them. That is what `test/translate.test.mjs`
 pins, along with `resolvePath`.
 
+Three more were found by testing the session surface against a **stubbed** SDK — the adapter's
+own code runs, only the wire is fake (`test/adapter.test.mjs`), which is how anything that needs a
+sandbox became testable at all. Each is pinned by a case that fails on 0.3.0:
+
+- **A command that never completed reported success.** `exitCodeOf` returned `0` for a null exit
+  code whenever there was no error object, so a timed-out or OOM-killed command came back to the
+  model as `exitCode: 0` — while this README said the opposite.
+- **`kill()` killed nothing.** It called `AbortController.abort()` and made no further request to
+  the sandbox at all, leaving termination to whatever execd does when a client hangs up; `wait()`
+  then rejected with `AbortError` instead of reporting a terminated process.
+- **A network-policy option was accepted and dropped.** `opensandbox({ initialNetworkPolicy:
+  "deny-all" })` called `Sandbox.create` with `{"image":"ubuntu"}` and reported nothing. There was
+  no `networkPolicy` option to spell correctly either; there is now, and an unknown option throws.
+
+Two more were found by reviewing those fixes before any of them shipped, and are pinned the same
+way. `kill()` recorded its intent *after* the round trip, so a successful kill made `wait()`
+reject (see the `kill()` bullet above). And the new reattach guard ran before the reconnect ladder
+and compared policy keys as raw strings, so a reaped sandbox plus a newly-added policy was a
+permanently unusable session — `Sandbox.create` calls: 0 — and adding an explicit
+`networkPolicy: "allow-all"`, which changes nothing about the sandbox, refused to reattach to
+every session that existed.
+
 Not exercised against a live server: gVisor / Kata / Firecracker isolation (the server reports
 "secure runtime is not configured" under Docker Desktop on macOS, so all of the above was tested
-on the plain Docker runtime), `spawn`, `removePath`, and the stream / encoding / line-range
-variants of the read and write methods. Those are written against eve's and OpenSandbox's
-declarations, not against a running server. Please open an issue with what breaks.
+on the plain Docker runtime), `spawn` and its `kill()`, the `networkPolicy` wire call,
+`removePath`, and the stream / encoding / line-range variants of the read and write methods.
+Those are written against eve's and OpenSandbox's declarations and covered by unit tests with a
+stubbed SDK, not against a running server. In particular the kill path assumes a Linux `/proc`
+and a `bash` in the image, the same assumption eve's `docker()` backend makes. Please open an
+issue with what breaks.
 
 ## Build
 

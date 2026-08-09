@@ -29,6 +29,7 @@
  */
 import { spawn } from "node:child_process";
 
+import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 
 import {
@@ -356,6 +357,41 @@ if (health.ok && health.body?.ok) {
   } else {
     pass("dashboard", `answering at ${dashboardUrl}, database connected${caveat}`);
   }
+
+  /*
+   * Is the container the one this project asked for?
+   *
+   * Everything above proves the dashboard is answering. None of it proves WHICH
+   * dashboard — and that gap shipped: the published image sat four days and 51
+   * commits behind while this line printed the same green either way, so a
+   * project whose Skills page scanned the wrong directory and whose /costs and
+   * /sessions pages did not exist verified perfectly.
+   *
+   * The compose file records the tag this project was scaffolded against, and
+   * /api/health now reports the version the running image actually is. Comparing
+   * two strings we already have is the whole check.
+   *
+   * A warn, never a fail: an operator may be running a newer image deliberately,
+   * or one built locally, and a verify that refuses to go green over that would
+   * be wrong more often than it was right. It just has to be SAID.
+   */
+  const running = typeof health.body?.version === "string" ? health.body.version : null;
+  const pinned = pinnedDashboardTag();
+  if (running === null) {
+    warn(
+      "dashboard image",
+      `${dashboardUrl} reports no version, so it predates this check — it is at least as old as 0.2.0`,
+      "docker compose --profile dashboard pull && docker compose --profile dashboard up -d",
+    );
+  } else if (pinned !== null && running !== pinned) {
+    warn(
+      "dashboard image",
+      `running ${running}, but this project's compose file pins ${pinned}`,
+      `docker compose --profile dashboard pull && docker compose --profile dashboard up -d`,
+    );
+  } else {
+    pass("dashboard image", running === pinned ? `${running}, matching the pin` : running);
+  }
 } else if (health.status === 0) {
   fail(
     "dashboard",
@@ -506,6 +542,28 @@ blank();
  * under --json. `open`/`xdg-open`/`start` cover macOS, Linux and Windows; if
  * none of them exist the URL is already printed above.
  */
+/**
+ * The dashboard image tag this project's own compose file asks for.
+ *
+ * Read from the file rather than from an env var, because the compose file is
+ * what `docker compose up` obeys — an env var would let the check pass while
+ * the thing being started disagreed with it. `EVESTACK_DASHBOARD_IMAGE` wins
+ * over the default when set, and that is deliberately NOT read here: someone
+ * who overrode the image knows what they are running, and the comparison this
+ * feeds is only interesting against the pin the scaffolder wrote.
+ *
+ * `null` when there is no compose file (an `attach`ed project may have none) or
+ * no recognisable tag, and the caller says so rather than guessing.
+ */
+function pinnedDashboardTag() {
+  try {
+    const raw = readFileSync("docker-compose.yml", "utf8");
+    return /evestack-dashboard:([0-9][0-9A-Za-z.\-+]*)/.exec(raw)?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function openBrowser(url) {
   const [cmd, args] =
     process.platform === "darwin"

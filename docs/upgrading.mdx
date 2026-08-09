@@ -1,7 +1,225 @@
 ---
-title: Upgrading eve
-description: What to do when the contract suite goes red, and the standing policy for keeping up with a framework that ships daily.
+title: Upgrading
+description: Two different jobs under one name — moving a project you scaffolded onto a newer evestack, and moving this repository onto a newer eve.
 ---
+
+<Warning>
+  **Two audiences, two halves. Read the one you are.**
+
+  **[Upgrading your project](#upgrading-your-project)** — you ran `npx evestack create` some
+  months ago and want the newer dashboard, the newer template and the newer eve pin in *your*
+  directory. Nothing about the evestack repository is involved.
+
+  **[Upgrading eve inside this repository](#upgrading-eve-inside-this-repository)** — you are
+  working on evestack itself, a contract went red, and you need to decide what that means. This
+  is the half everything else links to: `contract/run.mjs` prints "See docs/upgrading.mdx" when
+  the suite fails, and it means that half.
+
+  This page used to be only the second one, filed under a title that read like the first.
+</Warning>
+
+## Upgrading your project
+
+### What a scaffolded project actually is
+
+Worth stating before any commands, because it determines the whole shape of an upgrade: your
+project is a **copy**, not an install. `create-evestack` copies `templates/default` into your
+directory once and then has no further relationship with it. There is no `evestack upgrade`
+command — `packages/evestack-cli/src/` contains no such module — and nothing in the project
+checks for a newer version of itself.
+
+So these are the pieces, they move independently, and you move each one yourself:
+
+| In your project | What it is | How it moves |
+| --- | --- | --- |
+| `agent/`, `lib/`, `evals/`, `test/`, `tsconfig.json`, `HEARTBEAT.md` | Your code. Copied from `templates/default` at scaffold time, then yours | By hand, from a diff |
+| `scripts/*.mjs` — `bootstrap`, `checks`, `dev`, `start`, `ui`, `verify` | evestack's helper scripts, copied the same way. Most people never edit these | By hand, from a diff |
+| `package.json` dependencies — `eve`, `@evestack/*`, `ai`, `@workflow/world-postgres` | Ordinary npm | `npm install` |
+| `docker-compose.yml` — Postgres, and the dashboard behind a `dashboard` profile | Generated with the ports your machine had free, and committed | Edit the image tag |
+| `.env.local` and `.env` | Your generated credentials. Both git-ignored, both `0600` | Never overwrite these from a fresh scaffold |
+
+<Note>
+  `.env.local` is read by *both* the agent on your host and the dashboard container (through
+  `env_file:` in the compose file). `.env` is read only by Compose itself, for interpolating
+  `${...}` in `docker-compose.yml` — Compose does not read `.env.local`. Keep the distinction in
+  mind when an upgrade asks you to set a variable.
+</Note>
+
+### Find out where you are
+
+```bash
+# the eve you are pinned to
+node -p "require('./package.json').dependencies.eve"
+
+# the dashboard image tag your compose file names
+grep image: docker-compose.yml
+
+# what the running dashboard says it is — /api/health is the one
+# unauthenticated route, and it reports its own version
+curl -s http://127.0.0.1:4000/api/health
+
+# and whether the four parts are up at all
+npx evestack status
+```
+
+Compare those against a freshly published `create-evestack`: scaffold a throwaway project (next
+section) and read its `package.json` and `docker-compose.yml`. That pair — template plus image
+tag — is the combination that was tested together, which is the reason
+`packages/create-evestack/shared.mjs` pins the image to a tag rather than `latest`.
+
+### Upgrade the dashboard
+
+The dashboard is a container, so this is a repull and a restart. Your compose file names it as
+`${EVESTACK_DASHBOARD_IMAGE:-ghcr.io/sammytourani/evestack-dashboard:<tag>}`, so you can override
+it without editing a committed file — the generated `.env` already carries the line, commented
+out:
+
+```bash
+# in .env (NOT .env.local — Compose only interpolates from .env and the shell)
+EVESTACK_DASHBOARD_IMAGE=ghcr.io/sammytourani/evestack-dashboard:0.2.0
+```
+
+Then:
+
+```bash
+docker compose --profile dashboard pull dashboard
+docker compose --profile dashboard up -d dashboard
+curl -s http://127.0.0.1:4000/api/health
+```
+
+Editing the tag inside `docker-compose.yml` works too, and is the better choice if you want the
+version in version control.
+
+<Note>
+  **There is no migration step, and that is by design.** A self-hosted install has no migration
+  runner to hang one off, so the dashboard creates what it needs on first use: `evestack.spans`
+  on the first trace read, the budget tables on the first budget write, and `sql/facts.sql`,
+  `sql/alerts.sql`, `sql/approvals.sql`, `sql/memory-audit.sql` and `sql/query-indexes.sql`
+  applied once per process from disk. Every statement in those files is `CREATE … IF NOT EXISTS`,
+  `CREATE OR REPLACE`, or `ADD COLUMN IF NOT EXISTS` — `sql/alerts.sql` already carries two
+  columns added after the first release, with a backfill beside them. A newer image migrates
+  itself forward on the first request that touches the table.
+
+  The reverse is not covered: rolling the image *back* over a schema a newer one has written is
+  not something anything here tests.
+</Note>
+
+### Upgrade eve and the evestack packages
+
+```bash
+npm install eve@latest
+npm install @evestack/budget@latest @evestack/composio@latest @evestack/schedules@latest
+npm run typecheck
+npm test
+npm run verify
+```
+
+Three things to know before you run that:
+
+1. **`eve` below `0.30.0` is a security floor, not a preference.** On 0.29.x, `localDev()`
+   granted a full local-dev principal to anyone who sent a crafted `Host` header. The four
+   `@evestack/*` packages that import eve declare `peerDependencies.eve` as `>=0.30.0 <1.0.0`, so
+   npm will refuse the combination — but if you have `--force` in your muscle memory, know what
+   it would be forcing. [SECURITY.md](https://github.com/SammyTourani/evestack/blob/main/SECURITY.md)
+   has the detail.
+2. **`@workflow/world-postgres` is pinned to the `beta` dist-tag, not a range.** That is
+   deliberate: npm `latest` is on the 4.x line and eve needs the 5.0.0-beta line, and the runtime
+   rejects a protocol mismatch outright. A plain `npm install` re-resolves a dist-tag, so this
+   dependency can move under you without any version number in your `package.json` changing. If
+   sessions start failing right after an unrelated install, check this first.
+3. **`npm run verify` is the real gate**, not `npm test`. Its own header names what it walks:
+   "Postgres, Docker, the agent, the dashboard, an embedding probe" — plus the model key and the
+   schema — against the stack as it is actually running, with the fixing command on every red
+   line. It exits 1 if anything required failed, so you can put it in a script.
+
+If a new eve changed the workflow schema, `npm run db:bootstrap` is what applies it. That script
+is a thin wrapper around `@workflow/world-postgres`'s own setup script — it checks the connection
+first so a failure names a host and a port instead of a Drizzle stack trace, then hands over
+unchanged. The migrations are upstream's.
+
+### Pick up template changes
+
+This is the step with no automation, so here is the routine that works:
+
+<Steps>
+  <Step title="Scaffold a fresh project somewhere else">
+    ```bash
+    cd /tmp
+    npx create-evestack@latest reference-agent
+    ```
+    Answer **no** when it offers to bring the stack up — you only want the files. It generates
+    its own credentials, which you will not be copying anywhere.
+  </Step>
+
+  <Step title="Diff the parts that are evestack's, not yours">
+    ```bash
+    diff -ru ~/my-agent/scripts /tmp/reference-agent/scripts
+    diff -u  ~/my-agent/package.json /tmp/reference-agent/package.json
+    ```
+    `scripts/` is the highest-value diff and the safest to take wholesale: unless you have edited
+    them, those six files are evestack's, and `verify.mjs` in particular gains checks as new
+    failure modes are found. Take the `package.json` diff as information rather than as a patch —
+    yours has your project name, and may have dependencies you added.
+  </Step>
+
+  <Step title="Read the diff on the parts that are yours">
+    ```bash
+    diff -ru ~/my-agent/agent /tmp/reference-agent/agent
+    diff -ru ~/my-agent/lib   /tmp/reference-agent/lib
+    ```
+    Expect noise here — this is your agent's instructions, tools and channels, and you have
+    presumably changed them. What you are looking for is a *shape* change: a new file, a changed
+    import path, a rewritten auth chain in `agent/channels/eve.ts`. Apply those by hand.
+  </Step>
+
+  <Step title="Diff the compose file, but never copy it">
+    ```bash
+    diff -u ~/my-agent/docker-compose.yml /tmp/reference-agent/docker-compose.yml
+    ```
+    It is generated with the ports *your* machine had free and a project name derived from your
+    directory, so copying it over will point the stack somewhere else. Read it for a new service,
+    a new environment variable, or a new mount, and transplant just that.
+  </Step>
+
+  <Step title="Delete the reference project">
+    It holds a generated dashboard password, a trace-ingest token and a Postgres password that
+    are now lying around in `/tmp`.
+    ```bash
+    rm -rf /tmp/reference-agent
+    ```
+  </Step>
+</Steps>
+
+### Upgrade the CLI itself
+
+`npx evestack@latest …` pins nothing and resolves the newest published version, so there is
+nothing to maintain. A **global** install does not update itself:
+
+```bash
+npm i -g evestack@latest
+```
+
+### The order that matters
+
+The dashboard image and the agent template are versioned separately and released together, and
+the scaffolder pins one image tag per template version precisely because that is the combination
+that was tested. Moving one a long way without the other is untested rather than forbidden. If
+you are several releases behind, move both, from the same release, and run `npm run verify`
+afterwards.
+
+Nothing here rewrites your data. The one destructive operation in this area is
+`docker compose down -v`, which deletes the Postgres volume — every session, trace and memory
+with it — and it is never part of an upgrade. It is only ever needed to make a *new* database
+password take effect (`EVESTACK_DB_PASSWORD` in `.env`, which Compose interpolates into
+`POSTGRES_PASSWORD`), because Postgres applies that variable once, when the volume is first
+created.
+
+---
+
+## Upgrading eve inside this repository
+
+Everything below is for work on evestack itself. If you are running a scaffolded project, you
+want the half above.
 
 Vercel merged 252 pull requests into eve in fourteen days. eve shipped 0.30.0,
 0.30.1 and 0.30.2 on the same day evestack launched. That cadence is the
@@ -13,7 +231,7 @@ environment evestack lives in, and it has one practical consequence:
   down where a machine can check it.
 </Warning>
 
-## The policy
+### The policy
 
 1. **Every assumption evestack makes about eve is a contract in `contract/`.**
    If you find yourself writing "eve does X, so we can do Y", that belongs in
@@ -26,7 +244,7 @@ environment evestack lives in, and it has one practical consequence:
 4. **Deterministic checks decide; a model may advise.** See
    [On putting a model in CI](#on-putting-a-model-in-ci).
 
-## Why a typecheck is not enough
+### Why a typecheck is not enough
 
 evestack once shipped a `strictLocalDev()` wrapper. eve 0.29.x decided "is this
 request from my own machine" by matching the request's own hostname against an
@@ -57,7 +275,7 @@ EVESTACK_CONTRACT_EVE_DIR=node_modules/.pnpm/eve@0.29.5.../node_modules/eve \
   node contract/run.mjs --only=auth
 ```
 
-## When the suite goes red
+### When the suite goes red
 
 Read the failure first. Every contract prints the assumption it pins and what
 evestack does with it, so the report tells you the blast radius before you open
@@ -97,7 +315,7 @@ a single file.
   </Step>
 </Steps>
 
-## When it stays green and something breaks anyway
+### When it stays green and something breaks anyway
 
 This is the failure mode worth planning for. A green suite means *every
 assumption someone wrote down still holds* — not that the release is safe. eve
@@ -109,7 +327,7 @@ would have caught it**, in the same pull request. That is the only mechanism
 that makes the suite better over time, and it costs about fifteen minutes while
 the failure is still fresh. `contract/README.md` describes the shape.
 
-## What is currently pinned
+### What is currently pinned
 
 | Contract | Assumption |
 |---|---|
@@ -126,7 +344,7 @@ the failure is still fresh. `contract/README.md` describes the shape.
 The import and attribute lists are derived from evestack's own source at run
 time, so they widen automatically as the codebase grows.
 
-## The `eve-watch` workflow
+### The `eve-watch` workflow
 
 `.github/workflows/eve-watch.yml` runs daily and on demand. It asks npm for the
 latest eve; if it is newer than the pinned range it creates a branch, bumps
@@ -150,7 +368,7 @@ candidate:
 Actions → eve-watch → Run workflow → version: 0.31.0
 ```
 
-## On putting a model in CI
+### On putting a model in CI
 
 The honest engineering read, since it comes up every time.
 
@@ -196,7 +414,7 @@ table — which a human is required to read anyway.
 If you do not set the secret, everything above still works. That is the test of
 whether a model is a convenience layer or a dependency, and this one passes it.
 
-### The two questions it is actually asked
+#### The two questions it is actually asked
 
 Not "summarise this PR" — the deterministic steps already did that, better. It
 is asked the two things they structurally cannot answer:
@@ -231,7 +449,7 @@ the model to be quoted verbatim under `SUSPICIOUS TEXT` and not acted on. That
 matters most for exactly the sentence a compromised release would want to write:
 *"downstream repos should drop the Host-header assertions."*
 
-## Running the suite yourself
+### Running the suite yourself
 
 ```bash
 pnpm contract                        # all contracts

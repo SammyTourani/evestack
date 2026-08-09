@@ -408,7 +408,27 @@ jobs:
           # This is the input for question 2 below: to say what a release changed
           # that nothing covers, the model has to know what is already covered,
           # and the ids alone do not carry that.
-          node -e '
+          #
+          # The fallback is ANNOUNCED, not swallowed, and that distinction is the
+          # whole point of the `if !` below.
+          #
+          # It used to be `|| echo "(could not list contract coverage)" >
+          # /tmp/coverage.md` — one line, no annotation, and the step still went
+          # green. That is exactly how a real defect hid: the runner's
+          # --format=json output was being truncated whenever stdout was a pipe,
+          # so this node call threw on JSON.parse, the placeholder went into the
+          # prompt, and the advisor answered question 2 — "what did this release
+          # change that nothing covers?" — for every eve release with NO coverage
+          # data at all. Its answers looked normal. Nothing in the run said the
+          # input was missing. The truncation was found days later, by hand.
+          #
+          # A ::warning:: annotation surfaces in the run summary and on the job,
+          # which is the cheapest place a human will actually see it. It must not
+          # fail the job: this whole step is `continue-on-error: true` and
+          # advisory by construction, and a watch workflow that goes red because
+          # an optional comment lost one of its inputs trains people to ignore
+          # it. Loud and green, not silent and green.
+          if ! node -e '
             const { execFileSync } = require("child_process");
             const out = execFileSync("node", ["contract/run.mjs", "--format=json"], {
               maxBuffer: 64 * 1024 * 1024, encoding: "utf8",
@@ -418,7 +438,10 @@ jobs:
               `- ${c.id}: ${c.assumption}\n  asserts: ` +
               c.assertions.map((a) => a.detail).join("; ").slice(0, 1200));
             require("fs").writeFileSync("/tmp/coverage.md", lines.join("\n"));
-          ' || echo "(could not list contract coverage)" > /tmp/coverage.md
+          '; then
+            echo "::warning::contract coverage could not be listed (node contract/run.mjs --format=json failed). The advisory comment below was written WITHOUT knowing what the contract suite covers, so its answer to question 2 — what this release changes that nothing covers — is guesswork and should be ignored."
+            echo "(could not list contract coverage — \`node contract/run.mjs --format=json\` failed in this run, so nothing below knows what the suite covers)" > /tmp/coverage.md
+          fi
 
           node -e '
             const fs = require("fs");

@@ -1,0 +1,761 @@
+# Changelog
+
+Seven npm packages and one container image ship out of this repository, each
+versioned independently, so this file is grouped by **package** rather than by
+date. Within a package, newest first.
+
+Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The
+projects are pre-1.0 and follow [SemVer](https://semver.org/) with the pre-1.0
+reading the repository has actually used: a behaviour change that could break
+something scripting these commands is a **minor**, not a patch.
+
+## How to read this file
+
+- **Every `###` heading is exactly the git tag for that release** — `create-evestack@0.8.0`,
+  `@evestack/mcp@0.2.0`. That is deliberate and load-bearing in two places: the string
+  is also a valid `npm install` spec (`npm i create-evestack@0.8.0`), and
+  `.github/workflows/publish-dashboard.yml` extracts release notes by matching the
+  heading literally. See [RELEASING.md](RELEASING.md#tag-convention) for the convention
+  and for the two tags that predate it.
+- Most releases have **no tag** — only four exist, covering 4 of the 28 released versions below.
+  A heading is therefore the *name a tag would have*, not proof one exists. RELEASING.md
+  says which four are real.
+- **Dates are `America/Los_Angeles`**, the timezone every commit in this repository is
+  stamped in. npm records its `time` field in UTC; those timestamps are converted here,
+  so a date can be one day earlier than the value `npm view <pkg> time` prints.
+- Commit hashes are given for anything a reader might want to check. `git show <hash>`;
+  the commit messages in this repository are long and carry the measurements.
+
+## How this was reconstructed
+
+Written on 2026-08-09, after the fact, for six days of history that had no changelog.
+It is derived, not remembered:
+
+```bash
+npm view create-evestack time            # the authoritative publish record
+git log --oneline <bump>..<next-bump> -- packages/<dir>
+git tag -l
+```
+
+Every version below is a version npm or GHCR actually serves, cross-checked against the
+commit that moved the `version` field in that package's `package.json`. Where the
+boundary between two versions cannot be established from the tree — no tag was cut, so
+the only evidence is that a commit's timestamp falls before or after the registry's
+publish timestamp — the entry says so instead of guessing.
+
+Entries for 2026-08-04 are thinner than the ones that follow. That is the day the
+repository was created (7548849, 04:24) and five of these packages were first written; the
+commits are large, and which of them was inside a given tarball is not cleanly recoverable.
+They are summarised rather than itemised, deliberately.
+
+---
+
+## Unreleased
+
+Five packages are bumped in this checkout and **not yet on npm** — publishing needs a
+2FA one-time password, so it is a human step (af49a2a). One more has changed *without* a
+bump and needs one before anything else is published; it is listed at the end of this
+section, because a package whose version matches the registry while its code does not is
+the one state every check in RELEASING.md reports as green.
+
+### create-evestack@0.9.0 — unreleased
+
+#### Added
+
+- The generated `docker-compose.yml` bind-mounts the project's own `skills/` directory
+  into the dashboard and sets `EVESTACK_SKILLS_DIR` (30b4de4). Without it the dashboard's
+  Skills page scanned the image's own bundled skill instead of yours — so it always
+  showed the same one entry, on every install.
+- `npm run verify` in a generated project asks the running dashboard what version it is
+  (`/api/health`) and compares it against the tag the project's own compose file pins
+  (f76a0d1). Warn, never fail: running a newer or locally built image is legitimate.
+
+#### Changed
+
+- The scaffolded compose file pins `ghcr.io/sammytourani/evestack-dashboard:0.2.0`
+  (751ac5c), up from `:0.1.0`. `:0.1.0` is not withdrawn and stays pullable.
+
+#### Fixed
+
+- `evestack attach` read a CRLF `.env.local` as **empty** and therefore added a second
+  Postgres to a project that already had one, splitting session history across two
+  databases with neither half complete (a693659). `readEnvFiles` split on `"\n"` and
+  matched with a `$`-anchored regex without the `m` flag; measured, 0 of 2 lines parsed
+  on CRLF against 2 of 2 on LF. A `.env` written on Windows, or checked out with
+  `core.autocrlf=true`, was enough.
+- A generated project missing `db:bootstrap` reported "workflow tables created" anyway
+  (83af3bb).
+- The canary the env-name contract looked for was an `EVESTACK_`-prefixed name that
+  nothing sets (fc5dea7).
+
+### evestack@0.4.0 — unreleased
+
+#### Changed
+
+- `evestack tour` no longer treats silence as consent. Off a TTY it exits 3 instead of
+  sending a billable model call (920a439). This is a **behaviour change for anything
+  scripting it**, which is why the bump is minor rather than patch.
+
+#### Fixed
+
+- The four output defects the `0.3.0` redesign left behind — the stderr colour fix and
+  two `--json` defects among them — and `evestack status` against a scheme-less dashboard
+  URL (920a439).
+- The npm README advertised three of seven commands — it predated the redesign that
+  added `status` and `tour`, so the two commands that redesign was built around were
+  invisible on the page most people land on first (920a439).
+
+### @evestack/mcp@0.3.0 — unreleased
+
+Cut as a minor, not the patch this was first queued as. It was a patch while the change
+was README-only; the output cap below is a new feature with a new environment variable and
+a behavioural change to every tool result, and shipping that as `0.2.1` would tell every
+consumer's version range it was safe to take without reading anything.
+
+#### Added
+
+- **A cap on how much one tool result can put in a model's context**, default 64 KiB
+  (~16k tokens), configurable through `EVESTACK_MCP_MAX_OUTPUT_BYTES`. Before it, the size
+  of a tool result was a property of how much history the deployment had rather than of
+  anything this server decided: `list_approvals` against a busy install measured 113,289 B
+  (~28k tokens) with no arguments at all. Results are never silently shortened — the
+  payload stays valid JSON, `_truncated` is the first key so a model reading top-down meets
+  it before the data, and `cuts` names every array and string that lost content. A
+  truncated audit log mistaken for a complete one answers "who approved this?" with
+  "nobody did".
+
+#### Fixed
+
+- The README — which is the npmjs.com page — said `list_approvals` "does not exist yet".
+  The route was added in 5c49f3a on 2026-08-05, four days before that sentence shipped
+  (920a439).
+
+### @evestack/budget@0.2.1 — unreleased
+
+#### Fixed
+
+- **The spend cap undercharged every cache write.** `costUsd()` takes five arguments —
+  `(model, input, output, cacheRead, cacheWrite)` — and `hook.ts` called it with four, so
+  `cacheWriteTokens` fell to its `= 0` default on every step and a write was billed at the
+  plain input rate (b9a00a7). eve reports the number and `pricing.ts` has always accepted
+  it; only the call site dropped it. Cache reads and writes are *parts* of `inputTokens`
+  rather than additions to it, so the miss is the gap between two rates, not a whole extra
+  charge. Measured against the shipped catalog on 1M input tokens of which 400k were cache
+  writes: `anthropic/claude-sonnet-5` charged $2.000 against a correct $2.200 (−10%);
+  `openai/gpt-5-mini` charged $0.250 against a correct $0.250 (no difference), because it
+  publishes no separate write rate and `pricing.ts` falls back to the input rate. So the
+  bug undercharges on Anthropic and is a no-op on the default provider, which is why it
+  survived. Cost is what the cap is measured against, so an Anthropic prompt-caching
+  workload passed its limit before anything tripped.
+
+  Patch rather than minor: no surface moved and nothing scripting this package sees a
+  different shape — the only behaviour change is that a cap now trips where it should
+  always have. Pinned by a source-text assertion, because the hook needs Postgres and a
+  live session to run and a four-argument call is exactly the shape that regressed.
+
+  Still not fixed: `budget_steps` has no `cache_write_tokens` column, so the count is not
+  stored per step — only its **cost** is now correct. Adding the column means a migration
+  against tables created with `CREATE TABLE IF NOT EXISTS`, which is more than this bug
+  needs.
+
+### @evestack/sandbox-opensandbox@0.4.0 — unreleased
+
+Three defects found by testing the session surface against a **stubbed** SDK, and two more
+found by reviewing those fixes before they shipped. `test/adapter.test.mjs` is what made
+any of it visible: everything in `index.ts` needs a live OpenSandbox server to run, so none
+of it could be pinned by a test until the wire was faked. Each fix below is pinned by a
+case that fails on `0.3.0`.
+
+Unlike every other entry in this file, this one carries **no commit hashes — the work is
+uncommitted in this checkout**, in `src/index.ts`, `src/translate.ts`, `README.md`,
+`test/translate.test.mjs` and a new `test/adapter.test.mjs`. Commit before publishing:
+`npm publish ./packages/sandbox-opensandbox` packs the working tree, so otherwise `0.4.0`
+on npm is a version that exists in no commit and these bullets cite nothing checkable.
+
+#### Added
+
+- **`networkPolicy` on the backend.** OpenSandbox fixes a sandbox's `defaultAction` when
+  the sandbox is created — that is why `session.setNetworkPolicy()` still rejects — so
+  creation is the only point at which a policy can be honoured, and now it is:
+  `opensandbox({ networkPolicy: "deny-all" })` or an allow-list, translated to
+  OpenSandbox's `{defaultAction, egress}` model and passed to `Sandbox.create`. Honoured
+  completely or not at all — `subnets` (its egress model has no IP/CIDR) and per-domain
+  `transform` / `forwardURL` / `match` rules **throw when the backend is constructed**
+  rather than being dropped, because a restriction that is half-applied reports success
+  with the hole still open.
+- The policy is recorded alongside the sandbox id, and `create()` refuses to reattach to a
+  sandbox created under different egress: that sandbox's rules cannot be changed to match,
+  so reattaching would run the agent under the old policy while the operator reads the new
+  one in their source. Two limits on that refusal, both of which it lacked at first and
+  both of which turned a guard into an outage — it is checked *after* the reconnect ladder
+  and only for a sandbox actually recovered (a session whose sandbox was reaped upstream
+  has nothing to diverge from, and now gets a fresh one under the new policy instead of
+  throwing on every turn for ever: reproduced against the earlier build as `create() THREW
+  ... Sandbox.create calls: 0`), and `allow-all` compares equal to no policy at all, since
+  the SDK's own schema says an empty or null policy is allow-all at startup. Writing
+  `networkPolicy: "allow-all"` down explicitly is a no-op, not something that detaches
+  every live session.
+- `test/adapter.test.mjs`, the stubbed-SDK harness described above.
+
+#### Changed
+
+- **Breaking:** `opensandbox()` now **throws on any option it does not implement**
+  (`assertKnownOptions`), where `0.3.0` accepted and ignored it. TypeScript's
+  excess-property check catches `opensandbox({ typo: 1 })` written as an object literal
+  and catches nothing else, so **an untyped JavaScript caller, a spread
+  (`opensandbox({ ...config })`), or a config loaded from JSON that was passing extra keys
+  silently will now fail at construction** — that is the compatibility break in this
+  release, and it has no other announcement. It is deliberate because of the case that
+  motivated it: verified against `0.3.0`, `opensandbox({ initialNetworkPolicy:
+  "deny-all" })` called `Sandbox.create` with `{"image":"ubuntu"}` and said nothing, and a
+  caller who asked for a locked-down network and silently got an open one has no way to
+  tell from the outside. A misspelling that looks network-related is named as such in the
+  error.
+- `setNetworkPolicy()`'s rejection message no longer says a creation-time policy "is not
+  exposed yet"; it points at `opensandbox({ networkPolicy })`.
+- The README documents the option, the kill path and the exit-code contract, and says
+  which of them are covered only by the stubbed SDK rather than by a live server.
+
+#### Fixed
+
+- **A command that never completed reported success.** `exitCodeOf` was
+  `execution.exitCode ?? (execution.error ? 1 : 0)`, so a null exit code with no error
+  object returned **0**. The SDK returns null for exactly the cases where the command did
+  *not* complete — a server-side timeout kill, an OOM-killed container, an SSE stream that
+  simply ends — so a killed command was reported to the model as a success. It now returns
+  `137` (128 + SIGKILL), the number Linux, Docker and eve's own `docker()` backend surface,
+  so a reader that only asks `exitCode !== 0` sees failure and a reader of the number sees
+  "killed". The function's own doc comment and the README both already claimed the fixed
+  behaviour. Reproduced on `0.3.0`: an execution of `{exitCode: null, error: undefined}`
+  came back from `session.run()` as `{"exitCode":0}`. Applies to `run()` and to `spawn()`.
+- **`kill()` did not kill.** It called `AbortController.abort()` and made no further
+  request to the sandbox at all — that closes *our* SSE connection, and whether execd then
+  reaps the command is a server-side detail the SDK does not promise; it ships a separate
+  termination API precisely because hanging up is not a kill. Measured against the previous
+  build with a stubbed SDK: `kill()` made zero further calls to the sandbox, and `wait()`
+  afterwards **rejected with `AbortError`** rather than reporting a terminated process. A
+  spawned command is now wrapped to record its pid, and `kill()` runs a second command
+  inside the sandbox that SIGKILLs that pid and every descendant, using the same
+  `/proc`-walking script as eve's `docker()` backend. `wait()` after a successful `kill()`
+  now **resolves** with `137`; a `kill()` whose request never reached the sandbox throws,
+  rather than reporting a termination that may not have happened. Not the SDK's own
+  `commands.interrupt()`: it is `DELETE /command?id=<sessionId>` against a bash session
+  this backend does not use, and a termination call aimed at the wrong id is a kill that
+  silently does nothing.
+- The kill's intent is recorded **before** the round trip, not after. The server kills the
+  process before it answers, so the spawned command's stream dies while `kill()` is still
+  awaiting the response — written the other way round, which is how it was first written, a
+  kill that worked perfectly took the "the stream broke unexpectedly" path: `wait()`
+  rejected and both byte sinks errored under any reader, the exact opposite of the README's
+  claim. A count rather than a flag, so two concurrent kills cannot undo each other.
+- **Network-policy options were accepted and never reached the sandbox.** There was no
+  correctly-spelled option to pass one with, and anything that looked like one was dropped
+  in silence — see `networkPolicy` and `assertKnownOptions` above. This is the one class of
+  failure a caller cannot detect from outside the sandbox, which is why both halves of the
+  fix refuse rather than degrade.
+
+### Changed but not yet versioned
+
+- **`@evestack/dashboard`** — three changes have landed since the `0.2.0` image was built,
+  and `packages/dashboard/package.json` still says `0.2.0`. The image tag and the source
+  tree therefore name the same version and no longer contain the same thing; bump before
+  the next `docker` release.
+  - **Security:** `safeNextPath` rejected the `//` and `/\` prefixes, but the WHATWG URL
+    parser strips tab, LF and CR *before* parsing, so the string the browser resolves is
+    not the string that was validated. `/signin?next=/%09/evil.example` sent the operator
+    off-site immediately after they typed the deployment password. Measured against
+    Node's own implementation for all three characters (b9a00a7).
+  - **Fixed:** "Most expensive sessions" on `/costs` was empty on every install since it
+    shipped. `session_id` is `groupable: false` in the catalog, `compileMetricQuery`
+    threw, and `ranked()`'s caller caught everything and returned `[]`, so a broken panel
+    rendered as "Nothing to rank" — indistinguishable from a quiet month. The query now
+    takes an explicit `topN: true`, and `MetricQueryError` is re-thrown rather than
+    swallowed (38076ca).
+  - **Fixed:** the wedged-turns alert hardcoded 15 minutes while `facts.sql`,
+    `lib/fleet.ts` and the `wedged` outcome all use `STUCK_TURN_MS` = 1 hour, so it
+    counted turns the fleet banner called healthy and linked to a shorter list than the
+    number it reported (b9a00a7).
+  - **Added:** `/api/health` reports the dashboard's own `version`, on every branch
+    including the failures. Nothing could previously ask a *running* dashboard what it
+    was — `evestack verify` printed the same line against the current image and against
+    the four-day-old one — which is the whole reason the `0.1.0` image went 51 commits
+    stale unnoticed (f76a0d1).
+- **`contract/`** — 1b63559 and 06274c4 repaired a probe that was writing rows eve's
+  `WorkflowRunSchema` rejects, which bricked a development database for four days.
+  Ships in no published artifact; recorded here because the *symptom* reached users as
+  "the database that would not boot", and docs/troubleshooting.mdx carries the repair.
+
+---
+
+## `create-evestack`
+
+The `npm create` entry point. Carries `templates/default` inside it, so a change to the
+template ships as a change to this package.
+
+### create-evestack@0.8.0 — 2026-08-09
+
+> **Upgrade note.** `0.8.0` was published at 00:30 and 30b4de4 landed at 00:43 — twelve
+> minutes and forty-six seconds later. Every project scaffolded from npm since therefore
+> has a compose file with **no skills bind-mount** (the dashboard's Skills page scans the
+> image's own bundled skill) and pins the dashboard at `:0.1.0`. Both are fixed in the
+> unreleased `0.9.0`. Confirmed by running the published package into a clean directory
+> and reading the compose file it wrote (af49a2a).
+
+#### Changed
+
+- Terminal output: colour is decided once, from whether stdout is a TTY, instead of by
+  three separate colour tables that never asked (f420897).
+
+#### Fixed
+
+- The npm README still told people the dashboard image does not exist (d4ea07e).
+- A flag that gated nothing, and the reason the env-name contract could not see it
+  (c023c45).
+- `db:bootstrap` treated an absent `.env.local` as an error rather than as a
+  configuration (f758fbe).
+- The two commands people mistype now explain themselves, and the first run stops
+  guessing ports (b39d6d7, 8fd73d3).
+
+### create-evestack@0.7.0 — 2026-08-06
+
+#### Security
+
+- The generated Postgres password was written into a file that was then committed to git
+  (2789517).
+
+#### Fixed
+
+- `--help` wrote files (2789517).
+- `npx create-evestack` answered a wrong directory with a stack trace (bb4293c).
+- A built agent listened on a port nothing was looking at (83c5999).
+- The branch that explains a hallucinated memory id was the one that threw (a7c78a6).
+- A failed heartbeat could not be recorded as failed, and a disabled one still ran hourly
+  (8eb17e5).
+- Five defects found by re-verifying the whole stack, one of which kills the agent
+  (bc36a4a).
+- The heartbeat's two advertised selling points were not implemented, in four documents
+  (2d03a6a).
+
+#### Changed
+
+- The first run works, and explains itself (659d9cf).
+
+#### Removed
+
+- Unreachable release-toggle branches (a97354f).
+
+### create-evestack@0.6.0 — 2026-08-06
+
+#### Security
+
+- The agent's database was published to the network with a known password (e2fb418).
+
+#### Changed
+
+- One command. The dashboard is **pulled** from GHCR instead of built locally
+  (bbdc68e) — the change that removed the biggest piece of setup friction in the project,
+  and the reason `publish-dashboard.yml` exists.
+- The scaffolder stopped apologising for a dashboard image that is now published
+  (f2f0d48).
+
+#### Fixed
+
+- Prerelease users were told `0.30.1-beta.1` is newer than `0.30.2` (c795283).
+
+### create-evestack@0.5.0 — 2026-08-05
+
+Tagged `create-evestack@0.5.0`. A GitHub release was drafted for this version and never
+published; its body is the longest-form account of what changed here.
+
+#### Security
+
+- Sandbox egress is denied by default and the sandbox image is pinned (f21a399).
+
+#### Fixed
+
+- The tool-approval middleware was rewritten for `@ai-sdk/provider` 4.0.5, under which a
+  denial carries `providerOptions.openai.approvalId` — the old rewrite dropped it
+  (f21a399).
+- **Every span the generated project exported was silently dropped.** The exporter sent
+  no credential, so every span 401'd — and `@vercel/otel`'s fetch-based exporter treats a
+  401 as a resolved promise, reports success to the batch processor and drops the batch.
+  A misconfigured token was indistinguishable from "no traces yet". The template now
+  sends the shared secret and probes once at boot, so a refused credential says which
+  side is wrong (9f46b69).
+- The wizard offered "OpenAI or Anthropic" and implemented only OpenAI. All three
+  providers are now real choices that write their own key variable (9f46b69).
+
+#### Changed
+
+- One hero line, the same sentence on all four surfaces (ef40b13, 893cac8).
+
+### create-evestack@0.4.0 — 2026-08-05
+
+Tagged `create-evestack@0.4.0`.
+
+#### Fixed
+
+- **The advertised $0 local-model path never booted.** Choosing "Ollama (local)" wrote
+  `EVESTACK_MODEL=qwen3` and a comment saying no API key was needed, but never
+  `EVESTACK_PROVIDER=ollama`. The agent defaults the provider to `openai`, so the model
+  name went to the wrong provider and the agent died before serving a request (7ba9dd3).
+- **Every project claimed the compose project name `evestack`**, so a second scaffold —
+  or a scaffold beside the cloned repo, which the printed next steps tell you to set up —
+  was the *same* Compose project, and two agents shared one database. The name now
+  derives from the project directory (7ba9dd3).
+- A fresh install reported five npm advisories; now zero (f409414). All five were
+  `undici`, reached two ways: `@workflow/world-local` exact-pins 7.28.0 (lifted by a
+  narrow nested override), and `@ai-sdk/openai` was pinned `^2.0.0`, two majors behind
+  the SDK it plugs into — `^4.0.0` matches `ai@7`, so this is a correctness fix as much
+  as a security one.
+- The `anthropic` provider the agent already imports is now declared (ba280ea).
+
+#### Added
+
+- The RAM warning for local models appears in the wizard, not only in the README
+  (f409414). Loading a 5.2 GB model on top of Docker, Postgres, the dashboard and the
+  agent does not degrade gracefully.
+
+### create-evestack@0.3.1 — 2026-08-04
+
+#### Fixed
+
+- eve 0.30.6: survive the denial that killed every session (f771d5b).
+- A Slack bug that structure could not catch, found while packaging the Slack, Discord
+  and Telegram channels (49d56b4).
+
+### create-evestack@0.3.0 — 2026-08-04
+
+#### Added
+
+- The eve contract suite, and `@evestack/budget` as a template dependency (30c296d).
+
+### create-evestack@0.2.0 — 2026-08-04
+
+#### Changed
+
+- eve 0.30.2, and the auth patch it made obsolete is gone (eb0eaee).
+- Ships what `0.1.1` was bumped for but never published: a gated tool with approvals that
+  actually render (8f66c20), and telling scaffolded users the dashboard exists (5eba712).
+
+### create-evestack@0.1.1 — never published
+
+Bumped in 4967594 at 12:42 and superseded by `0.2.0` ten minutes later. npm has no such
+version; it is listed only so the gap between git and the registry is not read as a
+missing entry.
+
+### create-evestack@0.1.0 — 2026-08-04
+
+First working scaffolder (82ed0f1). Also in this window, by timestamp against the
+registry's 11:19 publish: Composio wired into the agent and UTC timestamp parsing fixed
+(22d41e2), the smoke/sandbox/memory eval suite (45c79a8), never selecting a local model
+implicitly plus two real Ollama bugs (178fc93), and a pre-publish QA pass that closed an
+auth bypass and every packaging defect found (35f739a).
+
+The split between this version and `0.1.1` is inferred from commit timestamps either side
+of the registry's publish time. No tag was cut, so it cannot be established exactly.
+
+### create-evestack@0.0.1 — 2026-08-04
+
+A name reservation, published at 05:32 within three seconds of `evestack@0.0.1`. It does
+not correspond to any commit in this repository. Do not install it.
+
+---
+
+## `evestack`
+
+The CLI — `create`, `attach`, `doctor`, `status`, `tour`, `verify`. Depends on
+`create-evestack`, so it publishes last.
+
+### evestack@0.3.0 — 2026-08-09
+
+> **Upgrade note.** This version predates the `tour` consent gate: off a TTY,
+> `evestack tour` treated silence as a yes and sent a billable model call. Fixed in the
+> unreleased `0.4.0` (af49a2a).
+
+#### Changed
+
+- Terminal output honours whether stdout is a TTY (f420897).
+
+#### Fixed
+
+- `evestack doctor` called finished conversations wedged (67f044f).
+
+### evestack@0.2.0 — 2026-08-06
+
+#### Fixed
+
+- Carries the same `0.7.0`-era fixes as the scaffolder it wraps: the committed Postgres
+  password and `--help` writing files (2789517), five stack-verification defects
+  (bc36a4a), and a first run that works and explains itself (659d9cf).
+
+### evestack@0.1.0 — 2026-08-06
+
+First real CLI: `evestack doctor`, which explains why a durable job is dead (489874a),
+and the one-command path in which the dashboard is pulled rather than built (bbdc68e).
+
+### evestack@0.0.1 — 2026-08-04
+
+A 196-byte name reservation with no `bin` field, published at 05:32 within three seconds
+of `create-evestack@0.0.1`. It predates every line of `packages/evestack-cli`, whose
+first commit is 489874a on 2026-08-05. Do not install it; `npx evestack` resolved to this
+until `0.1.0` landed.
+
+---
+
+## `@evestack/mcp`
+
+The MCP server. Standalone — nothing else published names it, so it can go out at any
+point in the release order.
+
+### @evestack/mcp@0.2.0 — 2026-08-06
+
+#### Added
+
+- A `test` script. The package had none, so `pnpm -r test` skipped it **entirely** —
+  including a hand-rolled JSON-RPC framer, a hand-rolled schema validator, and the
+  read-only tool gate the README leads with. 54 tests (b0fcf07).
+
+#### Fixed
+
+- The server pointed at a route that no longer carries the data (e83fbc1).
+- `#initialized` is enforced in the handshake rather than ignored — the client name
+  arrives there and becomes the User-Agent recorded against an approval (b0fcf07).
+- The README documented `/api/health`; the server reads `/api/health/detail` (b0fcf07).
+
+### @evestack/mcp@0.1.0 — 2026-08-05
+
+First release (51d2b85), alongside the fix to the trace tier that had never worked.
+
+---
+
+## `@evestack/budget`
+
+Spend caps. A **template dependency** — it must exist on npm before `create-evestack`
+does.
+
+### @evestack/budget@0.2.0 — 2026-08-06
+
+> **Upgrade note.** This is what npm serves today, and it undercharges every cache write:
+> `hook.ts` calls `costUsd()` with four of its five arguments, so an Anthropic
+> prompt-caching workload is billed about 10% under and passes its cap before anything
+> trips. OpenAI models are unaffected. Fixed in the unreleased `0.2.1` (b9a00a7).
+
+#### Fixed
+
+- **The cap could never trip on the documented Anthropic setup.** `config.ts` resolved an
+  unset model to `gpt-5-mini` regardless of provider, so `EVESTACK_PROVIDER=anthropic`
+  with the model unset — exactly what `.env.example` documents — asked for
+  `anthropic/gpt-5-mini`, which is in no pricing table. `findPrice` returned null, cost
+  was 0, and the $2 session and $10 daily caps could never fire. With the fail-closed
+  value `.env.example` recommends (`=stop`), the opposite: the first step is marked
+  exceeded and no turn can ever complete (028c3f8).
+- **A typo'd timezone failed every turn.** `EVESTACK_BUDGET_TIMEZONE` was read with no
+  trim and no validation, and the day key was computed *outside* the `try` guarding
+  `recordStep`, so a `RangeError` escaped the hook — and eve treats a thrown hook as a
+  real turn failure. Verified throwing on `""`, `"UTC "` (a trailing space from `.env` or
+  compose), `"GMT+2"` and `"America/Torono"` (028c3f8).
+- Two defects from the whole-stack re-verification, one of which kills the agent
+  (bc36a4a), and the first test coverage for the spend cap (37e7f11).
+
+#### Changed
+
+- eve 0.30.6 → 0.30.8 (b0936a2).
+
+### @evestack/budget@0.1.0 — 2026-08-04
+
+First release, with the eve contract suite (30c296d).
+
+---
+
+## `@evestack/composio`
+
+Composio tool access. A **template dependency**.
+
+### @evestack/composio@0.2.0 — 2026-08-06
+
+#### Added
+
+- A `test` script — the package had none, so `pnpm -r test` skipped it entirely. 20 tests
+  (b0fcf07).
+- `src/resolver.ts`: the session-selection logic (no key / the live one / nothing while a
+  failure cools off) split out of the closure that was handed straight to
+  `defineComposioTools`, where the only way to reach it was a real Composio handshake
+  (b0fcf07).
+
+#### Changed
+
+- eve 0.30.6 → 0.30.8 (b0936a2).
+
+#### Removed
+
+- The dead `COMPOSIO_EXECUTE_TOOL` slug (b0fcf07).
+
+### @evestack/composio@0.1.1 — 2026-08-04
+
+#### Fixed
+
+- eve 0.30.6, and the denial that killed every session (f771d5b).
+
+### @evestack/composio@0.1.0 — 2026-08-04
+
+First release (ac6d4da), published one minute before `create-evestack@0.1.0` — the
+dependency order this repository has followed since.
+
+---
+
+## `@evestack/schedules`
+
+Cron schedules and the heartbeat. A **template dependency**.
+
+### @evestack/schedules@0.2.0 — 2026-08-06
+
+#### Fixed
+
+- A cron written in capitals stopped the agent booting, and `describeCron` still
+  over-reported (6b79571).
+- The Schedules page could report a schedule running 1,440× more often than it does
+  (6338e3f).
+- Run duration recorded the seconds field twice instead of the elapsed time (0241ccd).
+- The heartbeat's two advertised selling points were not implemented, in four documents
+  (2d03a6a).
+
+#### Changed
+
+- eve 0.30.6 → 0.30.8 (b0936a2).
+
+### @evestack/schedules@0.1.0 — 2026-08-05
+
+First release, out of the work that added schedules, skills, fleet health and attach
+(3b708c6).
+
+---
+
+## `@evestack/sandbox-opensandbox`
+
+The OpenSandbox backend adapter. Standalone.
+
+### @evestack/sandbox-opensandbox@0.3.0 — 2026-08-06
+
+> **Upgrade note.** This is what npm serves today, and three things in it are worse than
+> they read. A command that never completed — a timeout kill, an OOM, a stream that ends —
+> comes back to the model as `exitCode: 0`; `kill()` closes the local connection and sends
+> the sandbox nothing, so `wait()` rejects instead of reporting a terminated process; and a
+> network-policy option is accepted and dropped, producing a sandbox with wide-open egress
+> and no complaint. The README already describes the first as fixed. All three are fixed in
+> the unreleased `0.4.0`, which also makes an unrecognised option throw.
+
+The largest correctness release of any package here. All of b0fcf07.
+
+#### Removed
+
+- **Breaking:** the `workingDirectory` *option* on the backend. It was public and did
+  nothing — it created the directory and then ran everything in `/workspace`. Removed
+  rather than wired, because eve pins `/workspace` as the relative-path anchor on every
+  backend. `run({ workingDirectory })` is the real per-command knob, and it now works.
+
+#### Fixed
+
+- **Three methods eve declares non-optional did not exist**: `spawn`,
+  `setNetworkPolicy`, `removePath`. A tool deleting a sandbox file got
+  `session.removePath is not a function`. Reading eve's `.d.ts` to implement them turned
+  up four more: `run()` destructured `cwd` where eve passes `workingDirectory`, so
+  **every** command ignored the directory it was given; `readFile`/`writeFile` were bytes
+  where eve's contract is a `ReadableStream`; `useSessionFn` returned synchronously where
+  eve returns a Promise; and `abortSignal`, `encoding` and `startLine`/`endLine` were
+  dropped silently, with a missing file never returning eve's documented `null`.
+- `prewarm` silently discarded `bootstrap()` and `seedFiles`, and `create` ignored
+  `templateKey`, so an author's install hook and seed files vanished and every session
+  came up bare Ubuntu. Nothing threw; the log said "no template snapshot captured" and
+  the README called the cost "a cold start". `create` now throws eve's
+  `SandboxTemplateNotProvisionedError`, structurally.
+- `joinOutput` appended a newline that was never in the output, so `printf %s x` returned
+  `"x\n"` where eve's Docker backend returns `"x"` — contradicting both the function's
+  own comment and the README's "byte for byte".
+- eve was not given back the key it reattaches sandboxes by (96bc9ef).
+- The README sold gVisor isolation at the top and admitted at the bottom that it was
+  never exercised. The client SDK has no runtime selector, so the adapter neither
+  requests nor verifies one; the top of the page now says what the caveat said.
+- Contract 09 asserted the members this wrapper implements are a *subset* of eve's
+  declarations, which is structurally blind to the failure that actually happened. It now
+  derives the required set from eve's declaration and checks both directions. Falsified:
+  renaming `removePath` makes it fail with "never defines removePath".
+
+#### Changed
+
+- eve 0.30.6 → 0.30.8 (b0936a2).
+
+### @evestack/sandbox-opensandbox@0.2.0 — 2026-08-04
+
+#### Fixed
+
+- Two real bugs, found by verifying the adapter against a live OpenSandbox server rather
+  than against its types (03c0cf0).
+
+### @evestack/sandbox-opensandbox@0.1.0 — 2026-08-04
+
+First release (952f0f9).
+
+---
+
+## `@evestack/dashboard`
+
+`private: true` on npm. It ships as a multi-arch container image,
+`ghcr.io/sammytourani/evestack-dashboard:<version>` (`linux/amd64` and `linux/arm64`),
+built and pushed by `.github/workflows/publish-dashboard.yml` on a tag push. The version
+here is the image tag. Dates are the git tag's, not npm's.
+
+### @evestack/dashboard@0.2.0 — 2026-08-09
+
+Tagged `dashboard-v0.2.0`, under the old convention. "51 commits, 149 files,
++25,621 / −1,524" since the `0.1.0` image, by the release commit's own count (751ac5c).
+Nothing here was broken; the release had simply never been cut, and no verification tier
+could see it because all four validate the checkout rather than the artifact.
+
+> **Upgrade note.** `create-evestack` on npm is still `0.8.0` and writes `:0.1.0` into
+> every compose file it generates, so until the scaffolder is republished this release
+> reaches people who clone the repo and people who track `:latest` — not `npx
+> create-evestack` users. A deliberate half-step. `:0.1.0` stays pullable.
+
+#### Added
+
+- The `/sessions` list — the page in the README's own hero screenshot. The `0.1.0` image
+  shipped only `/sessions/[id]`, so the route the screenshot shows was a 404 in the image
+  everyone was running (295a878).
+- `/costs` (e3204e1), `/sandboxes` (e92b7c1) and `/charts` (ecb17e3).
+- `/api/alerts` and `/api/metrics/query`, the fact tables underneath every chart, and the
+  query API (ecb17e3, 991b6d0).
+- Nine monitors that actually deliver, with a third state that is not OK (7528a72,
+  991b6d0, 82a316d).
+- The design system pass: preflight, one measure, and the states every page shares
+  (ef181b0, 57b2ffe).
+
+#### Security
+
+- Sign-in stopped redirecting the browser to the address the server is bound to
+  (c2dc9f0).
+- Forking replayed turns the operator never agreed to run (5699fcd).
+
+#### Fixed
+
+- Ten defects in the data layer, four of them silent (d15c962).
+- A failure rate that could read 200% (1dcc9f3); `count()` claiming to be dollars
+  (6043533); three ways the query API answered confidently and wrongly (5c135f5).
+- The endpoint that distinguishes a wired exporter from a silent one reported silent
+  (23ce653).
+- "Nothing happened" and "I cannot see" no longer render the same (cc89fec).
+- The wedged-turns alert could not fire outside UTC (be42dcd).
+- `getPool().end()` left the dead pool in the global (d128c87).
+- Ten stale claims across README, docs, `llms.txt` and site copy, adjudicated against the
+  code — 107 falsifiable claims read, 10 false (920a439).
+
+### @evestack/dashboard@0.1.0 — 2026-08-05
+
+Tagged `dashboard-v0.1.0`. The first published image, built from d4aee43. Multi-arch from
+the start.
+
+Everything before it — sessions, the run tree, the control API, OTLP ingest and
+integrations (ac6d4da), pgvector long-term memory and trace export (88241fd), browser
+chat (d2a9717) — was only reachable by cloning the repository and running
+`docker build`. It is folded into `0.1.0` rather than itemised: nothing was released
+before it, so there is no "changed since" to describe.

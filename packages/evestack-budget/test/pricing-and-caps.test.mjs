@@ -13,6 +13,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 
 // From dist/, not src/. `src/hook.ts` imports its siblings as `./cancel.js` —
 // TypeScript's convention for what is really a .ts file — and Node's type
@@ -191,4 +192,64 @@ test("the model key is provider-qualified, so one name on two providers prices a
   // And the cap can now see the money: priced means costUsd returns a number an
   // accumulating total can eventually compare against a cap.
   assert.ok(costUsd("anthropic/claude-sonnet-5", 1_000_000, 200_000, 0) > 0);
+});
+
+/**
+ * The hook must charge for cache WRITES, and for a while it did not.
+ *
+ * `costUsd(model, input, output, cacheRead, cacheWrite)` takes five arguments.
+ * hook.ts called it with four, so `cacheWriteTokens` fell to its `= 0` default
+ * on every step — while eve reports the number (its own ZERO_TOKEN_USAGE is
+ * `{cacheReadTokens, cacheWriteTokens, inputTokens, outputTokens}`) and
+ * pricing.ts has always accepted it.
+ *
+ * That is not an under-report, it is an under-CHARGE: `cost` is the number the
+ * cap is measured against, so a prompt-caching workload could pass its limit
+ * without tripping. On Anthropic a cache write is billed above the input rate.
+ *
+ * Asserted against the source text because the hook needs Postgres and a live
+ * session to run — the same reason the header above gives for what is not
+ * covered here — and a four-argument call is exactly the shape that regressed.
+ * composio-identity.test.mjs uses the same technique for the same reason.
+ */
+test("the spend hook passes cache-write tokens to the price function", () => {
+  const src = readFileSync(new URL("../src/hook.ts", import.meta.url), "utf8");
+
+  assert.match(
+    src,
+    /const cacheWriteTokens = usage\.cacheWriteTokens \?\? 0;/,
+    "the hook must read cacheWriteTokens off the usage eve reports",
+  );
+
+  const call = /costUsd\(\s*config\.model,\s*inputTokens,\s*outputTokens,\s*cacheReadTokens,\s*cacheWriteTokens,?\s*\)/;
+  assert.match(src, call, "costUsd must be called with all five arguments, cache writes last");
+});
+
+/**
+ * And the price function must actually charge for them, or the above is theatre.
+ *
+ * Cache writes are a SUBSET of inputTokens — costUsd subtracts reads and writes
+ * to get the non-cached remainder — so the realistic shape is one million input
+ * tokens OF WHICH some were writes, not a million writes beside a million
+ * inputs. Passing the latter trips the package's own impossible-split warning,
+ * which is itself the right behaviour and not what this test is about.
+ */
+test("dropping the cache-write argument undercharges where a provider prices writes higher", () => {
+  const M = 1_000_000;
+  const charged = costUsd("anthropic/claude-sonnet-5", M, 0, 0, 0);
+  const correct = costUsd("anthropic/claude-sonnet-5", M, 0, 0, 0.4 * M);
+  assert.ok(
+    correct > charged,
+    `sonnet-5 prices a write above input, so omitting it must undercharge (${charged} vs ${correct})`,
+  );
+
+  // And the reason it went unnoticed: on the DEFAULT provider there is no gap,
+  // because gpt-5-mini publishes no cache-write rate and pricing.ts falls back
+  // to the input rate. A test that only exercised the default would pass either
+  // way, which is worth pinning so nobody "simplifies" this to one model.
+  assert.equal(
+    costUsd("openai/gpt-5-mini", M, 0, 0, 0),
+    costUsd("openai/gpt-5-mini", M, 0, 0, 0.4 * M),
+    "gpt-5-mini has no published write rate, so the two must agree",
+  );
 });

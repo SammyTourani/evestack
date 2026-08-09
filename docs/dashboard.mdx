@@ -227,7 +227,8 @@ pnpm --filter @evestack/dashboard dev   # http://localhost:4000
 ```
 
 Both halves of `EVESTACK_AUTH_*` are required and neither is defaulted: with either missing the
-dashboard answers `503` on every route, sign-in page included. Use the same pair your agent has
+dashboard answers `503` to everything but `GET /signin`, which renders the reason with no
+sign-in form on it, so there is nothing to sign in with. Use the same pair your agent has
 in `.env.local` — it is one secret per deployment, which the dashboard signs you in with and
 then presents to the agent.
 

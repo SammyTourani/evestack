@@ -675,6 +675,22 @@ export function compileMetricQuery(input: unknown, now = Date.now()): CompiledQu
   const dimensionNames = asArray(body.dimensions, "dimensions").map((d, i) =>
     asString(d, `dimensions[${i}]`),
   );
+  /**
+   * "A list, not a chart" — said explicitly, so the catalog can keep refusing it
+   * everywhere else.
+   *
+   * `session_id` and `run_id` are `groupable: false` in both views to stop
+   * anyone putting a hundred thousand distinct values on a chart axis. That is
+   * the right default and the wrong answer for a top-N list, which is exactly
+   * the shape `ranked()` builds — and /costs asked for the ten most expensive
+   * SESSIONS. The compile threw, `ranked`'s caller swallowed it, and the panel
+   * rendered "Nothing to rank" on every install since it shipped.
+   *
+   * An opt-in rather than making the dimension groupable: a caller that wants a
+   * bounded ordered list says so, and a caller that forgets still cannot put
+   * session_id on an axis. `ranked()` is the only thing that sets it.
+   */
+  const topN = body.topN === true;
   const dimensions: CompiledDimension[] = [];
   // key -> the catalog SQL it resolved to, so nothing below has to look it up
   // again with a non-null assertion.
@@ -692,10 +708,10 @@ export function compileMetricQuery(input: unknown, now = Date.now()): CompiledQu
           )}.`,
       );
     }
-    if (!def.groupable) {
+    if (!def.groupable && !topN) {
       throw new MetricQueryError(
         `Dimension '${name}' is filterable but not groupable — it has one value per row, so ` +
-          "grouping on it returns a list, not a chart.",
+          "grouping on it returns a list, not a chart. Pass topN:true if a list is what you want.",
       );
     }
     if (seenDimension.has(name)) {

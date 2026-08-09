@@ -11,8 +11,10 @@
  * Dependency-free apart from `pg`, which the project already has. It runs
  * before `npm install` has necessarily finished anything else.
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // One colour table for the whole project, and the only one that asks whether
 // this is a terminal before emitting an escape. `npm run verify | tee log.txt`
@@ -349,4 +351,44 @@ export function eveArgsWithPort(command, passthrough = [], pinnedPort) {
   if (passthrough.some((arg) => arg === "--port" || arg.startsWith("--port="))) return args;
   args.push("--port", pinned);
   return args;
+}
+
+/**
+ * Which `eve` to execute: this project's, by absolute path, whenever it exists.
+ *
+ * `scripts/start.mjs` spawned the bare name `eve` and relied on PATH. That works
+ * under `npm run start`, because npm prepends `node_modules/.bin` to PATH for
+ * the command it runs — and it is exactly the assumption that breaks the moment
+ * a process supervisor starts the agent, which is the whole point of a service
+ * unit. systemd's default PATH is `/usr/local/sbin:/usr/local/bin:/usr/sbin:
+ * /usr/bin:/sbin:/bin`; launchd's is shorter still. Neither contains
+ * `node_modules/.bin`.
+ *
+ * Measured before this function existed, with the real scripts/start.mjs and a
+ * stub `node_modules/.bin/eve` in a scratch project:
+ *
+ *   PATH=<project>/node_modules/.bin:/usr/bin:/bin  ->  eve start --port 2000
+ *   PATH=/usr/local/bin:/usr/bin:/bin               ->  "eve is not installed
+ *                                                        in this project."
+ *
+ * That second line is the ENOENT branch of start.mjs, and it tells an operator
+ * whose install is perfectly fine to go and run `npm install` — a true-sounding
+ * message about the wrong problem, produced only under the supervisor, only in
+ * production. Resolving the path here removes the dependency on PATH entirely,
+ * so `ExecStart=/usr/bin/node scripts/start.mjs` behaves the same as `npm start`.
+ *
+ * `scriptUrl` is the caller's `import.meta.url`; the project root is its parent
+ * directory's parent, because every script here lives at `<root>/scripts/*.mjs`.
+ *
+ * Windows is deliberately left on PATH. There the shim is `eve.cmd`, it is
+ * spawned through `shell: true` (see start.mjs), and an absolute path handed to
+ * cmd.exe needs quoting rules this is not the place to reimplement — no one
+ * supervises this stack with systemd on Windows, so the trap above cannot bite
+ * there.
+ */
+export function eveBinary(scriptUrl, platform = process.platform) {
+  if (platform === "win32") return "eve";
+  const root = dirname(dirname(fileURLToPath(scriptUrl)));
+  const local = join(root, "node_modules", ".bin", "eve");
+  return existsSync(local) ? local : "eve";
 }
