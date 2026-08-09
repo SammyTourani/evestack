@@ -200,6 +200,28 @@ export default async function SkillsPage() {
         )}
       </div>
 
+      {/*
+        The remediation, in the branch a container actually reaches.
+
+        It already existed — inside `!directory.exists`, below — and the shipped
+        image can never land there: lib/skills.ts falls back to the template
+        skills the Dockerfile COPYs in, so the directory always exists and the
+        advice was permanently out of reach on the one deployment every doc
+        prescribes. The tag above says "bundled template", which is honest but
+        easy to skim past, and the skill it lists is called `memory-hygiene` —
+        the same name the scaffolder writes into a real project, so the page
+        looks like it is reading your agent when it is reading its own copy.
+      */}
+      {directory.resolvedBy === "bundled-template" && (
+        <p className={styles.problems}>
+          These are the skills bundled with the evestack template, not your agent&apos;s. Nothing
+          here scans <code>agent/skills/</code> from your project — a container has no view of it.
+          To scan your own, set <code>{SKILLS_DIR_ENV}</code> and mount that directory into the
+          container; the variable already reaches it through <code>env_file</code>, so the mount is
+          the missing half.
+        </p>
+      )}
+
       <details className={styles.limits}>
         <summary>A clean verdict is not proof of safety. What this scanner cannot do</summary>
         <ul>

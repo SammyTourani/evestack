@@ -271,7 +271,14 @@ eve keys sandboxes to durable sessions and keeps one long-lived container per se
 reporting `Linux`, and a working directory of `/workspace`. It needs a Docker daemon the agent
 process can reach, and nothing else.
 
-One limit worth knowing before you plan network policy: the Docker backend honours only
+**The sandbox ships with egress denied.** `EVESTACK_SANDBOX_NETWORK` defaults to `deny-all`, so a
+scaffolded agent's shell has no network until you say otherwise — which is the right default and
+also the answer to "why can't the agent `curl` anything". `resolveNetworkPolicy()` in
+`templates/default/agent/sandbox/sandbox.ts` treats an unrecognised value as a hard error rather
+than falling back to either side, because `allow_all` and `none` are typos and guessing wrong
+gives you either a broken shell or an open one.
+
+One further limit worth knowing before you plan network policy: the Docker backend honours only
 `allow-all` and `deny-all`. Domain allow-lists need `microsandbox()` (macOS on Apple Silicon, or
 Linux with KVM). There is also
 [`@evestack/sandbox-opensandbox`](https://github.com/SammyTourani/evestack/tree/main/packages/sandbox-opensandbox),
