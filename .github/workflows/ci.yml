@@ -355,7 +355,7 @@ jobs:
           EVESTACK_PROBE_DASHBOARD_PASSWORD: probe-password-not-a-secret
           EVESTACK_PROBE_INGEST_TOKEN: probe-ingest-token-not-a-secret
           WORKFLOW_POSTGRES_URL: postgres://evestack:evestack@localhost:5433/evestack
-        run: node contract/runtime/run.mjs --require=dashboard,agent,postgres --only=seam
+        run: node contract/runtime/run.mjs --require=dashboard,agent --only=seam
 
       - name: the dashboard's own log
         if: always()
