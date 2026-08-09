@@ -39,8 +39,9 @@ A project containing:
 | `agent/` | the eve agent — instructions, tools, channels, sandbox config |
 | `lib/memory.ts` | semantic long-term memory on your own Postgres via pgvector |
 | `evals/` | a runnable eval suite (`npx eve eval`) |
-| `docker-compose.yml` | the pgvector Postgres that stores durable sessions |
+| `docker-compose.yml` | the pgvector Postgres that stores durable sessions — safe to commit, because the password is not in it |
 | `.env.local` | generated, gitignored, with a unique `EVESTACK_AUTH_PASSWORD` |
+| `.env` | generated, gitignored, holding `EVESTACK_DB_PASSWORD` — the one variable `docker-compose.yml` interpolates. Compose reads `.env` and never `.env.local`, which is the whole reason there are two files. Rotate it in both together: Postgres only applies a new password when the data volume is first created |
 
 and, wired up for you:
 

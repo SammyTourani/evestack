@@ -41,29 +41,52 @@ const DOCUMENTATION = [
   "llms.txt",
 ];
 
-/** Every .mdx under docs/, plus every package README. Read once. */
-function documentationText() {
+/**
+ * Every .mdx under docs/, plus every package README. Read once.
+ *
+ * Returns the concatenated text (which the forward check searches) AND a map of
+ * every EVESTACK_* name to the files that mention it. The map is what the
+ * reverse check needs: "this name is documented nowhere the code reads it" is
+ * only actionable if it can say which file to go and fix.
+ */
+function documentation() {
   let text = "";
+  /** @type {Map<string, Set<string>>} name -> files that mention it */
+  const names = new Map();
+
+  const absorb = (rel, contents) => {
+    text += contents;
+    for (const match of contents.matchAll(/EVESTACK_[A-Z0-9_]+/g)) {
+      if (!names.has(match[0])) names.set(match[0], new Set());
+      names.get(match[0]).add(rel);
+    }
+  };
+
   for (const file of DOCUMENTATION) {
     try {
-      text += readFileSync(join(REPO_ROOT, file), "utf8");
+      absorb(file, readFileSync(join(REPO_ROOT, file), "utf8"));
     } catch {
       /* a missing optional doc is contract 16's problem, not this one */
     }
   }
   for (const entry of walk(join(REPO_ROOT, "docs"))) {
-    if (entry.endsWith(".mdx") || entry.endsWith(".md")) text += readFileSync(entry, "utf8");
+    if (entry.endsWith(".mdx") || entry.endsWith(".md")) {
+      absorb(relative(REPO_ROOT, entry), readFileSync(entry, "utf8"));
+    }
   }
   for (const pkg of readdirSync(join(REPO_ROOT, "packages"))) {
     for (const name of ["README.md", ".env.example"]) {
       try {
-        text += readFileSync(join(REPO_ROOT, "packages", pkg, name), "utf8");
+        absorb(
+          `packages/${pkg}/${name}`,
+          readFileSync(join(REPO_ROOT, "packages", pkg, name), "utf8"),
+        );
       } catch {
         /* not every package has both */
       }
     }
   }
-  return text;
+  return { text, names };
 }
 
 /**
@@ -123,12 +146,95 @@ function* walk(dir) {
  * reads them (it takes the env as an argument so it can be tested), plus the
  * bracket form. A name only mentioned in prose is not a read and is ignored —
  * this is about what the code actually asks the environment for.
+ *
+ * THE FOURTH PATTERN IS THE ONE THAT WAS MISSING, and its absence made this
+ * contract's coverage of lib/db.ts an accident.
+ *
+ * `positiveNumberEnv("EVESTACK_DB_POOL_MAX", 8)` does `process.env[name]` on a
+ * PARAMETER, so the first three patterns cannot see it: the literal never
+ * appears next to `process.env` anywhere. Its sibling one line up,
+ * EVESTACK_DB_CONNECT_TIMEOUT_MS, was read the identical way and did NOT show up
+ * as missing — not because this contract found it, but because
+ * test/db-env.test.mjs happens to set `process.env.EVESTACK_DB_CONNECT_TIMEOUT_MS`
+ * to exercise it, and a test's WRITE matches the same regex as a read.
+ *
+ * So whether a variable was covered here depended on whether someone had written
+ * a test that mentioned it by name. That is not a property anyone designed, and
+ * the one without a test — the pool size — was invisible. A typo in either
+ * string literal produced a silently ignored setting, which is precisely the
+ * failure at the top of this file.
+ *
+ * The pattern is a quoted name in the FIRST ARGUMENT POSITION of a call, not a
+ * quoted name anywhere. `assert.match(warnings[0], /EVESTACK_…/)` is a regex and
+ * does not match; `env("EVESTACK_MODEL")`, `value("EVESTACK_AUTH_USER")` and
+ * `env.get("EVESTACK_DB_PASSWORD")` do. A name passed to `console.warn` matches
+ * too, and that is correct rather than a false positive: a variable named in a
+ * message shown to a user is a variable that had better be documented.
  */
 const READS = [
   /process\.env\.(EVESTACK_[A-Z0-9_]+)/g,
   /(?<!process\.)\benv\.(EVESTACK_[A-Z0-9_]+)/g,
   /process\.env\[["'](EVESTACK_[A-Z0-9_]+)["']\]/g,
+  /[a-zA-Z_$][\w$.]*\(\s*["'](EVESTACK_[A-Z0-9_]+)["']/g,
 ];
+
+/**
+ * ── THE OTHER DIRECTION ──────────────────────────────────────────────────────
+ *
+ * Everything above asks "does the code read a name nobody documents". The
+ * mirror question is "does the documentation offer a name nothing reads", and
+ * until it was asked this file could not have caught the case it found:
+ *
+ *   packages/dashboard/.env.example offered
+ *
+ *       # Allow the dashboard to stop and remove sandbox containers, not just
+ *       # list them.
+ *       # EVESTACK_DOCKER_LIFECYCLE=1
+ *
+ *   and /sandboxes told the reader "lifecycle actions need
+ *   EVESTACK_DOCKER_LIFECYCLE as well". No code has ever read it.
+ *   lib/sandboxes.ts had already decided this, in its own header: the reader was
+ *   written before the actions existed and was deleted because "an env-var
+ *   reader with no caller is a promise the code does not keep". The deletion
+ *   reached the module and not the two files that advertise it, so the promise
+ *   survived in the one file whose entire job is to list what you can set.
+ *
+ * That is the same defect as EVESTACK_DAILY_BUDGET_USD with the arrow reversed,
+ * and it is the worse half for a security-adjacent flag: a reader does not
+ * merely fail to get a feature, they can conclude a capability is switched OFF
+ * because they never set the switch. There is no switch.
+ *
+ * Two allowlists, because a documented name with no reader is not always a bug.
+ */
+
+/**
+ * Named in the documentation ON PURPOSE so a reader does NOT use it, and
+ * asserted to stay unread. A tombstone that starts matching again means the bug
+ * it marks has come back, so these are checked in the negative rather than
+ * merely skipped.
+ */
+const TOMBSTONE = new Map([
+  [
+    "EVESTACK_DAILY_BUDGET_USD",
+    "docs/alerts.mdx names it to warn that it is NOT the variable; the real one is EVESTACK_BUDGET_DAILY_USD",
+  ],
+  [
+    "EVESTACK_DOCKER_LIFECYCLE",
+    "packages/dashboard/.env.example records that it was offered and never read; lib/sandboxes.ts has no lifecycle verbs",
+  ],
+]);
+
+/**
+ * Read by something that is not JavaScript, so the walk above will never see it.
+ * Each entry names the consumer, because "something else reads it" is the excuse
+ * that would otherwise cover every orphan.
+ */
+const NON_JS_CONSUMER = new Map([
+  [
+    "EVESTACK_DASHBOARD_IMAGE",
+    "docker-compose.yml: image: ${EVESTACK_DASHBOARD_IMAGE:-ghcr.io/sammytourani/evestack-dashboard:0.1.0}",
+  ],
+]);
 
 export default {
   id: "env/every-name-the-code-reads-is-findable",
@@ -146,7 +252,7 @@ export default {
     "a second.",
 
   async check(_eve, t) {
-    const docs = documentationText();
+    const { text: docs, names: documented } = documentation();
     const found = new Map();
 
     for (const file of walk(REPO_ROOT)) {
@@ -208,6 +314,77 @@ export default {
           actual: "none — remove it, or it exempts a future typo that happens to match",
         },
       );
+    }
+
+    // ── THE REVERSE DIRECTION ───────────────────────────────────────────────
+    // See the block above TOMBSTONE. Everything so far asked whether the code
+    // reads a name nobody documents; this asks whether the documentation offers
+    // a name nothing reads, which is how EVESTACK_DOCKER_LIFECYCLE survived.
+
+    // ANTI-VACUITY, again, and for the same reason as the count above: if the
+    // doc walk quietly stopped finding files there would be nothing to iterate
+    // and every assertion below would pass by being skipped.
+    t.ok(
+      documented.size >= 20,
+      `the documentation names ${documented.size} EVESTACK_* variables`,
+      {
+        expected: ">= 20 — the two .env.example files alone list more than that",
+        actual: `${documented.size}; a low count means the doc walk stopped matching and the reverse check below is inspecting an empty set`,
+      },
+    );
+
+    for (const [name, where] of [...documented].sort()) {
+      // A prefix quoted in prose — "EVESTACK_EMBED_*" — is not a variable and
+      // has nothing to read it. Same rule the INTERNAL list already uses.
+      if (name.endsWith("_")) continue;
+      if (TOMBSTONE.has(name)) continue;
+      if (NON_JS_CONSUMER.has(name)) continue;
+
+      t.ok(
+        found.has(name),
+        `${name} (documented in ${[...where].join(", ")}) is read by some code`,
+        {
+          expected: "at least one read in the workspace",
+          actual:
+            "nothing reads it. A variable offered in an .env.example or the docs and read by " +
+            "nobody is a setting a user can turn on and get silence from — and for a flag that " +
+            "sounds like a permission, a control they may believe is switched off. Wire it up, " +
+            "delete the line, or record it as a TOMBSTONE or NON_JS_CONSUMER with a reason",
+        },
+      );
+    }
+
+    // A tombstone must STAY dead. Checked in the negative on purpose: these are
+    // names the documentation mentions specifically so nobody uses them, so the
+    // day one starts being read again is the day the bug it marks came back.
+    for (const [name, reason] of TOMBSTONE) {
+      t.ok(!found.has(name), `the tombstoned ${name} is still read by nothing (${reason})`, {
+        expected: "no reads anywhere in the workspace",
+        actual: `read in ${found.get(name)} — either the defect returned, or the variable is real now and this entry should go`,
+      });
+      // And it must remain mentioned, or the warning it exists to give is gone
+      // and the entry is dead weight that would exempt a future real orphan.
+      t.ok(documented.has(name), `the tombstoned ${name} is still explained somewhere`, {
+        expected: "named in an .env.example, a README or docs/, with the reason it is not a variable",
+        actual: "mentioned nowhere — drop this entry, or the warning has been lost",
+      });
+    }
+
+    // Same honesty rule for the non-JS list: if compose stops interpolating it,
+    // the exemption is covering a name nothing anywhere reads.
+    for (const [name, consumer] of NON_JS_CONSUMER) {
+      let referenced = false;
+      for (const file of ["docker-compose.yml", "templates/default/docker-compose.yml"]) {
+        try {
+          if (readFileSync(join(REPO_ROOT, file), "utf8").includes(name)) referenced = true;
+        } catch {
+          /* not every checkout has both compose files */
+        }
+      }
+      t.ok(referenced, `${name} is still read by its non-JavaScript consumer (${consumer})`, {
+        expected: "named in a docker-compose.yml",
+        actual: "no compose file mentions it — the exemption now covers a name nothing reads at all",
+      });
     }
   },
 };
