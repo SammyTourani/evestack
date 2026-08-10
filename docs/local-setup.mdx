@@ -78,6 +78,55 @@ save the turn. Both are ignored on the hosted providers, whose models the catalo
   tradeoff for $0 total cost — try it, and switch to a cloud key if tool use feels unreliable.
 </Note>
 
+## What it costs on disk
+
+The RAM warning above is the one that bites first, but disk is the one nobody budgets for.
+Measured on macOS with Colima, one project, clean Docker:
+
+| | With an API key | On the $0 Ollama path |
+| --- | --- | --- |
+| Docker images | ~2.0 GB | ~2.0 GB |
+| Postgres volume | ~70 MB | ~70 MB |
+| Project directory | ~300 MB | ~300 MB |
+| `qwen3` + `nomic-embed-text` | not pulled | 5.5 GB |
+| **Total** | **≈ 2.4 GB** | **≈ 7.9 GB** |
+
+**Budget 10 GB free on the local-model path, 4 GB with an API key.** That leaves room to grow;
+the flat totals do not.
+
+The image figure is `pgvector/pgvector:pg17` at 646 MB, the dashboard at 1.05 GB unpacked from a
+228 MB pull, and a 665 MB sandbox template image eve builds on first run, less the `node:24-slim`
+layers two of them share. The project directory is almost entirely `node_modules` (262 MB
+measured); `.eve/` accounts for the rest and grows while `eve dev` is running.
+
+Each additional project on the same machine costs about **0.5 GB**. The big images are shared —
+its own sandbox template image (+157 MB), its own Postgres volume (~70 MB) and its own
+`node_modules` are not.
+
+### What grows, and the one thing nothing cleans up
+
+Spans are about 1.55 KB each and self-prune on a 30-day window (`EVESTACK_TRACE_RETENTION_DAYS`).
+The `workflow` schema **never prunes itself**; `npm run db:prune` is the manual answer to both,
+and [Operations](/docs/operations) covers it — including why space is not returned to the
+filesystem without a `VACUUM FULL`.
+
+The exception is the per-project **`eve-sandbox-template:*` image**. eve builds one per project,
+tagged with a hash of the project id, and at 665 MB it is the third-largest single item on disk.
+Nothing removes it: no evestack command, no `docker compose down -v`, and not deleting the
+project directory either. It outlives the project that created it, and a cleanup on the
+development machine reclaimed several GB from seven stale ones that had accumulated this way.
+
+```bash
+# what is actually there
+docker images --filter reference='eve-sandbox-template:*'
+
+# remove them — `docker image prune` rejects a reference filter, so list and pipe
+docker images --filter reference='eve-sandbox-template:*' -q | xargs docker rmi
+```
+
+Do that after you delete a project, not while one is running: the tag carries no hint of which
+project it belongs to, and a live project rebuilds its own on the next turn.
+
 ## Docker sandbox
 
 The default backend, `docker()`, keeps one long-lived container per durable session and

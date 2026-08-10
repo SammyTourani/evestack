@@ -58,10 +58,12 @@ over HTTP.
 
 ### Node
 
-**Node 24.** All seven published packages declare `"engines": { "node": ">=24" }`, as do the
-repository root and the template a scaffold gets, and it is the only version CI installs — all
-six `actions/setup-node` steps in `.github/workflows/ci.yml` pin `node-version: 24`. No other
-major is tested.
+**Node 24, and the current major alongside it.** All seven published packages declare
+`"engines": { "node": ">=24" }`, as do the repository root and the template a scaffold gets. CI
+installs 24 everywhere and 26 as well on the two jobs cheap enough to matrix: `typecheck` and
+`registry` in `.github/workflows/ci.yml` run `node-version: [24, 26]` with `fail-fast: false`,
+and the remaining five `actions/setup-node` steps pin 24. So 24 is the floor and 26 is checked;
+anything between them is inferred, not tested.
 
 The floor is enforced rather than merely advertised: `nodeVersionProblem()` in
 `packages/create-evestack/shared.mjs` refuses an older runtime with a message naming the version,
@@ -73,10 +75,38 @@ an older Node fails several commands later in a message that never names the rea
 
 | Platform | Status | What that is based on |
 | --- | --- | --- |
-| Linux `x86_64` | Tested | Every job in `ci.yml` runs on `ubuntu-latest`, including the runtime tier that boots Postgres, an agent and a Docker sandbox |
+| Linux `x86_64` | Tested | Every job in `ci.yml` bar the non-blocking `macos` one runs on `ubuntu-latest`, including the runtime tier that boots Postgres, an agent and a Docker sandbox |
 | Linux `arm64` | Image only | `publish-dashboard.yml` builds `linux/arm64` on an `ubuntu-24.04-arm` runner. The multi-arch image is exercised; the CLI and template are not tested there by CI |
-| macOS | Untested by CI | No workflow runs a macOS runner. The surface is small — the only `darwin` branches are the three helpers that shell out to `open` to launch a browser — but a macOS-only regression reaches a user before it reaches CI |
+| macOS | Partly tested | A non-blocking `macos-latest` job in `ci.yml` runs typecheck, the static contract tier and the POSIX file-mode tests. See below for what it deliberately leaves out |
 | **Windows** | **Untested** | See below |
+
+### macOS
+
+A `macos-latest` job runs on every PR. It is marked `continue-on-error: true`, so it reports
+without being able to block a merge — the table above says *partly* tested, and that is the
+honest word for it.
+
+**What it runs.** `pnpm -r typecheck`; the static contract tier (`node contract/run.mjs` — 512
+assertions, under two seconds on darwin); `create-evestack`'s suite, whose file-mode assertions
+gate on `process.platform !== "win32"` and check that generated credential files land at `0600`,
+which is the likeliest place for an APFS-versus-ext4 difference to surface on a
+security-relevant path; and the template's own suite, which resolves `node_modules/.bin/eve`
+under a scrubbed PATH and spawns without a shell.
+
+**What it deliberately leaves out.** Anything that needs a Docker daemon. Five jobs across this
+repo's workflows — `runtime` in `ci.yml`, plus `provider-bisect.yml`, `evals.yml`,
+`eve-watch.yml` and `dashboard-image.yml` — declare a `services:` block, and GitHub-hosted macOS
+runners have no daemon to back one. Porting them would mean dropping the contract runner's
+`--require` flag, which downgrades a probe that cannot run from a failure to a skip: green
+having checked nothing. Playwright is out for the same class of reason — the install step uses
+`--with-deps`, which is an `apt-get` path.
+
+**What is still uncovered.** There are four `darwin` branches in the tree, not three: the
+`open`-a-browser helpers at `packages/evestack-cli/src/project.mjs:354`,
+`packages/evestack-cli/src/tour.mjs:393` and `templates/default/scripts/verify.mjs:569`, plus
+`contract/runtime/repro/eve-turn-wedge.mjs:162`, which shells out to `sysctl -n vm.swapusage`.
+The macOS job executes none of them — it launches no browser, and the fourth lives in the
+runtime tier that does not run there. The job narrows the macOS gap; it does not close it.
 
 ### Windows
 
@@ -111,6 +141,15 @@ file modes would skip rather than fail.
 
 If Windows matters to you, a CI job on `windows-latest` is the contribution that would change
 this row — not a bug report saying it did not work.
+
+There is a cheaper contribution than that, though, and `eveBinary` is the worked example of it.
+Its signature is `eveBinary(scriptUrl, platform = process.platform)`: the default keeps every
+caller unchanged, and passing `"win32"` explicitly makes the Windows branch reachable from a
+test on the runner this repo already pays for. That is why one of the twelve is covered and
+eleven are not — not because the others are harder, but because they read `process.platform`
+directly instead of taking it as an argument. Threading the same defaulted parameter through the
+other eleven would convert them into tested branches on Linux, and would leave a
+`windows-latest` job as a nice-to-have rather than the only way to move this row.
 
 ### Everything else
 
