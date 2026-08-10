@@ -21,7 +21,7 @@ process is built rather than `eve dev`, and something other than you can reach t
 
 | Component | Port | Bound to | Notes |
 | --- | --- | --- | --- |
-| Agent, `eve dev` | 2000 | all interfaces | Auto-increments if 2000 is taken; read the startup log |
+| Agent, `eve dev` | 2000 | **`127.0.0.1`** | Does **not** auto-increment in a scaffolded project — a busy port is a hard `EADDRINUSE` |
 | Agent, `eve start` | `$PORT`, else **3000** | `--host`, default all interfaces | Not 2000 — see below |
 | Postgres | host **5433** → container 5432 | `127.0.0.1` in compose | 5433 so it never collides with a local Postgres on 5432. Override with `POSTGRES_BIND` |
 | Dashboard | 4000 | `127.0.0.1` in compose | A control plane; see [Expose the dashboard last](#expose-the-dashboard-last) |
@@ -32,6 +32,28 @@ process is built rather than `eve dev`, and something other than you can reach t
   `PORT=2000 eve start` and the rest of the stack needs no reconfiguration. Otherwise set
   `EVESTACK_AGENT_URL` to wherever it actually landed.
 </Note>
+
+<Warning>
+  **Both cells in that first row were wrong until 2026-08-09, and the binding one matters on
+  Linux.** They said "all interfaces" and "auto-increments if 2000 is taken". Neither is true of
+  a scaffolded project:
+
+  - `eve dev` falls back to `DEFAULT_DEVELOPMENT_SERVER_HOST`, which is `127.0.0.1`
+    (`dist/src/internal/nitro/host/dev-server-url.js`). Loopback, not all interfaces.
+  - `retryOnAddressInUse` is set only when **no** port is passed, and `scripts/dev.mjs` always
+    passes `--port` from `EVESTACK_AGENT_PORT`. So a collision throws rather than moving.
+    (`eve dev` with no port *does* auto-increment — which is why the template's own comment
+    describing that behaviour is correct and this table was not.)
+
+  **The Linux consequence.** The generated compose reaches the agent at
+  `http://host.docker.internal:2000` with a `host-gateway` mapping. On macOS Docker Desktop
+  proxies that to loopback and it works. On Linux `host-gateway` is the bridge IP, which a
+  loopback-bound `eve dev` is not listening on — so Postgres reads keep working while everything
+  the dashboard *drives* fails, which reads like a dashboard bug rather than a networking one.
+  Run the agent as `eve dev --host 0.0.0.0` (or use the built server, which honours `--host`) if
+  you need the container to reach it. Not reproduced here — this laptop is macOS — so treat it as
+  derived from the source above rather than measured.
+</Warning>
 
 Both mappings in the compose file are on loopback: the dashboard's is written
 `127.0.0.1:${DASHBOARD_PORT:-4000}:4000` and Postgres's is
