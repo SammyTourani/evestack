@@ -182,6 +182,119 @@ export async function inspectOllama(baseUrl, wanted = []) {
   return result;
 }
 
+/* -------------------------------------------------------------------------- */
+/* the two blocks a first run should not have to explain away                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Lines `eve dev` writes to STDERR that mean nothing to the person reading them.
+ * Both were measured on a cold scaffold, on stderr, with stdout untouched.
+ *
+ * ONE. rolldown, bundling a dependency:
+ *
+ *   node_modules/@vercel/otel/dist/node/index.js (23:28893) [EVAL] Use of
+ *   direct `eval` function is strongly discouraged as it poses security risks
+ *   and may cause issues with minification.
+ *
+ * plus three indented lines of frame and a `Help:` hint. The eval is inside
+ * @protobufjs/inquire, vendored into @vercel/otel's node build - code this
+ * project never runs, because agent/instrumentation.ts registers the JSON
+ * exporter and not the protobuf one. It prints on first boot and again on every
+ * hot rebuild, so a stranger editing a tool reads "poses security risks" once a
+ * minute with no way to know it is about someone else's file.
+ *
+ * eve already tries to hide exactly this. internal/nitro/host/
+ * nitro-bundler-config.js installs an onLog that drops any warn whose
+ * id / ids / loc.file / pluginCode sits under node_modules, and it works: the
+ * same warning is absent from `npm run build`, which was checked. The dev
+ * server's authored-artifact rebuild does not route through that config, so the
+ * one bundle a person watches all day is the one that leaks.
+ *
+ * TWO. the workflow SDK, once per new session and twice over:
+ *
+ *   [workflow-sdk] deploymentId: 'latest' has no effect in this world and was
+ *   ignored. It is only supported by worlds with atomic deployments, such as
+ *   Vercel. The run will target the current deployment.
+ *     currentDeploymentId postgres
+ *
+ * eve asks for deploymentId 'latest' whenever EVE_DEV=1 (execution/
+ * workflow-runtime.js, shouldRouteToLatestDeployment), the Postgres world has no
+ * resolveLatestDeploymentId, and the SDK narrates the fallback. Twice, because
+ * its dedupe flag is per module instance and the dev server has two. A
+ * self-hosted world is the only kind this template supports, so the advice can
+ * never apply. It is absent from `npm run start`, which was also checked:
+ * EVE_DEV is unset there, so the request that provokes it is never made.
+ *
+ * NOTHING ELSE IS FILTERED. Two sentences, both traced to their emitter, both
+ * about a state the reader cannot act on. Everything else eve, Postgres or this
+ * project's own code writes is relayed byte for byte, colours included.
+ * EVESTACK_RAW_LOGS=1 turns even these two back on.
+ */
+export const BENIGN_DEV_NOISE = [
+  /\[EVAL\]\s*Use of direct `eval` function is strongly discouraged/,
+  /^\[workflow-sdk\] deploymentId: 'latest' has no effect in this world/,
+];
+
+/** SGR escapes. Matching happens on the plain text; what is printed keeps its
+ *  colour. */
+const SGR = /\u001B\[[0-9;]*m/g;
+
+/**
+ * The filter as a value rather than a stream, so what it decides can be tested
+ * without spawning anything. push(chunk) returns the text to write on, and
+ * flush() returns whatever partial line is still held when the child exits.
+ *
+ * A matched line takes its CONTINUATION LINES with it: everything blank or
+ * indented that follows, up to the next line starting in column zero. Both
+ * blocks above are shaped that way. rolldown hangs a frame and a Help hint off
+ * its heading, the SDK hangs currentDeploymentId off its own, and suppressing
+ * the shape rather than each individual line means a future rolldown that words
+ * its hint differently leaves no orphaned fragments with nothing to explain them.
+ */
+export function createDevNoiseFilter(patterns = BENIGN_DEV_NOISE) {
+  const state = { pending: "", suppressed: 0, swallowing: false };
+
+  function keep(line) {
+    const plain = line.replace(SGR, "");
+    if (state.swallowing) {
+      if (plain.trim() === "") return false;
+      if (/^\s/.test(plain)) return false;
+    }
+    state.swallowing = false;
+    if (patterns.some((pattern) => pattern.test(plain))) {
+      state.swallowing = true;
+      state.suppressed += 1;
+      return false;
+    }
+    return true;
+  }
+
+  return {
+    push(chunk) {
+      const lines = (state.pending + chunk).split("\n");
+      // The tail is whatever has not been terminated yet. Holding it is what
+      // makes matching a whole line possible at all; `holding` below is how a
+      // caller decides to release one that never gets its newline.
+      state.pending = lines.pop();
+      const kept = lines.filter(keep);
+      if (kept.length === 0) return "";
+      return `${kept.join("\n")}\n`;
+    },
+    get holding() {
+      return state.pending !== "";
+    },
+    flush() {
+      const line = state.pending;
+      state.pending = "";
+      if (line === "") return "";
+      return keep(line) ? line : "";
+    },
+    get suppressed() {
+      return state.suppressed;
+    },
+  };
+}
+
 /** A JSON GET that answers `{ ok, status, body }` instead of throwing. */
 export async function probeJson(url, init = {}, timeoutMs = 4000) {
   try {
