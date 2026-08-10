@@ -264,7 +264,7 @@ const TOMBSTONE = new Map([
 const NON_JS_CONSUMER = new Map([
   [
     "EVESTACK_DASHBOARD_IMAGE",
-    "docker-compose.yml: image: ${EVESTACK_DASHBOARD_IMAGE:-ghcr.io/sammytourani/evestack-dashboard:0.3.0}",
+    "docker-compose.yml: image: ${EVESTACK_DASHBOARD_IMAGE:-ghcr.io/sammytourani/evestack-dashboard:0.3.1}",
   ],
 ]);
 

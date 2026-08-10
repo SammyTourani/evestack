@@ -17,9 +17,9 @@ something scripting these commands is a **minor**, not a patch.
   `.github/workflows/publish-dashboard.yml` extracts release notes by matching the
   heading literally. See [RELEASING.md](RELEASING.md#tag-convention) for the convention
   and for the two tags that predate it.
-- Most releases have **no tag** — only four exist, covering 4 of the 28 released versions below.
+- Most releases have **no tag** — ten exist, covering 10 of the 36 releases listed below.
   A heading is therefore the *name a tag would have*, not proof one exists. RELEASING.md
-  says which four are real.
+  says which ten are real, and `git tag` is the check.
 - **Dates are `America/Los_Angeles`**, the timezone every commit in this repository is
   stamped in. npm records its `time` field in UTC; those timestamps are converted here,
   so a date can be one day earlier than the value `npm view <pkg> time` prints.
@@ -77,6 +77,22 @@ condition every check in RELEASING.md reports as green.
 The `npm create` entry point. Carries `templates/default` inside it, so a change to the
 template ships as a change to this package.
 
+### create-evestack@0.9.2 — 2026-08-09
+
+#### Changed
+
+- The scaffolded compose file pins `ghcr.io/sammytourani/evestack-dashboard:0.3.1`, up
+  from `:0.3.0`. `:0.3.0` stays pullable, but a project scaffolded on it answers **502 on
+  every new chat** against an eve 0.31.x agent — that is the fix `0.3.1` carries, so this
+  bump is the one that puts it in front of new projects.
+
+> **The third of these in one day**, and the pattern is the point rather than the
+> incident: `0.9.0` pinned `:0.2.0` and went stale within the hour, `0.9.1` pinned `:0.3.0`
+> and went stale within two. The scaffolder pins a tag deliberately — pinning `latest`
+> would hand new projects an untested pairing — and the cost of that choice is a bump
+> every time the image moves. `publish-dashboard.yml`'s version job is what makes the cost
+> visible instead of silent: it refuses to build while the two disagree.
+
 ### create-evestack@0.9.1 — 2026-08-09
 
 #### Changed
@@ -131,12 +147,15 @@ template ships as a change to this package.
 
 ### create-evestack@0.8.0 — 2026-08-09
 
-> **Upgrade note.** `0.8.0` was published at 00:30 and 30b4de4 landed at 00:43 — twelve
-> minutes and forty-six seconds later. Every project scaffolded from npm since therefore
-> has a compose file with **no skills bind-mount** (the dashboard's Skills page scans the
-> image's own bundled skill) and pins the dashboard at `:0.1.0`. Both are fixed in the
-> unreleased `0.9.0`. Confirmed by running the published package into a clean directory
-> and reading the compose file it wrote (af49a2a).
+> **Upgrade note — historical.** `0.8.0` was published at 00:30 and 30b4de4 landed at
+> 00:43 — twelve minutes and forty-six seconds later. Every project scaffolded from npm
+> in the ten hours `0.8.0` was `latest` therefore has a compose file with **no skills
+> bind-mount** (the dashboard's Skills page scans the image's own bundled skill) and pins
+> the dashboard at `:0.1.0`. Both were fixed in `0.9.0`, published the same day at 10:54;
+> npm has served a fixed version since. This still applies to a project already scaffolded
+> from `0.8.0` — a project is a copy, so re-scaffolding is what picks the fix up. Confirmed
+> at the time by running the published package into a clean directory and reading the
+> compose file it wrote (af49a2a).
 
 #### Changed
 
@@ -305,7 +324,7 @@ not correspond to any commit in this repository. Do not install it.
 
 ## `evestack`
 
-The CLI — `create`, `attach`, `doctor`, `status`, `tour`, `verify`. Depends on
+The CLI — `create`, `status`, `tour`, `open`, `verify`, `attach`, `doctor`. Depends on
 `create-evestack`, so it publishes last.
 
 ### evestack@0.4.0 — 2026-08-09
@@ -327,9 +346,10 @@ The CLI — `create`, `attach`, `doctor`, `status`, `tour`, `verify`. Depends on
 
 ### evestack@0.3.0 — 2026-08-09
 
-> **Upgrade note.** This version predates the `tour` consent gate: off a TTY,
-> `evestack tour` treated silence as a yes and sent a billable model call. Fixed in the
-> unreleased `0.4.0` (af49a2a).
+> **Upgrade note — superseded.** npm serves `0.4.0`. This version predates the `tour`
+> consent gate: off a TTY, `evestack tour` treated silence as a yes and sent a billable
+> model call. Fixed in `0.4.0`, published the same day at 10:54 (af49a2a) — so this
+> applies only if something is pinned to `0.3.0`.
 
 #### Changed
 
@@ -447,10 +467,13 @@ does.
 
 ### @evestack/budget@0.2.0 — 2026-08-06
 
-> **Upgrade note.** This is what npm serves today, and it undercharges every cache write:
-> `hook.ts` calls `costUsd()` with four of its five arguments, so an Anthropic
-> prompt-caching workload is billed about 10% under and passes its cap before anything
-> trips. OpenAI models are unaffected. Fixed in the unreleased `0.2.1` (b9a00a7).
+> **Upgrade note — superseded.** npm serves `0.2.1`; this is no longer what a fresh
+> install gets. `0.2.0` undercharges every cache write: `hook.ts` calls `costUsd()` with
+> four of its five arguments, so an Anthropic prompt-caching workload is billed about 10%
+> under and passes its cap before anything trips. OpenAI models are unaffected. Fixed in
+> `0.2.1`, published 2026-08-09 (b9a00a7). Still live in any project whose lockfile still
+> resolves `@evestack/budget` to `0.2.0`; the template's range is a caret, so an install
+> that is allowed to move the lockfile picks the fix up on its own.
 
 #### Fixed
 
@@ -644,13 +667,16 @@ on npm is a version that exists in no commit and these bullets cite nothing chec
 
 ### @evestack/sandbox-opensandbox@0.3.0 — 2026-08-06
 
-> **Upgrade note.** This is what npm serves today, and three things in it are worse than
-> they read. A command that never completed — a timeout kill, an OOM, a stream that ends —
-> comes back to the model as `exitCode: 0`; `kill()` closes the local connection and sends
-> the sandbox nothing, so `wait()` rejects instead of reporting a terminated process; and a
-> network-policy option is accepted and dropped, producing a sandbox with wide-open egress
-> and no complaint. The README already describes the first as fixed. All three are fixed in
-> the unreleased `0.4.0`, which also makes an unrecognised option throw.
+> **Upgrade note — superseded.** npm serves `0.4.0`; this is no longer what a fresh
+> install gets. Three things in `0.3.0` are worse than they read. A command that never
+> completed — a timeout kill, an OOM, a stream that ends — comes back to the model as
+> `exitCode: 0`; `kill()` closes the local connection and sends the sandbox nothing, so
+> `wait()` rejects instead of reporting a terminated process; and a network-policy option
+> is accepted and dropped, producing a sandbox with wide-open egress and no complaint. The
+> README shipped with `0.3.0` already described the first as fixed. All three were fixed in
+> `0.4.0`, published 2026-08-09, which also makes an unrecognised option throw. Still live
+> for anyone still installing `0.3.0` — this package is standalone, so nothing upgrades it
+> for you.
 
 The largest correctness release of any package here. All of b0fcf07.
 
@@ -711,6 +737,41 @@ First release (952f0f9).
 `ghcr.io/sammytourani/evestack-dashboard:<version>` (`linux/amd64` and `linux/arm64`),
 built and pushed by `.github/workflows/publish-dashboard.yml` on a tag push. The version
 here is the image tag. Dates are the git tag's, not npm's.
+
+### @evestack/dashboard@0.3.1 — 2026-08-09
+
+#### Fixed
+
+- **Every new chat and every fork answered 502 against an eve 0.31.x agent**, and
+  `docs/upgrading.mdx` was telling self-hosters to `npm install eve@latest` — which is
+  `0.31.3`. `createSession` required a `continuationToken` in the create response;
+  0.30.8's docs say the response "returns `sessionId` and the `continuationToken`", and
+  0.31.3's say "session message and control request/response bodies do not accept or
+  return continuation tokens". The token moved to the `session.waiting` stream event,
+  which is where it becomes meaningful — a session that has not parked has nothing to
+  continue from. The session id is the handle; the token was never required here, and
+  every caller that needs one already resolves it from the durable stream. Now accepted
+  as absent, so the dashboard works against both lines. The fix was written and reviewed
+  in PR #36 a day earlier and stranded there behind a version bump.
+- **`/schedules` was up to 25 hours wrong, and `pinned`, in a zone whose daylight-saving
+  change is not a whole hour.** `0 2 * * *` in `America/St_Johns` standing on
+  2026-10-31T20:00Z projected 2026-11-02T05:30Z against the runner's 2026-11-01T05:30Z.
+  The 0.3.0 fix stepped over the whole repeated interval, which is right for a reading
+  inside it — New York's `30 1 * * *` — and wrong for one on its far edge, which has not
+  happened yet and occurs exactly once. The test is now the candidate rather than the
+  interval: look ahead at the new offset and step over the window only when what is found
+  inside it is a reading the clock has already spent. Verified against the runner across
+  five zones and both transitions; `America/St_Johns`, `Australia/Lord_Howe`,
+  `Pacific/Chatham` and `Europe/Berlin` now have no confidently-wrong answer at all.
+
+<Note>
+  One known case remains, unfixed and stated rather than hidden: in `America/New_York`,
+  `0 2 * * *` evaluated the day AFTER a spring-forward projects an hour late while still
+  reporting `pinned`. One disagreement in 180 differential cases per zone. The other
+  disagreements in that sweep are the runner's own fall-back quirk — `nextFire()` can
+  return an instant earlier than its `after` argument during the repeated hour — where
+  the page is right and the oracle is wrong.
+</Note>
 
 ### @evestack/dashboard@0.3.0 — 2026-08-09
 

@@ -9,7 +9,7 @@ section exists to prevent. It had been working by luck.
 
 | Package | Directory | Published |
 | --- | --- | --- |
-| `evestack` | `packages/evestack-cli` | yes — the CLI (`create`, `attach`, `doctor`) |
+| `evestack` | `packages/evestack-cli` | yes — the CLI (`create`, `status`, `tour`, `open`, `verify`, `attach`, `doctor`) |
 | `create-evestack` | `packages/create-evestack` | yes — the `npm create` entry point |
 | `@evestack/budget` | `packages/evestack-budget` | yes — **template dependency** |
 | `@evestack/composio` | `packages/evestack-composio` | yes — **template dependency** |
@@ -170,10 +170,14 @@ Verified, because a scoped name puts a `/` and a leading `@` into a ref:
 through `git tag -l '@evestack/dashboard@*'`, `git rev-parse` and `git describe`. Quote it in the
 shell.
 
-### The four tags that exist
+### The ten tags that exist
 
-Two predate this decision. They are public, so they are **not renamed** — a tag that has been
-pushed is an address someone may already have written down.
+All ten are annotated and pushed. Two use the superseded `dashboard-v*` form and predate this
+decision; they are public, so they are **not renamed** — a tag that has been pushed is an
+address someone may already have written down.
+
+Regenerate this table rather than trusting it:
+`git tag --sort=creatordate --format='%(refname:short) %(*objectname:short)'`.
 
 | tag | commit | status |
 | --- | --- | --- |
@@ -181,6 +185,17 @@ pushed is an address someone may already have written down.
 | `create-evestack@0.5.0` | 1163186 | the convention |
 | `dashboard-v0.1.0` | d4aee43 | superseded form — keep, do not imitate |
 | `dashboard-v0.2.0` | 751ac5c | superseded form — keep, do not imitate |
+| `@evestack/dashboard@0.3.0` | 94dd019 | the convention, and the first **scoped** tag — the one that actually exercises the `/` and leading `@` verified above |
+| `evestack@0.4.0` | 3d318ce | the convention |
+| `@evestack/budget@0.2.1` | 3d318ce | the convention |
+| `@evestack/mcp@0.3.0` | 3d318ce | the convention |
+| `@evestack/sandbox-opensandbox@0.4.0` | 3d318ce | the convention |
+| `create-evestack@0.9.1` | 94dd019 | the convention |
+
+Four of them naming the same commit is not a mistake: 3d318ce bumped `@evestack/budget`,
+`@evestack/mcp` and `@evestack/sandbox-opensandbox` in one commit, and `evestack` was already
+at `0.4.0` there. All four went to npm inside twenty-seven seconds of each other, about a
+minute after that commit (10:54:40 to 10:55:07, against a commit at 10:53:33).
 
 `.github/workflows/publish-dashboard.yml` triggers on **both** patterns and accepts either as a
 match for `packages/dashboard/package.json`, so `dashboard-v0.2.0` can still be re-run from the
@@ -191,9 +206,31 @@ The dashboard is not on npm. Its tag names the workspace package — `@evestack/
 what the version gate reads out of `package.json` — and the artifact it produces is
 `ghcr.io/sammytourani/evestack-dashboard:<version>`.
 
-Twenty-eight versions have been published and four tags exist. Do not backfill the missing
-twenty-four: a tag invented today would point at whatever commit looks right now, and a tag that
-might be wrong is worse than a gap CHANGELOG.md already documents honestly.
+Thirty-five versions have been published — 32 on npm, 3 images on GHCR — and ten tags exist, so
+twenty-five releases have none. Five of the ten were cut after the fact, on the evening of
+2026-08-09, and only because the evidence left no room to guess: each points at a commit whose
+own `package.json` carries exactly that version, minutes before the registry's timestamp for it.
+Do not backfill the remaining twenty-five on anything weaker. A tag invented today would point at
+whatever commit looks right now, and a tag that might be wrong is worse than a gap CHANGELOG.md
+already documents honestly.
+
+Recount rather than trusting those numbers — they go stale on every publish:
+
+```bash
+git tag | wc -l                          # tags
+
+total=0                                  # npm versions, all seven packages
+for p in create-evestack evestack @evestack/mcp @evestack/budget @evestack/composio \
+         @evestack/schedules @evestack/sandbox-opensandbox; do
+  total=$((total + $(npm view "$p" versions --json | grep -c '"')))
+done; echo "$total"
+
+# and the image tags, which are not on npm. Anonymous pull, no login:
+tok=$(curl -s 'https://ghcr.io/token?scope=repository:sammytourani/evestack-dashboard:pull&service=ghcr.io' \
+      | sed 's/.*"token":"\([^"]*\)".*/\1/')
+curl -s -H "Authorization: Bearer $tok" \
+     'https://ghcr.io/v2/sammytourani/evestack-dashboard/tags/list'
+```
 
 ### Cutting a tag
 
@@ -213,10 +250,17 @@ git push origin '@evestack/dashboard@0.3.0'
 
 ## Release notes
 
-Run `gh release list` first. When this section was written it printed exactly one row —
-"create-evestack 0.5.0", created 2026-08-06, still a **draft** — against twenty-six published
-npm versions and two published images. Publish that draft or delete it, but do not leave it: a draft
-is invisible to everyone but the maintainer, which is the worst of the three states.
+Run `gh release list` first. It prints seven rows today, all published, none a draft.
+
+One of the seven is the lesson. `create-evestack@0.5.0` was created as a draft on 2026-08-05, at
+the same minute as its tag, and stayed one until it was published on 2026-08-09 — four days
+invisible to everyone but the maintainer, which is the worst of the three states, because a draft
+looks finished from the inside and does not exist from the outside. Publish it or delete it; do
+not leave it. `gh release list` labels drafts, so this is one column to read, not an audit.
+
+Seven releases against ten tags and thirty-five published versions is still a gap, and it is the
+same gap: `--verify-tag` means a release can only be cut where a tag already is. The three tags
+with no release are `create-evestack@0.4.0`, `dashboard-v0.1.0` and `dashboard-v0.2.0`.
 
 `CHANGELOG.md` is the source. Every version heading there is exactly the tag name for that release,
 which is what lets the notes be lifted rather than rewritten — the release page and the changelog

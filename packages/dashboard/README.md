@@ -64,7 +64,7 @@ has thought about auth.
 
 | Tier | Paths | What it takes |
 | --- | --- | --- |
-| liveness | `/api/health` | nothing — Docker's HEALTHCHECK has no credential. Returns only `{ok, database}` |
+| liveness | `/api/health` | nothing — Docker's HEALTHCHECK has no credential. Always returns `ok` and `version`; `database` unless auth is unconfigured; a `status` and an `error` on the two branches that refuse. Nothing about sessions or cost — that is `/api/health/detail`, behind the session gate |
 | sign-in | `/signin`, `/api/auth/session`, `/api/auth/signout` | nothing, plus a same-origin check on the POSTs |
 | ingest | `/api/ingest/v1/traces` | `EVESTACK_INGEST_TOKEN` header, or a session. See [app/api/ingest/README.md](./app/api/ingest/README.md) |
 | session | **everything else**, pages and API alike | the session cookie or HTTP Basic |

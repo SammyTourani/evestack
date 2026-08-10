@@ -7,24 +7,31 @@ No Vercel account. $0 infrastructure.**
 ```bash
 npx create-evestack my-agent
 cd my-agent
-docker compose up -d postgres
-npm run db:bootstrap
-npm run dev
-docker compose --profile dashboard up -d   # the dashboard on :4000
+docker compose up -d postgres              # durable sessions
+npm run db:bootstrap                       # create the workflow schema
+docker compose --profile dashboard up -d   # the dashboard, usually on :4000
+npm run dev                                # the agent — holds this terminal
 ```
 
-That is the whole setup. The scaffolder asks for a model provider and (optionally) a Composio
-key, writes a `.env.local` with a freshly generated auth password, and installs dependencies.
-Pass `--yes` to skip the prompts and fill in `.env.local` yourself.
+That is the whole setup. The order matters: `npm run dev` is a foreground process that holds
+the terminal until you Ctrl-C it, so it goes last — which is also the order the scaffolder
+prints when it leaves the stack for you to start. The dashboard port is whichever one was free
+when you scaffolded, 4000 unless something already had it; `.env.local` and `docker-compose.yml`
+carry the real number, and `npx evestack open` prints it.
+
+The scaffolder asks for a model provider and (optionally) a Composio key, writes a `.env.local`
+with a freshly generated auth password, and installs dependencies. Pass `--yes` to skip the
+prompts and fill in `.env.local` yourself.
 
 The only thing that costs money is model tokens.
 
 ## Two names, one scaffolder
 
 `npx evestack create my-agent` runs this exact code. [`evestack`](https://www.npmjs.com/package/evestack)
-is the single command — `create`, `attach`, `doctor` — and depends on this package for the first
-two; `create-evestack` is the name npm's `create-*` convention leads people to, and it keeps
-working. Same prompts, same flags, one place a bug gets fixed.
+is the single command, and it answers to seven verbs — `create`, `status`, `tour`, `open`,
+`verify`, `attach`, `doctor` — of which `create` and `attach` are routed straight into this
+package's own modules. `create-evestack` is the name npm's `create-*` convention leads people
+to, and it keeps working. Same prompts, same flags, one place a bug gets fixed.
 
 This package is dependency-free on purpose, which is why the implementation lives here rather
 than the other way round: `evestack doctor` needs a Postgres driver, and nobody should download

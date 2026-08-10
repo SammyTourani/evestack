@@ -227,8 +227,12 @@ pnpm --filter @evestack/dashboard dev   # http://localhost:4000
 ```
 
 Both halves of `EVESTACK_AUTH_*` are required and neither is defaulted: with either missing the
-dashboard answers `503` to everything but `GET /signin`, which renders the reason with no
-sign-in form on it, so there is nothing to sign in with. Use the same pair your agent has
+dashboard serves nothing usable. `503` on every request, with four exceptions — `PUBLIC_PATHS`
+in `lib/auth.ts` holds three paths and `proxy.ts` opens that tier only to `GET`, so `GET /signin`
+renders the reason with no sign-in form on it, `GET /api/auth/session` and `GET /api/auth/signout`
+reach POST-only routes and get a bare `405`, and `GET /api/health` reaches its own handler, which
+answers `503 {"status":"unconfigured"}` and so reports the container unhealthy. None of the four
+exposes anything, and there is still nothing to sign in with. Use the same pair your agent has
 in `.env.local` — it is one secret per deployment, which the dashboard signs you in with and
 then presents to the agent.
 

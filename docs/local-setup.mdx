@@ -92,7 +92,12 @@ Swaps, one line in `agent/sandbox/sandbox.ts`:
 ## Common issues
 
 **`eve dev` seems to not be listening on port 2000.**
-It auto-increments when the port is taken. Read the actual port from the startup log.
+It is listening on `EVESTACK_AGENT_PORT` from `.env.local`, which the scaffolder set to the
+first free port at or above 2000 *at the time you scaffolded* — so on a machine that already
+had something on 2000, it is 2001 or higher. `npm run dev` passes that number to `eve dev` as
+`--port`, and eve only scans for a free port when it is given none, so nothing auto-increments
+at boot: if that port is busy now, you get `EADDRINUSE` and no server. Read `.env.local` for
+the number, and free the port rather than waiting for eve to move.
 
 **A follow-up request 404s or the agent seems to have forgotten everything.**
 Check that `WORKFLOW_POSTGRES_URL` is actually set and Postgres is reachable — without it,

@@ -2,9 +2,9 @@
  * Argument parsing and process wiring, kept out of bin/ so it can be tested
  * without spawning anything.
  *
- * `evestack` is the one command: `create`, `attach`, `doctor`. There used to be
- * two CLIs — a published `create-evestack` that scaffolds, and this one, which
- * only knew `doctor` and was never published. Two names is fine; two
+ * `evestack` is the one command, and COMMANDS below is the list it answers to.
+ * There used to be two CLIs — a published `create-evestack` that scaffolds, and
+ * this one, which only knew `doctor` and was never published. Two names is fine; two
  * implementations is not, so `create` and `attach` are routed straight into
  * `create-evestack`'s own modules (src/scaffold.mjs explains the direction of
  * the dependency). `npx create-evestack` still works and always will — it is

@@ -490,9 +490,31 @@ function nextInZone(walk: Walk, afterMs: number, zone: string, limitMs: number):
     //
     // Twenty-four hours early, and `pinned: true` because a history spanning a
     // transition pins the zone — so schedules-client.tsx:144 drew it as a firm
-    // answer with no hedge. Skipping the repeated interval is the whole fix:
-    // past it, the walk is in the new offset's frame and exact again.
-    cursor = changeMs + (before - after) * MINUTE_MS;
+    // answer with no hedge.
+    //
+    // ── which readings the jump has already spent, and which it has not ──────
+    //
+    // Skipping the whole repeated interval was too blunt. Only the readings
+    // INSIDE it repeat; a reading past its far edge has not happened yet, and
+    // stepping over it loses a real fire:
+    //
+    //   `0 2 * * *`, America/St_Johns, now = 2026-10-31T20:00:00Z
+    //     skipping   2026-11-02T05:30:00Z   twenty-five hours late, and PINNED
+    //     runner     2026-11-01T05:30:00Z   02:00 NST, the same evening
+    //
+    // 01:00–02:00 is what St John's replays; 02:00 itself is on the far side and
+    // occurs exactly once, at the new offset. New York's `30 1 * * *` is the
+    // other case — 01:30 IS inside the replayed hour, so its second occurrence
+    // must not fire.
+    //
+    // So the test is the candidate, not the interval: look ahead at the new
+    // offset, and step over the window only when what we would find inside it
+    // is a reading the clock has already spent. Both cases fall out of that,
+    // and neither needed a special case for half-hour zones — St John's only
+    // made the bug legible.
+    const repeatEnd = changeMs + (before - after) * MINUTE_MS;
+    const candidate = nextAtOffset(walk, changeMs, after);
+    cursor = candidate !== null && candidate < repeatEnd ? repeatEnd : changeMs;
   }
   return null;
 }
