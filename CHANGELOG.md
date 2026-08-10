@@ -179,8 +179,12 @@ template ships as a change to this package.
 
 ### create-evestack@0.5.0 — 2026-08-05
 
-Tagged `create-evestack@0.5.0`. A GitHub release was drafted for this version and never
-published; its body is the longest-form account of what changed here.
+Tagged `create-evestack@0.5.0`, and the [GitHub release][r050] carries the longest-form
+account of what changed here. It sat as an unpublished draft from 2026-08-06 until it was
+published on 2026-08-09 — visible to nobody but the maintainer for three days, which
+RELEASING.md calls the worst of the three states a release can be in.
+
+[r050]: https://github.com/SammyTourani/evestack/releases/tag/create-evestack%400.5.0
 
 #### Security
 
