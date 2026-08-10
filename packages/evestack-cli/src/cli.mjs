@@ -21,7 +21,7 @@
  * one you cannot.
  */
 import { DoctorError } from "./db.mjs";
-import { diagnose } from "./doctor.mjs";
+import { diagnose, resolveConnection } from "./doctor.mjs";
 import { renderText, renderJson, renderVerbose } from "./render.mjs";
 
 /**
@@ -334,11 +334,28 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
     return 2;
   }
 
+  // Project detection, before anything opens a socket.
+  //
+  // doctor was the one command with none of it. From a directory that is not an
+  // evestack project, `status`, `verify`, `open` and `tour` all print "This is
+  // not an evestack project." with the fix; doctor guessed a connection string,
+  // connected to whatever happened to be on localhost:5433, and printed a
+  // Postgres authentication error at someone who had not asked about Postgres.
+  //
+  // Resolved here rather than inside diagnose() because only this layer knows
+  // how to refuse the way the other four refuse — and because the answer is
+  // handed straight to diagnose(), so nothing resolves twice.
+  const { connectionString, project: projectDir } = resolveConnection(options.url);
+  if (!connectionString && !projectDir) {
+    const { notAProject } = await import("./project.mjs");
+    return notAProject(stderr);
+  }
+
   try {
     const report = await diagnose({
       schema: options.schema,
       workflow: options.workflow,
-      connectionString: options.url,
+      connectionString,
       agentUrl: options["agent-url"],
       limit: numeric(options.limit, "limit"),
       probes: numeric(options.probes, "probes"),

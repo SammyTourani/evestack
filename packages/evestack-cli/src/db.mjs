@@ -110,6 +110,72 @@ export function redact(connectionString) {
 }
 
 /**
+ * Which of the three ways a connection can fail actually happened.
+ *
+ * All three used to print "Cannot reach Postgres … or start one: docker compose
+ * up -d postgres". On the one that matters most that is false twice over: a
+ * server that answers a startup packet and then rejects the password IS
+ * reachable, and starting a second one cannot help. A stranger who follows that
+ * advice watches nothing change and concludes the database is broken.
+ *
+ * The split is on whether Postgres itself answered, which is knowable rather
+ * than guessable: a rejection carries a five-character SQLSTATE and a severity,
+ * and a transport failure carries a Node errno, which always begins with E and
+ * is never five characters. No SQLSTATE class begins with E.
+ */
+export function classifyConnectFailure(error) {
+  const code = typeof error?.code === "string" ? error.code : "";
+  const sqlstate = code.length === 5 && !code.startsWith("E") ? code : null;
+  if (!sqlstate && typeof error?.severity !== "string") return "unreachable";
+  if (sqlstate?.startsWith("28")) return "credentials";
+  if (sqlstate === "3D000") return "no-database";
+  return "refused";
+}
+
+/**
+ * What to print, and — the part that was wrong — what to suggest.
+ *
+ * The unreachable wording is unchanged, because for a database that really is
+ * not there it was already right. The other three say plainly that the server
+ * answered, so that nobody is sent to `docker compose up` for a problem
+ * starting a container cannot fix.
+ */
+export function connectFailureMessage(connectionString, error) {
+  const target = redact(connectionString);
+  // A dual-stack race arrives as an AggregateError whose own message is empty
+  // and whose real ones are underneath it.
+  const nested = Array.isArray(error?.errors) ? error.errors : [];
+  const reason = error?.message || nested.map((e) => e.message).join("; ") || String(error);
+
+  switch (classifyConnectFailure(error)) {
+    case "credentials":
+      return (
+        `Postgres is up at ${target} and refused these credentials\n  ${reason}\n\n` +
+        "It answered, so this is not a database that needs starting: the user or\n" +
+        "password in the URL does not match the one this server has. In a project\n" +
+        "made by `evestack create`, that line is WORKFLOW_POSTGRES_URL in .env.local."
+      );
+    case "no-database":
+      return (
+        `Postgres is up at ${target}, but that database does not exist\n  ${reason}\n\n` +
+        "It answered, so this is not a database that needs starting: the name after\n" +
+        "the last / in the URL is not one this server has."
+      );
+    case "refused":
+      return (
+        `Postgres is up at ${target} and refused the connection\n  ${reason}\n\n` +
+        "It answered, so this is not a database that needs starting. SQLSTATE " +
+        `${error?.code ?? "unknown"} above is the server's own code for what it objected to.`
+      );
+    default:
+      return (
+        `Cannot reach Postgres at ${target}\n  ${reason}\n\n` +
+        "Set WORKFLOW_POSTGRES_URL, or start one:  docker compose up -d postgres"
+      );
+  }
+}
+
+/**
  * Open the session. Returns the client plus what we could actually enforce on
  * it — `readOnly: false` is reported rather than hidden, because a pooler in
  * transaction mode silently drops session-level SET and the operator deserves
@@ -154,11 +220,7 @@ export async function connect({ connectionString, timeoutMs = 15_000 }) {
     // next query rejects with pg's own "not queryable" and is reported normally.
     client.on("error", () => {});
   } catch (cause) {
-    throw new DoctorError(
-      `Cannot reach Postgres at ${redact(connectionString)}\n  ${cause.message}\n\n` +
-        `Set WORKFLOW_POSTGRES_URL, or start one:  docker compose up -d postgres`,
-      { cause },
-    );
+    throw new DoctorError(connectFailureMessage(connectionString, cause), { cause });
   }
 
   let readOnly = false;
