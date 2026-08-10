@@ -187,7 +187,7 @@ Written down so they don't cost you any.
   only inside `eve dev`, so a built server needs Basic credentials from every host. On 0.29.x it
   was the reverse *and exploitable*: `localDev()` matched an unanchored `/^127\./` against the
   attacker-controlled `Host` header, so `127.evil.com` got an unauthenticated principal. We
-  found and patched it; Vercel fixed it upstream in 0.30.0. Pin `^0.30.2` or newer.
+  found and patched it; Vercel fixed it upstream in 0.30.0. Pin `eve` `>=0.30.0`.
 - **Adding `agent/instrumentation.ts` disables eve's zero-config trace spool**, so `eve traces`
   stops working. The dashboard replaces it; delete the file to get it back.
 - **Cancellation is cooperative.** The cancel route returns 202 immediately but the in-flight

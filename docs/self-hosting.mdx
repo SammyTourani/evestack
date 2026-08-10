@@ -82,7 +82,7 @@ reach it. See [Observability](/docs/observability).
   <Step title="Pin the three versions that have to agree">
     `eve`, the `@workflow/*` line, and the world package are one compatibility unit, and only one
     of the three is checked for you. The shipped `package.json` pins `eve` at `^0.30.8` and
-    `@workflow/world-postgres` at the `beta` tag. `^0.30.2` is the floor for any deployment
+    `@workflow/world-postgres` at the `beta` tag. `>=0.30.0` is the floor for any deployment
     reachable from a network — see [Auth off Vercel](#auth-off-vercel).
   </Step>
 
@@ -222,7 +222,10 @@ wrapper. Vercel fixed it properly upstream in 0.30.0 and `isLoopbackRequest` is 
 wrapper was deleted rather than kept — on 0.30 it could add no protection and would have rejected
 legitimate local-dev access over a LAN IP, a tunnel, or a container hostname.
 
-**Pin `eve` to `^0.30.2` or newer.** `contract/contracts/07-auth.contract.mjs` asserts both
+**Pin `eve` `>=0.30.0`.** That is the release the fix landed in, and it is the same floor
+SECURITY.md and every published peer range state; the template pins `^0.30.8` because that is
+the release evestack tests against, which is a different question.
+`contract/contracts/07-auth.contract.mjs` asserts both
 halves of the fixed behaviour — that no hostile `Host` makes `localDev()` grant, and that it
 still grants inside `EVE_DEV=1` — and it goes red against 0.29.5. See
 The contract suite in `contract/` records which eve versions have been run against it.
