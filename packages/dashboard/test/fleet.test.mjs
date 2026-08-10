@@ -19,7 +19,16 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { classifySession, intervalMilliseconds, uncheckedCandidates } from "../lib/fleet.ts";
+import {
+  bannerState,
+  classifySession,
+  inspectFleet,
+  intervalMilliseconds,
+  summarize,
+  tooRecentCandidates,
+  uncheckedCandidates,
+} from "../lib/fleet.ts";
+import { installStubPool, uninstallStubPool } from "./stub-pool.mjs";
 
 /**
  * The fleet classifier has exactly two ways to be useless, and both have
@@ -193,4 +202,209 @@ test("a sweep that saw everything reports nothing left, and never NaN", () => {
     assert.ok(Number.isFinite(value), `${JSON.stringify(broken)} -> ${value}`);
     assert.equal(value, 0);
   }
+});
+
+
+/* -- what the sweep says it did NOT look at -------------------------------- */
+
+/**
+ * `checked: 0` HAD TWO MEANINGS AND NO WAY TO TELL THEM APART, and this block
+ * is the whole of that fix.
+ *
+ * "No session has a turn open, so nothing here could be wedged" and "a turn is
+ * open and the sweep skipped it because it moved four minutes ago" both came
+ * back as {"wedged":0,"idle":0,"awaitingHuman":0,"unknown":0,"entries":[],
+ * "checked":0,"unchecked":0} — byte for byte. Someone who had just killed an
+ * agent mid-turn read the first from a sweep that meant the second, and filed
+ * it as a broken health check. The detection was not broken. It was silent
+ * about being silent.
+ *
+ * The rows below are what the sweep's own query returns, quiet flag and window
+ * counts included, so these pin the JavaScript that reads them. That the SQL
+ * produces those columns is PostgreSQL's semantics and is asserted against a
+ * real server by contract/runtime/probes/06-fleet-wedge-evidence.probe.mjs.
+ *
+ * No agent is listening in these, so any session that IS probed comes back
+ * `unknown`. That is deliberate: it makes "was this session probed at all"
+ * visible in the assertion, which is the property being tested.
+ */
+
+const AGO = (ms) => new Date(Date.now() - ms);
+
+function candidateRow(overrides = {}) {
+  return {
+    session_id: "wrun_x",
+    title: "t",
+    trigger: null,
+    created_at: AGO(3 * HOUR),
+    last_activity: AGO(3 * HOUR),
+    in_flight_since: AGO(3 * HOUR),
+    quiet: true,
+    candidate_count: "1",
+    too_recent_count: "0",
+    ...overrides,
+  };
+}
+
+const sweep = (rows) => installStubPool([["FROM workflow.workflow_runs s", rows]]);
+
+test("a session with an open turn that moved too recently is COUNTED, not erased", async (t) => {
+  // One session whose turn stopped 21 minutes ago, against the shipped
+  // 30-minute quiet gate. The old query dropped it in HAVING, so the sweep
+  // could not count what it had thrown away.
+  sweep([
+    candidateRow({
+      session_id: "stopped-21m-ago",
+      quiet: false,
+      last_activity: AGO(21 * 60 * 1000),
+      candidate_count: "0",
+      too_recent_count: "1",
+    }),
+  ]);
+  t.after(uninstallStubPool);
+
+  const report = await inspectFleet();
+  assert.equal(report.checked, 0, "nothing was old enough to probe, which is correct");
+  assert.equal(report.tooRecent, 1, "and the caller can now see that one was skipped");
+  assert.equal(report.entries.length, 0, "a skipped session must not cost a round trip");
+  assert.equal(report.unchecked, 0, "unchecked is the probe budget, not the quiet gate");
+});
+
+test("an empty sweep is a DIFFERENT answer from a skipped one", async (t) => {
+  sweep([]);
+  t.after(uninstallStubPool);
+
+  const report = await inspectFleet();
+  assert.equal(report.checked, 0);
+  assert.equal(report.tooRecent, 0, "no rows at all means no session has a turn open");
+  assert.notDeepEqual(
+    { checked: report.checked, tooRecent: report.tooRecent },
+    { checked: 0, tooRecent: 1 },
+    "all clear and not-looked-at must not serialise to the same object",
+  );
+});
+
+test("only the quiet rows are probed, however many came back", async (t) => {
+  const stub = sweep([
+    candidateRow({ session_id: "quiet-one", quiet: true, candidate_count: "1", too_recent_count: "2" }),
+    candidateRow({ session_id: "busy-one", quiet: false, candidate_count: "1", too_recent_count: "2" }),
+    candidateRow({ session_id: "busy-two", quiet: false, candidate_count: "1", too_recent_count: "2" }),
+  ]);
+  t.after(uninstallStubPool);
+
+  const report = await inspectFleet();
+  assert.equal(report.checked, 1, "one probe, not three");
+  assert.deepEqual(report.entries.map((e) => e.sessionId), ["quiet-one"]);
+  assert.equal(report.tooRecent, 2);
+  assert.equal(stub.matching("FROM workflow.workflow_runs s").length, 1, "still one query");
+});
+
+test("the report quotes the thresholds it applied, not the ones it was asked for", async (t) => {
+  sweep([]);
+  t.after(uninstallStubPool);
+
+  // 1e-11 minutes is the value that used to reach Postgres as "6e-7
+  // milliseconds" and come back a 500. It rounds to a 0ms gate, and the report
+  // has to say so rather than echo the request.
+  const report = await inspectFleet({ idleMs: 1e-11 * 60_000 });
+  assert.equal(report.idleThresholdMs, 0);
+  assert.equal(report.wedgeAfterMs, HOUR, "the banner prints this; it must be the real constant");
+
+  const shipped = await inspectFleet();
+  assert.equal(shipped.idleThresholdMs, DEFAULT_IDLE_MS);
+});
+
+test("tooRecent rides on any row the sweep returned, probed or not", () => {
+  assert.equal(tooRecentCandidates([{ too_recent_count: "4" }]), 4);
+  assert.equal(tooRecentCandidates([{ quiet: true, too_recent_count: "4" }]), 4);
+  assert.equal(tooRecentCandidates([]), 0, "no open turns anywhere");
+  for (const broken of [{}, { too_recent_count: null }, { too_recent_count: "many" }]) {
+    assert.equal(tooRecentCandidates([broken]), 0, JSON.stringify(broken));
+  }
+});
+
+/* -- the buckets add up ---------------------------------------------------- */
+
+const entry = (health) => ({
+  sessionId: `s-${health}`,
+  title: null,
+  trigger: null,
+  createdAt: new Date().toISOString(),
+  idleMs: 0,
+  health,
+  pendingCount: 0,
+  reason: "",
+});
+
+const reportOf = (healths, extras = {}) => ({
+  entries: healths.map(entry),
+  checked: healths.length,
+  unchecked: 0,
+  tooRecent: 0,
+  idleThresholdMs: DEFAULT_IDLE_MS,
+  wedgeAfterMs: HOUR,
+  ...extras,
+});
+
+test("every checked session lands in exactly one reported bucket", () => {
+  // `active` was the one health value summarize() did not report, so the four
+  // counters were allowed to sum to LESS than `checked` with nothing in the
+  // payload saying where the difference went — and the difference was exactly
+  // the sessions in the 30-to-60-minute window after a process dies.
+  const report = reportOf(["wedged", "idle", "awaiting-human", "unknown", "active", "active"]);
+  const counts = summarize(report);
+  const total = counts.wedged + counts.idle + counts.awaitingHuman + counts.unknown + counts.active;
+  assert.equal(total, report.checked);
+  assert.equal(counts.active, 2);
+});
+
+/* -- what the banner says -------------------------------------------------- */
+
+test("the wedged banner CAN fire", () => {
+  // The README screenshot advertises "8 sessions wedged" and nothing proved the
+  // state was reachable. Confirmed against a real Postgres as well: a session
+  // whose turn has been open 90 minutes classifies wedged at the shipped
+  // defaults, and the sweep reports wedged: 1.
+  const state = bannerState(reportOf(["wedged"]));
+  assert.equal(state.register, "fault");
+  assert.equal(state.counts.wedged, 1);
+});
+
+test("a park or an unreachable agent is a to-do, not a fault", () => {
+  assert.equal(bannerState(reportOf(["awaiting-human"])).register, "todo");
+  assert.equal(bannerState(reportOf(["unknown"])).register, "todo");
+});
+
+test("an unjudged open turn is not silence", () => {
+  // The first minutes after a process dies: nothing probed, one session held
+  // back by the quiet gate. This used to render an empty page next to a
+  // Failure rate 0% tile.
+  const skipped = bannerState(reportOf([], { tooRecent: 1 }));
+  assert.equal(skipped.register, "coverage");
+  assert.equal(skipped.unjudged, 1);
+
+  // And the half hour after that: probed, and too young to call a fault.
+  const young = bannerState(reportOf(["active"]));
+  assert.equal(young.register, "coverage");
+  assert.equal(young.unjudged, 1);
+});
+
+test("the out-of-budget line is reachable on its own", () => {
+  // It sat behind an early return that fired unless something was already
+  // wrong, so the one sentence saying the sweep ran out of round trips could
+  // only appear once those round trips had already found a fault.
+  assert.equal(bannerState(reportOf(["idle"], { unchecked: 149 })).register, "coverage");
+});
+
+test("a fleet with nothing open renders nothing at all", () => {
+  // No green all-clear badge. The absence IS the good news, and a banner that
+  // is always present is furniture.
+  assert.equal(bannerState(reportOf([])).register, "silent");
+  assert.equal(bannerState(reportOf(["idle"])).register, "silent");
+});
+
+test("a fault outranks the coverage lines", () => {
+  const state = bannerState(reportOf(["wedged", "active"], { tooRecent: 3, unchecked: 2 }));
+  assert.equal(state.register, "fault");
+  assert.equal(state.unjudged, 4, "the coverage count is still reported alongside it");
 });
