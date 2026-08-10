@@ -2,7 +2,7 @@
   "name": "@evestack/composio",
   "version": "0.2.0",
   "type": "module",
-  "description": "One browser flow signs an eve agent into 1000+ tools. Wires Composio's Tool Router into eve, and degrades to a no-op when no API key is set.",
+  "description": "One browser flow signs an eve agent into 1,000+ tools. Wires Composio's Tool Router into eve, and degrades to a no-op when no API key is set.",
   "license": "Apache-2.0",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

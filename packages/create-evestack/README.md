@@ -6,6 +6,22 @@ No Vercel account. $0 infrastructure.**
 
 ```bash
 npx create-evestack my-agent
+```
+
+That can be the whole setup. The scaffolder asks **four** questions up front — where, which
+model, whether you want Composio's tools, and **whether it should bring the stack up for you**
+— and then works while you walk away:
+
+1. **Where** — the project directory.
+2. **Model** — OpenAI, Anthropic or Ollama, and a key if you have one.
+3. **Tools** — Composio's one-click tool sign-in, on by default.
+4. **Bring it up** — start Postgres, create the schema, pull the dashboard.
+
+Say **yes** to question 4 and it does all three, then offers to start the agent too, so there
+is nothing left to paste. Say **no** — or pass `--yes`, or leave Docker stopped — and it prints
+these four commands when it finishes instead:
+
+```bash
 cd my-agent
 docker compose up -d postgres              # durable sessions
 npm run db:bootstrap                       # create the workflow schema
@@ -13,15 +29,13 @@ docker compose --profile dashboard up -d   # the dashboard, usually on :4000
 npm run dev                                # the agent — holds this terminal
 ```
 
-That is the whole setup. The order matters: `npm run dev` is a foreground process that holds
-the terminal until you Ctrl-C it, so it goes last — which is also the order the scaffolder
-prints when it leaves the stack for you to start. The dashboard port is whichever one was free
-when you scaffolded, 4000 unless something already had it; `.env.local` and `docker-compose.yml`
-carry the real number, and `npx evestack open` prints it.
+The order matters: `npm run dev` is a foreground process that holds the terminal until you
+Ctrl-C it, so it goes last. The dashboard port is whichever one was free when you scaffolded,
+4000 unless something already had it; `.env.local` and `docker-compose.yml` carry the real
+number, and `npx evestack open` prints it.
 
-The scaffolder asks for a model provider and (optionally) a Composio key, writes a `.env.local`
-with a freshly generated auth password, and installs dependencies. Pass `--yes` to skip the
-prompts and fill in `.env.local` yourself.
+Either way you get a `.env.local` with a freshly generated auth password, and dependencies
+installed.
 
 The only thing that costs money is model tokens.
 
@@ -66,7 +80,8 @@ and, wired up for you:
 - Node 24+
 - Docker, running — Postgres and the agent sandbox both need it
 - A model API key, or [Ollama](https://ollama.com) for a genuinely $0 stack. Check your free RAM
-  before choosing Ollama: budget roughly *model size + 4 GB*.
+  before choosing Ollama: budget roughly *both model sizes + 4 GB* — long-term memory needs the
+  chat model and a separate 274 MB embedding model loaded, not one of them.
 
 ## Model providers
 
@@ -87,7 +102,7 @@ Runs — sessions, turns, subagent trees, computed cost per turn, plus the abili
 sessions, stream replies and resolve approvals.
 
 It is already in the `docker-compose.yml` this scaffolder writes, behind a profile so a plain
-`docker compose up -d` does not pull ~400 MB on someone who only asked for a database:
+`docker compose up -d` does not pull ~230 MB on someone who only asked for a database:
 
 ```bash
 docker compose --profile dashboard up -d

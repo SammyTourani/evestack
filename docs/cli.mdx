@@ -34,7 +34,7 @@ The three checking commands answer different questions, and it is worth being ab
 
 | | Question | Cost |
 | --- | --- | --- |
-| `status` | Is it running right now, and where? | four parallel probes, read-only |
+| `status` | Is it running right now, and where? | three parallel probes plus a config read, read-only |
 | `verify` | Is it configured correctly, part by part? | talks to Docker, Postgres and the ingest route |
 | `doctor` | Everything is up and a run still will not move — why? | reads Postgres, writes nothing |
 
@@ -48,7 +48,7 @@ npx create-evestack [name] [--yes] [--verbose]
 | Flag | Effect |
 | --- | --- |
 | `[name]` | Project directory. Prompted for if omitted (interactively). |
-| `--yes` / `-y` | Skip prompts, use defaults. Also triggered automatically when stdin isn't a TTY (CI, a piped script). It additionally declines to start containers, because nobody is there to say no to a 200 MB pull. |
+| `--yes` / `-y` | Skip prompts, use defaults. Also triggered automatically when stdin isn't a TTY (CI, a piped script). It additionally declines to start containers, because nobody is there to say no to a 230 MB pull. |
 | `--verbose` | Show the raw `npm` and `docker` output instead of one progress row each. |
 
 Four questions, all asked before any work starts, so the install and the image pull are a wait
@@ -252,7 +252,7 @@ there is something to fix it prints the SQL and lets you decide. Safe to point a
 | --- | --- |
 | `--schema=NAME` | graphile-worker's schema. Default `graphile_worker`. |
 | `--workflow=NAME` | eve's workflow schema. Default `workflow`. |
-| `--url=URL` | Postgres connection string. Default `$WORKFLOW_POSTGRES_URL`, then `$DATABASE_URL`. |
+| `--url=URL` | Postgres connection string. Default `$WORKFLOW_POSTGRES_URL`, then `$DATABASE_URL`, then `WORKFLOW_POSTGRES_URL` in the project's `.env.local` or `.env`. |
 | `--agent-url=URL` | The eve agent, for session health. Default `$EVESTACK_AGENT_URL`, then `http://127.0.0.1:2000`. |
 | `--limit=N` | Max rows listed per section. Default `50`; counts are never capped. |
 | `--probes=N` | Max sessions probed, `0` to skip. Default `25`. |
@@ -274,13 +274,14 @@ has run those already knows what they mean.
 | --- | --- |
 | `0` | Looked, and found nothing that is costing a run right now. |
 | `1` | At least one fault — a stranded run, a wedged job, a wedged session. |
-| `2` | Could not look: no database, wrong schema, or bad arguments. |
+| `2` | Could not look: not an evestack project, no database, wrong schema, or bad arguments. |
 
 `create` and `attach` use the same shape: `0` is a project you can run, `1` is one you cannot.
 
-`status`, `verify`, `open` and `tour` all work from anywhere inside the project directory — they
-walk up looking for the project's env files, because `evestack` is on `PATH` and gets typed from
-wherever you happen to be.
+`status`, `verify`, `open`, `tour` and `doctor` all work from anywhere inside the project
+directory — they walk up looking for the project's env files, because `evestack` is on `PATH`
+and gets typed from wherever you happen to be. Outside a project they all say so, rather than
+failing at whatever they tried next.
 
 ## Output
 

@@ -456,9 +456,9 @@ if (asJson) {
 }
 
 /**
- * The ten checks, in three groups.
+ * The eleven checks, in three named groups plus the "other" catch-all.
  *
- * A flat list of ten lines made every check look equally important and equally
+ * A flat list of eleven lines made every check look equally important and equally
  * urgent, so a red `dashboard` and a red `postgres` read the same — when one of
  * them is why the other failed. Grouping them in dependency order says, without
  * a sentence, that the thing to fix is the highest red line.

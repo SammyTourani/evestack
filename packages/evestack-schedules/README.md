@@ -130,8 +130,10 @@ The evestack template ships `agent/schedules/heartbeat.ts` as the worked example
 its own, reads a `HEARTBEAT.md` you can edit without a redeploy, and is asked to reply with an
 acknowledgement token when there is nothing to say.
 
-**That token is not currently dropped.** The filter exists in the template but has nowhere to run,
-because eve posts the reply itself — so a quiet hour delivers `HEARTBEAT_OK` to your channel. See
+**That token is not currently dropped, and there is no filter to drop it.** There used to be an
+`isWorthDelivering(reply)` predicate in the template; it was called from nowhere, because eve
+posts the reply itself, and it has been deleted rather than left in a file people read and edit.
+So a quiet hour delivers `HEARTBEAT_OK` to your channel. See
 the note at the top of `templates/default/agent/schedules/heartbeat.ts`. An hourly heartbeat that
 always sends something is an hourly notification, and you will mute it within a day.
 

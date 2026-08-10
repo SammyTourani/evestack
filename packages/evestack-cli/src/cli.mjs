@@ -106,7 +106,9 @@ Options
   --schema=NAME       graphile-worker's schema            (default: graphile_worker)
   --workflow=NAME     eve's workflow schema               (default: workflow)
   --url=URL           Postgres connection string          (default: $WORKFLOW_POSTGRES_URL,
-                                                           then $DATABASE_URL)
+                                                           then $DATABASE_URL, then
+                                                           WORKFLOW_POSTGRES_URL in the
+                                                           project's .env.local or .env)
   --agent-url=URL     the eve agent, for session health   (default: $EVESTACK_AGENT_URL,
                                                            then http://127.0.0.1:2000)
   --limit=N           max rows listed per section         (default: 50; counts are never capped)

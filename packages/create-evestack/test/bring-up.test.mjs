@@ -13,7 +13,7 @@
  * So this starts a real container. It is skipped — not failed — when Docker is
  * not available or the image is not already cached, because neither is true of
  * every machine and a test that fails on a laptop without Docker is a test
- * people learn to ignore. `only: "database"` stops it before the ~200 MB
+ * people learn to ignore. `only: "database"` stops it before the ~230 MB
  * dashboard pull.
  */
 import assert from "node:assert/strict";

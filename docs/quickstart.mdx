@@ -17,14 +17,30 @@ npx evestack create my-agent
 ```
 
 `npx create-evestack my-agent` does the same thing. They are two published names for one
-implementation — `evestack` is the single command (`create`, `verify`, `open`, `attach`,
-`doctor` — see [the CLI reference](/docs/cli)), and `create-evestack` is the name npm's
-`create-*` convention leads people to. Same code, same prompts, same flags.
+implementation — `evestack` is the single command (`create`, `status`, `tour`, `open`,
+`verify`, `attach`, `doctor` — see [the CLI reference](/docs/cli)), and `create-evestack` is
+the name npm's `create-*` convention leads people to. Same code, same prompts, same flags.
 
-You'll be asked for a model provider — OpenAI, Anthropic or Ollama — and whether to enable
-Composio's one-click tool sign-in. Answer both, or pass `--yes` to skip prompts and fill in
-`.env.local` yourself afterward — the scaffolder never hangs waiting on input it isn't going
-to get.
+It asks **four** questions, all of them before any work starts, so the install and the image
+pull are a wait you can walk away from:
+
+1. **Where** — the project directory.
+2. **Model** — OpenAI, Anthropic or Ollama, and a key if you have one.
+3. **Tools** — Composio's one-click tool sign-in, on by default.
+4. **Bring it up** — whether it should start Postgres, create the schema and pull the
+   dashboard for you.
+
+Pass `--yes` to skip all four and fill in `.env.local` yourself afterward — the scaffolder
+never hangs waiting on input it isn't going to get.
+
+<Note>
+  **Question 4 decides how much of this page you have to type.** Answer **yes** and the
+  scaffolder does *Bring up the database* and *See it in the dashboard* for you, then offers to
+  run *Run it* as well — so there is nothing left to paste, and you can read those sections as a
+  description of what already happened. Answer **no** — or run under `--yes`, or with Docker
+  not running — and it prints those same four commands when it finishes, which are the ones
+  below.
+</Note>
 
 Whichever you pick, `.env.local` gets `EVESTACK_PROVIDER` *and* that provider's own key
 variable. Both matter: `EVESTACK_PROVIDER` is what `agent/agent.ts` branches on, and setting a
@@ -113,9 +129,9 @@ That is a **pull**. The generated `docker-compose.yml` points at
 the service is already wired to this project's database and to the `.env.local` your agent
 reads — so there is no repository to clone, no image to build, and no credential to copy across.
 
-That pull resolves a multi-arch manifest — `linux/amd64` and `linux/arm64`, ~204 MB
-compressed — so the same command works on an Apple Silicon laptop and on an x86 server
-without you choosing a platform.
+That pull resolves a multi-arch manifest — `linux/amd64` and `linux/arm64`, ~230 MB
+compressed each — so the same command works on an Apple Silicon laptop and on an x86 server
+without you choosing a platform. It unpacks to about 1 GB on disk.
 
 <Note>
   To run an image of your own — a fork, a private registry, a local build under a different name

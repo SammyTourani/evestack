@@ -43,7 +43,7 @@ that; handing it the daemon hands back everything it contained.
 
 **There is no agent image.** Nothing publishes one, so a compose service would
 need `build:`, and every deploy would build your project into an image before it
-could start. The dashboard image is ~204 MB compressed and builds from the
+could start. The dashboard image is ~230 MB compressed and builds from the
 repository root; doing that to the agent as well, on every restart, is a cost the
 default should not impose.
 
