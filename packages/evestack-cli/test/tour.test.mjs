@@ -14,6 +14,7 @@
  * If eve renames one of those, this is where it should go red.
  */
 import assert from "node:assert/strict";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createServer } from "node:http";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -231,17 +232,42 @@ async function withCountingAgent(run, { answerHealth = false } = {}) {
  * carries only the usage text and the refusal. Both are worth reading, so this
  * captures the real one too; a test that asserted on the sink alone would be
  * asserting on an empty string and passing for the wrong reason.
+ *
+ * ─ Why it separates the writes by async context instead of eating them ─
+ *
+ * `node --test` runs this file in a child process and the runner reports what
+ * happened by WRITING IT TO THAT CHILD'S STDOUT. A capture that replaces
+ * `process.stdout.write` and returns `true` without forwarding therefore eats
+ * the runner's own result lines for every test that finishes while the capture
+ * is installed. Measured on this file before the fix: 14 top-level tests
+ * declared, `tests 9` reported, and the missing five included whichever ones
+ * happened to complete inside the window. A failure in one of them still turned
+ * the file red — as a bare `not ok` with no name and no assertion message,
+ * which is the worst possible way to learn a test broke.
+ *
+ * So the interceptor keeps only what `run` printed. `AsyncLocalStorage`
+ * propagates through the awaits inside `run`, and the runner's reporting
+ * happens in its own context, so "did the code under test write this?" is a
+ * question that can be asked rather than guessed. Anything that is not ours is
+ * forwarded to the real stream untouched, which also means a write this cannot
+ * attribute shows up on the console instead of vanishing — the failure lands
+ * where someone will see it.
  */
+const capturedWrites = new AsyncLocalStorage();
+
 async function captureStdout(run) {
   const original = process.stdout.write.bind(process.stdout);
+  // A fresh token per call, so a nested capture cannot claim the outer one's
+  // writes and a stale context cannot claim anything.
+  const mine = Symbol("captureStdout");
   let text = "";
   process.stdout.write = (chunk, ...rest) => {
-    text += chunk;
-    void rest;
+    if (capturedWrites.getStore() !== mine) return original(chunk, ...rest);
+    text += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
     return true;
   };
   try {
-    await run();
+    await capturedWrites.run(mine, run);
   } finally {
     process.stdout.write = original;
   }
@@ -388,4 +414,58 @@ test("outside a project it exits 2 without touching an agent", async () => {
     assert.deepEqual(seen.paths, [], `nothing should have been called: ${seen.paths.join(", ")}`);
     void port;
   });
+});
+
+
+/**
+ * The capture helper, tested, because the version of it that was here quietly
+ * cost this file five of its own results.
+ *
+ * The bug it pins is not "the assertions were wrong". Every assertion above
+ * passed the whole time. What broke was the REPORT: `node --test` counted 9 of
+ * 14, and the five it lost were the ones whose result lines happened to be
+ * flushed while a capture was installed. A suite that under-reports itself is a
+ * suite nobody can trust to have run, so the split it now makes — ours versus
+ * the runner's — is worth a test of its own rather than a comment.
+ */
+test("captureStdout keeps what the tour printed and forwards what it did not", async () => {
+  const real = process.stdout.write;
+  let forwarded = "";
+  // Swallows the two synthetic markers and forwards everything else, so this
+  // test cannot reintroduce the very bug it is pinning.
+  process.stdout.write = (chunk, ...rest) => {
+    const text = typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+    if (text.includes("-LINE")) {
+      forwarded += text;
+      return true;
+    }
+    return real.call(process.stdout, chunk, ...rest);
+  };
+  let captured;
+  try {
+    // Registered OUTSIDE the capture, which is what makes it stand in for the
+    // test runner: its callback runs during the capture window but was created
+    // in a different async context, exactly as the reporter's writes are.
+    const fromElsewhere = new Promise((resolve) => {
+      setTimeout(() => {
+        process.stdout.write("RUNNER-RESULT-LINE\n");
+        resolve();
+      }, 5);
+    });
+    captured = await captureStdout(async () => {
+      process.stdout.write("TOUR-OUTPUT-LINE\n");
+      await fromElsewhere;
+    });
+  } finally {
+    process.stdout.write = real;
+  }
+
+  assert.match(captured, /TOUR-OUTPUT-LINE/, "the tour's own output is still captured");
+  assert.doesNotMatch(captured, /RUNNER-RESULT-LINE/, "and nothing else is folded into it");
+  assert.match(
+    forwarded,
+    /RUNNER-RESULT-LINE/,
+    "a write from outside the capture reaches the real stream — this is the regression",
+  );
+  assert.doesNotMatch(forwarded, /TOUR-OUTPUT-LINE/, "and the captured output is not also printed");
 });
