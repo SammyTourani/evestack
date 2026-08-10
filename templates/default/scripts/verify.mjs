@@ -476,6 +476,19 @@ const MARK = { pass: g.OK, fail: g.FAIL, warn: g.WARN, skip: g.SKIP };
 
 blank();
 heading("verify", basename(process.cwd()));
+
+/**
+ * Wide enough for the longest label actually printed, and never narrower than
+ * the 12 the rest of the CLI lines up on.
+ *
+ * `pad` pads a string to a width; it does not guarantee a gap after it. The
+ * longest label here is "dashboard image" at 15 characters against a hardcoded
+ * 12, so every healthy run printed a version welded to its label:
+ * `✓ dashboard image0.3.1`. Derived from the results rather than bumped to 16,
+ * because the next check with a long name would silently do it again.
+ */
+const LABEL_WIDTH = Math.max(12, ...results.map((r) => r.name.length + 1));
+
 const grouped = new Set(GROUPS.flatMap(([, names]) => names));
 const sections = [
   ...GROUPS,
@@ -489,7 +502,7 @@ for (const [title, names] of sections) {
   console.log(`    ${C.dim}${title}${C.reset}`);
   for (const r of rows) {
     row(MARK[r.state], r.name, r.state === "fail" ? c.red(r.detail) : c.dim(r.detail), "", {
-      indent: 6, labelWidth: 12,
+      indent: 6, labelWidth: LABEL_WIDTH,
     });
     // The fix is the only thing on this screen anyone is meant to type, so it
     // is bold and on its own line rather than a dim `fix:` prefix inline.

@@ -198,7 +198,12 @@ async function withCountingAgent(run, { answerHealth = false } = {}) {
     seen.paths.push(`${req.method} ${req.url}`);
     if (req.url === "/eve/v1/health") {
       seen.health += 1;
-      if (!answerHealth) return void res.writeHead(503).end();
+      // Dropped rather than answered. The fixture's own line above is "a
+      // server that answers nothing", and a 503 is not nothing — status now
+      // tells a socket that replied apart from one that did not, and reports
+      // the first as "something answered 503 here". The request is still
+      // counted, so the assertions below are as strong as they were.
+      if (!answerHealth) return void res.destroy();
       res.writeHead(200, { "content-type": "application/json" });
       return void res.end(JSON.stringify({ ok: true, status: "ready" }));
     }
