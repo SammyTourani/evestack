@@ -81,7 +81,20 @@ export interface SpanRow {
   scopeName: string | null;
   sessionId: string | null;
   rootSessionId: string | null;
+  /**
+   * What this span DECLARED, inherited from its nearest declaring ancestor by
+   * buildSpanTree. On an exporting install that is `turn_0` — an ordinal, not a
+   * run id, and the same string on every turn of every session. Fine for
+   * grouping spans within one trace; never join it to `workflow_runs`.
+   */
   turnId: string | null;
+  /**
+   * The workflow run this span executed inside, materialized by
+   * `evestack.resolve_span_ancestry()`. This is the value that joins to
+   * `workflow_runs.id`, `fact_turn.run_id` and the session page's turn card.
+   * NULL when the walk could not attribute the span at all.
+   */
+  resolvedTurnId: string | null;
 }
 
 /** A span plus the ids and depth it only has by virtue of its ancestors. */
@@ -92,6 +105,7 @@ export interface SpanNode extends SpanRow {
 
 export interface ModelCall {
   spanId: string;
+  /** The turn's workflow run id, which is the key the session page groups by. */
   turnId: string | null;
   stepIndex: number | null;
   model: string | null;
@@ -111,6 +125,7 @@ export interface ModelCall {
 
 export interface ToolCall {
   spanId: string;
+  /** The turn's workflow run id, which is the key the session page groups by. */
   turnId: string | null;
   stepIndex: number | null;
   name: string | null;
@@ -742,7 +757,7 @@ const SELECT_SPAN = `
   SELECT trace_id, span_id, parent_span_id, name, kind,
          start_time, end_time, duration_ms, status_code, status_message,
          attributes, resource, events, scope_name,
-         session_id, root_session_id, turn_id
+         session_id, root_session_id, turn_id, resolved_turn_id
   FROM evestack.spans
 `;
 
@@ -765,7 +780,23 @@ function toSpanRow(raw: Record<string, unknown>): SpanRow {
     sessionId: (raw.session_id as string) ?? null,
     rootSessionId: (raw.root_session_id as string) ?? null,
     turnId: (raw.turn_id as string) ?? null,
+    resolvedTurnId: (raw.resolved_turn_id as string) ?? null,
   };
+}
+
+/**
+ * The run a call belongs to, for anything that has to line up with the run tree.
+ *
+ * `resolvedTurnId` first because it is the only one of the two that names a
+ * workflow run: `turnId` is `turn_0` on every exported span, which joins to
+ * nothing and made /sessions/[id] report a session with a tool call and a
+ * transcript as having neither. The declared value is still the fallback, for
+ * the two cases the resolver leaves alone — a span whose parent never arrived,
+ * and a trace with no enclosing `workflow.run.id` — where an id that at least
+ * groups the session's own spans beats null.
+ */
+function callTurnId(span: SpanRow): string | null {
+  return span.resolvedTurnId ?? span.turnId;
 }
 
 /**
@@ -1030,7 +1061,7 @@ export async function listModelCalls(sessionId: string): Promise<ModelCall[]> {
       const a = span.attributes;
       return {
         spanId: span.spanId,
-        turnId: span.turnId,
+        turnId: callTurnId(span),
         stepIndex:
           num(ancestorAttribute(span, byId, "agent.step.index")) ??
           num(a["ai.settings.context.eve.step.index"]),
@@ -1076,7 +1107,7 @@ export async function listToolCalls(sessionId: string): Promise<ToolCall[]> {
       const a = node.attributes;
       return {
         spanId: node.spanId,
-        turnId: node.turnId,
+        turnId: callTurnId(node),
         stepIndex:
           num(ancestorAttribute(node, byId, "agent.step.index")) ??
           num(a["ai.settings.context.eve.step.index"]),

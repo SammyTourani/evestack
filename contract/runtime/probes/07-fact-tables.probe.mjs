@@ -64,6 +64,19 @@ const TRACES_SQL = join(DASHBOARD, "sql/traces.sql");
 /** Milliseconds, mirroring lib/facts.ts STUCK_TURN_MS. */
 const STUCK_TURN_SECONDS = 3600;
 
+/**
+ * The schema version sql/facts.sql installs, read out of the file.
+ *
+ * Hardcoded here as `1` until the derivation of `environment` changed and the
+ * file went to 2, at which point this probe failed on a correct change. The
+ * number is the file's, not the probe's: reading it keeps the assertion about
+ * what it is for — that a bump DROPS the tables — instead of about whether
+ * someone remembered to edit two places.
+ */
+const FACTS_TARGET_VERSION = Number(
+  /VALUES \('facts', (\d+)\)/.exec(readFileSync(FACTS_SQL, "utf8"))?.[1],
+);
+
 async function connect() {
   const { default: pg } = await import("pg");
   const client = new pg.Client({ connectionString: process.env.WORKFLOW_POSTGRES_URL });
@@ -759,9 +772,11 @@ export default {
                 (SELECT version FROM ${schema}.schema_version WHERE component = 'facts') AS version`,
       );
       t.ok(
-        rebuilt[0].turns === 0 && rebuilt[0].marks === 0 && rebuilt[0].version === 1,
+        rebuilt[0].turns === 0 &&
+          rebuilt[0].marks === 0 &&
+          rebuilt[0].version === FACTS_TARGET_VERSION,
         "a version bump drops the derived tables and the watermark with them, so the next refresh is a full rebuild",
-        { actual: JSON.stringify(rebuilt[0]) },
+        { expected: `0 turns, 0 marks, version ${FACTS_TARGET_VERSION}`, actual: JSON.stringify(rebuilt[0]) },
       );
 
       await client.query(relocate(FACTS_SQL, schema));

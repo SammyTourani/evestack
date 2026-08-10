@@ -136,6 +136,11 @@ const TRACE_B = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const TRACE_C = "cccccccccccccccccccccccccccccccc";
 const TRACE_D = "dddddddddddddddddddddddddddddddd";
 const TRACE_NOISE = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+const TRACE_ALIAS = "11111111111111111111111111111111";
+const TRACE_LOCAL = "22222222222222222222222222222222";
+
+/** The workflow run a turn IS, which is what resolved_turn_id has to name. */
+const TURN_RUN = "wrun_01KZMZMVCNDMRM3XFZE1TCVQHF";
 
 export default {
   id: "traces/spans-resolve-to-a-session",
@@ -299,6 +304,83 @@ export default {
       );
 
       /* ---------------------------------------------------------------- */
+      /* 4b. the turn id an exporting install actually sends                */
+      /* ---------------------------------------------------------------- */
+
+      // What eve's AI SDK exporter declares is `turn_0`: an ordinal within the
+      // session, not a run id, and the SAME string on every turn of every
+      // session. Everything downstream joins resolved_turn_id to
+      // workflow_runs.id, so left as declared it joins to nothing - the session
+      // page reported a session holding 12 spans, a tool call and a full
+      // transcript as having none of them, while the trace page rendered all
+      // three from those same rows.
+      //
+      // The run is on the trace, two levels up: eve executes a turn AS a
+      // workflow run, so `workflow.run.id` on the enclosing `step.execute
+      // turnStep` span IS the turn. This is that shape, span for span, out of
+      // the reproduction database.
+      await insert(client, schema, [
+        span({ traceId: TRACE_ALIAS, spanId: "e100000000000000", name: "workflow.execute turnWorkflow", attributes: { "workflow.run.id": TURN_RUN } }),
+        span({ traceId: TRACE_ALIAS, spanId: "e200000000000000", parentSpanId: "e100000000000000", name: "step.execute turnStep", attributes: { "workflow.run.id": TURN_RUN } }),
+        // Declares nothing. The gap the walk has to cross.
+        span({ traceId: TRACE_ALIAS, spanId: "e300000000000000", parentSpanId: "e200000000000000", name: "step.execute" }),
+        span({ traceId: TRACE_ALIAS, spanId: "e400000000000000", parentSpanId: "e300000000000000", name: "ai.eve.turn", attributes: { "eve.turn.id": "turn_0", "eve.session.id": "sess_e" } }),
+        span({ traceId: TRACE_ALIAS, spanId: "e500000000000000", parentSpanId: "e400000000000000", name: "invoke_agent gpt-5-mini", attributes: ids("sess_e", "turn_0") }),
+        span({ traceId: TRACE_ALIAS, spanId: "e600000000000000", parentSpanId: "e500000000000000", name: "execute_tool remember" }),
+        // Session-scoped plumbing, hanging off the turn step. It carries the
+        // SESSION's run id, and accepting that as a turn would hang the whole
+        // session off one phantom turn.
+        span({ traceId: TRACE_ALIAS, spanId: "e700000000000000", parentSpanId: "e200000000000000", name: "workflow.stream.flush", attributes: { "workflow.run.id": "sess_e" } }),
+      ]);
+
+      const aliased = await resolved(client, schema, "e500000000000000");
+      t.ok(
+        aliased.turn_id === "turn_0" && aliased.resolved_turn_id === TURN_RUN,
+        "a `turn_0` alias resolves to the workflow run the span executed inside, while the declared column still says what was sent",
+        { expected: `turn_0 / ${TURN_RUN}`, actual: `${aliased.turn_id} / ${aliased.resolved_turn_id}` },
+      );
+
+      const aliasedTool = await resolved(client, schema, "e600000000000000");
+      t.ok(
+        aliasedTool.resolved_turn_id === TURN_RUN,
+        "the `execute_tool` span underneath it lands on the same run - this is the row fact_tool_call keys on, " +
+          "and it is what the session page could not find",
+        { expected: TURN_RUN, actual: aliasedTool.resolved_turn_id },
+      );
+
+      const plumbing = await resolved(client, schema, "e700000000000000");
+      t.ok(
+        plumbing.resolved_turn_id === null,
+        "a session-scoped plumbing span is not given a turn - it declares no turn id, and the run it names is the session",
+        { actual: plumbing.resolved_turn_id },
+      );
+
+      // The conservative half, and the reason this cannot move an attribution
+      // that already worked: eve's local tracer writes the run id into
+      // `agent.turn.id` directly, and that value is kept verbatim.
+      await insert(client, schema, [
+        span({ traceId: TRACE_LOCAL, spanId: "f200000000000000", name: "workflow.execute turnWorkflow", attributes: { "workflow.run.id": "wrun_enclosing" } }),
+        span({ traceId: TRACE_LOCAL, spanId: "f300000000000000", parentSpanId: "f200000000000000", name: "agent.turn", attributes: { "agent.session.id": "sess_f", "agent.turn.id": "wrun_declared" } }),
+      ]);
+      const declaredRun = await resolved(client, schema, "f300000000000000");
+      t.ok(
+        declaredRun.resolved_turn_id === "wrun_declared",
+        "a turn id that already names a run is kept, not overwritten by the run its span happens to sit inside",
+        { expected: "wrun_declared", actual: declaredRun.resolved_turn_id },
+      );
+
+      // And the degraded case, which has to stay the OLD behaviour rather than
+      // become a wrong join: TRACE_A carries no `workflow.run.id` anywhere, so
+      // its alias is kept exactly as the earlier assertions in this probe
+      // expect. Restated here because it is now a decision, not an accident.
+      const noEnclosingRun = await resolved(client, schema, "a400000000000000");
+      t.ok(
+        noEnclosingRun.resolved_turn_id === "turn_a",
+        "a trace with no enclosing workflow.run.id keeps the declared turn id - the fallback is the old behaviour, not null",
+        { actual: noEnclosingRun.resolved_turn_id },
+      );
+
+      /* ---------------------------------------------------------------- */
       /* 5. at-least-once delivery                                         */
       /* ---------------------------------------------------------------- */
 
@@ -380,7 +462,7 @@ export default {
         `SELECT version FROM ${schema}.schema_version WHERE component = 'spans'`,
       );
       t.ok(
-        Number(version[0]?.version) === 3,
+        Number(version[0]?.version) === 4,
         "re-applying the file to a database that predates the migration records the new schema version",
         { actual: version[0]?.version },
       );
@@ -409,13 +491,13 @@ export default {
       // Third application. Idempotence is not optional: this file runs on every boot.
       await client.query(schemaSql(schema));
       const again = await resolved(client, schema, "a400000000000000");
-      const { rows: stillThree } = await client.query(
-        `SELECT count(*)::int AS n FROM ${schema}.schema_version WHERE component = 'spans' AND version = 3`,
+      const { rows: stillCurrent } = await client.query(
+        `SELECT count(*)::int AS n FROM ${schema}.schema_version WHERE component = 'spans' AND version = 4`,
       );
       t.ok(
-        again.resolved_session_id === "sess_a2" && stillThree[0].n === 1,
+        again.resolved_session_id === "sess_a2" && stillCurrent[0].n === 1,
         "applying the file a third time changes nothing",
-        { actual: `${again.resolved_session_id}, ${stillThree[0].n} version rows` },
+        { actual: `${again.resolved_session_id}, ${stillCurrent[0].n} version rows` },
       );
     } finally {
       await client.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(() => {});

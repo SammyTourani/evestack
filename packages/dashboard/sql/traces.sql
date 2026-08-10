@@ -102,8 +102,9 @@ CREATE TABLE IF NOT EXISTS evestack.spans (
   -- (`$eve.parent` / `$eve.type`) before it can be treated as one, and some
   -- values name runs that have since been pruned. Nothing here implements that
   -- join, so a STORED generated column would only be a table rewrite and an index
-  -- nobody reads. `attributes ->> 'workflow.run.id'` is right there for whoever
-  -- writes the join; add the column with it, not before.
+  -- nobody reads as a column. resolve_span_ancestry() below DOES read the
+  -- attribute, to translate a turn alias into the run it ran inside; that needs
+  -- the nearest ancestor's value, which a per-row generated column cannot see.
 
   -- The same ids, inherited from the nearest ancestor that declares one.
   --
@@ -117,6 +118,12 @@ CREATE TABLE IF NOT EXISTS evestack.spans (
   -- Read `session_id` when the question is "did this span say which session it
   -- belonged to". Read `resolved_session_id` when the question is "which
   -- session does this span belong to", which is every aggregation.
+  --
+  -- `resolved_turn_id` is NOT just the inherited `turn_id`. It is the id of the
+  -- workflow run the span executed inside, so it joins to `workflow_runs.id` —
+  -- which the declared value does not, on any install that exports. See the
+  -- turn-id section on resolve_span_ancestry() below; nothing should join
+  -- `turn_id` to a run.
   resolved_session_id text,
   resolved_turn_id    text,
 
@@ -187,6 +194,44 @@ CREATE INDEX IF NOT EXISTS spans_name_idx
  * as well as history in that one case. No AFTER DELETE trigger defends it:
  * prune_spans cuts on start_time, so a trace old enough to lose spans is not one
  * an exporter is still appending to, and the guard would run on every batch.
+ *
+ * ── THE TURN ID IS TRANSLATED, NOT ONLY INHERITED ───────────────────────────
+ *
+ * `resolved_turn_id` has one job: name the workflow run the span executed
+ * inside, so sql/facts.sql can join it to `workflow_runs.id` and the session
+ * page can find a turn's spans. The declared `turn_id` does not always do that,
+ * because eve's two tracers disagree about what a turn id IS:
+ *
+ *   agent.turn.id                      the turn's workflow run, `wrun_…`
+ *   ai.settings.context.eve.turn.id    `turn_0`, an ordinal within the session
+ *
+ * Only the second ever reaches an external collector — the same split the
+ * `session_id` column documents above — so on an exporting install every span
+ * carries `turn_0`, for every turn of every session. That is not a key: it joins
+ * to no run, and four sessions in the reproduction database all share the one
+ * value. The session page keys its turn card on the run id, so it found nothing
+ * and reported a session holding 12 spans, a tool call and a full transcript as
+ * having none of them, while /traces/<id> rendered all three from those rows.
+ *
+ * The run id is on the trace, one or two levels up. eve executes a turn AS a
+ * workflow run, so `workflow.run.id` on the enclosing `step.execute turnStep`
+ * span is that turn. The walk below therefore inherits that key as well and
+ * swaps it in where the declared turn id is an alias. Three rules keep the swap
+ * from inventing an attribution:
+ *
+ *   A turn id that already names a run is never touched (the `wrun_` prefix).
+ *     This can only fill a join that was empty; it cannot move one that worked.
+ *   The all-zero `wrun_00000000000000000000000000` is not a run id. It is what
+ *     the engine stamps on stream-read spans, it joins to nothing, and folding
+ *     it in is exactly the mistake the `session_id` note above exists to avoid.
+ *   An enclosing run that IS the session is not a turn. Turn spans nest inside
+ *     `workflow.execute turnWorkflow`; session-scoped plumbing
+ *     (`workflow.stream.flush`, `hook.resume`) carries the SESSION's run id, and
+ *     accepting it would hang every span in the session off one phantom turn.
+ *
+ * Where the trace carries no enclosing run id at all — a fixture, or a collector
+ * that received only the AI SDK subtree — the declared value is kept, which is
+ * what this did before. The degraded case is the old behaviour, not a bad join.
  */
 CREATE OR REPLACE FUNCTION evestack.resolve_span_ancestry(traces text[] DEFAULT NULL)
 RETURNS bigint
@@ -204,7 +249,8 @@ BEGIN
   END IF;
 
   WITH RECURSIVE walk AS (
-    SELECT s.trace_id, s.span_id, s.session_id AS sid, s.turn_id AS tid
+    SELECT s.trace_id, s.span_id, s.session_id AS sid, s.turn_id AS tid,
+           NULLIF(s.attributes ->> 'workflow.run.id', 'wrun_00000000000000000000000000') AS rid
     FROM evestack.spans s
     WHERE s.trace_id = ANY(scope)
       AND (s.parent_span_id IS NULL
@@ -214,18 +260,38 @@ BEGIN
     UNION ALL
     SELECT c.trace_id, c.span_id,
            COALESCE(c.session_id, w.sid),
-           COALESCE(c.turn_id,    w.tid)
+           COALESCE(c.turn_id,    w.tid),
+           COALESCE(NULLIF(c.attributes ->> 'workflow.run.id', 'wrun_00000000000000000000000000'), w.rid)
     FROM walk w
     JOIN evestack.spans c
       ON c.trace_id = w.trace_id AND c.parent_span_id = w.span_id
   ),
-  resolved AS (
+  -- Split out so the turn rule below reads as a rule rather than as four
+  -- repetitions of the same COALESCE. `rid` is the nearest self-or-ancestor
+  -- `workflow.run.id`: the run this span executed inside.
+  inherited AS (
     SELECT s.trace_id, s.span_id,
            COALESCE(w.sid, s.session_id) AS sid,
-           COALESCE(w.tid, s.turn_id)    AS tid
+           COALESCE(w.tid, s.turn_id)    AS tid,
+           w.rid                         AS rid
     FROM evestack.spans s
     LEFT JOIN walk w ON w.trace_id = s.trace_id AND w.span_id = s.span_id
     WHERE s.trace_id = ANY(scope)
+  ),
+  resolved AS (
+    SELECT trace_id, span_id, sid,
+           CASE
+             -- Already a run id, or nothing to translate. Untouched, always.
+             WHEN tid IS NULL OR starts_with(tid, 'wrun_') THEN tid
+             -- An alias, and the trace says which run it ran in. The session's
+             -- own run is not a turn, so it is not an answer to this question.
+             WHEN rid IS NOT NULL AND rid IS DISTINCT FROM sid THEN rid
+             -- An alias on a trace that carries no enclosing run. Keep it: it
+             -- is at least stable within the session, which is what the
+             -- /traces pages group by.
+             ELSE tid
+           END AS tid
+    FROM inherited
   )
   UPDATE evestack.spans s
      SET resolved_session_id = r.sid,
@@ -383,7 +449,7 @@ CREATE TABLE IF NOT EXISTS evestack.schema_version (
 -- current version.
 DO $mig$
 DECLARE
-  target    constant integer := 3;
+  target    constant integer := 4;
   installed integer;
   current_expr text;
 BEGIN
@@ -442,6 +508,37 @@ BEGIN
     ALTER TABLE evestack.spans DROP COLUMN IF EXISTS workflow_run_id;
   END IF;
 
+  -- 4: resolved_turn_id names a workflow run, not a tracer-local alias.
+  --
+  -- No DDL — resolve_span_ancestry() above is CREATE OR REPLACE and is already
+  -- the new one by the time this runs. What needs a migration step is the DATA:
+  -- every span stored before this release holds the alias, and the triggers only
+  -- fire on write, so without this the fix would apply to future spans and leave
+  -- every session already in the database reading "no spans on any of the 1 runs".
+  IF installed < 4 THEN
+    PERFORM evestack.resolve_span_ancestry();
+
+    -- The fact tables key on resolved_turn_id and refresh from a watermark over
+    -- `spans.received_at`. The UPDATE above moves no `received_at` — re-resolving
+    -- is not re-receiving — so nothing would put these turns back in the pending
+    -- set and `span_coverage` would stay 'none' on rows that now have spans.
+    -- Dropping the watermark makes the next refresh a full rebuild, which is the
+    -- documented way to do this (see the header of sql/facts.sql). Guarded
+    -- because facts.sql is applied AFTER this file: on a fresh database the
+    -- table does not exist yet, and there is nothing stale to rebuild.
+    IF to_regclass('evestack.fact_watermark') IS NOT NULL THEN
+      DELETE FROM evestack.fact_watermark WHERE component = 'fact_turn';
+    END IF;
+
+    -- Nothing reads spans by the DECLARED turn id any more, and this table takes
+    -- every span an agent exports, so a redundant index is write amplification
+    -- on the hottest insert path here. Its replacement is
+    -- `spans_resolved_turn_only_idx`, created below. Dropped here rather than in
+    -- sql/query-indexes.sql because that file is held to CREATE INDEX IF NOT
+    -- EXISTS and nothing else, and is proven so by a probe.
+    DROP INDEX IF EXISTS evestack.evestack_spans_turn_idx;
+  END IF;
+
   INSERT INTO evestack.schema_version (component, version) VALUES ('spans', target)
   ON CONFLICT (component) DO UPDATE
     SET version = EXCLUDED.version, applied_at = now()
@@ -467,6 +564,22 @@ CREATE INDEX IF NOT EXISTS spans_resolved_session_idx
   ON evestack.spans (resolved_session_id) WHERE resolved_session_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS spans_resolved_turn_idx
   ON evestack.spans (resolved_session_id, resolved_turn_id) WHERE resolved_turn_id IS NOT NULL;
+
+-- And by turn alone, which the composite above cannot serve: `resolved_turn_id`
+-- is not its leading column, so a lookup with no session in hand reads all of
+-- it. getSessionTree() does exactly that — it has the session's run ids and asks
+-- which traces they appear in — and sql/facts.sql joins the same column per
+-- turn. Measured by W1 on a synthetic 1.5M-row table for the identical lookup
+-- against `turn_id`: 34.191 ms and 15,549 shared buffers on the composite,
+-- 0.076 ms and 19 on a leading-column index.
+--
+-- This index used to live in sql/query-indexes.sql, on the DECLARED `turn_id`,
+-- with a note saying it would read better here. It moved when the queries moved
+-- to the resolved column, and migration step 4 drops the old one; the file it
+-- came from can now hold nothing but `workflow.workflow_runs`, which is the only
+-- part of it that needed the justification in its header.
+CREATE INDEX IF NOT EXISTS spans_resolved_turn_only_idx
+  ON evestack.spans (resolved_turn_id) WHERE resolved_turn_id IS NOT NULL;
 
 -- Retention scans this, and so does anything asking for a time window.
 CREATE INDEX IF NOT EXISTS spans_start_time_idx

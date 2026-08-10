@@ -93,12 +93,19 @@ CREATE TABLE IF NOT EXISTS evestack.schema_version (
 -- the text of the expression it was about to install, so the guard was false on
 -- every database that already had the change and the migration was silently
 -- inert exactly where it was needed.
+--
+-- Version 2 changes no column. It changes how `environment` is DERIVED — the
+-- old expression read a key that is on none of the spans an exporting install
+-- sends — and a derivation change is exactly what this mechanism is for: the
+-- watermark would otherwise leave every already-materialized row holding the
+-- old answer forever, which is the same "silently inert on the databases that
+-- need it" failure the comment above describes.
 DO $$
 DECLARE
   installed integer;
 BEGIN
   SELECT version INTO installed FROM evestack.schema_version WHERE component = 'facts';
-  IF installed IS DISTINCT FROM 1 THEN
+  IF installed IS DISTINCT FROM 2 THEN
     DROP TABLE IF EXISTS evestack.fact_tool_call;
     DROP TABLE IF EXISTS evestack.fact_turn;
     DROP TABLE IF EXISTS evestack.fact_watermark;
@@ -257,7 +264,7 @@ CREATE TABLE IF NOT EXISTS evestack.fact_watermark (
 );
 
 INSERT INTO evestack.schema_version (component, version)
-VALUES ('facts', 1)
+VALUES ('facts', 2)
 ON CONFLICT (component) DO UPDATE SET version = EXCLUDED.version, applied_at = now();
 
 /* -------------------------------------------------------------------------- */
@@ -422,7 +429,14 @@ BEGIN
         count(*) FILTER (
           WHERE s.name = 'ai.toolCall' OR starts_with(s.name, 'execute_tool ')
         )::int AS tool_span_count,
-        max(s.attributes ->> 'eve.environment') AS environment,
+        -- Two vocabularies, third time in this LATERAL. `eve.environment` is
+        -- the local tracer's key and is on zero spans of an exporting install;
+        -- the AI SDK stamps `ai.settings.context.eve.*` on the same spans that
+        -- carry the session and turn ids. Reading only the first is why every
+        -- row of /sessions showed `environment` as `—`. It reads `unknown` now
+        -- on a scaffolded project, because that is the value eve exported.
+        max(COALESCE(s.attributes ->> 'eve.environment',
+                     s.attributes ->> 'ai.settings.context.eve.environment')) AS environment,
 
         -- A turn is one model call per step, so a turn that used a tool has
         -- several — and which one each field comes from is a decision, not a

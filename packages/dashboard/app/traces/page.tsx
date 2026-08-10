@@ -80,7 +80,18 @@ export default async function TracesPage() {
                     <tr>
                       <th>Session</th>
                       <th>Agent</th>
-                      <th className="num">Spans</th>
+                      {/* Not "Spans". The detail page also has a number under
+                          that word and it is a different number — this counts
+                          the spans attributed TO the session, that one counts
+                          every span in the traces the session touched, and the
+                          second is several times the first. One click apart,
+                          same label, no way to tell which you were reading. */}
+                      <th
+                        className="num"
+                        title="Spans that resolve to this session. The session's traces also carry plumbing spans that belong to no session; open a session to see those."
+                      >
+                        Attributed spans
+                      </th>
                       <th className="num">Traces</th>
                       <th className="num">Model calls</th>
                       <th className="num">Tool calls</th>
