@@ -21,7 +21,7 @@
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { projectNameFor } from "./create.mjs";
 import {
   C, DASHBOARD_IMAGE, detectPm, dim, freePort, makePrompter, ok, packageVersion,
@@ -55,12 +55,28 @@ function readCertifiedEve() {
   }
 }
 /**
- * The floor for anything reachable from a network. Below 0.30.2, eve's
+ * The floor for anything reachable from a network. Below 0.30.0, eve's
  * `localDev()` matched an unanchored /^127\./ against the attacker-controlled
- * Host header, so `127.evil.com` obtained an unauthenticated principal. Fixed
- * upstream in 0.30.0 and confirmed on 0.30.2; see the README.
+ * Host header, so `127.evil.com` obtained an unauthenticated principal. Vercel
+ * fixed that upstream in 0.30.0, which is where SECURITY.md draws the line
+ * ("Pin `eve` `>=0.30.0`") and where all four published peer ranges draw it.
+ *
+ * This constant said 0.30.2 for a while, four lines under a comment that said
+ * "fixed upstream in 0.30.0" — both cannot be true. 0.30.2 is the release
+ * evestack ITSELF moved to when it deleted the `strictLocalDev()` wrapper the
+ * upstream fix had made obsolete (CHANGELOG: "eve 0.30.2, and the auth patch it
+ * made obsolete is gone"). That is a date in this project's history, not a
+ * security boundary — and with the floor sitting there, every user on 0.30.0 or
+ * 0.30.1 was told in writing that `127.evil.com` could obtain an
+ * unauthenticated principal on their install. It could not. Crying wolf about
+ * authentication is corrosive in a project whose whole pitch is self-hosting.
+ *
+ * "0.30.2 is the lowest version anyone tested" is a real and separate concern,
+ * and it already has a constant: CERTIFIED_EVE, whose warning reads "Older is
+ * untested, not unsupported". That is the right register for 0.30.0–0.30.7.
+ * The exploit language below belongs to < 0.30.0 and to nothing else.
  */
-const MIN_EVE = "0.30.2";
+const MIN_EVE = "0.30.0";
 const OTEL_RANGE = "^2.1.3";
 /**
  * A dist-tag, not a version range, and deliberately so: npm's `latest` for
@@ -387,7 +403,9 @@ function reportEveVersion({ range, installed }) {
   const cmp = compareVersions(found, CERTIFIED_EVE);
   if (compareVersions(found, MIN_EVE) < 0) {
     warn(`eve ${found} (${source}) — older than ${MIN_EVE}.`);
-    dim("Below 0.30.2 eve's localDev() matched an unanchored /^127\\./ against the Host");
+    // Interpolated, not typed out. The sentence and the constant disagreed for
+    // several releases precisely because they were two separate literals.
+    dim(`Below ${MIN_EVE} eve's localDev() matched an unanchored /^127\\./ against the Host`);
     dim("header, so `127.evil.com` got an unauthenticated principal. Upgrade before");
     dim("anything but your own laptop can reach this agent.");
   } else if (cmp < 0) {
@@ -419,6 +437,119 @@ function buildPlan({
   const agentSrc = readFileSync(agentPath, "utf8");
   const existingUrl = env.get("WORKFLOW_POSTGRES_URL");
   const envAdditions = [];
+
+  // ---- git -----------------------------------------------------------------
+  //
+  // A `.git` here is a fence, not version control.
+  //
+  // `eve dev` snapshots the project's source on every boot, and it decides what
+  // "the project" is by walking UP from the app root to the nearest directory
+  // holding `.git`, `pnpm-workspace.yaml`, or a package.json with a `workspaces`
+  // key — first marker wins (eve's resolveDevelopmentSourceRoot, in
+  // dist/src/internal/nitro/dev-runtime-source-snapshot.js). The first thing it
+  // copies out of that directory is its workspace metadata, and eve's
+  // WORKSPACE_METADATA_FILE_NAMES includes `.npmrc`.
+  //
+  // So a project with no marker of its own hands that job to whichever ancestor
+  // has one, and on a machine whose home directory is a dotfiles repo the
+  // ancestor is `$HOME`: `~/.npmrc` — registry credentials and all — is copied
+  // into .eve/dev-runtime/snapshots/<id>/source/ on every boot. Measured, not
+  // theorised: ten copies on one machine, each byte-identical to the real file.
+  // `create` fixed it by creating a repository; attach had the identical hole
+  // and this is the same fix.
+  //
+  // NEAREST WINS, and that is what makes a marker here sufficient rather than
+  // merely polite: the walk returns the FIRST directory that matches, so a
+  // `.git` at the project root ends it before any ancestor is consulted. eve
+  // offers no other lever — the module reads no environment variable, so there
+  // is no override to set and a marker is the only mechanism there is.
+  //
+  // Which leaves one real question: is the ancestor a WORKSPACE root, or just a
+  // repository eve wandered into?
+  //
+  //   pnpm-workspace.yaml, or a package.json with `workspaces` — the project
+  //   genuinely belongs to that workspace, and eve needs that root to reach the
+  //   sibling packages it depends on (addDependencyMountsForRoot only follows
+  //   paths inside the source root). Collapsing the root onto the project would
+  //   cut those loose, so this one is left alone and warned about.
+  //
+  //   a bare `.git` and no workspace manifest — a dotfiles repo in $HOME, a
+  //   personal projects repo, an enclosing scratch checkout. Nothing about it is
+  //   a workspace, it holds nothing this project needs, and it is the exact
+  //   configuration the leak was found in. Fence it.
+  //
+  // It does not bend the "additive, never overwrites, everything reversible"
+  // contract at the top of this file — `git init` in a directory with no
+  // repository adds one path, overwrites nothing, and undoes with one command,
+  // so it is planned, printed and listed for undo like every other write.
+  //
+  // No initial commit, deliberately: `git commit` needs user.name/user.email and
+  // honours commit.gpgsign, and a signing prompt turns a scaffolder into a hang.
+  const markerRoot = nearestSourceRootMarker(target);
+  const gitRoot = nearestGitRoot(target);
+  let willInitGit = false;
+  if (markerRoot === resolve(target)) {
+    // Already its own source root — it has a .git, a pnpm-workspace.yaml, or a
+    // package.json declaring workspaces. Nothing to decide, nothing was wrong.
+  } else if (markerRoot !== null && isWorkspaceRoot(markerRoot)) {
+    // Evidence, not suspicion. eve copies the WORKSPACE ROOT's metadata here,
+    // not $HOME's, and a workspace .npmrc is usually registry configuration —
+    // and where it does carry auth it is usually an indirection
+    // (`_authToken=${NPM_TOKEN}`), which is a reference to a secret and not a
+    // secret. Warning unconditionally would put an alert in front of every
+    // monorepo package on every run, about something the reader cannot act on,
+    // which is how a warning becomes furniture. So this looks first.
+    const exposed = copiedCredentialFile(markerRoot);
+    if (exposed === null) {
+      plan.notes.push(
+        `Dev snapshots come from the workspace root ${markerRoot}, not from this project — ` +
+          `nothing in that directory's metadata carries a literal credential.`,
+      );
+    } else {
+      plan.alerts.push(
+        `${join(markerRoot, exposed)} carries a literal credential, and \`eve dev\` copies that ` +
+          `file into .eve/dev-runtime/snapshots/ on every boot — ${markerRoot} is the nearest ` +
+          `workspace root above this project, so it is where eve snapshots the source from. ` +
+          `attach does not fence a project off from a workspace it belongs to: eve reaches the ` +
+          `sibling packages through that root. Move the secret into your own ~/.npmrc, or ` +
+          `replace it with an environment reference like \`_authToken=\${NPM_TOKEN}\`, and the ` +
+          `copies stop carrying it. If this project does not belong to that workspace, ` +
+          `\`git init\` here and eve will stop at the project instead.`,
+      );
+    }
+  } else {
+    // Either nothing above carries a marker at all, or the nearest one is a bare
+    // repository — a dotfiles repo, a scratch checkout — that this project has
+    // no relationship with. Both get the fence. The second is the leak itself;
+    // the first is already project-only today, but only because no ancestor
+    // happens to carry a marker, and the day one appears the source root leaves
+    // the project with nothing said about it.
+    if (git(target, ["--version"]).ran) {
+      willInitGit = true;
+      add(
+        ".git/",
+        "an empty repo — keeps eve's dev snapshots inside this project",
+        "rm -rf .git (only if you have not committed anything since)",
+        () => initGitRepository(target),
+      );
+    } else {
+      plan.alerts.push(
+        markerRoot === null
+          ? `git is not on PATH, so attach could not leave a marker here. Nothing above this ` +
+            `directory carries one either, so \`eve dev\` snapshots the project itself today — ` +
+            `but that stops being true the moment an ancestor gets a .git, and then eve copies ` +
+            `that directory's package.json, lockfiles and .npmrc, credentials included, into ` +
+            `.eve/dev-runtime/snapshots/ on every boot. Run \`git init\` here once git is ` +
+            `available.`
+          : `git is not on PATH, so attach could not leave a marker here — so \`eve dev\` ` +
+            `treats ${markerRoot} as this project's source root and copies that directory's ` +
+            `package.json, lockfiles and .npmrc into .eve/dev-runtime/snapshots/ on every boot, ` +
+            `credentials in .npmrc included. That directory is a repository, not a workspace ` +
+            `this project belongs to. Run \`git init\` here once git is available and eve will ` +
+            `stop at the project.`,
+      );
+    }
+  }
 
   // ---- Postgres ------------------------------------------------------------
   if (existingUrl) {
@@ -803,7 +934,12 @@ function buildPlan({
           writeFileSync(gitignorePath, `${head}\n# added by \`evestack attach\` — generated credentials live here\n${envFileName}\n`);
         },
       );
-    } else if (existsSync(join(target, ".git"))) {
+    } else if (gitRoot !== null || willInitGit) {
+      // `gitRoot`, not `.git` in the target: a project sitting inside somebody
+      // else's repository is one `git add -A` away from committing the generated
+      // password, and it was being handed the "this is not a git repository"
+      // line instead. A planned repository counts for the same reason — by the
+      // time this write runs, it is there.
       add(
         ".gitignore",
         `ignore ${envFileName}`,
@@ -1391,6 +1527,173 @@ function git(target, args) {
 }
 
 /**
+ * The nearest directory at or above the target that holds a `.git`, or null.
+ *
+ * A filesystem walk rather than asking git, because this is the question eve
+ * asks — eve does its own walk and never consults git — and because it has to
+ * answer on a machine with no git at all.
+ */
+function nearestGitRoot(target) {
+  let dir = resolve(target);
+  for (;;) {
+    if (existsSync(join(dir, ".git"))) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+/**
+ * The nearest directory at or above the target that `eve dev` would treat as
+ * this project's source root, or null if nothing does.
+ *
+ * eve's own resolveDevelopmentSourceRoot walk — up from the target to the first
+ * directory holding `.git`, `pnpm-workspace.yaml`, or a package.json with a
+ * `workspaces` key. eve falls back to the app root when the walk finds nothing;
+ * this returns null instead, because "the project, because it is marked" and
+ * "the project, because nothing else is" are the same source root and different
+ * decisions.
+ *
+ * Reimplemented rather than imported: attach runs from `npx` with no eve of its
+ * own, and has to give this answer before eve is installed at all.
+ */
+function nearestSourceRootMarker(target) {
+  let dir = resolve(target);
+  for (;;) {
+    if (isEveSourceRootMarker(dir)) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+function isEveSourceRootMarker(dir) {
+  return existsSync(join(dir, ".git")) || isWorkspaceRoot(dir);
+}
+
+/**
+ * Is this directory a workspace root, as opposed to merely a repository?
+ *
+ * The distinction attach's decision turns on. Both answers make eve stop here,
+ * but only this one means the project has a relationship with the directory:
+ * eve reaches a workspace sibling by walking out of the project and into the
+ * root, so a marker in the project would put those siblings outside the source
+ * root. A bare `.git` offers this project nothing, and is just where the walk
+ * happened to stop.
+ */
+function isWorkspaceRoot(dir) {
+  if (existsSync(join(dir, "pnpm-workspace.yaml"))) return true;
+  try {
+    return JSON.parse(readFileSync(join(dir, "package.json"), "utf8"))?.workspaces !== undefined;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The workspace root's own file that holds a literal credential, or null.
+ *
+ * eve copies the source root's WORKSPACE_METADATA_FILE_NAMES into every dev
+ * snapshot, so this asks the only question worth interrupting someone over: is
+ * one of those copies going to contain a secret?
+ *
+ * Two files are read, and both are small by nature. `.npmrc` is the only entry
+ * in eve's list whose PURPOSE is authentication. `package.json` is read because
+ * a dependency can carry inline userinfo (`git+https://user:token@host/...`).
+ * The lockfiles in that list can in principle carry the same userinfo and are
+ * deliberately not read: they run to megabytes, this is on the path of every
+ * attach, and a size-capped partial scan would answer "no secret here" on
+ * evidence it never looked at — worse than not looking.
+ *
+ * Fails open in every direction: unreadable, oversized, or absent all mean
+ * "nothing to say". A warning invented because a file could not be read is the
+ * furniture this function exists to avoid.
+ */
+function copiedCredentialFile(root) {
+  const npmrc = readSmallFile(join(root, ".npmrc"));
+  if (npmrc !== null && npmrcHasLiteralCredential(npmrc)) return ".npmrc";
+  const manifest = readSmallFile(join(root, "package.json"));
+  if (manifest !== null && urlHasLiteralCredential(manifest)) return "package.json";
+  return null;
+}
+
+/** 64 KB. An .npmrc or a manifest is a few hundred bytes; anything larger is not one. */
+const CREDENTIAL_SCAN_LIMIT = 64 * 1024;
+
+function readSmallFile(path) {
+  try {
+    const stat = statSync(path);
+    if (!stat.isFile() || stat.size > CREDENTIAL_SCAN_LIMIT) return null;
+    return readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A value that IS a secret, as opposed to one that points at one.
+ *
+ * `${NPM_TOKEN}` and `$NPM_TOKEN` are the documented way to keep a token out of
+ * a committed .npmrc — npm expands them from the environment at read time. A
+ * file that only ever references a variable is exactly the file nobody needs to
+ * be warned about, and an empty value is not a credential either.
+ */
+function isLiteralSecret(raw) {
+  const value = raw.trim().replace(/^["']|["']$/g, "").trim();
+  if (!value) return false;
+  return !/^\$\{[^}]*\}$/.test(value) && !/^\$[A-Za-z_][A-Za-z0-9_]*$/.test(value);
+}
+
+/**
+ * npm's auth keys, bare or scoped to a registry.
+ *
+ * `_auth`, `_authToken` and `_password` are the three that carry a secret;
+ * `email`, `username` and `always-auth` sit beside them and do not. The
+ * optional `//host/:` prefix is npm's per-registry form. Anchored, so
+ * `always-auth=true` cannot match `_auth`.
+ *
+ * The VALUE is never read out of here — only whether one is present. Nothing in
+ * this file ever prints it.
+ */
+function npmrcHasLiteralCredential(text) {
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith(";")) continue;
+    const match = /^(?:\/\/[^=]*:)?(?:_auth|_authToken|_password)\s*=(.*)$/i.exec(trimmed);
+    if (match && isLiteralSecret(match[1])) return true;
+  }
+  return false;
+}
+
+/**
+ * A URL with inline userinfo — `https://user:secret@host/...`.
+ *
+ * The shape a token takes in a manifest: a `git+https://` dependency or a
+ * publishConfig registry. `ssh://git@host/...` carries a username and no
+ * password, so it has no colon before the `@` and does not match.
+ */
+function urlHasLiteralCredential(text) {
+  for (const match of text.matchAll(/:\/\/[^/\s"']+:([^/\s"'@]+)@/g)) {
+    if (isLiteralSecret(match[1])) return true;
+  }
+  return false;
+}
+
+/**
+ * Create the repository, and nothing else.
+ *
+ * No commit: `git commit` needs user.name and user.email and honours
+ * commit.gpgsign, so on a machine with signing configured this would stop dead
+ * waiting for a passphrase nobody is watching for. An empty repository is all
+ * the fence has to be — eve looks for the `.git` path, not for history.
+ */
+function initGitRepository(target) {
+  const result = spawnSync("git", ["init", "-q"], { cwd: target, stdio: "ignore" });
+  if (result.error) throw new Error(`could not create a repository — ${result.error.message}`);
+  if (result.status !== 0) throw new Error(`git init exited ${result.status}`);
+}
+
+/**
  * Is git tracking this file?
  *
  * The question gitIgnores() below cannot answer, and the one that matters most:
@@ -1457,7 +1760,10 @@ function chooseEnvFile(target) {
  * being wrong costs one duplicate line in a .gitignore.
  */
 function gitIgnores(target, fileName) {
-  if (existsSync(join(target, ".git"))) {
+  // Any repository the target sits in can be asked, not only one rooted exactly
+  // here: a parent .gitignore that already covers this name makes the line
+  // attach would add a duplicate, and check-ignore is the only thing that knows.
+  if (nearestGitRoot(target) !== null) {
     const { ran, ok } = git(target, ["check-ignore", "--quiet", "--", fileName]);
     if (ran) return ok;
   }
@@ -1548,12 +1854,12 @@ function minVersion(range) {
  * newer than 0.30.2".
  *
  * That is not a cosmetic ordering bug. `installed` is read verbatim out of
- * node_modules/eve/package.json, so a user on any 0.30.x prerelease below
- * 0.30.2 silently skipped the `< 0` branch at the call site and was never shown
- * the warning that eve's localDev() matched an unanchored /^127\./ against the
- * Host header — meaning `127.evil.com` resolved to an unauthenticated
- * principal. The check that exists to catch that release range reported it as
- * newer than certified.
+ * node_modules/eve/package.json, so a user on a prerelease below the floor —
+ * `0.30.0-rc.1`, or any 0.29.x prerelease — silently skipped the `< 0` branch
+ * at the call site and was never shown the warning that eve's localDev()
+ * matched an unanchored /^127\./ against the Host header, meaning
+ * `127.evil.com` resolved to an unauthenticated principal. The check that
+ * exists to catch that release range reported it as newer than certified.
  *
  * Mirrors contract/lib/semver.mjs `compare()`, which is correct but lives
  * outside the published package and cannot be imported from here.

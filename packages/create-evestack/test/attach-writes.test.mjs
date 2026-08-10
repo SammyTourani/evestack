@@ -26,7 +26,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,9 +40,16 @@ const ENTRY = join(dirname(fileURLToPath(import.meta.url)), "..", "index.mjs");
  */
 const POSIX = process.platform !== "win32";
 
-/** A minimal but real eve project: package.json with eve, and agent/agent.ts. */
-function eveProject({ git = false, envFiles = {}, skills = false, instrumentation = false } = {}) {
-  const dir = mkdtempSync(join(tmpdir(), "evestack-attach-writes-"));
+/**
+ * A minimal but real eve project: package.json with eve, and agent/agent.ts.
+ *
+ * `under` puts it inside a directory the caller owns instead of straight in
+ * $TMPDIR, which is how the "somebody else's repository is above us" case gets
+ * built. Everything else lands in a fresh temp directory with no marker of any
+ * kind above it — which is the shape attach's `.git` decision turns on.
+ */
+function eveProject({ git = false, envFiles = {}, skills = false, instrumentation = false, under = null } = {}) {
+  const dir = under ? join(under, "app") : mkdtempSync(join(tmpdir(), "evestack-attach-writes-"));
   mkdirSync(join(dir, "agent"), { recursive: true });
   writeFileSync(
     join(dir, "package.json"),
@@ -244,6 +251,9 @@ test("--dry-run writes nothing, and --help detects nothing", () => {
   assert.match(dry.stdout, /--dry-run: nothing was written/);
   assert.equal(read(dir, ".env.local"), null);
   assert.equal(read(dir, "docker-compose.yml"), null);
+  // Including the repository. It is planned like every other write, so it has
+  // to obey --dry-run like every other write.
+  assert.equal(existsSync(join(dir, ".git")), false, "--dry-run created a repository");
 
   const empty = mkdtempSync(join(tmpdir(), "evestack-not-a-project-"));
   const help = spawnSync(process.execPath, [ENTRY, "attach", "--help"], { cwd: empty, encoding: "utf8" });
@@ -492,4 +502,261 @@ test("the printed dashboard command bounds its logs too, and names the driver", 
   // defaults to journald or awslogs this command would be refused outright
   // rather than quietly run without a ceiling.
   assert.match(command, /--log-driver json-file/, command);
+});
+
+/* -------------------------------------------------------------------------- */
+/* the repository, and why attach creates one                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The credential leak, and the one-line fence that closes it.
+ *
+ * `eve dev` snapshots the project's source on every boot, and it finds "the
+ * project" by walking UP to the nearest directory holding `.git`,
+ * `pnpm-workspace.yaml` or a package.json with `workspaces` — then copies that
+ * directory's workspace metadata, a list that includes `.npmrc`. A project with
+ * no marker of its own therefore hands the job to an ancestor, and on a machine
+ * whose home directory is a dotfiles repo the ancestor is `$HOME`: `~/.npmrc`,
+ * registry credentials and all, is copied into
+ * .eve/dev-runtime/snapshots/<id>/source/ every boot. Ten such copies were
+ * measured on one machine, each byte-identical to the real file.
+ *
+ * `create` already fixed this for projects it scaffolds. attach had the
+ * identical hole, and these pin the three answers it can give.
+ */
+
+test("a project with no repository above it gets one, listed in the undo", () => {
+  const dir = eveProject();
+  assert.equal(existsSync(join(dir, ".git")), false, "fixture is wrong: it already has one");
+
+  const result = attach(dir);
+  const output = `${result.stdout}${result.stderr}`;
+  assert.equal(result.status, 0, output);
+
+  assert.equal(existsSync(join(dir, ".git")), true, "no repository was created");
+  assert.equal(run(dir, "git", ["rev-parse", "--is-inside-work-tree"]).stdout.trim(), "true");
+  // The whole point: eve's walk now stops here instead of in $HOME.
+  assert.equal(
+    run(dir, "git", ["rev-parse", "--show-toplevel"]).stdout.trim(),
+    realpathSync(dir),
+    "the repository is not rooted at the project",
+  );
+  // Reversible, and said so where the rest of the footprint is said.
+  assert.match(output, /\.git\//, output);
+  assert.match(output, /rm -rf \.git/, output);
+});
+
+/**
+ * No initial commit, and the reason is not tidiness.
+ *
+ * `git commit` needs user.name and user.email, and it honours commit.gpgsign —
+ * so on a machine with signing configured, committing here would sit waiting for
+ * a passphrase nobody is watching for, which turns a scaffolder into a hang. eve
+ * looks for the `.git` path, not for history, so an empty repository is the
+ * whole fence.
+ */
+test("the repository attach creates is empty — no commit, nothing staged", () => {
+  const dir = eveProject();
+  assert.equal(attach(dir).status, 0);
+
+  assert.notEqual(run(dir, "git", ["rev-parse", "--verify", "HEAD"]).status, 0, "attach committed");
+  const staged = run(dir, "git", ["diff", "--cached", "--name-only"]).stdout.trim();
+  assert.equal(staged, "", `attach staged files:\n${staged}`);
+  // And the generated password is ignored before it can be added by anybody
+  // else: the repository is new, so nothing in it is tracked yet.
+  assert.equal(
+    run(dir, "git", ["check-ignore", "--quiet", "--", ".env.local"]).status,
+    0,
+    ".env.local is not ignored in the repository attach just created",
+  );
+});
+
+test("a project that already has a repository is left exactly as it was", () => {
+  const dir = eveProject({ git: true });
+  const head = run(dir, "git", ["rev-parse", "HEAD"]).stdout.trim();
+
+  const result = attach(dir);
+  const output = `${result.stdout}${result.stderr}`;
+  assert.equal(result.status, 0, output);
+
+  assert.equal(run(dir, "git", ["rev-parse", "HEAD"]).stdout.trim(), head, "history moved");
+  assert.equal(run(dir, "git", ["rev-list", "--count", "HEAD"]).stdout.trim(), "1");
+  assert.doesNotMatch(output, /rm -rf \.git/, output);
+});
+
+/**
+ * The configuration the leak was actually found in.
+ *
+ * A dotfiles repo in `$HOME` with a project somewhere underneath it. eve stops
+ * at the FIRST marker going up, so a marker in the project ends the walk before
+ * that repo is ever reached — which is what makes fencing sufficient here rather
+ * than merely polite. The enclosing repo is not a workspace, holds nothing this
+ * project needs, and there is no override to set: eve reads no environment
+ * variable for this, so a marker is the only mechanism available.
+ */
+test("a bare repository above the project is fenced off, not deferred to", () => {
+  const parent = mkdtempSync(join(tmpdir(), "evestack-attach-bare-repo-"));
+  run(parent, "git", ["init", "-q", "."]);
+  const dir = eveProject({ under: parent });
+
+  const result = attach(dir);
+  const output = `${result.stdout}${result.stderr}`;
+  assert.equal(result.status, 0, output);
+
+  assert.equal(existsSync(join(dir, ".git")), true, "the enclosing repository was deferred to");
+  assert.equal(
+    run(dir, "git", ["rev-parse", "--show-toplevel"]).stdout.trim(),
+    realpathSync(dir),
+    "eve's walk still leaves the project",
+  );
+  assert.match(output, /rm -rf \.git/, output);
+  assert.equal(
+    run(dir, "git", ["check-ignore", "--quiet", "--", ".env.local"]).status,
+    0,
+    ".env.local is not ignored in the repository attach just created",
+  );
+});
+
+/**
+ * The case that is not the bug, and the one attach leaves alone.
+ *
+ * Here the project really is a package in that workspace, and eve reaches its
+ * sibling packages by walking out of the project and into the root — a marker
+ * in the project would put those siblings outside the source root. So attach
+ * does not fence, and the question becomes whether to say anything at all.
+ *
+ * It says nothing loud unless there is something to be loud about. An alert on
+ * every run of every monorepo package, about a copy that carries no secret, is
+ * a message people learn to skip — and then the one that matters is skipped
+ * too. The two halves of that judgement are this test and the next.
+ */
+test("a workspace root with nothing to leak is left alone, quietly", () => {
+  const parent = mkdtempSync(join(tmpdir(), "evestack-attach-workspace-"));
+  run(parent, "git", ["init", "-q", "."]);
+  writeFileSync(join(parent, "pnpm-workspace.yaml"), "packages:\n  - app\n");
+  // Registry configuration and an environment reference — the ordinary contents
+  // of a committed workspace .npmrc, and not a secret. `${NPM_TOKEN}` is npm's
+  // documented way of keeping the token out of the file, so a copy of this file
+  // carries nothing, and there is nothing to interrupt anybody about.
+  writeFileSync(
+    join(parent, ".npmrc"),
+    "registry=https://registry.example.invalid/\n" +
+      "//registry.example.invalid/:_authToken=${NPM_TOKEN}\n" +
+      "always-auth=true\n",
+  );
+  // And the shape that looks like an inlined token and is not one: a username
+  // with no password. The manifest is copied into the snapshot too, so if this
+  // tripped the check the alert would fire on half the monorepos in existence.
+  writeFileSync(
+    join(parent, "package.json"),
+    `${JSON.stringify({
+      name: "root",
+      private: true,
+      dependencies: { "some-public-lib": "git+ssh://git@github.com/org/lib.git" },
+    }, null, 2)}\n`,
+  );
+  const dir = eveProject({ under: parent });
+
+  const result = attach(dir);
+  const output = `${result.stdout}${result.stderr}`;
+  assert.equal(result.status, 0, output);
+
+  assert.equal(existsSync(join(dir, ".git")), false, "attach fenced off a workspace it belongs to");
+  assert.doesNotMatch(output, /rm -rf \.git/, output);
+  assert.match(output, /nothing in that directory's metadata carries a literal credential/, output);
+  assert.doesNotMatch(output, /Move the secret/, `an alert fired with nothing to alert about:\n${output}`);
+  // `parent`, not realpathSync(parent): attach reports the path it was given,
+  // and on macOS /var is a symlink to /private/var.
+  assert.ok(output.includes(parent), `the warning does not name the workspace root:\n${output}`);
+  // A workspace root that is also a repository is still a workspace root — and
+  // the generated password still has to be kept out of that repository.
+  assert.equal(
+    run(dir, "git", ["check-ignore", "--quiet", "--", ".env.local"]).status,
+    0,
+    ".env.local is committable from the workspace root's repository",
+  );
+});
+
+/**
+ * And the half that is worth interrupting for.
+ *
+ * A literal `_auth` in the workspace root is a real exposure — that byte string
+ * is copied into `.eve/dev-runtime/snapshots/` on every boot — and unlike the
+ * ancestor's mere existence, it is something the reader can act on. So this one
+ * gets the alert, and it names the file.
+ */
+test("a literal credential in the workspace root is worth interrupting for", () => {
+  const parent = mkdtempSync(join(tmpdir(), "evestack-attach-workspace-secret-"));
+  run(parent, "git", ["init", "-q", "."]);
+  writeFileSync(join(parent, "pnpm-workspace.yaml"), "packages:\n  - app\n");
+  writeFileSync(
+    join(parent, ".npmrc"),
+    "registry=https://registry.example.invalid/\n" +
+      "//registry.example.invalid/:_auth=DECOYVALUENOTAREALCREDENTIAL\n",
+  );
+  const dir = eveProject({ under: parent });
+
+  const result = attach(dir);
+  const output = `${result.stdout}${result.stderr}`;
+  assert.equal(result.status, 0, output);
+
+  assert.match(output, /Move the secret/, output);
+  assert.ok(output.includes(join(parent, ".npmrc")), `the alert does not name the file:\n${output}`);
+  // Presence and path, never the value.
+  assert.ok(!output.includes("DECOYVALUENOTAREALCREDENTIAL"), "attach printed the credential itself");
+  // Still no fence: the project belongs to that workspace either way.
+  assert.equal(existsSync(join(dir, ".git")), false, "attach fenced off a workspace it belongs to");
+});
+
+/**
+ * The other file eve copies that can hold a secret.
+ *
+ * A dependency pinned to `git+https://user:token@host/...` puts a live token in
+ * the workspace root's package.json, and that file is copied into every
+ * snapshot just like the .npmrc. `ssh://git@host/...` is the shape that looks
+ * similar and is not a secret — a username with no password — so it is here to
+ * be ignored.
+ */
+test("a token inlined into the workspace root's manifest is caught too", () => {
+  const parent = mkdtempSync(join(tmpdir(), "evestack-attach-workspace-manifest-"));
+  const parentManifest = `${JSON.stringify({
+    name: "root",
+    private: true,
+    workspaces: ["app"],
+    dependencies: {
+      "some-internal-lib": "git+https://ci:DECOYTOKENNOTAREALCREDENTIAL@git.example.invalid/org/lib.git",
+      "some-public-lib": "git+ssh://git@github.com/org/lib.git",
+    },
+  }, null, 2)}\n`;
+  const parentManifestPath = join(parent, "package.json");
+  writeFileSync(parentManifestPath, parentManifest);
+  const dir = eveProject({ under: parent });
+
+  const result = attach(dir);
+  const output = `${result.stdout}${result.stderr}`;
+  assert.equal(result.status, 0, output);
+
+  assert.match(output, /Move the secret/, output);
+  assert.ok(
+    output.includes(join(parent, "package.json")),
+    `the alert names the wrong file:\n${output}`,
+  );
+  assert.ok(!output.includes("DECOYTOKENNOTAREALCREDENTIAL"), "attach printed the credential itself");
+});
+
+test("npm and yarn workspaces count as a workspace root too", () => {
+  // The other half of isWorkspaceRoot: a `workspaces` key in a package.json,
+  // with no pnpm-workspace.yaml and no repository anywhere above.
+  const parent = mkdtempSync(join(tmpdir(), "evestack-attach-npm-workspace-"));
+  const root = JSON.stringify({ name: "root", private: true, workspaces: ["app"] }, null, 2);
+  writeFileSync(join(parent, "package.json"), `${root}\n`);
+  const dir = eveProject({ under: parent });
+
+  const result = attach(dir);
+  const output = `${result.stdout}${result.stderr}`;
+  assert.equal(result.status, 0, output);
+  assert.equal(existsSync(join(dir, ".git")), false, "attach fenced off an npm workspace");
+  // No .npmrc at all here, so the quiet line is the whole of what gets said.
+  assert.match(output, /Dev snapshots come from the workspace root/, output);
+  assert.doesNotMatch(output, /Move the secret/, output);
 });
