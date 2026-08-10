@@ -185,8 +185,16 @@ export default async function TraceDetailPage(props: PageProps<"/traces/[id]">) 
       </div>
 
       <div className="stat-row">
+        {/* "Spans in trace", not "Spans": the index lists an "Attributed spans"
+            number for this same session and it is smaller, because this counts
+            every span in the traces the session touched — plumbing and outbound
+            fetches included — and that one counts only the spans that resolve
+            to the session. Both are worth showing; sharing one word made the
+            two pages look like they disagreed. */}
         <div className="stat">
-          <div className="stat-label">Spans</div>
+          <div className="stat-label">
+            {traces.size === 1 ? "Spans in trace" : "Spans in traces"}
+          </div>
           <div className="stat-value">{fmt(spanTotal)}</div>
         </div>
         <div className="stat">

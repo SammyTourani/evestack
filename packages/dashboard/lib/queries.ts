@@ -207,11 +207,11 @@ export function ensureQueryIndexes(): Promise<void> {
   // readQueryIndexSql throws synchronously; inside the chain so that a
   // missing file cannot escape past the catch below and take a page down.
   //
-  // ensureTraceSchema first because the file's last statement indexes
-  // evestack.spans, and the whole file is one multi-statement query — so on
-  // a database that has never received a span, an unqualified run would
-  // fail at that last statement and roll back the workflow_runs indexes
-  // with it.
+  // ensureTraceSchema first, still. The index file no longer touches
+  // evestack.spans — that index moved to sql/traces.sql with the query that
+  // uses it — but getSessionTree joins the spans table in the same breath as
+  // this, and applying its schema here is what keeps the join from being the
+  // thing that discovers the table is missing.
   indexesReady = ensureTraceSchema()
     .then(() => query(readQueryIndexSql()))
     .then(() => undefined)
@@ -517,16 +517,24 @@ export async function listSessions(
  * `agent/instrumentation.ts` disables eve's local `agent.*` tracer, after which
  * only the trace root (`ai.eve.turn`) and the `invoke_agent`/`step N` spans
  * carry `ai.settings.context.eve.turn.id`, and the `chat`/`execute_tool`
- * children hang beneath them carrying nothing. So the id is inherited through
- * `trace_id`. That is the same shape W1's attribution work generalises, done
- * here narrowly enough to keep working either way: if W1 lands ids on the child
- * spans directly, `turn_id` merely agrees with the root's and the HAVING below
- * still passes.
+ * children hang beneath them carrying nothing.
  *
- * `HAVING COUNT(DISTINCT turn_id) = 1` is the honesty clause. A trace spanning
- * two turns cannot say which one called the tool, so it contributes to neither
- * rather than being split or double-counted, and those turns report `null` —
- * the same as no trace at all.
+ * `resolved_turn_id`, NOT `turn_id`, is what those ids are read through. Both
+ * are on the row and only one of them is a run id. What the exporter declares
+ * is `turn_0` — an ordinal within the session, identical on every turn of every
+ * session — so `turn_id IN (SELECT id FROM runs)` matched nothing on a real
+ * install and every row of this column read `null`: "no trace at all", on a
+ * session whose tool call is rendered in full one page away. The resolved
+ * column is the ancestor walk's answer to the same question and does name the
+ * run (sql/traces.sql). It is also strictly wider — it is filled on the `chat`
+ * and `execute_tool` children too, not just on the three spans that declare
+ * anything — so the inner lookup no longer depends on which layer of the trace
+ * happened to be exported.
+ *
+ * `HAVING COUNT(DISTINCT resolved_turn_id) = 1` is the honesty clause. A trace
+ * spanning two turns cannot say which one called the tool, so it contributes to
+ * neither rather than being split or double-counted, and those turns report
+ * `null` — the same as no trace at all.
  */
 export async function getSessionTree(sessionId: string): Promise<TurnRow[]> {
   // `evestack.spans` is created lazily by the trace ingest path, so a dashboard
@@ -561,14 +569,15 @@ export async function getSessionTree(sessionId: string): Promise<TurnRow[]> {
     -- then charged the other turn's execute_tool spans to this one. The count
     -- was always over the whole trace; now the guard is too.
     trace_turn AS (
-      SELECT s.trace_id, MIN(s.turn_id) AS turn_id
+      SELECT s.trace_id, MIN(s.resolved_turn_id) AS turn_id
       FROM evestack.spans s
       WHERE s.trace_id IN (
-              SELECT t.trace_id FROM evestack.spans t WHERE t.turn_id IN (SELECT id FROM runs)
+              SELECT t.trace_id FROM evestack.spans t
+               WHERE t.resolved_turn_id IN (SELECT id FROM runs)
             )
-        AND s.turn_id IS NOT NULL
+        AND s.resolved_turn_id IS NOT NULL
       GROUP BY s.trace_id
-      HAVING COUNT(DISTINCT s.turn_id) = 1
+      HAVING COUNT(DISTINCT s.resolved_turn_id) = 1
     ),
     tool_calls AS (
       SELECT tt.turn_id,

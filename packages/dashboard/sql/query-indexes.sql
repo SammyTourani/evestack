@@ -1,9 +1,9 @@
 -- Indexes the queries in lib/queries.ts need, and nothing else.
 --
--- Two tables, for two different reasons. Most of this file is expression
--- indexes for the `$eve.*` JSONB lookups on `workflow.workflow_runs`, which is
--- someone else's table and needs the justification below. The last one is on
--- `evestack.spans`, which is ours.
+-- One table, for one reason. Every statement here is an expression index for
+-- the `$eve.*` JSONB lookups on `workflow.workflow_runs`, which is someone
+-- else's table and needs the justification below. Indexes on `evestack.spans`
+-- belong in sql/traces.sql, beside the table that declares it.
 --
 -- ─ Why this file breaks the rule the other sql/ files obey ────────────────────
 --
@@ -96,26 +96,17 @@ CREATE INDEX IF NOT EXISTS evestack_runs_parent_idx
   ON workflow.workflow_runs ((attributes->>'$eve.parent'))
   WHERE (attributes->>'$eve.parent') IS NOT NULL;
 
--- ─ evestack.spans — our own table, no exception needed ───────────────────────
+-- ─ evestack.spans is no longer indexed from here ─────────────────────────────
 --
--- getSessionTree resolves a turn's tool calls by looking up spans by `turn_id`.
--- sql/traces.sql already indexes `(session_id, turn_id)`, but `turn_id` is not
--- its leading column, so that index answers this lookup only by reading all of
--- itself. It is cheap today because the index is partial and small; it stops
--- being cheap in proportion to how many turns have ever been traced.
+-- There used to be one span index in this file, on the declared `turn_id`, with
+-- a note that it would read better beside the table. It moved: getSessionTree
+-- now looks spans up by `resolved_turn_id` — the only one of the two that names
+-- a workflow run — and the index followed it into sql/traces.sql, which owns
+-- that table and can also drop the old one. Nothing is lost; the measurement
+-- that justified it is quoted there.
 --
--- Measured against a synthetic 1.5M-row spans table (100k sessions × 5 turns ×
--- 3 identity-carrying spans), looking up the spans of one session's five turns:
---   with only (session_id, turn_id):  34.191 ms, 15,549 shared buffers (seq scan)
---   with this index:                   0.076 ms,      19 shared buffers
---
--- It lives here rather than beside the table in sql/traces.sql only because
--- that file has other authors; it would read better there and moving it is a
--- pure win whenever someone is in that file anyway. `IF NOT EXISTS` makes the
--- move safe from either direction.
-CREATE INDEX IF NOT EXISTS evestack_spans_turn_idx
-  ON evestack.spans (turn_id)
-  WHERE turn_id IS NOT NULL;
+-- So this file is now exactly what its header argues for and nothing else:
+-- expression indexes on `workflow.workflow_runs`, someone else's table.
 
 -- Deliberately NOT indexed:
 --
