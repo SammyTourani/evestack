@@ -208,6 +208,24 @@ export async function headline(
   };
 }
 
+/**
+ * Why a degraded chart now carries a sentence.
+ *
+ * Both catches below were written the same way and for a defensible reason —
+ * one unreachable database must not take the whole page down. What neither
+ * accounted for is that the empty value they return is not neutral. An empty
+ * series renders "No data in this range" and an empty ranking renders "Nothing
+ * to rank in this range", and those are the sentences a genuinely quiet window
+ * earns. So the failure path and the healthy-but-idle path produced identical
+ * pixels, which is the same defect as `{"wedged":0,"checked":0}` on /api/fleet
+ * and a `healthy` /api/health against a database it cannot read: the surface
+ * degrades to good news.
+ *
+ * The fix is not to stop degrading. It is to say so while degrading.
+ */
+const unreadableReason = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
 /** A bucketed series split by a dimension, shaped for TimeSeriesChart. */
 export async function stacked(
   window: Window,
@@ -215,7 +233,12 @@ export async function stacked(
   aggregation: string,
   dimension: string,
   options: { view?: string } = {},
-): Promise<{ series: { id: string; label: string; points: { x: number; y: number | null }[] }[]; truncated: boolean }> {
+): Promise<{
+  series: { id: string; label: string; points: { x: number; y: number | null }[] }[];
+  truncated: boolean;
+  /** Non-null when the read failed, so an empty chart is never read as a quiet window. */
+  unreadable: string | null;
+}> {
   let result: MetricResult;
   try {
     result = await runMetricQuery({
@@ -226,9 +249,11 @@ export async function stacked(
     });
   } catch (error) {
     // Same rule as `ranked` below: a query this file built wrong is a bug and
-    // must be seen; a database that is unreachable degrades to an empty chart.
+    // must be seen; a database that is unreachable degrades to an empty chart —
+    // an empty chart that SAYS it is empty because the read failed, not because
+    // the window was quiet. See `unreadableReason` above.
     if (error instanceof MetricQueryError) throw error;
-    return { series: [], truncated: false };
+    return { series: [], truncated: false, unreadable: unreadableReason(error) };
   }
 
   const key = measure === ROWS ? "rows" : `${aggregation}_${measure}`;
@@ -263,7 +288,7 @@ export async function stacked(
     .sort((a, b) => b.total - a.total)
     .map(({ total: _total, ...rest }) => rest);
 
-  return { series, truncated: result.truncated };
+  return { series, truncated: result.truncated, unreadable: null };
 }
 
 export interface Ranked {
@@ -287,7 +312,11 @@ export async function ranked(
     withDuration?: { measure: string; aggregation: string };
     limit?: number;
   },
-): Promise<Ranked[]> {
+): Promise<{
+  rows: Ranked[];
+  /** Non-null when the read failed, so an empty list is never read as "nothing ranked". */
+  unreadable: string | null;
+}> {
   const measures: { measure: string; aggregation: string }[] = [
     options.measure === ROWS
       ? { measure: "duration", aggregation: "count" }
@@ -325,14 +354,14 @@ export async function ranked(
     // down for. MetricQueryError is deterministic and reachable in CI, so it is
     // raised where someone will see it.
     if (error instanceof MetricQueryError) throw error;
-    return [];
+    return { rows: [], unreadable: unreadableReason(error) };
   }
 
   const durationKey = options.withDuration
     ? `${options.withDuration.aggregation}_${options.withDuration.measure}`
     : null;
 
-  return result.data.map((row) => {
+  const ranking: Ranked[] = result.data.map((row) => {
     const raw = row[options.dimension];
     const label = raw === null || raw === undefined ? "(none)" : String(raw);
     const rate = options.withFailures ? num(row.avg_failure_rate) : null;
@@ -358,6 +387,7 @@ export async function ranked(
       ...(durationKey === null ? {} : { durationMs: num(row[durationKey]) }),
     };
   });
+  return { rows: ranking, unreadable: null };
 }
 
 /**

@@ -194,6 +194,7 @@ export default async function OverviewPage(props: PageProps<"/">) {
           title="Turns over time"
           subtitle={`By trigger, ${label} window.`}
           series={data.runsByTrigger.series}
+          unreadable={data.runsByTrigger.unreadable}
           unit="count"
           variant="stacked-area"
           xLabel="time"
@@ -203,6 +204,7 @@ export default async function OverviewPage(props: PageProps<"/">) {
           title="Spend over time"
           subtitle="By model. A model with no catalog price contributes nothing here and is listed as unpriced below."
           series={data.spendByModel.series}
+          unreadable={data.spendByModel.unreadable}
           unit="cost"
           variant="stacked-area"
           xLabel="time"
@@ -214,7 +216,8 @@ export default async function OverviewPage(props: PageProps<"/">) {
         <TopList
           title="Models"
           subtitle="Ranked by spend. Sort by error rate or latency to find the one that is expensive for the wrong reason."
-          rows={data.topModels}
+          rows={data.topModels.rows}
+          unreadable={data.topModels.unreadable}
           unit="cost"
           valueLabel="spend"
           durationLabel="p95"
@@ -222,7 +225,8 @@ export default async function OverviewPage(props: PageProps<"/">) {
         <TopList
           title="Tools"
           subtitle="Ranked by calls. A tool that is slow and frequent costs more than one that is slow and rare."
-          rows={data.topTools}
+          rows={data.topTools.rows}
+          unreadable={data.topTools.unreadable}
           unit="count"
           valueLabel="calls"
           durationLabel="p95"

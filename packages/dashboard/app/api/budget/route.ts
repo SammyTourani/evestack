@@ -1,5 +1,5 @@
 import { readBudgetCaps } from "@/lib/budget-env";
-import { query } from "@/lib/db";
+import { isMissingTable, query } from "@/lib/db";
 
 /** The three the hook enforces; anything else is treated as "fail" there. */
 const BUDGET_MODES = new Set(["fail", "cancel", "observe"]);
@@ -163,10 +163,27 @@ export async function GET(request: Request) {
       events,
     });
   } catch (error) {
-    // The tables only exist once the budget hook has run once. A dashboard
-    // pointed at an agent that never enabled it should say so, not 500.
+    /*
+     * The tables only exist once the budget hook has run once. A dashboard
+     * pointed at an agent that never enabled it should say so, not 500.
+     *
+     * WHICH IS NOT THE SAME AS SAYING 200. The test was `detail.includes
+     * ("evestack.budget")`, a substring of the message, so `permission denied
+     * for table budget_usage` and a half-applied migration both produced the
+     * reassuring "No budget data yet" sentence AT HTTP 200 — and a monitor
+     * polling this route for a non-2xx read a healthy endpoint while the spend
+     * caps were genuinely unreadable. pg tells us precisely which case this is:
+     * 42P01 is undefined_table and nothing else is.
+     *
+     * The status stays 200 for the genuinely-absent case, because that is a
+     * real answer to a real question ("no budget data exists"), and becomes 503
+     * for everything else, because that is not an answer at all.
+     */
     const detail = error instanceof Error ? error.message : String(error);
-    const missing = detail.includes("evestack.budget");
+    // `isMissingTable` is lib/db.ts's own SQLSTATE test and the only honest one
+    // here: query() rethrows as DatabaseUnavailableError, so `error.code` is
+    // gone by the time this runs and only the formatted message survives.
+    const missing = isMissingTable(error) && detail.includes("evestack.budget");
     return Response.json(
       {
         ok: false,

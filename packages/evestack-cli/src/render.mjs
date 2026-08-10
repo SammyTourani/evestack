@@ -7,6 +7,7 @@
  */
 import { c as color, g } from "create-evestack/ui";
 
+import { blindSpots } from "./findings.mjs";
 import { table, section, duration, fmt } from "./format.mjs";
 
 /**
@@ -58,11 +59,16 @@ function header(report) {
     }`,
   );
   if (report.sessions) {
-    lines.push(
-      `  agent      ${report.sessions.agentUrl}${
-        report.sessions.agentReachable ? "" : " — unreachable, so no session was classified"
-      }`,
-    );
+    // Three states, not two. `null` is "no session needed classifying, so the
+    // agent was never contacted" and it used to render as a bare URL —
+    // identical to a reachable agent. See doctor.mjs.
+    const reach =
+      report.sessions.agentReachable === true
+        ? ""
+        : report.sessions.agentReachable === false
+          ? " — unreachable, so no session was classified"
+          : " — not contacted; no session was quiet enough to need classifying";
+    lines.push(`  agent      ${report.sessions.agentUrl}${reach}`);
   }
   return `${lines.join("\n")}\n`;
 }
@@ -115,12 +121,33 @@ function findingsSection(report) {
 
 function verdict(report) {
   const critical = report.findings.filter((f) => f.severity === "critical");
+  /*
+   * What this run could not look at.
+   *
+   * The verdict is the last thing anybody reads and it filtered on `critical`
+   * alone, so every check that COULD NOT RUN — the agent unreachable, the
+   * workflow tables absent, the probe budget exhausted, is_available missing —
+   * landed as a WARNING or INFO above and then the closing sentence declared
+   * "Nothing is currently costing you a run." A clean bill of health signed by
+   * a tool that did not look is exactly the shape /api/fleet, /api/health, the
+   * failure rate and the trace-ingest monitor were each fixed for.
+   *
+   * The claim is narrowed rather than replaced: what was examined really was
+   * clean, and saying so is still useful. What it may no longer say is
+   * "nothing", full stop.
+   */
+  const blind = blindSpots(report.findings);
   let out = section("verdict");
   if (critical.length === 0) {
     out +=
-      "  Nothing is currently costing you a run.\n" +
-      "  Any dead jobs listed above are leftovers whose runs found another way forward —\n" +
-      "  worth knowing, not an incident.\n";
+      blind.length === 0
+        ? "  Nothing is currently costing you a run.\n" +
+          "  Any dead jobs listed above are leftovers whose runs found another way forward —\n" +
+          "  worth knowing, not an incident.\n"
+        : `  Nothing that this run could examine is costing you a run, and ${blind.length} ` +
+          `check${blind.length === 1 ? "" : "s"} could not be made:\n` +
+          blind.map((f) => `    ${g.skip} ${f.title}\n`).join("") +
+          "  This is not an all-clear. Clear those and re-run before treating it as one.\n";
     return out;
   }
   out += `  ${critical.length} fault${critical.length === 1 ? "" : "s"}: ${critical

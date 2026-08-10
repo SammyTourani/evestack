@@ -1,4 +1,5 @@
 import { listApprovals, type ApprovalRow } from "@/lib/approvals";
+import { EM_DASH } from "@/components/ui/format";
 import { describeDbError } from "@/lib/db";
 import { suggestFilename } from "@/lib/promote-eval";
 import { gradeOf, RANK, type Grade } from "./grade";
@@ -110,6 +111,16 @@ export default async function EvalsPage() {
    * ranking that puts broken sessions first.
    */
   const failedBySession = new Map<string, number>();
+  /**
+   * Set when the query above did not answer.
+   *
+   * Without it the catch below produced an empty map, `gradeOf` never returned
+   * `failed`, the "Ended badly" tile rendered a confident `0`, and every row's
+   * Why column read "Nothing went wrong here." — a per-session verdict derived
+   * from a read that never happened. The approvals half of this page already
+   * has exactly this affordance twenty lines up; this half did not.
+   */
+  let failedError: string | null = null;
   try {
     const rows = await query<{ session_id: string; n: string }>(
       `SELECT session_id, count(*)::text AS n
@@ -119,8 +130,10 @@ export default async function EvalsPage() {
       [sessions.map((x) => x.id)],
     );
     for (const r of rows) failedBySession.set(r.session_id, Number(r.n));
-  } catch {
-    // Ranking degrades; promotion still works.
+  } catch (error) {
+    // Ranking degrades; promotion still works — but it degrades OUT LOUD, so
+    // "Ended badly: 0" is never printed about turns nobody counted.
+    failedError = describeDbError(error);
   }
 
   const deniedBySession = new Map<string, string[]>();
@@ -176,9 +189,16 @@ export default async function EvalsPage() {
         </div>
         <div className="stat">
           <div className="stat-label">Ended badly</div>
-          <div className="stat-value">{counts.failed}</div>
+          <div className="stat-value">{failedError === null ? counts.failed : EM_DASH}</div>
         </div>
       </div>
+
+      {failedError && (
+        <p className={styles.warn}>
+          Could not count failed turns, so no session below is described as having ended badly and
+          the count above is unknown rather than zero. {failedError}
+        </p>
+      )}
 
       {approvalsError && (
         <p className={styles.warn}>

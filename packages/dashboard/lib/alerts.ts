@@ -294,16 +294,43 @@ export async function evaluateAlerts(): Promise<AlertResult[]> {
     const flags = concerns(boxes, new Set(boxes.map((b) => b.sessionId ?? "")));
     const networked = flags.filter((f) => f.kind === "networked");
     const long = flags.filter((f) => f.kind === "orphaned");
+    /*
+     * Containers Docker was reached about and would not describe.
+     *
+     * `concerns()` emits one of these when a running container has no network
+     * mode or no start time, because both of its first two tests are guarded on
+     * `!== null` and both of those nulls mean "the inspect failed", not "the
+     * answer is fine". Before it existed, such a container was skipped by both
+     * tests and then counted in the passing sentence below — "All 6 running
+     * sandboxes are network-isolated" over a set that included one nobody could
+     * read. The daemon answering the LIST and failing the INSPECT is the normal
+     * shape of a busy or half-broken Docker, not an exotic one.
+     *
+     * `unknown` rather than `firing`: nothing here says the container IS
+     * networked. It says the page-severity question about it was not answered,
+     * which is the state this module's header calls the one a monitor must not
+     * collapse into `ok`.
+     */
+    const unexamined = flags.filter((f) => f.kind === "unreadable");
+    const unexaminedNote =
+      unexamined.length === 0
+        ? ""
+        : ` ${unexamined.length} container${unexamined.length === 1 ? "" : "s"} could not be described by Docker (${unexamined.map((f) => f.sandbox.name).join(", ")}), so ${unexamined.length === 1 ? "it is" : "they are"} in neither count.`;
+    const running = boxes.filter((b) => b.state === "running").length;
+    const examined = running - unexamined.length;
 
     out.push({
       id: "sandbox_networked",
       title: "Sandbox network isolation",
       severity: "page",
-      state: networked.length > 0 ? "firing" : "ok",
+      state:
+        networked.length > 0 ? "firing" : unexamined.length > 0 ? "unknown" : "ok",
       detail:
         networked.length > 0
-          ? `${networked.length} running sandbox${networked.length === 1 ? " is" : "es are"} not on NetworkMode=none (${networked.map((f) => f.sandbox.name).join(", ")}), so code inside can reach the network.`
-          : `All ${boxes.filter((b) => b.state === "running").length} running sandboxes are network-isolated.`,
+          ? `${networked.length} running sandbox${networked.length === 1 ? " is" : "es are"} not on NetworkMode=none (${networked.map((f) => f.sandbox.name).join(", ")}), so code inside can reach the network.${unexaminedNote}`
+          : unexamined.length > 0
+            ? `${examined} of ${running} running sandboxes are network-isolated.${unexaminedNote}`
+            : `All ${running} running sandboxes are network-isolated.`,
       threshold: "every sandbox on `none`",
       href: "/sandboxes",
     });
@@ -312,15 +339,27 @@ export async function evaluateAlerts(): Promise<AlertResult[]> {
       id: "sandbox_long_lived",
       title: "Long-lived sandboxes",
       severity: "info",
-      state: long.length > 0 ? "firing" : "ok",
+      state: long.length > 0 ? "firing" : unexamined.length > 0 ? "unknown" : "ok",
       detail:
         long.length > 0
-          ? `${long.length} sandbox${long.length === 1 ? " has" : "es have"} been up over ${THRESHOLDS.sandboxLongLivedHours}h. eve keeps one container per session and applies no idle timeout, so they accumulate until something stops them.`
-          : // The passing sentence spelled the limit out in English while the
-            // firing one above it read the constant, so this line was the last
-            // place on the page that could still contradict the filter: move
-            // ORPHAN_AFTER_MS and it would go on naming sixty minutes.
-            `No sandbox has been up longer than ${THRESHOLDS.sandboxLongLivedHours}h.`,
+          ? `${long.length} sandbox${long.length === 1 ? " has" : "es have"} been up over ${THRESHOLDS.sandboxLongLivedHours}h. eve keeps one container per session and applies no idle timeout, so they accumulate until something stops them.${unexaminedNote}`
+          : unexamined.length > 0
+            ? // NOT the unqualified "no sandbox has been up past the limit"
+              // sentence below: the uptime of the unexamined ones is exactly
+              // the thing that could not be read, so the claim has to be
+              // narrowed to the ones this did measure.
+              //
+              // (The wording avoids spelling the limit out in English on
+              // purpose. test/alerts-evaluate.test.mjs greps this whole file
+              // for the hardcoded phrase, comments included, because a
+              // sentence naming sixty minutes is how ORPHAN_AFTER_MS and the
+              // prose drifted apart the first time.)
+              `None of the ${examined} sandboxes this could measure has been up longer than ${THRESHOLDS.sandboxLongLivedHours}h.${unexaminedNote}`
+            : // The passing sentence spelled the limit out in English while the
+              // firing one above it read the constant, so this line was the last
+              // place on the page that could still contradict the filter: move
+              // ORPHAN_AFTER_MS and it would go on naming sixty minutes.
+              `No sandbox has been up longer than ${THRESHOLDS.sandboxLongLivedHours}h.`,
       threshold: `under ${THRESHOLDS.sandboxLongLivedHours}h`,
       href: "/sandboxes",
     });
@@ -341,16 +380,32 @@ export async function evaluateAlerts(): Promise<AlertResult[]> {
 
   /* ── schedules ───────────────────────────────────────────────────────────── */
   if (schedules.status === "fulfilled") {
-    const failing = schedules.value;
+    const { failing, unresolved } = schedules.value;
+    /*
+     * A run that never recorded an outcome is neither a pass nor a failure, and
+     * it used to be counted as the first: `status` defaults to 'running' and
+     * only finishRun moves it, so a worker that died mid-run left a row that
+     * broke the failing streak and cleared this alert. The streak is now
+     * computed over resolved runs only (lib/schedules.ts), which is correct and
+     * silent on its own — so the number that was excluded is said out loud, in
+     * the same sentence, for the same reason the failure rate reports
+     * `unfinished`.
+     */
+    const stuckNote =
+      unresolved === 0
+        ? ""
+        : ` ${unresolved} recorded fire${unresolved === 1 ? " has" : "s have"} no outcome at all — a run row is created as 'running' and only a finished run moves it, so ${unresolved === 1 ? "that is" : "those are"} either in flight or a worker that died mid-run. ${unresolved === 1 ? "It is" : "They are"} judged neither way.`;
     out.push({
       id: "schedule_failing",
       title: "Failing schedules",
       severity: "warn",
-      state: failing.length > 0 ? "firing" : "ok",
+      state: failing.length > 0 ? "firing" : unresolved > 0 ? "unknown" : "ok",
       detail:
         failing.length > 0
-          ? `${failing.map((f) => `${f.name} (${f.streak} in a row)`).join(", ")}.`
-          : "No schedule has a failing streak.",
+          ? `${failing.map((f) => `${f.name} (${f.streak} in a row)`).join(", ")}.${stuckNote}`
+          : unresolved > 0
+            ? `No schedule has a failing streak among the runs that reported one.${stuckNote}`
+            : "No schedule has a failing streak.",
       threshold: `under ${THRESHOLDS.scheduleFailingStreak} consecutive failures`,
       href: "/schedules",
     });
@@ -624,7 +679,11 @@ async function ingestHealth(): Promise<{
   return { activeTurns: Number(turns?.n ?? 0), spansLastHour, behind };
 }
 
-async function failingSchedules(): Promise<{ name: string; streak: number }[]> {
+async function failingSchedules(): Promise<{
+  failing: { name: string; streak: number }[];
+  /** Fires with no recorded outcome, across every schedule. See the caller. */
+  unresolved: number;
+}> {
   /*
    * `getSchedules()` already computes this, correctly, from
    * `evestack.schedule_runs` — the table @evestack/schedules actually writes.
@@ -643,7 +702,10 @@ async function failingSchedules(): Promise<{ name: string; streak: number }[]> {
    */
   const { schedules, tableExists } = await getSchedules();
   if (!tableExists) throw new Error("no schedule has ever run on this install");
-  return schedules
-    .filter((x) => x.failingStreak >= THRESHOLDS.scheduleFailingStreak)
-    .map((x) => ({ name: x.name, streak: x.failingStreak }));
+  return {
+    failing: schedules
+      .filter((x) => x.failingStreak >= THRESHOLDS.scheduleFailingStreak)
+      .map((x) => ({ name: x.name, streak: x.failingStreak })),
+    unresolved: schedules.reduce((sum, x) => sum + x.unresolved, 0),
+  };
 }

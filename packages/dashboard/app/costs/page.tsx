@@ -363,6 +363,7 @@ export default async function CostsPage(props: PageProps<"/costs">) {
               title="Spend over time"
               subtitle={`By model, ${label} window. A model with no catalog price contributes nothing to this chart.`}
               series={spendByModel.series}
+              unreadable={spendByModel.unreadable}
               unit="cost"
               variant="stacked-area"
               xLabel="time"
@@ -374,7 +375,8 @@ export default async function CostsPage(props: PageProps<"/costs">) {
             <TopList
               title="Most expensive sessions"
               subtitle="Ranked by spend. Each links to the turn-by-turn breakdown."
-              rows={topSessions.map((r) => ({
+              unreadable={topSessions.unreadable}
+              rows={topSessions.rows.map((r) => ({
                 ...r,
                 label: r.label === "(none)" ? r.label : `${r.label.slice(0, 22)}…`,
                 href: r.label === "(none)" ? undefined : `/sessions/${r.label}`,
