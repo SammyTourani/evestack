@@ -294,16 +294,38 @@ export async function listSandboxes(): Promise<SandboxAvailability> {
 export const ORPHAN_AFTER_MS = 60 * 60 * 1000;
 
 export interface SandboxConcern {
-  readonly kind: "networked" | "orphaned" | "session-gone";
+  readonly kind: "networked" | "orphaned" | "session-gone" | "unreadable";
   readonly sandbox: Sandbox;
 }
 
 /**
- * The three things worth interrupting someone about.
+ * The three things worth interrupting someone about, and the fourth that says
+ * one of the three could not be decided.
  *
  * Pure and exported so the rules are testable without a daemon — they are the
  * whole editorial content of the page, and a rule that only exists inside JSX
  * cannot be checked.
+ *
+ * ── WHY `unreadable` IS A CONCERN AND NOT A SILENCE ──────────────────────────
+ *
+ * Both of the first two tests are guarded with `!== null`, and both of those
+ * nulls mean "Docker did not tell us", not "the answer is fine". `networkMode`
+ * falls back through `inspect?.HostConfig` — and that inspect is a
+ * `.catch(() => null)` on a 3-second timeout — to the list's own copy, and then
+ * to null; `uptimeMs` comes only from the inspect. So a container the daemon is
+ * too slow or too broken to describe was skipped by BOTH tests and then counted
+ * in "All N running sandboxes are network-isolated" (lib/alerts.ts) and in
+ * "Nothing needs attention." (app/sandboxes/page.tsx).
+ *
+ * That is the shape this repo has now fixed four times: the check that could
+ * not run produced the reassuring answer. `sandbox_networked` is a PAGE
+ * severity alert about code reaching the internet from inside a sandbox, so it
+ * is the worst place in the product to guess in the flattering direction.
+ *
+ * `state` gets the same treatment. `listSandboxes` writes `c.State ?? "unknown"`,
+ * and the loop below returns early for anything that is not exactly `running` —
+ * so a container with no reported state was silently exempt from all three
+ * checks rather than being reported as unexamined.
  */
 export function concerns(
   sandboxes: readonly Sandbox[],
@@ -313,8 +335,20 @@ export function concerns(
   void now;
   const out: SandboxConcern[] = [];
   for (const sandbox of sandboxes) {
-    if (sandbox.state !== "running") continue;
-    // eve sets `none` for an isolated sandbox. Anything else can reach out.
+    if (sandbox.state !== "running") {
+      // Not `continue` unconditionally: a container whose state Docker never
+      // reported is not a stopped container, and treating it as one exempts it
+      // from every test below without saying so.
+      if (sandbox.state === "unknown" || sandbox.state === "") {
+        out.push({ kind: "unreadable", sandbox });
+      }
+      continue;
+    }
+    // eve sets `none` for an isolated sandbox. Anything else can reach out —
+    // and null is not "anything else", it is "we could not read it".
+    if (sandbox.networkMode === null || sandbox.uptimeMs === null) {
+      out.push({ kind: "unreadable", sandbox });
+    }
     if (sandbox.networkMode !== null && sandbox.networkMode !== "none") {
       out.push({ kind: "networked", sandbox });
     }

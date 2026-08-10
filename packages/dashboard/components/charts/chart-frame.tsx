@@ -107,20 +107,35 @@ export interface ChartFrameProps {
   readonly state: ChartState;
   /** Buckets in range, used only to word the all-absent empty state. */
   readonly bucketCount?: number;
+  /** Why the read failed. Required in spirit whenever `state` is `unreadable`. */
+  readonly unreadableReason?: string;
   /** Zoom controls, filters — anything that acts on the chart. */
   readonly actions?: ReactNode;
   readonly children: ReactNode;
 }
 
 /**
- * The two empties say different things because they are different facts. No
+ * The three empties say different things because they are different facts. No
  * rows means nothing happened in the window. Rows with no values means things
  * happened and were not measured — the shape that a chart of zeros would
- * report as a healthy, quiet week.
+ * report as a healthy, quiet week. `unreadable` means the question was never
+ * answered, and it is separate from the other two for the reason the whole
+ * `unknown` register exists: a failed read that renders "No data in this
+ * range" is a chart telling its reader the window was quiet.
  */
-function Empty({ state, buckets }: { state: ChartState; buckets: number }) {
+function Empty({
+  state,
+  buckets,
+  reason,
+}: {
+  state: ChartState;
+  buckets: number;
+  reason?: string;
+}) {
   const message =
-    state === "no-rows"
+    state === "unreadable"
+      ? `This chart could not be read${reason === undefined ? "" : `: ${reason}`}. That is not the same as an empty window — nothing here says the range was quiet.`
+      : state === "no-rows"
       ? "No data in this range."
       : `${buckets.toLocaleString("en-US")} ${buckets === 1 ? "bucket" : "buckets"} in range, and not one reported a value. This is missing data, not zero.`;
   return (
@@ -176,7 +191,11 @@ export function ChartFrame(props: ChartFrameProps) {
       {props.state === "ok" ? (
         props.children
       ) : (
-        <Empty state={props.state} buckets={props.bucketCount ?? 0} />
+        <Empty
+          state={props.state}
+          buckets={props.bucketCount ?? 0}
+          {...(props.unreadableReason === undefined ? {} : { reason: props.unreadableReason })}
+        />
       )}
 
       {props.legend === undefined || props.legend.length === 0 ? null : (

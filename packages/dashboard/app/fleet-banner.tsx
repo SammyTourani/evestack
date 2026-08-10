@@ -38,11 +38,33 @@ export async function FleetBanner() {
   let report: Awaited<ReturnType<typeof inspectFleet>>;
   try {
     report = await inspectFleet();
-  } catch {
-    // The session list is the point of this page; a failed health sweep must
-    // not take it down. Silence is the right failure here — the banner is an
-    // extra, and an error box about the extra would bury the actual content.
-    return null;
+  } catch (error) {
+    /*
+     * NOT `return null`, which is what this did, and it undid the fix above it.
+     *
+     * The contract this component just gained is that an EMPTY banner means
+     * "nothing is open" rather than "nothing was examined" — that is the entire
+     * reason bannerState grew a `coverage` register. A sweep that THREW
+     * rendered the identical empty page, so the one failure that means "no
+     * session in this fleet was looked at at all" reached the reader as the
+     * same pixels as "every session was looked at and all of them are well".
+     * The coverage register closed that door in the counts and left it open in
+     * the error path.
+     *
+     * Still not an error box, for the original reason: the session list under
+     * this is the point of the page and must survive a failed sweep. One faint
+     * coverage line, in the register that exists for exactly this, is the whole
+     * fix — it costs the reader a sentence and it costs the page nothing.
+     */
+    return (
+      <div className={styles.note}>
+        <p className={`faint ${styles.line}`}>
+          No session was checked for being stuck — the health sweep could not run (
+          {error instanceof Error ? error.message : String(error)}). This page is not saying the
+          fleet is healthy.
+        </p>
+      </div>
+    );
   }
 
   // Every decision this component makes is in lib/fleet.ts, where a test can

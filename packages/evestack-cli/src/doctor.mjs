@@ -188,9 +188,16 @@ export async function diagnose(options = {}) {
         limit: probeLimit,
       });
       const baseUrl = agentBaseUrl(options.agentUrl);
+      /*
+       * `null`, not `true`. Nothing contacted the agent on this branch, and
+       * `agentReachable: true` is a claim about a request that was never made —
+       * render.mjs prints the agent URL clean, and --json publishes the boolean
+       * as a fact. There is nothing wrong with not asking (no candidate needed
+       * classifying); there is something wrong with reporting it as an answer.
+       */
       const probe =
         candidates.length === 0
-          ? { entries: [], agentReachable: true, agentError: null, probed: 0 }
+          ? { entries: [], agentReachable: null, agentError: null, probed: 0 }
           : await inspectSessions(candidates, { baseUrl, timeoutMs });
       report.sessions = { ...probe, candidates, unchecked, idleMs, agentUrl: baseUrl };
     }
@@ -207,6 +214,7 @@ export async function diagnose(options = {}) {
       ratio: report.ratio,
       runs,
       sessions: report.sessions,
+      probeLimit,
       limit,
     });
 

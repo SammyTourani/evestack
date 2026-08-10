@@ -41,6 +41,22 @@ export interface ScheduleSummary {
   readonly failures: number;
   /** Consecutive failures ending at the most recent run — the alarm worth ringing. */
   readonly failingStreak: number;
+  /**
+   * Runs among the newest `STREAK_DEPTH` that never recorded an outcome.
+   *
+   * `@evestack/schedules` inserts a run with `status` defaulting to `'running'`
+   * and only `finishRun` moves it to completed / failed / skipped, so a worker
+   * that died mid-run leaves the row at `'running'` FOREVER. That value is not
+   * a success and it is not a failure; it is a fire nobody knows the result of.
+   *
+   * It is reported rather than folded into either count because the streak used
+   * to be broken by it: `MIN(depth) FILTER (WHERE status <> 'failed')` matched a
+   * `'running'` row at depth 1, so a crashed worker sitting on top of twenty
+   * failures produced `failingStreak = 0` and the alert said "No schedule has a
+   * failing streak." That is the same shape as an unfinished turn scoring as a
+   * successful one — the unresolved input took the good branch.
+   */
+  readonly unresolved: number;
 }
 
 export interface SchedulesView {
@@ -120,9 +136,37 @@ export async function getSchedules(): Promise<SchedulesView> {
         ) newest
       ) streak
     ),
+    -- An unresolved run is TRANSPARENT to the streak, not a break in it.
+    --
+    -- (No backticks anywhere in this SQL: it is a template literal, and one
+    -- inside it ends the string with a parse error nowhere near the cause. The
+    -- warning twenty lines up was written because someone did it; this comment
+    -- exists because the person adding it did it again.)
+    --
+    -- status defaults to 'running' and only finishRun advances it, so a run
+    -- still in flight — or one whose worker died and never will finish — sits
+    -- at 'running' with no outcome. status <> 'failed' was true for it, so it
+    -- ended the streak at depth 1 and failing came out 0 even when every run
+    -- beneath it had failed. Ranking over the RESOLVED rows only means the
+    -- streak is the prefix of runs that actually reported an outcome, and the
+    -- unresolved ones are counted separately below instead of silently
+    -- clearing the alarm.
+    resolved AS (
+      SELECT name, status,
+             row_number() OVER (PARTITION BY name ORDER BY depth) AS rank
+      FROM ranked
+      WHERE status IN ('completed', 'failed', 'skipped')
+    ),
     streaks AS (
       SELECT name,
-             COALESCE(MIN(depth) FILTER (WHERE status <> 'failed'), MAX(depth) + 1) - 1 AS failing
+             COALESCE(MIN(rank) FILTER (WHERE status <> 'failed'), MAX(rank) + 1) - 1 AS failing
+      FROM resolved GROUP BY name
+    ),
+    -- Counted over ranked, so a schedule whose newest runs are ALL unresolved
+    -- still appears here even though it contributes no row to streaks.
+    unresolved AS (
+      SELECT name,
+             count(*) FILTER (WHERE status NOT IN ('completed', 'failed', 'skipped')) AS n
       FROM ranked GROUP BY name
     ),
     -- All-time on purpose. The page renders these as "N runs, M failed" beneath a
@@ -134,11 +178,17 @@ export async function getSchedules(): Promise<SchedulesView> {
       SELECT name, count(*) AS total, count(*) FILTER (WHERE status = 'failed') AS failures
       FROM evestack.schedule_runs GROUP BY name
     )
-    SELECT l.*, t.total, t.failures, s.failing,
+    -- LEFT JOIN on streaks, not JOIN: a schedule whose newest runs are every
+    -- one of them unresolved has no row in resolved and would otherwise drop
+    -- off the page entirely — a schedule disappearing is the loudest possible
+    -- version of this same bug.
+    SELECT l.*, t.total, t.failures, COALESCE(s.failing, 0) AS failing,
+           COALESCE(u.n, 0) AS unresolved,
            st.paused, st.paused_at, st.paused_by
     FROM latest l
     JOIN totals t ON t.name = l.name
-    JOIN streaks s ON s.name = l.name
+    LEFT JOIN streaks s ON s.name = l.name
+    LEFT JOIN unresolved u ON u.name = l.name
     LEFT JOIN evestack.schedule_state st ON st.name = l.name
     ORDER BY l.fire_at DESC
   `);
@@ -159,6 +209,7 @@ export async function getSchedules(): Promise<SchedulesView> {
       totalRuns: Number(raw.total ?? 0),
       failures: Number(raw.failures ?? 0),
       failingStreak: Number(raw.failing ?? 0),
+      unresolved: Number(raw.unresolved ?? 0),
     })),
     recent: recent.map(toRun),
   };

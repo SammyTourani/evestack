@@ -269,8 +269,28 @@ export async function status(argv, { stdout = process.stdout, stderr = process.s
   const { agent, postgres, dashboard, model } = await probeAll(env);
   const results = [agent, postgres, dashboard, model];
 
+  /*
+   * `warn` IS NOT `ok`, and both summaries below used to count it as one.
+   *
+   * There are three part states and only two were ever tallied: `down` filtered
+   * on `fail`, so a `warn` — "connected, but <error>", the shape a probe returns
+   * when it reached the thing and could not finish checking it — printed one
+   * yellow dot and was then folded into the bold green "Everything is up.", into
+   * `"ok": true`, and into exit 0. A script could not tell a fully-verified
+   * stack from one where a check did not complete, which is the same defect
+   * /api/health had when it answered `healthy` against a database it could not
+   * read.
+   *
+   * So the two counts are separate everywhere, and the verdict requires both to
+   * be empty. `unknown` is named in the payload rather than folded into `down`
+   * because the fixes are different: a part that is down needs starting, and a
+   * part that could not be checked needs looking at.
+   */
+  const down = results.filter((r) => r.state === "fail");
+  const unknown = results.filter((r) => r.state === "warn");
+  const settled = down.length === 0 && unknown.length === 0;
+
   if (argv.includes("--json")) {
-    const down = results.filter((r) => r.state === "fail");
     /**
      * Strip presentation before serialising, or `--json` is not machine-readable.
      *
@@ -286,9 +306,23 @@ export async function status(argv, { stdout = process.stdout, stderr = process.s
      */
     const clean = results.map((r) => ({ ...r, detail: plain(r.detail), where: plain(r.where) }));
     stdout.write(
-      `${JSON.stringify({ ok: down.length === 0, project: name, dir: found.dir, results: clean }, null, 2)}\n`,
+      `${JSON.stringify(
+        {
+          ok: settled,
+          project: name,
+          dir: found.dir,
+          down: down.map((r) => r.part),
+          // Parts that answered and could not be fully checked. `ok` is false
+          // while this is non-empty: nothing here is known to be broken, and
+          // nothing here is known to be working either.
+          unknown: unknown.map((r) => r.part),
+          results: clean,
+        },
+        null,
+        2,
+      )}\n`,
     );
-    return down.length === 0 ? 0 : 1;
+    return settled ? 0 : 1;
   }
 
   const GLYPH = { ok: c.green(g.dot), warn: c.yellow(g.dot), fail: c.red(g.dot) };
@@ -306,8 +340,7 @@ export async function status(argv, { stdout = process.stdout, stderr = process.s
   }
   lines.push("");
 
-  const down = results.filter((r) => r.state === "fail");
-  if (down.length === 0) {
+  if (settled) {
     const url = forHumans(dashboard.url ?? "http://localhost:4000");
     lines.push(
       `  ${c.greenBold("Everything is up.")}  ${c.dim("Your dashboard:")} ${c.brand(url)}`,
@@ -316,6 +349,23 @@ export async function status(argv, { stdout = process.stdout, stderr = process.s
     );
     stdout.write(`${lines.join("\n")}\n`);
     return 0;
+  }
+
+  // Nothing down, but something unchecked. Its own summary, because "Everything
+  // is up." is a claim this run cannot make and "N parts are down." is a claim
+  // it must not make either.
+  if (down.length === 0) {
+    const n = unknown.length;
+    lines.push(
+      `  ${c.yellowBold(`${n} ${n === 1 ? "part" : "parts"} could not be checked.`)} ` +
+        c.dim(
+          `Nothing is down; ${n === 1 ? `${unknown[0].part} answered and` : "they answered and"} could not finish reporting, so this is not an all-clear.`,
+        ),
+      `  ${c.dim(`${"`evestack verify`"} checks configuration too, and says more about why.`)}`,
+      "",
+    );
+    stdout.write(`${lines.join("\n")}\n`);
+    return 1;
   }
 
   // One cause, one fix. When both containers are missing at once the honest

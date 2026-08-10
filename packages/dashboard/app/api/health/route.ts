@@ -49,16 +49,20 @@ export const dynamic = "force-dynamic";
  * unreachable", which is a confident wrong answer about the healthy half. The
  * comparison is skipped, loudly, and the other checks still run.
  */
-async function versionsAhead(): Promise<string[]> {
+async function versionsAhead(): Promise<{ ahead: string[]; unavailable: string | null }> {
   try {
-    return await schemaVersionsAhead();
+    return { ahead: await schemaVersionsAhead(), unavailable: null };
   } catch (error) {
+    const why = error instanceof Error ? error.message : String(error);
     console.warn(
       "[evestack] /api/health could not compare its schema version against the database, so " +
-        "it cannot tell you whether this image is older than that database: " +
-        `${error instanceof Error ? error.message : error}`,
+        `it cannot tell you whether this image is older than that database: ${why}`,
     );
-    return [];
+    // Returned as well as logged. A console.warn on the server is not an answer
+    // to the caller: the body was an unqualified ok with no trace of a check
+    // that did not run, which is the shape this route was already fixed for
+    // once. `ok` stays true because the primary question was answered.
+    return { ahead: [], unavailable: why };
   }
 }
 export async function GET(): Promise<Response> {
@@ -122,7 +126,7 @@ export async function GET(): Promise<Response> {
      * body — and marking it is the point. An unhealthy HEALTHCHECK does not
      * restart anything, so this surfaces the mismatch without a crash loop.
      */
-    const ahead = await versionsAhead();
+    const { ahead, unavailable } = await versionsAhead();
     if (ahead.length > 0) {
       return Response.json(
         {
@@ -162,7 +166,18 @@ export async function GET(): Promise<Response> {
         { status: 503, headers },
       );
     }
-    return Response.json({ ok: true, database: "connected", version: dashboardVersion() }, { headers });
+    return Response.json(
+      {
+        ok: true,
+        database: "connected",
+        version: dashboardVersion(),
+        // Present only when a check did not run; its absence is the all-clear.
+        ...(unavailable === null
+          ? {}
+          : { schemaComparison: "unavailable", schemaComparisonError: unavailable }),
+      },
+      { headers },
+    );
   } catch {
     // No error detail here. pg's messages carry the host, port and database
     // name from the connection string, and nothing authenticates this response.

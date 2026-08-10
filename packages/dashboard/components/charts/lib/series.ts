@@ -116,6 +116,17 @@ export type ChartState =
   | "no-rows"
   /** Rows exist, and not one of them carries a value in any series. */
   | "all-absent"
+  /**
+   * The query did not answer, so there is no window to describe.
+   *
+   * A third empty rather than a reuse of `no-rows`, because those are opposite
+   * facts and `no-rows` is the reassuring one: "No data in this range" is what
+   * a genuinely quiet week says, and rendering it for a database that refused
+   * the read is the same all-clear-while-blind the fleet banner and /api/health
+   * were both fixed for. Never produced by `prepareChart` — it is set by the
+   * caller that caught the failure, because that is the only place that knows.
+   */
+  | "unreadable"
   | "ok";
 
 export interface PreparedChart {
