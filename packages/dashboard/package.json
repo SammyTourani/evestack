@@ -1,6 +1,6 @@
 {
   "name": "@evestack/dashboard",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "Self-hosted observability and control plane for eve agents: sessions, cost, approvals with audit, memory, schedules and evals, read from your own Postgres.",

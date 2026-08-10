@@ -52,13 +52,32 @@ They are summarised rather than itemised, deliberately.
 
 ## Unreleased
 
-Five packages are bumped in this checkout and **not yet on npm** — publishing needs a
-2FA one-time password, so it is a human step (af49a2a). One more has changed *without* a
-bump and needs one before anything else is published; it is listed at the end of this
-section, because a package whose version matches the registry while its code does not is
-the one state every check in RELEASING.md reports as green.
+Nothing is waiting to be published. The five packages that were queued here — the
+scaffolder, the CLI, `@evestack/mcp`, `@evestack/budget` and
+`@evestack/sandbox-opensandbox` — went to npm on 2026-08-09 and their entries have moved
+down into their own sections; the dashboard image followed at `0.3.0`. Every published
+version now matches the tree it was built from, verified package by package.
 
-### create-evestack@0.9.0 — unreleased
+What remains below ships in no artifact. It is recorded because the *symptom* reached
+users even though the code never did — the state this section exists to make visible,
+since a package whose version matches the registry while its code does not is the one
+condition every check in RELEASING.md reports as green.
+
+### Changed but not yet versioned
+
+- **`contract/`** — 1b63559 and 06274c4 repaired a probe that was writing rows eve's
+  `WorkflowRunSchema` rejects, which bricked a development database for four days.
+  Ships in no published artifact; recorded here because the *symptom* reached users as
+  "the database that would not boot", and docs/troubleshooting.mdx carries the repair.
+
+---
+
+## `create-evestack`
+
+The `npm create` entry point. Carries `templates/default` inside it, so a change to the
+template ships as a change to this package.
+
+### create-evestack@0.9.0 — 2026-08-09
 
 #### Added
 
@@ -87,210 +106,6 @@ the one state every check in RELEASING.md reports as green.
   (83af3bb).
 - The canary the env-name contract looked for was an `EVESTACK_`-prefixed name that
   nothing sets (fc5dea7).
-
-### evestack@0.4.0 — unreleased
-
-#### Changed
-
-- `evestack tour` no longer treats silence as consent. Off a TTY it exits 3 instead of
-  sending a billable model call (920a439). This is a **behaviour change for anything
-  scripting it**, which is why the bump is minor rather than patch.
-
-#### Fixed
-
-- The four output defects the `0.3.0` redesign left behind — the stderr colour fix and
-  two `--json` defects among them — and `evestack status` against a scheme-less dashboard
-  URL (920a439).
-- The npm README advertised three of seven commands — it predated the redesign that
-  added `status` and `tour`, so the two commands that redesign was built around were
-  invisible on the page most people land on first (920a439).
-
-### @evestack/mcp@0.3.0 — unreleased
-
-Cut as a minor, not the patch this was first queued as. It was a patch while the change
-was README-only; the output cap below is a new feature with a new environment variable and
-a behavioural change to every tool result, and shipping that as `0.2.1` would tell every
-consumer's version range it was safe to take without reading anything.
-
-#### Added
-
-- **A cap on how much one tool result can put in a model's context**, default 64 KiB
-  (~16k tokens), configurable through `EVESTACK_MCP_MAX_OUTPUT_BYTES`. Before it, the size
-  of a tool result was a property of how much history the deployment had rather than of
-  anything this server decided: `list_approvals` against a busy install measured 113,289 B
-  (~28k tokens) with no arguments at all. Results are never silently shortened — the
-  payload stays valid JSON, `_truncated` is the first key so a model reading top-down meets
-  it before the data, and `cuts` names every array and string that lost content. A
-  truncated audit log mistaken for a complete one answers "who approved this?" with
-  "nobody did".
-
-#### Fixed
-
-- The README — which is the npmjs.com page — said `list_approvals` "does not exist yet".
-  The route was added in 5c49f3a on 2026-08-05, four days before that sentence shipped
-  (920a439).
-
-### @evestack/budget@0.2.1 — unreleased
-
-#### Fixed
-
-- **The spend cap undercharged every cache write.** `costUsd()` takes five arguments —
-  `(model, input, output, cacheRead, cacheWrite)` — and `hook.ts` called it with four, so
-  `cacheWriteTokens` fell to its `= 0` default on every step and a write was billed at the
-  plain input rate (b9a00a7). eve reports the number and `pricing.ts` has always accepted
-  it; only the call site dropped it. Cache reads and writes are *parts* of `inputTokens`
-  rather than additions to it, so the miss is the gap between two rates, not a whole extra
-  charge. Measured against the shipped catalog on 1M input tokens of which 400k were cache
-  writes: `anthropic/claude-sonnet-5` charged $2.000 against a correct $2.200 (−10%);
-  `openai/gpt-5-mini` charged $0.250 against a correct $0.250 (no difference), because it
-  publishes no separate write rate and `pricing.ts` falls back to the input rate. So the
-  bug undercharges on Anthropic and is a no-op on the default provider, which is why it
-  survived. Cost is what the cap is measured against, so an Anthropic prompt-caching
-  workload passed its limit before anything tripped.
-
-  Patch rather than minor: no surface moved and nothing scripting this package sees a
-  different shape — the only behaviour change is that a cap now trips where it should
-  always have. Pinned by a source-text assertion, because the hook needs Postgres and a
-  live session to run and a four-argument call is exactly the shape that regressed.
-
-  Still not fixed: `budget_steps` has no `cache_write_tokens` column, so the count is not
-  stored per step — only its **cost** is now correct. Adding the column means a migration
-  against tables created with `CREATE TABLE IF NOT EXISTS`, which is more than this bug
-  needs.
-
-### @evestack/sandbox-opensandbox@0.4.0 — unreleased
-
-Three defects found by testing the session surface against a **stubbed** SDK, and two more
-found by reviewing those fixes before they shipped. `test/adapter.test.mjs` is what made
-any of it visible: everything in `index.ts` needs a live OpenSandbox server to run, so none
-of it could be pinned by a test until the wire was faked. Each fix below is pinned by a
-case that fails on `0.3.0`.
-
-Unlike every other entry in this file, this one carries **no commit hashes — the work is
-uncommitted in this checkout**, in `src/index.ts`, `src/translate.ts`, `README.md`,
-`test/translate.test.mjs` and a new `test/adapter.test.mjs`. Commit before publishing:
-`npm publish ./packages/sandbox-opensandbox` packs the working tree, so otherwise `0.4.0`
-on npm is a version that exists in no commit and these bullets cite nothing checkable.
-
-#### Added
-
-- **`networkPolicy` on the backend.** OpenSandbox fixes a sandbox's `defaultAction` when
-  the sandbox is created — that is why `session.setNetworkPolicy()` still rejects — so
-  creation is the only point at which a policy can be honoured, and now it is:
-  `opensandbox({ networkPolicy: "deny-all" })` or an allow-list, translated to
-  OpenSandbox's `{defaultAction, egress}` model and passed to `Sandbox.create`. Honoured
-  completely or not at all — `subnets` (its egress model has no IP/CIDR) and per-domain
-  `transform` / `forwardURL` / `match` rules **throw when the backend is constructed**
-  rather than being dropped, because a restriction that is half-applied reports success
-  with the hole still open.
-- The policy is recorded alongside the sandbox id, and `create()` refuses to reattach to a
-  sandbox created under different egress: that sandbox's rules cannot be changed to match,
-  so reattaching would run the agent under the old policy while the operator reads the new
-  one in their source. Two limits on that refusal, both of which it lacked at first and
-  both of which turned a guard into an outage — it is checked *after* the reconnect ladder
-  and only for a sandbox actually recovered (a session whose sandbox was reaped upstream
-  has nothing to diverge from, and now gets a fresh one under the new policy instead of
-  throwing on every turn for ever: reproduced against the earlier build as `create() THREW
-  ... Sandbox.create calls: 0`), and `allow-all` compares equal to no policy at all, since
-  the SDK's own schema says an empty or null policy is allow-all at startup. Writing
-  `networkPolicy: "allow-all"` down explicitly is a no-op, not something that detaches
-  every live session.
-- `test/adapter.test.mjs`, the stubbed-SDK harness described above.
-
-#### Changed
-
-- **Breaking:** `opensandbox()` now **throws on any option it does not implement**
-  (`assertKnownOptions`), where `0.3.0` accepted and ignored it. TypeScript's
-  excess-property check catches `opensandbox({ typo: 1 })` written as an object literal
-  and catches nothing else, so **an untyped JavaScript caller, a spread
-  (`opensandbox({ ...config })`), or a config loaded from JSON that was passing extra keys
-  silently will now fail at construction** — that is the compatibility break in this
-  release, and it has no other announcement. It is deliberate because of the case that
-  motivated it: verified against `0.3.0`, `opensandbox({ initialNetworkPolicy:
-  "deny-all" })` called `Sandbox.create` with `{"image":"ubuntu"}` and said nothing, and a
-  caller who asked for a locked-down network and silently got an open one has no way to
-  tell from the outside. A misspelling that looks network-related is named as such in the
-  error.
-- `setNetworkPolicy()`'s rejection message no longer says a creation-time policy "is not
-  exposed yet"; it points at `opensandbox({ networkPolicy })`.
-- The README documents the option, the kill path and the exit-code contract, and says
-  which of them are covered only by the stubbed SDK rather than by a live server.
-
-#### Fixed
-
-- **A command that never completed reported success.** `exitCodeOf` was
-  `execution.exitCode ?? (execution.error ? 1 : 0)`, so a null exit code with no error
-  object returned **0**. The SDK returns null for exactly the cases where the command did
-  *not* complete — a server-side timeout kill, an OOM-killed container, an SSE stream that
-  simply ends — so a killed command was reported to the model as a success. It now returns
-  `137` (128 + SIGKILL), the number Linux, Docker and eve's own `docker()` backend surface,
-  so a reader that only asks `exitCode !== 0` sees failure and a reader of the number sees
-  "killed". The function's own doc comment and the README both already claimed the fixed
-  behaviour. Reproduced on `0.3.0`: an execution of `{exitCode: null, error: undefined}`
-  came back from `session.run()` as `{"exitCode":0}`. Applies to `run()` and to `spawn()`.
-- **`kill()` did not kill.** It called `AbortController.abort()` and made no further
-  request to the sandbox at all — that closes *our* SSE connection, and whether execd then
-  reaps the command is a server-side detail the SDK does not promise; it ships a separate
-  termination API precisely because hanging up is not a kill. Measured against the previous
-  build with a stubbed SDK: `kill()` made zero further calls to the sandbox, and `wait()`
-  afterwards **rejected with `AbortError`** rather than reporting a terminated process. A
-  spawned command is now wrapped to record its pid, and `kill()` runs a second command
-  inside the sandbox that SIGKILLs that pid and every descendant, using the same
-  `/proc`-walking script as eve's `docker()` backend. `wait()` after a successful `kill()`
-  now **resolves** with `137`; a `kill()` whose request never reached the sandbox throws,
-  rather than reporting a termination that may not have happened. Not the SDK's own
-  `commands.interrupt()`: it is `DELETE /command?id=<sessionId>` against a bash session
-  this backend does not use, and a termination call aimed at the wrong id is a kill that
-  silently does nothing.
-- The kill's intent is recorded **before** the round trip, not after. The server kills the
-  process before it answers, so the spawned command's stream dies while `kill()` is still
-  awaiting the response — written the other way round, which is how it was first written, a
-  kill that worked perfectly took the "the stream broke unexpectedly" path: `wait()`
-  rejected and both byte sinks errored under any reader, the exact opposite of the README's
-  claim. A count rather than a flag, so two concurrent kills cannot undo each other.
-- **Network-policy options were accepted and never reached the sandbox.** There was no
-  correctly-spelled option to pass one with, and anything that looked like one was dropped
-  in silence — see `networkPolicy` and `assertKnownOptions` above. This is the one class of
-  failure a caller cannot detect from outside the sandbox, which is why both halves of the
-  fix refuse rather than degrade.
-
-### Changed but not yet versioned
-
-- **`@evestack/dashboard`** — three changes have landed since the `0.2.0` image was built,
-  and `packages/dashboard/package.json` still says `0.2.0`. The image tag and the source
-  tree therefore name the same version and no longer contain the same thing; bump before
-  the next `docker` release.
-  - **Security:** `safeNextPath` rejected the `//` and `/\` prefixes, but the WHATWG URL
-    parser strips tab, LF and CR *before* parsing, so the string the browser resolves is
-    not the string that was validated. `/signin?next=/%09/evil.example` sent the operator
-    off-site immediately after they typed the deployment password. Measured against
-    Node's own implementation for all three characters (b9a00a7).
-  - **Fixed:** "Most expensive sessions" on `/costs` was empty on every install since it
-    shipped. `session_id` is `groupable: false` in the catalog, `compileMetricQuery`
-    threw, and `ranked()`'s caller caught everything and returned `[]`, so a broken panel
-    rendered as "Nothing to rank" — indistinguishable from a quiet month. The query now
-    takes an explicit `topN: true`, and `MetricQueryError` is re-thrown rather than
-    swallowed (38076ca).
-  - **Fixed:** the wedged-turns alert hardcoded 15 minutes while `facts.sql`,
-    `lib/fleet.ts` and the `wedged` outcome all use `STUCK_TURN_MS` = 1 hour, so it
-    counted turns the fleet banner called healthy and linked to a shorter list than the
-    number it reported (b9a00a7).
-  - **Added:** `/api/health` reports the dashboard's own `version`, on every branch
-    including the failures. Nothing could previously ask a *running* dashboard what it
-    was — `evestack verify` printed the same line against the current image and against
-    the four-day-old one — which is the whole reason the `0.1.0` image went 51 commits
-    stale unnoticed (f76a0d1).
-- **`contract/`** — 1b63559 and 06274c4 repaired a probe that was writing rows eve's
-  `WorkflowRunSchema` rejects, which bricked a development database for four days.
-  Ships in no published artifact; recorded here because the *symptom* reached users as
-  "the database that would not boot", and docs/troubleshooting.mdx carries the repair.
-
----
-
-## `create-evestack`
-
-The `npm create` entry point. Carries `templates/default` inside it, so a change to the
-template ships as a change to this package.
 
 ### create-evestack@0.8.0 — 2026-08-09
 
@@ -364,8 +179,12 @@ template ships as a change to this package.
 
 ### create-evestack@0.5.0 — 2026-08-05
 
-Tagged `create-evestack@0.5.0`. A GitHub release was drafted for this version and never
-published; its body is the longest-form account of what changed here.
+Tagged `create-evestack@0.5.0`, and the [GitHub release][r050] carries the longest-form
+account of what changed here. It sat as an unpublished draft from 2026-08-06 until it was
+published on 2026-08-09 — visible to nobody but the maintainer for three days, which
+RELEASING.md calls the worst of the three states a release can be in.
+
+[r050]: https://github.com/SammyTourani/evestack/releases/tag/create-evestack%400.5.0
 
 #### Security
 
@@ -467,6 +286,23 @@ not correspond to any commit in this repository. Do not install it.
 The CLI — `create`, `attach`, `doctor`, `status`, `tour`, `verify`. Depends on
 `create-evestack`, so it publishes last.
 
+### evestack@0.4.0 — 2026-08-09
+
+#### Changed
+
+- `evestack tour` no longer treats silence as consent. Off a TTY it exits 3 instead of
+  sending a billable model call (920a439). This is a **behaviour change for anything
+  scripting it**, which is why the bump is minor rather than patch.
+
+#### Fixed
+
+- The four output defects the `0.3.0` redesign left behind — the stderr colour fix and
+  two `--json` defects among them — and `evestack status` against a scheme-less dashboard
+  URL (920a439).
+- The npm README advertised three of seven commands — it predated the redesign that
+  added `status` and `tour`, so the two commands that redesign was built around were
+  invisible on the page most people land on first (920a439).
+
 ### evestack@0.3.0 — 2026-08-09
 
 > **Upgrade note.** This version predates the `tour` consent gate: off a TTY,
@@ -508,6 +344,31 @@ until `0.1.0` landed.
 The MCP server. Standalone — nothing else published names it, so it can go out at any
 point in the release order.
 
+### @evestack/mcp@0.3.0 — 2026-08-09
+
+Cut as a minor, not the patch this was first queued as. It was a patch while the change
+was README-only; the output cap below is a new feature with a new environment variable and
+a behavioural change to every tool result, and shipping that as `0.2.1` would tell every
+consumer's version range it was safe to take without reading anything.
+
+#### Added
+
+- **A cap on how much one tool result can put in a model's context**, default 64 KiB
+  (~16k tokens), configurable through `EVESTACK_MCP_MAX_OUTPUT_BYTES`. Before it, the size
+  of a tool result was a property of how much history the deployment had rather than of
+  anything this server decided: `list_approvals` against a busy install measured 113,289 B
+  (~28k tokens) with no arguments at all. Results are never silently shortened — the
+  payload stays valid JSON, `_truncated` is the first key so a model reading top-down meets
+  it before the data, and `cuts` names every array and string that lost content. A
+  truncated audit log mistaken for a complete one answers "who approved this?" with
+  "nobody did".
+
+#### Fixed
+
+- The README — which is the npmjs.com page — said `list_approvals` "does not exist yet".
+  The route was added in 5c49f3a on 2026-08-05, four days before that sentence shipped
+  (920a439).
+
 ### @evestack/mcp@0.2.0 — 2026-08-06
 
 #### Added
@@ -533,6 +394,34 @@ First release (51d2b85), alongside the fix to the trace tier that had never work
 
 Spend caps. A **template dependency** — it must exist on npm before `create-evestack`
 does.
+
+### @evestack/budget@0.2.1 — 2026-08-09
+
+#### Fixed
+
+- **The spend cap undercharged every cache write.** `costUsd()` takes five arguments —
+  `(model, input, output, cacheRead, cacheWrite)` — and `hook.ts` called it with four, so
+  `cacheWriteTokens` fell to its `= 0` default on every step and a write was billed at the
+  plain input rate (b9a00a7). eve reports the number and `pricing.ts` has always accepted
+  it; only the call site dropped it. Cache reads and writes are *parts* of `inputTokens`
+  rather than additions to it, so the miss is the gap between two rates, not a whole extra
+  charge. Measured against the shipped catalog on 1M input tokens of which 400k were cache
+  writes: `anthropic/claude-sonnet-5` charged $2.000 against a correct $2.200 (−10%);
+  `openai/gpt-5-mini` charged $0.250 against a correct $0.250 (no difference), because it
+  publishes no separate write rate and `pricing.ts` falls back to the input rate. So the
+  bug undercharges on Anthropic and is a no-op on the default provider, which is why it
+  survived. Cost is what the cap is measured against, so an Anthropic prompt-caching
+  workload passed its limit before anything tripped.
+
+  Patch rather than minor: no surface moved and nothing scripting this package sees a
+  different shape — the only behaviour change is that a cap now trips where it should
+  always have. Pinned by a source-text assertion, because the hook needs Postgres and a
+  live session to run and a four-argument call is exactly the shape that regressed.
+
+  Still not fixed: `budget_steps` has no `cache_write_tokens` column, so the count is not
+  stored per step — only its **cost** is now correct. Adding the column means a migration
+  against tables created with `CREATE TABLE IF NOT EXISTS`, which is more than this bug
+  needs.
 
 ### @evestack/budget@0.2.0 — 2026-08-06
 
@@ -635,6 +524,102 @@ First release, out of the work that added schedules, skills, fleet health and at
 
 The OpenSandbox backend adapter. Standalone.
 
+### @evestack/sandbox-opensandbox@0.4.0 — 2026-08-09
+
+Three defects found by testing the session surface against a **stubbed** SDK, and two more
+found by reviewing those fixes before they shipped. `test/adapter.test.mjs` is what made
+any of it visible: everything in `index.ts` needs a live OpenSandbox server to run, so none
+of it could be pinned by a test until the wire was faked. Each fix below is pinned by a
+case that fails on `0.3.0`.
+
+Unlike every other entry in this file, this one carries **no commit hashes — the work is
+uncommitted in this checkout**, in `src/index.ts`, `src/translate.ts`, `README.md`,
+`test/translate.test.mjs` and a new `test/adapter.test.mjs`. Commit before publishing:
+`npm publish ./packages/sandbox-opensandbox` packs the working tree, so otherwise `0.4.0`
+on npm is a version that exists in no commit and these bullets cite nothing checkable.
+
+#### Added
+
+- **`networkPolicy` on the backend.** OpenSandbox fixes a sandbox's `defaultAction` when
+  the sandbox is created — that is why `session.setNetworkPolicy()` still rejects — so
+  creation is the only point at which a policy can be honoured, and now it is:
+  `opensandbox({ networkPolicy: "deny-all" })` or an allow-list, translated to
+  OpenSandbox's `{defaultAction, egress}` model and passed to `Sandbox.create`. Honoured
+  completely or not at all — `subnets` (its egress model has no IP/CIDR) and per-domain
+  `transform` / `forwardURL` / `match` rules **throw when the backend is constructed**
+  rather than being dropped, because a restriction that is half-applied reports success
+  with the hole still open.
+- The policy is recorded alongside the sandbox id, and `create()` refuses to reattach to a
+  sandbox created under different egress: that sandbox's rules cannot be changed to match,
+  so reattaching would run the agent under the old policy while the operator reads the new
+  one in their source. Two limits on that refusal, both of which it lacked at first and
+  both of which turned a guard into an outage — it is checked *after* the reconnect ladder
+  and only for a sandbox actually recovered (a session whose sandbox was reaped upstream
+  has nothing to diverge from, and now gets a fresh one under the new policy instead of
+  throwing on every turn for ever: reproduced against the earlier build as `create() THREW
+  ... Sandbox.create calls: 0`), and `allow-all` compares equal to no policy at all, since
+  the SDK's own schema says an empty or null policy is allow-all at startup. Writing
+  `networkPolicy: "allow-all"` down explicitly is a no-op, not something that detaches
+  every live session.
+- `test/adapter.test.mjs`, the stubbed-SDK harness described above.
+
+#### Changed
+
+- **Breaking:** `opensandbox()` now **throws on any option it does not implement**
+  (`assertKnownOptions`), where `0.3.0` accepted and ignored it. TypeScript's
+  excess-property check catches `opensandbox({ typo: 1 })` written as an object literal
+  and catches nothing else, so **an untyped JavaScript caller, a spread
+  (`opensandbox({ ...config })`), or a config loaded from JSON that was passing extra keys
+  silently will now fail at construction** — that is the compatibility break in this
+  release, and it has no other announcement. It is deliberate because of the case that
+  motivated it: verified against `0.3.0`, `opensandbox({ initialNetworkPolicy:
+  "deny-all" })` called `Sandbox.create` with `{"image":"ubuntu"}` and said nothing, and a
+  caller who asked for a locked-down network and silently got an open one has no way to
+  tell from the outside. A misspelling that looks network-related is named as such in the
+  error.
+- `setNetworkPolicy()`'s rejection message no longer says a creation-time policy "is not
+  exposed yet"; it points at `opensandbox({ networkPolicy })`.
+- The README documents the option, the kill path and the exit-code contract, and says
+  which of them are covered only by the stubbed SDK rather than by a live server.
+
+#### Fixed
+
+- **A command that never completed reported success.** `exitCodeOf` was
+  `execution.exitCode ?? (execution.error ? 1 : 0)`, so a null exit code with no error
+  object returned **0**. The SDK returns null for exactly the cases where the command did
+  *not* complete — a server-side timeout kill, an OOM-killed container, an SSE stream that
+  simply ends — so a killed command was reported to the model as a success. It now returns
+  `137` (128 + SIGKILL), the number Linux, Docker and eve's own `docker()` backend surface,
+  so a reader that only asks `exitCode !== 0` sees failure and a reader of the number sees
+  "killed". The function's own doc comment and the README both already claimed the fixed
+  behaviour. Reproduced on `0.3.0`: an execution of `{exitCode: null, error: undefined}`
+  came back from `session.run()` as `{"exitCode":0}`. Applies to `run()` and to `spawn()`.
+- **`kill()` did not kill.** It called `AbortController.abort()` and made no further
+  request to the sandbox at all — that closes *our* SSE connection, and whether execd then
+  reaps the command is a server-side detail the SDK does not promise; it ships a separate
+  termination API precisely because hanging up is not a kill. Measured against the previous
+  build with a stubbed SDK: `kill()` made zero further calls to the sandbox, and `wait()`
+  afterwards **rejected with `AbortError`** rather than reporting a terminated process. A
+  spawned command is now wrapped to record its pid, and `kill()` runs a second command
+  inside the sandbox that SIGKILLs that pid and every descendant, using the same
+  `/proc`-walking script as eve's `docker()` backend. `wait()` after a successful `kill()`
+  now **resolves** with `137`; a `kill()` whose request never reached the sandbox throws,
+  rather than reporting a termination that may not have happened. Not the SDK's own
+  `commands.interrupt()`: it is `DELETE /command?id=<sessionId>` against a bash session
+  this backend does not use, and a termination call aimed at the wrong id is a kill that
+  silently does nothing.
+- The kill's intent is recorded **before** the round trip, not after. The server kills the
+  process before it answers, so the spawned command's stream dies while `kill()` is still
+  awaiting the response — written the other way round, which is how it was first written, a
+  kill that worked perfectly took the "the stream broke unexpectedly" path: `wait()`
+  rejected and both byte sinks errored under any reader, the exact opposite of the README's
+  claim. A count rather than a flag, so two concurrent kills cannot undo each other.
+- **Network-policy options were accepted and never reached the sandbox.** There was no
+  correctly-spelled option to pass one with, and anything that looked like one was dropped
+  in silence — see `networkPolicy` and `assertKnownOptions` above. This is the one class of
+  failure a caller cannot detect from outside the sandbox, which is why both halves of the
+  fix refuse rather than degrade.
+
 ### @evestack/sandbox-opensandbox@0.3.0 — 2026-08-06
 
 > **Upgrade note.** This is what npm serves today, and three things in it are worse than
@@ -704,6 +689,79 @@ First release (952f0f9).
 `ghcr.io/sammytourani/evestack-dashboard:<version>` (`linux/amd64` and `linux/arm64`),
 built and pushed by `.github/workflows/publish-dashboard.yml` on a tag push. The version
 here is the image tag. Dates are the git tag's, not npm's.
+
+### @evestack/dashboard@0.3.0 — 2026-08-09
+
+The second release of the day, and cut for the reason the first one was: `0.2.0` shipped
+in the morning and the audit's remaining findings landed in `3d318ce` that afternoon, so
+the image tag and the source tree once again named the same version while containing
+different code. Bumping is what stops that from being a standing condition rather than an
+incident.
+
+A minor, not a patch: the schedule projection moved from the browser to the server and
+changes what the page displays, and `/api/health` grew a field.
+
+#### Security
+
+- `safeNextPath` rejected the `//` and `/\` prefixes, but the WHATWG URL parser strips
+  tab, LF and CR *before* parsing, so the string the browser resolves is not the string
+  that was validated. `/signin?next=/%09/evil.example` sent the operator off-site
+  immediately after they typed the deployment password. Measured against Node's own
+  implementation for all three characters (b9a00a7).
+
+#### Fixed
+
+- **`/costs` counted turns that never called a model as unpriced spend.** `priced` is a
+  three-state column — `TRUE` priced, `FALSE` no catalog entry, `NULL` no model call
+  (`sql/facts.sql:155`) — and `r.priced !== true` folded the last two together. The
+  warning banner then read "N turns ran a model with no catalog price ()" with an empty
+  parenthetical, because a turn that called no model has no model name to list. The same
+  fold was corrected in `lib/alerts.ts`, where it produced a spurious `firing` alert.
+- **"Most expensive sessions" on `/costs` was empty on every install since it shipped.**
+  `session_id` is `groupable: false` in the catalog, `compileMetricQuery` threw, and
+  `ranked()`'s caller caught everything and returned `[]`, so a broken panel rendered as
+  "Nothing to rank" — indistinguishable from a quiet month. The query now takes an
+  explicit `topN: true`, and `MetricQueryError` is re-thrown rather than swallowed
+  (38076ca).
+- **`/schedules` computed the next fire in the reader's browser timezone.** The number is
+  now projected server-side, and the agent's zone is derived from the fires that schedule
+  actually recorded rather than assumed — so two people in different places are shown the
+  same instant, and it is the instant the runner will use.
+- **`/schedules` projected a daylight-saving fall-back a full day early, and marked it
+  confident.** Standing on 01:30 EDT the page offered the 01:30 EST repeat an hour later;
+  the runner fires the next day, because Vixie does not re-run a reading the clock
+  repeats. `pinned: true` suppresses the UI's hedge, so it was drawn as a firm answer.
+  Verified against `@evestack/schedules`' own `nextFire()` rather than against a
+  description of it, and pinned by a differential test over both transitions.
+- **A schedule named `__proto__` lost its next fire silently.** `nextFires[name] = value`
+  on a plain object sets the prototype instead of creating a property when the key is
+  `__proto__`, and the name is chosen by the operator. Built with `Object.fromEntries`
+  now, which creates an ordinary own key.
+- **The wedged-turns alert used a 15-minute threshold** while `facts.sql`, `lib/fleet.ts`
+  and the `wedged` outcome all use `STUCK_TURN_MS` = 1 hour, so it counted turns the fleet
+  banner called healthy and linked to a shorter list than the number it reported
+  (b9a00a7). Its `threshold` field, rendered as "healthy: …", separately asserted "none
+  stalled" whatever the count was; it now states the condition it actually tests.
+- **`/memory` capped at 200 rows without saying so.** The total was already shown; what
+  was missing was any marker that the list itself had ended early.
+- **Several claims about what an unconfigured dashboard serves were wrong**, in
+  `lib/auth.ts`, `proxy.ts`, `app/api/health/route.ts`, the README and `.env.example`.
+  It does not answer 503 on every route: `PUBLIC_PATHS` holds three paths and `proxy.ts`
+  gates the tier on method, so four path/method combinations get through — `GET /signin`
+  renders the misconfiguration with no form on it, the two `/api/auth` routes are
+  POST-only and answer a bare 405, and `GET /api/health` reaches its own handler, which
+  returns `503 {"status":"unconfigured"}`.
+
+#### Added
+
+- **`/api/health` reports the dashboard's own `version`**, on every branch including the
+  failures. Nothing could previously ask a *running* dashboard what it was — `evestack
+  verify` printed the same line against the current image and against the four-day-old
+  one — which is the whole reason the `0.1.0` image went 51 commits stale unnoticed
+  (f76a0d1).
+- Tests for two surfaces that decided something consequential and had none: `evaluateAlerts`
+  (every `DeliveryStatus` branch, the threshold boundary, empty versus stale facts) and the
+  approvals decision path.
 
 ### @evestack/dashboard@0.2.0 — 2026-08-09
 
