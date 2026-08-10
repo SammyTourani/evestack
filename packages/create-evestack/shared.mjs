@@ -37,7 +37,7 @@ export const REPO = "https://github.com/SammyTourani/evestack";
  * steps and from the generated compose header. Printing a pull command that
  * 404s, with nothing saying so, is worse than the clone-and-build it replaced.
  */
-export const DASHBOARD_IMAGE_TAG = "0.2.0";
+export const DASHBOARD_IMAGE_TAG = "0.3.0";
 export const DASHBOARD_IMAGE = `ghcr.io/sammytourani/evestack-dashboard:${DASHBOARD_IMAGE_TAG}`;
 /*
  * `DASHBOARD_IMAGE_PUBLISHED` lived here and is gone.
