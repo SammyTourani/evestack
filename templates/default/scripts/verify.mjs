@@ -380,7 +380,7 @@ if (health.ok && health.body?.ok) {
   if (running === null) {
     warn(
       "dashboard image",
-      `${dashboardUrl} reports no version, so it predates this check — it is at least as old as 0.2.0`,
+      `${dashboardUrl} reports no version, so it is older than 0.3.0 — the release that added the field`,
       "docker compose --profile dashboard pull && docker compose --profile dashboard up -d",
     );
   } else if (pinned !== null && running !== pinned) {

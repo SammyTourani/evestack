@@ -77,6 +77,28 @@ condition every check in RELEASING.md reports as green.
 The `npm create` entry point. Carries `templates/default` inside it, so a change to the
 template ships as a change to this package.
 
+### create-evestack@0.9.1 — 2026-08-09
+
+#### Changed
+
+- The scaffolded compose file pins `ghcr.io/sammytourani/evestack-dashboard:0.3.0`, up
+  from `:0.2.0`. `:0.2.0` is not withdrawn and stays pullable.
+
+#### Fixed
+
+- `npm run verify` told an operator whose dashboard reports no version that it was "at
+  least as old as 0.2.0". The `version` field on `/api/health` was added in `3d318ce`,
+  which shipped in the **0.3.0** image — so an image without it is older than 0.3.0, and
+  0.2.0 was the newest release that could still be missing the field rather than the
+  oldest. Off by one release, in the direction that made a stale image sound newer.
+
+> **Why this exists at all.** `0.9.0` was published an hour before the dashboard was cut
+> at `0.3.0`, so it pins `:0.2.0` — correct when published, stale within the hour.
+> `publish-dashboard.yml`'s version job caught it and refused to build: "Every scaffolded
+> project would pull a tag this release does not publish." The gate stopped the release
+> rather than shipping a mismatch, which is the whole reason it counts written-out tags
+> instead of trusting one.
+
 ### create-evestack@0.9.0 — 2026-08-09
 
 #### Added
