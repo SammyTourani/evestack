@@ -179,3 +179,208 @@ test("off a TTY the tour refuses to send rather than assuming yes", async () => 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+/* -------------------------------------------------------------------------- */
+/* what it costs                                                              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A server that answers nothing and counts what it was asked for.
+ *
+ * The tests below assert an absence, and an absence is the easiest thing in
+ * the world to assert vacuously: a tour pointed at a port nobody is listening
+ * on also sends no billable turn. So the port is real, something is listening,
+ * and the count is read out of it.
+ */
+async function withCountingAgent(run, { answerHealth = false } = {}) {
+  const seen = { health: 0, sessions: 0, streams: 0, paths: [] };
+  const server = createServer((req, res) => {
+    seen.paths.push(`${req.method} ${req.url}`);
+    if (req.url === "/eve/v1/health") {
+      seen.health += 1;
+      if (!answerHealth) return void res.writeHead(503).end();
+      res.writeHead(200, { "content-type": "application/json" });
+      return void res.end(JSON.stringify({ ok: true, status: "ready" }));
+    }
+    if (req.method === "POST" && req.url === "/eve/v1/session") {
+      seen.sessions += 1;
+      res.writeHead(202, { "content-type": "application/json" });
+      return void res.end(JSON.stringify({ ok: true, sessionId: "sess_billed" }));
+    }
+    if (req.url?.includes("/stream")) seen.streams += 1;
+    res.writeHead(404).end();
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  try {
+    return await run(port, seen);
+  } finally {
+    server.close();
+  }
+}
+
+
+/**
+ * The tour prints its report through create-evestack/ui, which writes to the
+ * real process.stdout rather than to the injected stream. The injected one
+ * carries only the usage text and the refusal. Both are worth reading, so this
+ * captures the real one too; a test that asserted on the sink alone would be
+ * asserting on an empty string and passing for the wrong reason.
+ */
+async function captureStdout(run) {
+  const original = process.stdout.write.bind(process.stdout);
+  let text = "";
+  process.stdout.write = (chunk, ...rest) => {
+    text += chunk;
+    void rest;
+    return true;
+  };
+  try {
+    await run();
+  } finally {
+    process.stdout.write = original;
+  }
+  return text;
+}
+
+/** A project directory pointed at `port`, plus the chdir/TTY dance. */
+async function inProject(port, { stdinTty, extraEnv = "" }, run) {
+  const dir = mkdtempSync(join(tmpdir(), "evestack-tour-"));
+  writeFileSync(join(dir, ".env.local"), `EVESTACK_AGENT_PORT=${port}\n${extraEnv}`);
+  const cwd = process.cwd();
+  const stdin = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+  const stdout = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+  Object.defineProperty(process.stdin, "isTTY", { value: stdinTty, configurable: true });
+  // Never a TTY on stdout in a test: it makes --no-open default on, so nothing
+  // below can launch a browser on the machine running the suite.
+  Object.defineProperty(process.stdout, "isTTY", { value: false, configurable: true });
+  try {
+    process.chdir(dir);
+    return await run(dir);
+  } finally {
+    process.chdir(cwd);
+    if (stdin) Object.defineProperty(process.stdin, "isTTY", stdin);
+    if (stdout) Object.defineProperty(process.stdout, "isTTY", stdout);
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * The regression this file exists for.
+ *
+ * 920a439 is titled "tour billed without asking". Exit 3 is already covered
+ * above, and exit 3 is the symptom rather than the harm: what actually went
+ * wrong is that a provider got called. So this one asserts the harm directly,
+ * against a listening agent that would have answered 202 to a session POST.
+ */
+test("off a TTY the tour reaches no provider at all, not merely exits 3", async () => {
+  await withCountingAgent(async (port, seen) => {
+    await inProject(port, { stdinTty: false }, async () => {
+      const code = await tour([], { stdout: sink(), stderr: sink() });
+      assert.equal(code, 3);
+    });
+    assert.equal(seen.sessions, 0, "no session was started, so no turn was billed");
+    assert.equal(seen.streams, 0, "and nothing streamed a reply back");
+    // Stronger than the two above together: the consent gate is ahead of the
+    // stack check, so a refused tour does not even look at the agent. If a
+    // future refactor moves the gate after probeAll this goes red, which is
+    // the warning worth having.
+    assert.deepEqual(seen.paths, [], `the tour called the agent: ${seen.paths.join(", ")}`);
+  });
+});
+
+test("--yes is consent to spend, but a stack that is down still stops first", async () => {
+  await withCountingAgent(
+    async (port, seen) => {
+      await inProject(port, { stdinTty: false }, async () => {
+        let code;
+        const printed = await captureStdout(async () => {
+          code = await tour(["--yes"], { stdout: sink(), stderr: sink() });
+        });
+        assert.equal(code, 1, "a down stack is exit 1, not a refusal and not a success");
+        assert.match(printed, /agent/i, "and it says which part is not answering");
+        assert.match(printed, /not answering/i, "in words, not as a status code");
+      });
+      assert.equal(
+        seen.sessions,
+        0,
+        "--yes authorises one message, it does not authorise sending it into a broken stack",
+      );
+      assert.ok(seen.health > 0, "the stack check really ran, so this is not vacuous");
+    },
+    { answerHealth: false },
+  );
+});
+
+test("-y is accepted as consent, so the documented short flag is real", async () => {
+  await withCountingAgent(async (port) => {
+    await inProject(port, { stdinTty: false }, async () => {
+      const code = await tour(["-y"], { stdout: sink(), stderr: sink() });
+      // Not 3. Exit 3 here would mean the short form documented in TOUR_USAGE
+      // does not grant consent, so a caller following the help text gets a
+      // refusal and no explanation.
+      assert.notEqual(code, 3, "-y must grant consent exactly as --yes does");
+    });
+  });
+});
+
+test("--help states the cost before anything happens, and calls nothing", async () => {
+  const { TOUR_USAGE } = await import("../src/tour.mjs");
+  await withCountingAgent(async (port, seen) => {
+    await inProject(port, { stdinTty: false }, async () => {
+      const stdout = sink();
+      const code = await tour(["--help"], { stdout, stderr: sink() });
+      assert.equal(code, 0);
+      assert.equal(stdout.text, TOUR_USAGE, "--help prints the usage and nothing else");
+    });
+    assert.deepEqual(seen.paths, [], "--help is not a dry run of the tour, it is text");
+  });
+
+  // The claim under test is not that a flag exists. It is that someone reading
+  // the help learns it will spend money BEFORE they run it.
+  assert.match(TOUR_USAGE, /real model call/i, "the help must say a real model call happens");
+  assert.match(TOUR_USAGE, /asks before sending/i, "and that consent is asked for");
+  assert.match(TOUR_USAGE, /--yes/, "and name the flag that skips the question");
+  assert.match(TOUR_USAGE, /exits 3|exit 3|  3  /i, "and document the refusal code");
+});
+
+/**
+ * The other half of the claim: the tour is supposed to teach the product, not
+ * just prove the stack is up. If it stops naming the four things that make
+ * evestack worth running over plain eve, it has become a health check with a
+ * model call attached, which is strictly worse than a health check.
+ */
+test("the tour teaches the product it is a tour of", async () => {
+  const { TOUR_USAGE } = await import("../src/tour.mjs");
+  assert.match(TOUR_USAGE, /dashboard/i, "the dashboard is the thing plain eve does not have");
+  assert.match(TOUR_USAGE, /four steps/i, "and the shape is stated up front");
+
+  await withCountingAgent(async (port) => {
+    await inProject(port, { stdinTty: false }, async () => {
+      const printed = await captureStdout(async () => {
+        await tour(["--yes"], { stdout: sink(), stderr: sink() });
+      });
+      // Printed before the stack check, so a down stack still shows the plan.
+      for (const word of ["the stack", "a turn", "where it went", "what is next"]) {
+        assert.match(printed, new RegExp(word, "i"), `step "${word}" is missing`);
+      }
+    });
+  });
+});
+
+test("outside a project it exits 2 without touching an agent", async () => {
+  await withCountingAgent(async (port, seen) => {
+    const dir = mkdtempSync(join(tmpdir(), "evestack-not-a-project-"));
+    const cwd = process.cwd();
+    try {
+      process.chdir(dir);
+      const code = await tour(["--yes"], { stdout: sink(), stderr: sink() });
+      assert.equal(code, 2, "not an evestack project is its own exit code");
+    } finally {
+      process.chdir(cwd);
+      rmSync(dir, { recursive: true, force: true });
+    }
+    assert.deepEqual(seen.paths, [], `nothing should have been called: ${seen.paths.join(", ")}`);
+    void port;
+  });
+});
