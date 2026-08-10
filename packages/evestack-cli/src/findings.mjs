@@ -27,14 +27,33 @@ export const INFO = "info";
  */
 export const JANITOR_THRESHOLD_MS = 4 * 60 * 60 * 1000;
 
-const finding = (id, severity, title, action, evidence = [], detail = []) => ({
+/**
+ * `blind` marks a finding that exists because a CHECK COULD NOT RUN, as opposed
+ * to one that found something.
+ *
+ * It is a separate axis from severity on purpose. "The agent was unreachable so
+ * no session could be classified" is a WARNING — it is not itself costing
+ * anybody a run — and severity is all the verdict and the exit code ever read.
+ * So a run in which nothing could be examined printed "Nothing is currently
+ * costing you a run." and exited 0, which is a clean bill of health issued by a
+ * tool that did not look. Raising those findings to CRITICAL would be the wrong
+ * fix: they are not faults, and paging on them would teach people to ignore
+ * CRITICAL. Naming the incompleteness separately is the right one.
+ */
+const finding = (id, severity, title, action, evidence = [], detail = [], blind = false) => ({
   id,
   severity,
   title,
   action,
   evidence,
   detail,
+  blind,
 });
+
+/** Findings that exist because something could not be examined. */
+export function blindSpots(findings) {
+  return findings.filter((f) => f.blind === true);
+}
 
 /** A run that eve still expects to make progress. */
 const RUNNABLE = new Set(["pending", "running"]);
@@ -74,6 +93,17 @@ export function buildFindings(input) {
     ratio = null,
     runs = new Map(),
     sessions = null,
+    /**
+     * The probe budget this run used, or null when the caller did not say.
+     *
+     * Read rather than inferred from `sessions === null`, because those are two
+     * different facts and only the caller can tell them apart: a null
+     * `sessions` means the sweep did not happen, and `--probes=0` is the one
+     * reason for that which the operator chose. Inferring it made every caller
+     * that simply does not pass `sessions` — every unit test, for one — raise a
+     * finding about a flag nobody set.
+     */
+    probeLimit = null,
     limit,
   } = input;
 
@@ -321,7 +351,10 @@ export function buildFindings(input) {
       );
     }
 
-    if (!sessions.agentReachable) {
+    // `=== false`, not falsy. `null` is "no session needed classifying, so the
+    // agent was never contacted" (doctor.mjs), and treating that as unreachable
+    // would raise a finding about nothing on every healthy install.
+    if (sessions.agentReachable === false) {
       findings.push(
         finding(
           "sessions-unclassified",
@@ -340,6 +373,65 @@ export function buildFindings(input) {
             "and reported 22 healthy sessions as wedged. Reason unreachable: " +
               (sessions.agentError?.message ?? "unknown"),
           ],
+          true,
+        ),
+      );
+    }
+
+    /*
+     * The agent ANSWERED and did not recognise the session.
+     *
+     * `inspectSessions` has a genuine fifth health value for this — `unknown`,
+     * "the agent does not know this session id" — and nothing read it. Only
+     * `wedged` raised a finding, so a sweep in which every session 404'd
+     * produced no finding at any severity, "Nothing to act on." and exit 0.
+     * That is the module header's own rule broken from the other side: the
+     * classification exists, it is honest, and it was thrown away.
+     *
+     * A WARNING and a blind spot rather than a fault: the session may be
+     * perfectly fine and simply older than the agent process. What is not fine
+     * is a report that does not mention it.
+     */
+    const unrecognised = sessions.entries.filter((e) => e.health === "unknown");
+    if (unrecognised.length > 0) {
+      findings.push(
+        finding(
+          "sessions-unrecognised",
+          WARNING,
+          `${unrecognised.length} session${unrecognised.length === 1 ? "" : "s"} could not be classified: the agent answered and does not know ${unrecognised.length === 1 ? "it" : "them"}`,
+          "Check that --agent-url points at the agent that owns these sessions, and re-run — an agent restarted onto fresh storage, or a different project on the same port, answers exactly like this.",
+          unrecognised.slice(0, 10).map((e) => ({
+            session: e.sessionId,
+            title: e.title ?? "-",
+            idle: duration(e.idleMs),
+            reason: firstLine(e.reason ?? "-"),
+          })),
+          [],
+          true,
+        ),
+      );
+    }
+
+    /*
+     * Candidates past the quiet gate that the probe budget never reached.
+     *
+     * `quietSessions` has always computed this and `diagnose` has always stored
+     * it, and it was rendered nowhere in the text report — grep found it in
+     * exactly two files, neither of which prints. With 100 quiet sessions and
+     * the default --probes=25, seventy-five were never examined and the report
+     * said so nowhere, then closed with "Nothing is currently costing you a
+     * run." This is the CLI's version of /api/fleet's `checked: 0`.
+     */
+    if (sessions.unchecked > 0) {
+      findings.push(
+        finding(
+          "sessions-unchecked",
+          INFO,
+          `${sessions.unchecked} further quiet session${sessions.unchecked === 1 ? " was" : "s were"} not examined — the probe budget ran out`,
+          `Re-run with --probes=${Math.min(100, sessions.unchecked + sessions.probed)} to cover them; each probe is one HTTP round trip to the agent, which is why there is a bound at all.`,
+          [],
+          [],
+          true,
         ),
       );
     }
@@ -356,6 +448,46 @@ export function buildFindings(input) {
         WARNING,
         "graphile's `is_available` column is missing, so availability was computed rather than read",
         "Check the graphile-worker version before trusting any availability number in this report: the definition used here — (locked_at is null and attempts < max_attempts) — is copied from migration 000011 and may no longer match.",
+        [],
+        [],
+        true,
+      ),
+    );
+  }
+
+  /*
+   * The two whole sections that silently do not run.
+   *
+   * `diagnose` guards the stranded-run query and the session sweep on
+   * `pre.hasWorkflowRuns` and on `--probes > 0`, and when either is false those
+   * fields stay at their initial `[]` / `null`. The findings section then says
+   * "No run is stranded behind a job that cannot be claimed" and the verdict
+   * says "Nothing is currently costing you a run" — two affirmative claims
+   * about queries that were never issued. The header carries an aside about it;
+   * the two sections a reader acts on did not.
+   */
+  if (!pre.hasWorkflowRuns) {
+    findings.push(
+      finding(
+        "runs-not-assessed",
+        WARNING,
+        "no workflow_runs table was found, so no run was checked for being stranded",
+        "Pass --workflow=<schema> if eve's tables live elsewhere; without them this report describes the job queue only, and a run stranded behind a dead job cannot be seen from the queue alone.",
+        [],
+        [],
+        true,
+      ),
+    );
+  } else if (probeLimit === 0) {
+    findings.push(
+      finding(
+        "sessions-not-probed",
+        INFO,
+        "session health was not assessed — the probe budget is zero",
+        "Re-run without --probes=0 to classify quiet sessions; idle, awaiting-human and wedged are indistinguishable in the workflow tables, so SQL alone cannot tell you whether anything is stuck.",
+        [],
+        [],
+        true,
       ),
     );
   }

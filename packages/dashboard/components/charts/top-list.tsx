@@ -52,6 +52,14 @@ export interface TopListProps {
   /** How many rows to draw. The rest are counted in a note. */
   readonly limit?: number;
   readonly defaultSort?: RankKey;
+  /**
+   * Set when the ranking query FAILED rather than returning nothing.
+   *
+   * "Nothing to rank in this range" is the sentence a quiet window earns, and
+   * `ranked()` used to hand it to every runtime failure as well — so a list
+   * that could not be read looked exactly like a list with nothing in it.
+   */
+  readonly unreadable?: string | null;
 }
 
 export function TopList(props: TopListProps) {
@@ -94,7 +102,12 @@ export function TopList(props: TopListProps) {
         ) : null}
       </div>
 
-      {shown.length === 0 ? (
+      {props.unreadable != null ? (
+        <p className="flex min-h-24 items-center justify-center rounded-md border border-dashed border-border px-4 text-center text-small text-text-dim">
+          This ranking could not be read: {props.unreadable}. Nothing here says the range was
+          quiet.
+        </p>
+      ) : shown.length === 0 ? (
         <p className="flex min-h-24 items-center justify-center rounded-md border border-dashed border-border text-small text-text-dim">
           Nothing to rank in this range.
         </p>

@@ -76,6 +76,11 @@ const CONCERN_TEXT: Record<SandboxConcern["kind"], { label: string; detail: stri
     detail:
       "The session this container names is not in the database. The container outlived its run row, which is how they accumulate unnoticed.",
   },
+  unreadable: {
+    label: "not examined",
+    detail:
+      "Docker did not describe this container — no network mode, no start time, or no state at all — so the isolation and long-lived checks could not be run against it. It is not being called healthy; it is being called unknown.",
+  },
 };
 
 function SandboxRow({ sandbox, flags }: { sandbox: Sandbox; flags: readonly SandboxConcern[] }) {
@@ -239,6 +244,8 @@ export default async function SandboxesPage() {
   // compute for every row.
   const ids = [...new Set(sandboxes.map((s) => s.sessionId).filter((v): v is string => v !== null))];
   let known = new Set<string>();
+  /** True when the "does this session still exist" query failed. */
+  let sessionsUnread = false;
   if (ids.length > 0) {
     try {
       const rows = await query<{ id: string }>(
@@ -250,7 +257,12 @@ export default async function SandboxesPage() {
       // The database being down must not turn every container into an orphan.
       // Leaving `known` empty would flag all of them; instead treat every named
       // session as present and lose only that one flag.
+      //
+      // But SAY that the flag was lost. Suppressing `session-gone` and then
+      // printing "Nothing needs attention." is a verdict partly derived from a
+      // query that failed, which is the defect this page was audited for.
       known = new Set(ids);
+      sessionsUnread = true;
     }
   }
 
@@ -272,10 +284,15 @@ export default async function SandboxesPage() {
           <p className="mb-4 text-small text-text-dim">
             {running} running, {sandboxes.length - running} stopped.
             {flags.length === 0
-              ? " Nothing needs attention."
+              ? sessionsUnread
+                ? " Nothing was flagged, but one of the three checks did not run — see below."
+                : " Nothing needs attention."
               : ` ${flags.length} thing${flags.length === 1 ? "" : "s"} worth a look, flagged below.`}{" "}
             A sandbox is called long-lived after {duration(ORPHAN_AFTER_MS)}, because eve keeps one
             container per session and never times one out.
+            {sessionsUnread
+              ? " The database did not answer, so no container was checked against the sessions it names — the \u201csession gone\u201d flag is missing from every row rather than absent from it."
+              : ""}
           </p>
           <div className="flex flex-col gap-3">
             {sandboxes.map((s) => (

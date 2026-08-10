@@ -100,6 +100,16 @@ export interface TimeSeriesProps {
    * is for a caller that wants to re-query at a finer grain.
    */
   readonly onViewChange?: (view: Range | null) => void;
+  /**
+   * Set when the caller's query FAILED, as opposed to returning nothing.
+   *
+   * An empty `series` is otherwise rendered as "No data in this range", which
+   * is the sentence a genuinely quiet window earns. Handing that sentence to a
+   * reader whose database refused the read is the all-clear-while-blind shape
+   * this repo has now fixed on /api/fleet, /api/health, the failure rate and
+   * the trace-ingest monitor; a chart is not exempt from it.
+   */
+  readonly unreadable?: string | null;
 }
 
 const defaultFormatX = (x: number) => stamp(new Date(x).toISOString(), "second");
@@ -264,8 +274,9 @@ export function TimeSeriesChart(props: TimeSeriesProps) {
       legend={legend}
       summary={summary}
       table={chartTable(chart, { title: props.title, xLabel, formatX })}
-      state={chart.state}
+      state={props.unreadable == null ? chart.state : "unreadable"}
       bucketCount={chart.rows.length}
+      {...(props.unreadable == null ? {} : { unreadableReason: props.unreadable })}
       actions={
         <>
           <ChartButton
