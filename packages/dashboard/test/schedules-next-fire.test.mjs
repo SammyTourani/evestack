@@ -486,3 +486,24 @@ test("the tooltip names the agent's zone whenever it differs from the reader's f
   const utc = projectNextFire("0 9 * * *", ["2026-08-08T09:00:00.000Z"], NOW);
   assert.match(describeNextFire(utc), /consistent with UTC/);
 });
+
+test("a reading past the far edge of a repeated hour still fires, in a half-hour zone", () => {
+  // The other half of the fall-back rule, and the case skipping the whole
+  // interval got wrong. St John's replays 01:00–02:00 on 2026-11-01; `0 2` sits
+  // on the far edge, so it has NOT already fired and occurs exactly once, at
+  // the new offset:
+  //
+  //   skipping the interval  2026-11-02T05:30:00Z   twenty-five hours late, PINNED
+  //   the runner             2026-11-01T05:30:00Z   02:00 NST, the same evening
+  //
+  // New York's `30 1 * * *` above is the opposite case — 01:30 is INSIDE the
+  // replayed hour — so the two together pin the rule rather than one example of
+  // it. A half-hour zone is not special here; it only made the bug legible,
+  // because a 30-minute error is harder to mistake for a rounding artefact.
+  const now = new Date("2026-10-31T20:00:00.000Z");
+  const next = projectNextFire("0 2 * * *", historyIn("America/St_Johns", "0 2 * * *", now, 500), now);
+
+  assert.equal(next.at, truthIn("America/St_Johns", "0 2 * * *", now));
+  assert.equal(next.at, "2026-11-01T05:30:00.000Z");
+  assert.notEqual(next.at, "2026-11-02T05:30:00.000Z"); // the skipped-past answer
+});

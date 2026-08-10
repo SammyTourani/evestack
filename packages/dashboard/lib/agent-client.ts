@@ -280,7 +280,23 @@ export interface CreateSessionInput {
 
 export interface CreateSessionResult {
   sessionId: string;
-  continuationToken: string;
+  /**
+   * NULL FROM eve 0.31 ONWARD, and that is not a degradation.
+   *
+   * 0.30.x minted a continuation token in the create response. 0.31.3 answers
+   * `{ok, sessionId, status}` and publishes the token on the `session.waiting`
+   * stream event instead — which is where it becomes meaningful, since a session
+   * that has not parked has nothing to continue from. Verified against a running
+   * 0.31.3: the event still carries `data.continuationToken`, unchanged.
+   *
+   * Requiring it here rejected every session created against 0.31.3 with
+   * "The agent accepted the session but returned no handles" — a 502 on the
+   * dashboard's only way to start a conversation. Contracts did not see it
+   * (they pin routes and module exports, not response bodies) and neither did
+   * typecheck (this is JSON parsed at runtime). Only seam/chat-stream and
+   * seam/chat-mutations, driving a live agent, did.
+   */
+  continuationToken: string | null;
 }
 
 export async function createSession(input: CreateSessionInput): Promise<CreateSessionResult> {
@@ -294,12 +310,18 @@ export async function createSession(input: CreateSessionInput): Promise<CreateSe
     ...(input.signal ? { signal: input.signal } : {}),
   });
 
-  if (!result.sessionId || !result.continuationToken) {
-    throw new AgentError("invalid_response", "The agent accepted the session but returned no handles.", {
+  // The SESSION ID is the handle. The token is not required, and demanding it
+  // is what broke against 0.31.3 — see CreateSessionResult above. Every caller
+  // that needs a token already resolves one from the durable stream: the
+  // follow-up route does it whenever `continuationToken` is omitted, and the
+  // fork route polls `getSessionSnapshot` for a token that is not the one it
+  // already spent. Neither has ever depended on this field.
+  if (!result.sessionId) {
+    throw new AgentError("invalid_response", "The agent accepted the session but named no session.", {
       status: 502,
     });
   }
-  return { sessionId: result.sessionId, continuationToken: result.continuationToken };
+  return { sessionId: result.sessionId, continuationToken: result.continuationToken ?? null };
 }
 
 export interface ContinueSessionInput {

@@ -78,8 +78,13 @@ a database with no tables.
 npm run dev
 ```
 
-`eve dev` boots on port 2000 by default — but **auto-increments if that port is taken**, so
-read the actual port from its startup log rather than assuming.
+The agent boots on the port the scaffolder wrote into `.env.local` as `EVESTACK_AGENT_PORT` —
+2000 unless that was already taken when you scaffolded. `npm run dev` passes it to `eve dev` as
+`--port`, which means **there is no auto-increment**: eve only scans for a free port when no
+port is given at all, so if something else has grabbed that port since, the boot fails with a
+plain `EADDRINUSE` rather than moving. Free the port, or change `EVESTACK_AGENT_PORT` in
+`.env.local` — and if you do, change the `EVESTACK_AGENT_URL` default in `docker-compose.yml`
+to match, because the scaffolder wrote that number in at generation time.
 
 ## Verify it's durable
 

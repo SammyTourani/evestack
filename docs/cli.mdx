@@ -160,11 +160,13 @@ it still runs and prints the link.
 evestack verify [--open | --no-open] [--json]
 ```
 
-Runs the project's own `scripts/verify.mjs` and groups its ten checks in dependency order —
+Runs the project's own `scripts/verify.mjs` and groups its eleven checks in dependency order —
 **foundation** (`.env.local`, Docker, Postgres, the schema, pgvector), **model** (the provider
-key, embeddings), then **the stack** (the agent, the dashboard, trace ingest). For anything
-broken it names the command that fixes it, and it exits `1` if a required check failed, so CI
-can run it too.
+key, embeddings), then **the stack** (the agent, the dashboard, trace ingest). The eleventh,
+`dashboard image` — does the running container's version match the tag your compose file
+pins? — runs only once the dashboard answers, and prints under **other**, the catch-all group
+that exists so a check can never be silently dropped. For anything broken it names the command
+that fixes it, and it exits `1` if a required check failed, so CI can run it too.
 
 Grouping is the point: a red `dashboard` and a red `postgres` used to read as equally urgent when
 one of them is why the other failed. Fix the highest red line first.
