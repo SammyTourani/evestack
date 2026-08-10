@@ -135,16 +135,17 @@ have to ask for it.
 
 Node 24, Docker, and a model API key (or Ollama).
 
-"Node 24" is not a floor with a tested range above it — 24 is the only major CI installs, and
-all seven published packages declare `"engines": { "node": ">=24" }`, as do the root manifest
-and the template a scaffold gets. The rest, stated plainly because the code contains platform
-branches that might suggest otherwise:
+"Node 24" is the floor, and there is now a tested range above it — all seven published packages
+declare `"engines": { "node": ">=24" }`, as do the root manifest and the template a scaffold
+gets, and CI installs both 24 and the current major on the two jobs cheap enough to matrix
+(`typecheck` and `registry`). The other four Linux jobs still pin 24. The rest, stated plainly
+because the code contains platform branches that might suggest otherwise:
 
 | | |
 | --- | --- |
-| **Linux x86-64** | Tested. Every job in `.github/workflows/ci.yml` runs on `ubuntu-latest` |
+| **Linux x86-64** | Tested. Every job in `.github/workflows/ci.yml` runs on `ubuntu-latest` bar the non-blocking `macos` one, and it is the only platform the runtime tier runs on at all |
 | **Linux arm64** | The dashboard image is built and published for it; the CLI and template are not tested there |
-| **macOS** | Untested by CI — no workflow runs a macOS runner |
+| **macOS** | Partly tested. A non-blocking `macos-latest` job runs typecheck, the contract tier and the POSIX file-mode tests. The runtime tier cannot follow it — that needs a Docker daemon the runner does not have |
 | **Windows** | **Untested.** Twelve `process.platform === "win32"` branches ship, and the only one with a test is exercised by passing `"win32"` in as an argument on Linux. Use WSL2 |
 | **Postgres** | `pgvector/pgvector:pg17`, which is what both compose files run and what CI starts |
 

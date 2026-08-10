@@ -20,6 +20,21 @@ on:
 jobs:
   typecheck:
     runs-on: ubuntu-latest
+    # Node 24 is the floor every package declares; 26 is the current major.
+    # Testing only the floor is how "we support >=24" quietly becomes "we tested
+    # 24", and a whole acceptance pass has since run this stack on Node 26 with
+    # nothing version-specific breaking. This is the cheap way to keep that
+    # true: the two jobs that need no database, no browser and no Docker.
+    # fail-fast is off so a 26-only break still reports the 24 result.
+    #
+    # Note for whoever owns branch protection: a matrix renames the status
+    # check. This job now reports as `typecheck (24)` and `typecheck (26)`
+    # rather than `typecheck`, and `registry` does the same. A required-check
+    # rule still pinned to the old bare name will never be satisfied again.
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [24, 26]
     steps:
       - uses: actions/checkout@v4
       # No `version:` here, or in any other job. Given one while package.json
@@ -31,7 +46,7 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: ${{ matrix.node-version }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       # Workspace packages publish their types from dist/, which is gitignored —
@@ -696,11 +711,21 @@ jobs:
 
   registry:
     runs-on: ubuntu-latest
+    # The second half of the Node matrix; see `typecheck` above for why. This
+    # job is the other one cheap enough to double: it builds the registry JSON
+    # and diffs it against the committed tree, with no database, browser or
+    # Docker involved. Running it on both majors also means the generated JSON
+    # is checked for byte-stability across Node versions, which is the thing
+    # the diff gate would otherwise assume.
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [24, 26]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: ${{ matrix.node-version }}
       - run: node registry/build.mjs
 
       # THE gate. Every assertion below this step describes the JSON that
@@ -788,3 +813,66 @@ jobs:
             }
             process.exit(failed ? 1 : 0);
           '
+
+  # macOS, deliberately non-blocking and deliberately partial.
+  #
+  # The honesty problem this solves: README.md and docs/support.mdx both told a
+  # reader "macOS is untested by CI", which was true and which is a bad row to
+  # leave in a table forever. A whole acceptance pass then ran the stack on
+  # macOS 26.5.2 / Node 26 and nothing platform-specific broke — so the row was
+  # pessimistic, but nothing in CI could say so.
+  #
+  # Why partial, and why that is not a cop-out: 5 of the repo's jobs (`runtime`
+  # here, plus provider-bisect, evals, eve-watch and dashboard-image) declare a
+  # `services:` block. `services:` needs a Docker daemon, and GitHub-hosted
+  # macOS runners do not have one. They cannot be ported at all, and pretending
+  # otherwise would mean dropping the contract runner's `--require` and
+  # reporting green having checked nothing — the exact vacuity
+  # contract/README.md forbids.
+  #
+  # So this job takes the part that IS portable and is also where the real
+  # macOS risk lives:
+  #   - the static contract tier (measured: 512 assertions, 1.8s on darwin)
+  #   - the POSIX file-mode assertions in create-evestack's suite, which gate on
+  #     `process.platform !== "win32"` and assert 0600 on generated credential
+  #     files. APFS vs ext4 is the most plausible source of a genuine
+  #     macOS-only failure, and it is on a security-relevant path.
+  #   - the template's `eve-binary` tests, which resolve node_modules/.bin/eve
+  #     under a scrubbed PATH and spawn without a shell — BSD execvp semantics.
+  #
+  # `continue-on-error: true` is the whole "non-blocking" claim. A macOS
+  # regression should be visible on the PR that caused it without being able to
+  # block a merge on a platform nobody has committed to supporting. Promote it
+  # by deleting that one line, once the row in README.md can honestly say
+  # "supported" rather than "exercised".
+  macos:
+    runs-on: macos-latest
+    continue-on-error: true
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      # Bare, for the same reason every other job here is: package.json's
+      # `packageManager` is the single pin, and passing `version:` as well makes
+      # the action refuse to install at all.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Same cold-checkout rule as the Linux jobs: workspace packages publish
+      # types from a gitignored dist/, so typecheck dies on TS2307 without this.
+      - run: pnpm -r --if-present run build
+      - run: pnpm -r typecheck
+
+      # The static tier only. No `--require`: the runtime probes need Postgres
+      # and a Docker daemon, and this runner has neither. Skipping them here is
+      # honest; forcing them would not be.
+      - run: node contract/run.mjs
+
+      # Named separately from a blanket `pnpm test` so that a macOS-only failure
+      # says which surface broke in the job list, without opening the log.
+      - name: credential file modes and scaffolder behaviour
+        run: pnpm --filter create-evestack test
+      - name: the template's own suite
+        run: pnpm --filter @evestack/template-default test

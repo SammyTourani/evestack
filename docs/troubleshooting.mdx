@@ -160,6 +160,48 @@ A provider value that isn't `openai`, `anthropic` or `ollama` now throws at boot
 three valid ones. Older templates fell back to OpenAI silently, so `EVESTACK_PROVIDER=claude`
 looked configured and behaved as though it wasn't set at all.
 
+## "`eve dev` rebuilds whenever a file changes in my home directory"
+
+The giveaway is a doubled path in the log line, naming files you never put in the project:
+
+```
+[eve:dev] change detected (5 events: unlink /Users/me/Users/me/.npmrc, add /Users/me/.gemrc,
+add /Users/me/.npmrc, add /Users/me/.yarnrc, add /Users/me/.yarnrc.yml), rebuilding authored artifacts...
+```
+
+**The project has no `.git`.** eve resolves its dev source root by walking up from the app
+directory until it finds `.git` or `pnpm-workspace.yaml`. A project with neither keeps walking,
+and on a machine where the dotfiles live in git, the walk stops at `$HOME` and calls it the
+source root. Everything follows from that: the lockfile watcher watches 20 paths, 15 of them
+outside the project and none of them existing, and chokidar reacts to a watch target that does
+not exist by watching its parent directory instead. That parent is your home directory.
+
+It is not only noise. Files matching eve's workspace-metadata list are **copied** into
+`.eve/dev-runtime/snapshots/<id>/source/`, and `.npmrc` is on that list — so a registry
+credential in `~/.npmrc` gets duplicated into the project directory, byte for byte, with nothing
+logged to say so. The scaffolded `.gitignore` covers `.eve/`, so it will not be committed, and
+nothing uploads it. It is still a credential somewhere nobody asked for it to be.
+
+**Fix, and it is one command:**
+
+```bash
+git init
+```
+
+Both resolvers use the same marker list and stop at the first marker they find, so an empty
+repository at the project root ends the walk. Measured before and after: the source root returns
+to the project, watch paths drop from 20 to 5, and nothing outside the project is watched or
+copied.
+
+`create-evestack` does this for you — it has run `git init` at the end of `create` since the
+scaffolder started shipping this fix, which is also what finally makes the `.gitignore` it writes
+mean anything. You only hit this if the project was scaffolded some other way, or if the
+`git init` step warned that it could not run.
+
+The underlying bug is eve's, not evestack's, and it is still present in the newest published eve.
+A full write-up with a minimal reproduction is drafted and ready to file at
+`.github/upstream/eve-dev-watcher-source-root.md`; it has not been posted.
+
 ## "The agent forgets everything between restarts"
 
 `WORKFLOW_POSTGRES_URL` isn't set, or Postgres isn't reachable at that URL. `eve` falls back
