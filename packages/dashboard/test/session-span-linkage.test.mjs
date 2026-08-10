@@ -38,7 +38,7 @@ import { test } from "node:test";
 
 import { installStubPool, uninstallStubPool } from "./stub-pool.mjs";
 
-const { listModelCalls, listToolCalls } = await import(
+const { insertSpans, listModelCalls, listToolCalls } = await import(
   new URL("../lib/traces.ts", import.meta.url).href
 );
 
@@ -223,5 +223,80 @@ test("the span read asks for resolved_turn_id, or none of the above can be true"
   assert.ok(
     reads.some((call) => call.squashed.includes("resolved_turn_id")),
     "no span read selected resolved_turn_id",
+  );
+});
+
+/*
+ * ── THE HALF THAT MAKES THE SQL STAY TRUE ───────────────────────────────────
+ *
+ * Everything above is about reading the resolved column. This is about it being
+ * right to read, which stopped being true the moment the traffic was real.
+ *
+ * sql/traces.sql keeps `resolved_turn_id` current with an AFTER STATEMENT
+ * trigger. A trigger runs inside the statement that fired it, so it only ever
+ * sees that statement's snapshot — and spans export when they END, so the leaves
+ * of a turn leave before the workflow span carrying the run id they need, and
+ * two batches for one trace are routinely in flight at once. Each then resolves
+ * a trace the other half of is invisible in, both commit, and the trace is left
+ * on the `turn_0` alias with nothing scheduled to look again. Measured on the
+ * real path: 40 traces delivered as two overlapping batches left 93 spans across
+ * 31 of them stale, and a hand-run resolve changed exactly those 93 rows. That is
+ * the defect at the top of this file, back again, from a direction no unit test
+ * of the read path can see.
+ *
+ * So insertSpans finishes the job in its own transaction once the write has
+ * committed. contract/runtime/probes/22-concurrent-ingest-resolution.probe.mjs
+ * proves that converges against a real server, by delivering forty traces as two
+ * overlapping batches each. This pins the cheap half: that the call is made at
+ * all, after the writes rather than before them, and scoped to the traces that
+ * actually arrived.
+ */
+test("a stored batch is re-resolved after it commits, because the trigger cannot", async (t) => {
+  const pool = installStubPool([]);
+  // Retention off, so the fire-and-forget prune cannot outlive the stub pool and
+  // go looking for a real Postgres after the test has ended.
+  const retention = process.env.EVESTACK_TRACE_RETENTION_DAYS;
+  process.env.EVESTACK_TRACE_RETENTION_DAYS = "0";
+  t.after(() => {
+    uninstallStubPool();
+    if (retention === undefined) delete process.env.EVESTACK_TRACE_RETENTION_DAYS;
+    else process.env.EVESTACK_TRACE_RETENTION_DAYS = retention;
+  });
+
+  const OTHER_TRACE = "9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b";
+  const nano = String(BigInt(Date.now()) * 1000000n);
+  const ingested = (traceId, spanId) => ({
+    traceId,
+    spanId,
+    parentSpanId: null,
+    name: "execute_tool remember",
+    kind: 1,
+    startUnixNano: nano,
+    endUnixNano: nano,
+    statusCode: 1,
+    statusMessage: null,
+    attributes: {},
+    resource: {},
+    events: [],
+    scopeName: null,
+    scopeVersion: null,
+  });
+
+  await insertSpans([ingested(TRACE, "0000000000000001"), ingested(OTHER_TRACE, "0000000000000002")]);
+
+  const inserted = pool.firstIndexOf("INSERT INTO evestack.spans");
+  const resolved = pool.firstIndexOf("evestack.resolve_span_ancestry");
+  assert.ok(inserted >= 0, "no INSERT reached the database, so the rest means nothing");
+  assert.ok(
+    resolved > inserted,
+    "insertSpans has to re-resolve AFTER its rows are committed. Before them, or not " +
+      "at all, and a trace whose two halves arrived in overlapping batches keeps the " +
+      "turn_0 alias for good — which is the session page reporting no spans for a turn " +
+      "whose tool call the trace page renders in full",
+  );
+  assert.deepEqual(
+    pool.calls[resolved].params[0],
+    [TRACE, OTHER_TRACE],
+    "the resolve is scoped to the traces this batch touched, not to the whole table",
   );
 });
