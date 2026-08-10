@@ -16,6 +16,8 @@ itself works.
 git clone https://github.com/<you>/evestack
 cd evestack
 pnpm install
+pnpm -r --if-present run build   # workspace packages publish from dist/, which is gitignored;
+                                 # without this the template cannot resolve @evestack/budget
 docker compose up -d postgres
 cd templates/default && cp .env.example .env.local   # pick a provider; see below for the $0 one
 pnpm run db:bootstrap                                # creates the workflow schema
@@ -32,11 +34,17 @@ cd packages/dashboard && cp .env.example .env.local && pnpm run dev   # the dash
 
 ```bash
 pnpm -r typecheck
-cd templates/default && pnpm exec eve eval
+cd templates/default && pnpm run eval
 ```
 
 Both must be clean. The eval suite drives a real agent turn through a real Docker sandbox, so
 it needs Docker running.
+
+`pnpm run eval`, not `pnpm exec eve eval`. The Setup above leaves an agent running on :2000,
+and `eve eval` boots its own dev server and refuses to boot a second one for a project that
+already has one — so the bare command exits 1 with *A dev server is already running for this
+eve agent* and runs nothing. The script hands eve `--url` for the recorded port and runs the
+same preflight `pnpm run dev` does; a `--url` you pass yourself is left alone.
 
 **It does not need a paid model key.** The `$0` Ollama path runs the whole suite — this said
 otherwise for a while, which is the wrong thing for this project of all projects to be wrong
@@ -46,8 +54,8 @@ unreachable:
 
 ```bash
 ollama pull qwen3                # the chat model
-ollama pull nomic-embed-text     # embeddings, 274 MB — `npm run verify` checks for it by name
-cd templates/default && pnpm exec eve eval
+ollama pull nomic-embed-text     # embeddings, 274 MB — `npm run eval` checks for it by name
+cd templates/default && pnpm run eval
 # EVALS 4 — smoke 1/1, deny-survives 4/4, sandbox 3/3, memory 5/5 — 13 gates, 37.6s
 ```
 

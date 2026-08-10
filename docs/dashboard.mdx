@@ -53,8 +53,30 @@ This is where evestack diverges from Agent Runs, which is read-only:
   before building anything that assumes a cancel is instant
 - **Promote a session to an eval** — turn any run, especially one that went wrong, into a real
   `evals/*.eval.ts` replaying its actual messages
+  ([how to run one](#running-the-evals))
 - **Replay a session into a new one** — re-send its messages with one turn rewritten. Read
   [Replaying a session](#replaying-a-session) first; it re-runs the original's tool calls
+
+## Running the evals
+
+Save a promoted file into `evals/` in the agent project, then:
+
+```bash
+npm run eval                    # the whole suite
+npm run eval -- my-eval-name    # just the one you promoted
+```
+
+Not `npx eve eval`. eve boots its own dev server for a run, and it refuses to boot a second
+one for a project that already has one — so with `npm run dev` up, which is where the
+quickstart leaves you, a bare `npx eve eval` exits 1 with *A dev server is already running for
+this eve agent* and runs nothing. `npm run eval` hands eve the port this project recorded in
+`EVESTACK_AGENT_PORT` instead, and runs the same Postgres, schema and model checks that
+`npm run dev` runs first. A `--url` you pass yourself is always left alone.
+
+The evals drive a real agent through a real Docker sandbox, so Docker has to be running. They
+need no paid key: on the `$0` Ollama path the whole suite passes, and `evals/memory.eval.ts`
+needs the second, separate `ollama pull nomic-embed-text` — `npm run eval` checks for it by
+name rather than letting `remember` fail mid-run.
 
 ## Replaying a session
 
