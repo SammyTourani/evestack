@@ -30,12 +30,14 @@
  *   npm run dev              check, then start
  *   npm run dev -- --no-ui   passed straight through to eve, as are all flags
  *   EVESTACK_SKIP_PREFLIGHT=1 npm run dev    start without checking
+ *   EVESTACK_RAW_LOGS=1 npm run dev          relay eve stderr unfiltered
  */
 import { spawn } from "node:child_process";
 
 import {
   C,
   connectPostgres,
+  createDevNoiseFilter,
   dockerRunning,
   envValue,
   eveArgsWithPort,
@@ -45,6 +47,9 @@ import {
 } from "./checks.mjs";
 
 const passthrough = process.argv.slice(2);
+
+/** How long a stderr write with no newline is held before it is printed anyway. */
+const RELEASE_HELD_MS = 60;
 
 function stop(title, lines) {
   console.error(`\n${C.red}${C.bold}  ${title}${C.reset}\n`);
@@ -63,18 +68,38 @@ function stop(title, lines) {
  * machine with two projects that is the other project's agent.
  *
  * A `--port` the user typed always wins: the pin is a default, not a rule.
+ *
+ * STDERR IS THE ONE STREAM THIS WRAPPER TOUCHES, and only to drop the two
+ * blocks documented beside BENIGN_DEV_NOISE in checks.mjs. stdin and stdout
+ * stay inherited, which is what keeps eve's interactive terminal UI exactly as
+ * it was: eve decides whether to run it from `process.stdin.isTTY &&
+ * process.stdout.isTTY` (cli/commands/preconditions.js) and picocolors decides
+ * colour from `process.stdout.isTTY` (compiled/picocolors). Neither reads
+ * stderr, so piping it changes no behaviour and no colour. Verified by capture:
+ * the same run prints the same bytes with and without the pipe, minus those two
+ * blocks.
  */
 function startEve() {
   // Shared with scripts/start.mjs. It lived here first and `start` did without
   // it, which is the whole reason a built server ignored the recorded port.
   const args = eveArgsWithPort("dev", passthrough, process.env.EVESTACK_AGENT_PORT);
+  const filtering = !process.env.EVESTACK_RAW_LOGS;
   // `eve` from the local install rather than a global one, so the version the
   // project pinned is the version that runs.
   const child = spawn("eve", args, {
-    stdio: "inherit",
-    env: process.env,
+    stdio: filtering ? ["inherit", "inherit", "pipe"] : "inherit",
+    // NODE_ENV before the spread, so a value the caller set still wins. eve
+    // reads it once at module load and stamps it on every model span as
+    // `eve.environment` (harness/tool-loop.js: `process.env.NODE_ENV ?? "unknown"`),
+    // which is the column the dashboard session list calls Environment. Nothing
+    // set it, so every row on a scaffolded project read `unknown`, or nothing.
+    env: { NODE_ENV: "development", ...process.env },
     shell: process.platform === "win32",
   });
+  // `drain` is called again from the exit handler below: `exit` can fire before
+  // the stderr stream has ended, and process.exit() after it would take any line
+  // still held in the filter with it.
+  const drain = filtering ? relayStderr(child) : () => {};
   child.on("error", (error) => {
     if (error.code === "ENOENT") {
       stop("eve is not installed in this project.", [
@@ -89,9 +114,39 @@ function startEve() {
     process.on(signal, () => child.kill(signal));
   }
   child.on("exit", (code, signal) => {
+    drain();
     if (signal) process.kill(process.pid, signal);
     else process.exit(code ?? 0);
   });
+}
+
+/**
+ * Pass the child's stderr through, minus the two known blocks.
+ *
+ * Line-oriented, so a chunk that splits mid-line cannot smuggle half a match
+ * past the filter. That means a write with no trailing newline would be held
+ * forever, which is why RELEASE_HELD_MS exists: nothing in eve writes a partial
+ * line to stderr today (its progress row writes to stdout, cli/ui/live-row.js),
+ * but a tool in this project might, and a swallowed write is a worse bug than a
+ * 60ms late one. The timer is unref-ed so it never keeps the process alive.
+ */
+function relayStderr(child) {
+  const filter = createDevNoiseFilter();
+  const drain = () => process.stderr.write(filter.flush());
+  const release = { timer: undefined };
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk) => {
+    process.stderr.write(filter.push(chunk));
+    clearTimeout(release.timer);
+    if (!filter.holding) return;
+    release.timer = setTimeout(() => process.stderr.write(filter.flush()), RELEASE_HELD_MS);
+    release.timer.unref();
+  });
+  child.stderr.on("end", () => {
+    clearTimeout(release.timer);
+    drain();
+  });
+  return drain;
 }
 
 if (process.env.EVESTACK_SKIP_PREFLIGHT) {

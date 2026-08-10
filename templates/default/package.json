@@ -17,7 +17,8 @@
     "test": "node --test test/*.test.mjs",
     "db:bootstrap": "node scripts/bootstrap.mjs",
     "db:prune": "node --env-file-if-exists=.env.local scripts/prune.mjs",
-    "verify": "node --env-file-if-exists=.env.local scripts/verify.mjs"
+    "verify": "node --env-file-if-exists=.env.local scripts/verify.mjs",
+    "demo:approval": "node --env-file-if-exists=.env.local scripts/approval-demo.mjs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.30",

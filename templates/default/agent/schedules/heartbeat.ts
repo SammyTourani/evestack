@@ -1,4 +1,7 @@
 import { defineSchedule, type ScheduleHandlerArgs } from "eve/schedules";
+import discord from "../channels/discord.js";
+import slack from "../channels/slack.js";
+import telegram from "../channels/telegram.js";
 import { tracked } from "@evestack/schedules";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -145,9 +148,7 @@ async function fire(
     return;
   }
 
-  // Dynamic import so an agent that never enables the heartbeat does not pay
-  // to load a channel it has not configured.
-  const channel = await loadChannel(channelName);
+  const channel = loadChannel(channelName);
 
   const dispatch = receive(channel as never, {
     target: target as never,
@@ -260,22 +261,33 @@ export default defineSchedule({ cron: CRON, run });
  * `receive` needs the channel object, and which channel is configuration rather
  * than code, so it is resolved by name.
  *
+ * Statically imported, and the import list is the whole reason. These three were
+ * dynamic imports with a comment saying an agent that never enables the
+ * heartbeat should not pay to load a channel it has not configured. It never
+ * paid less, and `npm run build` said so out loud, three times, on a scaffolded
+ * project that has changed nothing:
+ *
+ *   [INEFFECTIVE_DYNAMIC_IMPORT] agent/channels/discord.ts is dynamically
+ *   imported by agent/schedules/heartbeat.ts but also statically imported by
+ *   .eve/builds/<id>/host/compiled-artifacts-bootstrap.mjs, dynamic import will
+ *   not move module into another chunk.
+ *
+ * eve registers every file under agent/channels/ whether or not anything imports
+ * it, so the saving the dynamic form was written for cannot exist, and the only
+ * thing it produced was three warnings in the output of a documented command.
+ *
  * Throws, for the same reason readTarget does: the heartbeat has been switched on
  * and cannot run, which is a failure worth recording on the row rather than a
  * warning in a log.
  */
-async function loadChannel(name: string): Promise<unknown> {
-  const known: Record<string, () => Promise<{ default: unknown }>> = {
-    telegram: () => import("../channels/telegram.js"),
-    slack: () => import("../channels/slack.js"),
-    discord: () => import("../channels/discord.js"),
-  };
+function loadChannel(name: string): unknown {
+  const known: Record<string, unknown> = { telegram, slack, discord };
 
-  const load = known[name.toLowerCase()];
-  if (!load) {
+  const channel = known[name.toLowerCase()];
+  if (!channel) {
     throw new Error(
       `EVESTACK_HEARTBEAT_CHANNEL="${name}" is not one of ${Object.keys(known).join(", ")}`,
     );
   }
-  return (await load()).default;
+  return channel;
 }

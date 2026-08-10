@@ -50,7 +50,13 @@ const args = eveArgsWithPort("start", passthrough, process.env.EVESTACK_AGENT_PO
 const bin = eveBinary(import.meta.url);
 const child = spawn(bin, args, {
   stdio: "inherit",
-  env: process.env,
+  // NODE_ENV before the spread, so an orchestrator that sets it still wins. eve
+  // reads it once at module load and stamps it on every model span as
+  // `eve.environment` (harness/tool-loop.js: `process.env.NODE_ENV ?? "unknown"`),
+  // which is the Environment column in the dashboard. Unset, a deployed agent
+  // and a laptop are indistinguishable in the one list that shows both, and
+  // `production` is the conventional value for a built server besides.
+  env: { NODE_ENV: "production", ...process.env },
   shell: process.platform === "win32",
 });
 
