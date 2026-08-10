@@ -30,7 +30,7 @@ import {
   basename, C, DASHBOARD_IMAGE, detectPm, dim, freePort, makePrompter, ok,
   packageVersion, REPO, say, shellQuote, step, templateDir, warn, writeSecretFile,
 } from "./shared.mjs";
-import { blank, box, c, g, row, rule, shortPath, task, wordmark } from "./ui.mjs";
+import { blank, box, c, color, g, row, rule, shortPath, task, wordmark } from "./ui.mjs";
 
 /** One finished thing, in the aligned two-column shape every command uses. */
 const done = (label, detail) => row(g.OK, label, c.dim(detail), "", { labelWidth: 13 });
@@ -58,6 +58,95 @@ function stepHeader(n, title) {
 /** padEnd against printable width, for the provider table. */
 function padTo(s, n) {
   return `${s}${" ".repeat(Math.max(0, n - s.length))}`;
+}
+
+/* -------------------------------------------------------------------------- */
+/* which model                                                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Every one of these is written to .env.local as EVESTACK_PROVIDER. It is the
+ * variable agent/agent.ts branches on (defaulting to "openai"), and a model name
+ * written without it goes to whichever provider was already selected — which is
+ * how the Ollama path used to fail, with `compaction trigger model
+ * "openai/qwen3" does not have known AI Gateway context window metadata`.
+ * Choosing a provider and not writing EVESTACK_PROVIDER is not a partial
+ * configuration, it is a broken one.
+ *
+ * A Map, not an object literal, because the key is whatever the user typed:
+ * `PROVIDERS["__proto__"]` on a literal returns Object.prototype, which is
+ * truthy, so `?? default` never fires and the wizard goes on to write
+ * `EVESTACK_PROVIDER=undefined` and `undefined=` into .env.local.
+ */
+export const PROVIDERS = new Map([
+  ["1", { id: "openai", keyVar: "OPENAI_API_KEY", model: "gpt-5-mini", keyHint: "https://platform.openai.com/api-keys" }],
+  ["2", { id: "anthropic", keyVar: "ANTHROPIC_API_KEY", model: "claude-sonnet-5", keyHint: "https://console.anthropic.com/settings/keys" }],
+  ["3", { id: "ollama", keyVar: null, model: "qwen3", keyHint: null }],
+]);
+
+/** Taken only when there is nobody to ask: `--yes`, CI, a heredoc, a dead pipe. */
+export const DEFAULT_PROVIDER = "1";
+
+export const PROVIDER_QUESTION = "Choose 1, 2 or 3:";
+
+/**
+ * A bound on the loop below, and the reason there is one.
+ *
+ * Re-asking forever is right while a person is typing and wrong the instant
+ * anything else is: a pty driven by a script that answers every prompt with a
+ * newline would spin here until something killed it. Five refusals is far past
+ * what a human does by accident, and what happens after them is printed.
+ */
+const CHOICE_ATTEMPTS = 5;
+
+/**
+ * Ask which provider, and do not guess.
+ *
+ * This was one `ask("Choose 1, 2 or 3:", "1")`, so a bare Enter — or a Down
+ * arrow, because the prompt is numeric and not the arrow-key list people expect
+ * — selected OpenAI in silence and the wizard went straight on to demand an
+ * OPENAI_API_KEY. The user is then being asked for a credential belonging to a
+ * product they did not choose, with nothing on screen saying why. Of the four
+ * questions this is the one that decides the rest of the run: the provider,
+ * whether a key is needed at all, whether anything leaves the machine, and what
+ * the finish diagram says.
+ *
+ * So an unusable answer is refused and asked again. The default survives for the
+ * one case that cannot answer, and there it is printed rather than assumed.
+ *
+ * `closed()` is what makes re-asking safe — see makePrompter for why `ask` alone
+ * cannot tell Enter from EOF. Injected rather than imported, because that is
+ * what makes this loop testable without a pty, and a pty is the only other way
+ * to reach it.
+ */
+export async function chooseProvider({ ask, closed = () => false, nonInteractive = false, complain = warn }) {
+  for (let attempt = 0; attempt < CHOICE_ATTEMPTS && !nonInteractive && !closed(); attempt += 1) {
+    const answer = (await ask(PROVIDER_QUESTION, "")).trim();
+    const picked = PROVIDERS.get(answer);
+    if (picked) return { provider: picked, defaulted: false };
+    // EOF, not a wrong answer: `ask` returned its fallback because stdin closed.
+    if (closed()) break;
+    complain(
+      answer === ""
+        ? "This one decides the provider, so it is not guessed. Type 1, 2 or 3."
+        : `${JSON.stringify(printable(answer))} is not one of them. Type 1, 2 or 3.`,
+    );
+  }
+  return { provider: PROVIDERS.get(DEFAULT_PROVIDER), defaulted: true };
+}
+
+/**
+ * Echoing back what someone typed is echoing back whatever they typed, and the
+ * answer that produced this whole bug was a Down arrow — ESC, then "[B". Handed
+ * back to the terminal raw that moves the cursor instead of printing it, so a
+ * complaint about the input corrupts the screen it is complaining on.
+ */
+function printable(answer) {
+  const safe = (ch) => {
+    const code = ch.codePointAt(0);
+    return code < 0x20 || code === 0x7f ? "?" : ch;
+  };
+  return Array.from(answer.slice(0, 24), safe).join("");
 }
 
 /* -------------------------------------------------------------------------- */
@@ -163,6 +252,171 @@ function printTail(output, lines = 12) {
   blank();
   for (const line of tail) say(`      ${c.dim(line.slice(0, 100))}`);
   blank();
+}
+
+/* -------------------------------------------------------------------------- */
+/* the silence in the middle                                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * What the install is waiting on, said out loud before the reader gives up.
+ *
+ * Measured, on a machine whose npm was pinned to a corporate mirror: the first
+ * command in the quickstart printed nothing at all for two and a half minutes
+ * and then failed. The spinner already proves the process is alive and the
+ * elapsed clock already proves it is moving, but neither says WHAT it is waiting
+ * for — and "npm install, 2m 10s" is indistinguishable from a hang to the one
+ * person who has never seen this command succeed.
+ *
+ * The registry is the answer nearly every time, and it is the fact nobody has to
+ * hand: the row says `npm`, and the host it is talking to is three .npmrc files
+ * away. Naming it turns "this is broken" into "this machine cannot reach
+ * reposerver.example.com", which is something a stranger can act on.
+ *
+ * Pure and exported, so the thresholds can be tested without waiting out two
+ * minutes of real time for each one.
+ *
+ * The notes do NOT repeat the command. The label beside them already says
+ * `install`, and the detail column is only as wide as the terminal minus the
+ * label and the elapsed clock — about 57 characters at the 80 columns most
+ * people still run. A note that overflows wraps, and a wrapped line breaks the
+ * spinner underneath it, because the repaint clears one line and not two. So
+ * the host gets the room instead: it is the part nobody can guess.
+ */
+const INSTALL_WAIT_STAGES = [
+  { after: 15_000, note: (where) => `resolving from ${where}` },
+  { after: 45_000, note: (where) => `still waiting on ${where}` },
+  { after: 120_000, note: (where) => `no answer from ${where} yet` },
+];
+
+export function installWaitNote(elapsedMs, registryHostname = null) {
+  const where = registryHostname || "the registry";
+  let note = null;
+  for (const stage of INSTALL_WAIT_STAGES) {
+    if (elapsedMs >= stage.after) note = stage.note(where);
+  }
+  return note;
+}
+
+/**
+ * Asked once, five seconds in: late enough that a fast install never pays for
+ * it, early enough that the answer is in hand before the first note needs it.
+ */
+const REGISTRY_LOOKUP_AFTER = 5_000;
+
+let registryLookup = null;
+
+/**
+ * The registry host this package manager is really configured with.
+ *
+ * `config get registry` reads the whole chain — project, user, global and the
+ * environment — which is the only way to get the value the install is actually
+ * using rather than the default everybody assumes. It is a local read, so it
+ * cannot itself hang on the network that is already stuck.
+ *
+ * Only npm and pnpm are asked. Yarn Berry spells it `npmRegistryServer` and bun
+ * has no `config get` at all, and a confidently wrong host here would be worse
+ * than none: this exists to remove a guess, not to add one.
+ *
+ * Memoised, because the answer cannot change inside one run and both the
+ * progress row and the failure message want it.
+ */
+export function registryHost(pm) {
+  registryLookup ??= readRegistry(pm).then((url) => {
+    if (!url) return null;
+    try {
+      return new URL(url).host;
+    } catch {
+      return null;
+    }
+  });
+  return registryLookup;
+}
+
+function readRegistry(pm) {
+  const fromEnv = process.env.npm_config_registry?.trim();
+  if (fromEnv) return Promise.resolve(fromEnv);
+  if (pm !== "npm" && pm !== "pnpm") return Promise.resolve(null);
+  return new Promise((resolve) => {
+    let out = "";
+    let settled = false;
+    const done = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    // A `timeout` rather than a Promise.race: a race leaves the child running,
+    // and an orphan holding a pipe keeps the event loop alive past the point
+    // where the scaffold has finished and should have exited.
+    const child = spawn(pm, ["config", "get", "registry"], {
+      env: childEnv(),
+      stdio: ["ignore", "pipe", "ignore"],
+      shell: process.platform === "win32",
+      timeout: 5_000,
+    });
+    child.stdout?.setEncoding("utf8").on("data", (chunk) => {
+      out += chunk;
+    });
+    child.on("error", () => done(null));
+    child.on("close", () => done(out.trim().split("\n").pop()?.trim() || null));
+  });
+}
+
+/**
+ * Escalate a progress row while something slow runs. Returns the stop function.
+ *
+ * Nothing here can print a second line: `task` repaints the current line every
+ * 90ms, so anything written beside it lands in the middle of the spinner. The
+ * note is therefore the whole message, which is why it stays short.
+ */
+function watchInstall(pm, emit) {
+  const started = Date.now();
+  let host = null;
+  let asked = false;
+  let shown = null;
+  const tick = () => {
+    const elapsed = Date.now() - started;
+    if (!asked && elapsed >= REGISTRY_LOOKUP_AFTER) {
+      asked = true;
+      registryHost(pm).then(
+        (found) => {
+          host = found;
+        },
+        () => {},
+      );
+    }
+    const note = installWaitNote(elapsed, host);
+    if (note && note !== shown) {
+      shown = note;
+      emit(note);
+    }
+  };
+  const timer = setInterval(tick, 1_000);
+  timer.unref?.();
+  return () => clearInterval(timer);
+}
+
+/**
+ * Does this failure read as the network rather than the project?
+ *
+ * It is the difference between "run it again" and "this machine cannot reach
+ * the registry", and it is the failure a first-timer is both most likely to hit
+ * and least able to name. Deliberately narrow: a 404 for a package that does not
+ * exist is NOT this, and answering that with network advice would send someone
+ * to look at their VPN over a typo.
+ */
+const NETWORK_FAILURE = new RegExp(
+  [
+    "ETIMEDOUT", "ENOTFOUND", "ECONNREFUSED", "ECONNRESET", "EAI_AGAIN",
+    "ERR_SOCKET_TIMEOUT", "ERR_PNPM_META_FETCH_FAIL", "network timeout",
+    "request to \\S+ failed", "self[- ]signed certificate",
+    "unable to (?:verify the first certificate|get local issuer)",
+  ].join("|"),
+  "i",
+);
+
+export function looksLikeANetworkFailure(output) {
+  return NETWORK_FAILURE.test(String(output ?? ""));
 }
 
 /**
@@ -328,7 +582,7 @@ export async function create(argv) {
   const nonInteractive = args.yes || !process.stdin.isTTY;
   const positional = args.positional;
 
-  const { ask, confirm, close } = await makePrompter(nonInteractive);
+  const { ask, confirm, closed, close } = await makePrompter(nonInteractive);
 
   wordmark({ big: true });
 
@@ -371,28 +625,16 @@ export async function create(argv) {
   say(`      ${c.bold("2")}  ${padTo("Anthropic", 11)}${padTo("claude-sonnet-5", 18)}${c.dim("strong tool-calling")}`);
   say(`      ${c.bold("3")}  ${padTo("Ollama", 11)}${padTo("qwen3", 18)}${c.dim("local, $0, needs RAM headroom")}`);
   blank();
-  // Every one of these is written to .env.local as EVESTACK_PROVIDER. It is the
-  // variable agent/agent.ts branches on (defaulting to "openai"), and a model
-  // name written without it goes to whichever provider was already selected —
-  // which is how the Ollama path used to fail, with `compaction trigger model
-  // "openai/qwen3" does not have known AI Gateway context window metadata`.
-  // Choosing a provider and not writing EVESTACK_PROVIDER is not a partial
-  // configuration, it is a broken one.
-  // A Map, not an object literal, because the key is whatever the user typed:
-  // `PROVIDERS["__proto__"]` on a literal returns Object.prototype, which is
-  // truthy, so `?? default` never fires and the wizard goes on to write
-  // `EVESTACK_PROVIDER=undefined` and `undefined=` into .env.local.
-  const PROVIDERS = new Map([
-    ["1", { id: "openai", keyVar: "OPENAI_API_KEY", model: "gpt-5-mini", keyHint: "https://platform.openai.com/api-keys" }],
-    ["2", { id: "anthropic", keyVar: "ANTHROPIC_API_KEY", model: "claude-sonnet-5", keyHint: "https://console.anthropic.com/settings/keys" }],
-    ["3", { id: "ollama", keyVar: null, model: "qwen3", keyHint: null }],
-  ]);
-  const modelChoice = await ask("Choose 1, 2 or 3:", "1");
-  // Anything unrecognised falls back to the default rather than scaffolding a
-  // project configured for a provider nobody picked.
-  const chosen = PROVIDERS.get(modelChoice.trim()) ?? PROVIDERS.get("1");
+  const { provider: chosen, defaulted } = await chooseProvider({ ask, closed, nonInteractive });
+  // The default is still reachable — `--yes`, CI, a closed pipe — but it is no
+  // longer silent. Naming what was taken is the difference between a scaffold
+  // you can trust and one you have to open .env.local to understand.
+  if (defaulted) dim(`No answer, so this takes ${DEFAULT_PROVIDER}: ${chosen.id} ${chosen.model}.`);
   const useOllama = chosen.id === "ollama";
 
+  // Kept for the finish diagram: whether anything leaves the machine on the
+  // Ollama path depends on this URL, and inspectOllama is out of scope by then.
+  let ollamaBaseUrl = null;
   let apiKeyLine = "";
   let modelLine = `EVESTACK_PROVIDER=${chosen.id}\nEVESTACK_MODEL=${chosen.model}`;
   if (useOllama) {
@@ -402,6 +644,7 @@ export async function create(argv) {
     // failure on their first message — the point at which they have the least
     // context for debugging it.
     const ollama = await inspectOllama(chosen.model);
+    ollamaBaseUrl = ollama.baseUrl;
     if (!ollama.installed) {
       warn("Ollama is not on PATH. Install it from https://ollama.com, then:");
       warn(`  ollama pull ${chosen.model} && ollama pull nomic-embed-text`);
@@ -475,6 +718,15 @@ export async function create(argv) {
       `Start Postgres, create the schema and pull the dashboard? ${C.dim}(~200 MB)${C.reset}`,
       true,
     );
+    // The same reasoning as the branch above, one step later. If stdin died
+    // while the question was on screen — a terminal that closed, a harness that
+    // fed its input and left — `confirm` hands back its default, and the default
+    // here starts containers and pulls 200 MB on behalf of nobody. Observed
+    // doing exactly that under a pty whose input had already ended.
+    if (closed()) {
+      wantStart = false;
+      dim("Skipped: stdin closed before this was answered.");
+    }
   }
 
   close();
@@ -695,15 +947,55 @@ export async function create(argv) {
   writeFileSync(join(target, "docker-compose.yml"), composeFile(composeProject, { pgPort, dashboardPort, agentPort }));
   done("compose", "docker-compose.yml — Postgres, dashboard behind a profile");
 
+  // A git repository, because eve decides what to copy by walking up from here.
+  //
+  // eve/dist/.../dev-runtime-source-snapshot.js resolves the DEV SOURCE ROOT by
+  // walking parents until it finds `.git` or `pnpm-workspace.yaml`, and then
+  // copies that root's package.json, lockfiles and .npmrc into
+  // .eve/dev-runtime/snapshots/<id>/source/. A scaffold with no .git of its own
+  // therefore inherits whichever directory above it has one — and for anyone who
+  // keeps their dotfiles in git, that is $HOME.
+  //
+  // Measured on a real scaffold before this line existed: three byte-identical
+  // copies of the user's ~/.npmrc, registry credential and all, sitting under
+  // .eve/ in a project directory they had no reason to look in. Same sha1 as the
+  // original. It is gitignored and it never leaves the machine, and it is still a
+  // credential copied somewhere nobody asked for. The same resolution is what
+  // made eve's dev watcher rebuild the project whenever an unrelated dotfile in
+  // $HOME changed.
+  //
+  // The resolver stops at the FIRST marker it finds, so a .git here ends the walk
+  // whatever is above it — including inside another checkout, which is exactly
+  // the case that would otherwise keep the bug.
+  //
+  // `git init` and no commit. A commit needs user.name and user.email, which a
+  // fresh machine does not have, and it would run whatever commit.gpgsign points
+  // at — a signing agent that puts up a prompt turns a scaffolder into a hang.
+  // The empty repository is the whole of what the fix needs.
+  const git = await run(target, "git", ["init", "-q"]);
+  const initialised = git.ok && existsSync(join(target, ".git"));
+  initialised
+    ? done("git", ".git — an empty repo, and the boundary of what eve copies")
+    : warnNoGit();
+
   // ---- install --------------------------------------------------------------
   const pm = detectPm();
   const installing = args.verbose ? null : task("install", `${pm} install`, { labelWidth: 13 });
   if (args.verbose) say(`  ${g.MARK} ${c.bold("install")} ${c.dim(`${pm} install`)}`);
+  // The row above proves the process is alive; this says what it is waiting on.
+  // Off a TTY the spinner does not animate at all, so there the same notes are
+  // printed as their own lines — a CI log that goes quiet for two minutes has
+  // the same problem, and some runners kill the job over it.
+  const live = color && process.stdout.isTTY;
+  const stopWatching = installing
+    ? watchInstall(pm, (note) => (live ? installing.update(note) : dim(note)))
+    : null;
   // `shell` on Windows for the reason run() states: npm/pnpm/yarn/bun are `.cmd`
   // shims there and a bare spawn cannot execute them, so every Windows run ended
   // at "Created, but dependencies are not installed" and exit 1. Not verified on
   // Windows from here — this matches what the template's own scripts already do.
   const install = await run(target, pm, ["install"], { verbose: args.verbose });
+  stopWatching?.();
   // A failed install leaves an empty node_modules, and the steps below would
   // then fail one after another with unrelated-looking errors. Report it as the
   // failure it is — including the exit code, so CI and shell `&&` chains stop
@@ -723,6 +1015,17 @@ export async function create(argv) {
   if (!installed) {
     blank();
     say(`  ${c.yellowBold("Created, but dependencies are not installed.")}`);
+    // WHICH failure it was decides whether running the command again is worth
+    // anything, and the tail printed above is npm's wording, not an explanation.
+    if (looksLikeANetworkFailure(install.output)) {
+      const where = (await registryHost(pm)) ?? `whichever registry ${pm} is set to`;
+      blank();
+      say(`  ${c.bold("That failure is the network, not the template.")}`);
+      dim(`The install was talking to ${where}.`);
+      dim("A VPN, a proxy that filters npm, or a private mirror that does not carry");
+      dim("these packages all look exactly like this. Check which one is in play:");
+      say(`    ${c.bold(`${pm} config get registry`)}`);
+    }
     blank();
     say(`  ${c.bold("Finish it")}`);
     // Quoted: a project called "My Agent" printed `cd My Agent`, which is two
@@ -751,7 +1054,9 @@ export async function create(argv) {
   blank();
   rule();
   blank();
-  architecture({ agentPort, pgPort, dashboardPort, provider: chosen.id, model: chosen.model, up });
+  architecture({
+    agentPort, pgPort, dashboardPort, provider: chosen.id, model: chosen.model, up, ollamaBaseUrl,
+  });
   blank();
   say(`  ${c.bold("Dashboard")}   ${c.brandBold(dashboardUrl)}`);
   say(`  ${c.bold("Sign in")}     evestack ${c.dim("/")} ${c.bold(password)}`);
@@ -823,13 +1128,14 @@ export async function create(argv) {
  * printing a list of commands, which tells someone what to type and nothing
  * about what they now have — and evestack is four processes on three ports with
  * one outbound call, which is exactly the shape that a paragraph fails to
- * explain and a six-line picture does not.
+ * explain and a six-line picture does not. Whether there is an outbound call at
+ * all depends on the provider, which is what modelEdge below is for.
  *
  * Drawn with the ports this project actually chose, not the defaults: on a
  * machine already running one scaffold these are 2001, 5434 and 4001, and a
  * diagram that lied about that would be worse than none.
  */
-function architecture({ agentPort, pgPort, dashboardPort, provider, model, up }) {
+function architecture({ agentPort, pgPort, dashboardPort, provider, model, up, ollamaBaseUrl = null }) {
   const port = (n) => c.brand(`:${n}`);
   // Running state as a glyph at the head of the row rather than a "not started"
   // suffix: the suffix pushed the two container rows past the frame, and a
@@ -857,12 +1163,80 @@ function architecture({ agentPort, pgPort, dashboardPort, provider, model, up })
   say(`      ${c.dim(g.pipe)}`);
   say(
     `      ${c.dim(`${g.bl}${g.bar}${g.arrow}`)} ${c.bold(provider)} ` +
-      `${c.dim(`${model} — the only thing that leaves this machine`)}`,
+      `${c.dim(modelEdge(provider, model, ollamaBaseUrl))}`,
   );
   // Always, not `if (!up)`. The agent is never running at this point — it is the
   // command that comes next — so there is a dim dot on screen even on the fully
   // successful path, and a live run showed it there with nothing to explain it.
   say(`      ${c.dim(`${g.dot} dim = not started yet`)}`);
+}
+
+/**
+ * The last line of the diagram: where the model is, and whether reaching it
+ * leaves the machine.
+ *
+ * It read "the only thing that leaves this machine" for every provider. On the
+ * Ollama path that is false — ollama is a local process on 127.0.0.1:11434, and
+ * a live run of the whole stack opened zero non-loopback sockets — so the free,
+ * fully local option, the one the product leads with, was the single place the
+ * diagram undersold it. Two of the three providers really do leave the machine,
+ * which is exactly why this branches rather than being softened into a sentence
+ * that is true of both.
+ *
+ * The third branch is not hypothetical either: OLLAMA_BASE_URL is a supported
+ * setting (templates/default/.env.example, docs/local-setup.mdx) and pointing it
+ * at another host is the one Ollama configuration where traffic does leave.
+ * Claiming otherwise would be this same bug again, in the other direction.
+ *
+ * THE WORDING IS NOT OWNED HERE. These strings are placeholders pending the copy
+ * pass; the branch is the part this file is responsible for. One constraint on
+ * whatever replaces them: the line is printed as six spaces, an arrow, the
+ * provider name and then this, so anything past about 60 characters wraps on an
+ * 80-column terminal. The test beside this pins that budget.
+ */
+export function modelEdge(provider, model, ollamaBaseUrl = null) {
+  if (provider !== "ollama") return `${model} — the only thing that leaves this machine`;
+  const url = ollamaBaseUrl || "http://127.0.0.1:11434";
+  const where = hostOf(url);
+  if (!isLoopback(url)) return `${model} — on ${where}, which does leave this machine`;
+  return `${model} — on ${where}; nothing leaves this machine`;
+}
+
+function hostOf(url) {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * IPv6 arrives bracketed from URL.host and bare from URL.hostname; 0.0.0.0 as a
+ * destination means this machine everywhere this runs. Anything unparseable is
+ * treated as remote, because the claim being guarded is the one to be earned.
+ */
+function isLoopback(url) {
+  let hostname;
+  try {
+    hostname = new URL(url).hostname;
+  } catch {
+    return false;
+  }
+  const host = hostname.replace(/^\[/, "").replace(/\]$/, "").toLowerCase();
+  return host === "localhost" || host === "::1" || host === "0.0.0.0" || /^127\./.test(host);
+}
+
+
+/**
+ * Said out loud, because the consequence is not one anybody would guess: with no
+ * .git in the project, eve walks up and treats the nearest directory that has
+ * one as the source root, then copies that directory's package.json, lockfiles
+ * and .npmrc into .eve/. On a machine whose dotfiles are in git, that is $HOME.
+ */
+function warnNoGit() {
+  warn("git init did not run — is git installed? This project has no .git.");
+  dim("Create one before `npm run dev`. Without it eve walks up to the nearest");
+  dim("directory that has one and copies that directory's .npmrc into .eve/.");
 }
 
 /**
@@ -878,13 +1252,16 @@ function architecture({ agentPort, pgPort, dashboardPort, provider, model, up })
  */
 async function confirmRunAgent(cd) {
   if (!process.stdin.isTTY || !process.stdout.isTTY) return false;
-  const { confirm, close } = await makePrompter(false);
+  const { confirm, closed, close } = await makePrompter(false);
   const yes = await confirm(
     `Start it now? ${C.dim}(holds this terminal — or run \`cd ${cd}\` and start it yourself)${C.reset}`,
     true,
   );
+  // A default taken from a dead stdin must not spawn a foreground process
+  // and take the terminal with it. Same defect as the question above.
+  const answered = yes && !closed();
   close();
-  return yes;
+  return answered;
 }
 
 // Build leftovers and secrets that must never reach a generated project.

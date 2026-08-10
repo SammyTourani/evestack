@@ -257,6 +257,13 @@ export function detectPm(dir) {
  * Non-interactive when asked for, or when stdin is not a terminal (CI, a piped
  * heredoc, a Dockerfile). Without this the process would reach EOF mid-prompt
  * and exit 0 having done nothing, which looks like success.
+ *
+ * `closed()` is what lets a caller RE-ASK safely. `ask` collapses two different
+ * events into the same answer — the user pressed Enter, and stdin hit EOF — so a
+ * question that wants to insist on a real answer cannot tell "ask again" from
+ * "there is nobody there". A loop that guesses wrong either accepts a default
+ * nobody chose or spins forever against a closed pipe, and this flag is the only
+ * thing that separates the two cases.
  */
 export async function makePrompter(nonInteractive) {
   const { createInterface } = await import("node:readline/promises");
@@ -289,7 +296,7 @@ export async function makePrompter(nonInteractive) {
     return a === "" ? def : a.startsWith("y");
   };
 
-  return { ask, confirm, close: () => rl?.close() };
+  return { ask, confirm, closed: () => stdinClosed, close: () => rl?.close() };
 }
 
 /* -------------------------------------------------------------------------- */
