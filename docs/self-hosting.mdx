@@ -21,7 +21,7 @@ process is built rather than `eve dev`, and something other than you can reach t
 
 | Component | Port | Bound to | Notes |
 | --- | --- | --- | --- |
-| Agent, `eve dev` | 2000 | **`127.0.0.1`** | Does **not** auto-increment in a scaffolded project — a busy port is a hard `EADDRINUSE` |
+| Agent, `eve dev` | 2000 | **`127.0.0.1`** | A bare `eve dev` auto-increments if 2000 is taken. A scaffolded project does not: `npm run dev` passes `--port`, so a busy port is `EADDRINUSE` |
 | Agent, `eve start` | `$PORT`, else **3000** | `--host`, default all interfaces | Not 2000 — see below |
 | Postgres | host **5433** → container 5432 | `127.0.0.1` in compose | 5433 so it never collides with a local Postgres on 5432. Override with `POSTGRES_BIND` |
 | Dashboard | 4000 | `127.0.0.1` in compose | A control plane; see [Expose the dashboard last](#expose-the-dashboard-last) |
@@ -351,8 +351,11 @@ docker compose --profile dashboard up -d
 
 <Note>
   Published since `dashboard-v0.1.0` as a multi-arch manifest — `linux/amd64` and `linux/arm64`,
-  ~204 MB compressed per platform. `.github/workflows/publish-dashboard.yml` builds each arch on
-  its own native runner and merges the digests, so neither is emulated.
+  ~230 MB compressed per platform, about 1 GB unpacked.
+  `.github/workflows/publish-dashboard.yml` builds each arch on its own native runner and merges
+  the digests, so neither is emulated. Check any tag yourself with
+  `docker manifest inspect ghcr.io/sammytourani/evestack-dashboard:<version>` and sum the layer
+  sizes.
 </Note>
 
 ### Building it yourself
