@@ -5,8 +5,8 @@
  * thirty-eight lines of usage and exited 2; the answer to "is my stack up?" was
  * `evestack verify`, which is a different question — verify is a pre-flight that
  * talks to Docker, probes an OTLP ingest route and can take a couple of seconds
- * per check. Status is the glance: four parallel probes, a short timeout, and
- * one fix command under anything red.
+ * per check. Status is the glance: three parallel probes plus a configuration
+ * read, a short timeout, and one fix command under anything red.
  *
  * The division of labour, stated because two commands that both "check things"
  * will otherwise grow into each other:
@@ -23,7 +23,7 @@ import { spawnSync } from "node:child_process";
 
 import { c, fixLine, forHumans, g, headingLine, plain, rowLine, shortPath } from "create-evestack/ui";
 
-import { connect, DoctorError } from "./db.mjs";
+import { classifyConnectFailure, connect, DoctorError } from "./db.mjs";
 import { findProjectEnv, notAProject, projectEnv, wantsHelp } from "./project.mjs";
 
 /** Short: this is the glance. A part that takes longer than this to answer is,
@@ -56,11 +56,25 @@ Exit codes
 /* probes                                                                      */
 /* -------------------------------------------------------------------------- */
 
-/** A GET that answers instead of throwing. */
-async function reachable(url) {
+/**
+ * A GET that answers instead of throwing.
+ *
+ * `status: 0` is reserved for "nothing answered at all" — refused, or timed
+ * out. Any other number means something is listening and replied, which is a
+ * different problem with a different fix, and every probe below now depends on
+ * being able to tell those two apart.
+ */
+async function reachable(url, { wantBody = false } = {}) {
   try {
     const response = await fetch(url, { signal: AbortSignal.timeout(PROBE_MS) });
-    return { ok: response.ok, status: response.status };
+    const answer = { ok: response.ok, status: response.status };
+    // Only when asked, only on a failure, and only when the server says it is
+    // JSON: an HTML error page from a proxy in front is not worth reading into
+    // memory on a command whose whole promise is that it is a glance.
+    if (wantBody && !response.ok && response.headers.get("content-type")?.includes("application/json")) {
+      answer.body = await response.json().catch(() => undefined);
+    }
+    return answer;
   } catch (error) {
     return { ok: false, status: 0, error: error?.name === "TimeoutError" ? "timed out" : "refused" };
   }
@@ -93,10 +107,20 @@ async function probeAgent(env) {
              fix: "it should look like http://127.0.0.1:2000", where: explicit };
   }
   const health = await reachable(new URL("/eve/v1/health", base));
-  return health.ok
-    ? { part: "agent", state: "ok", where: portLabel(base), detail: "answering" }
-    : { part: "agent", state: "fail", where: portLabel(base),
-        detail: "not answering", fix: "npm run dev" };
+  if (health.ok) return { part: "agent", state: "ok", where: portLabel(base), detail: "answering" };
+  // Something replied, so the port is not empty and `npm run dev` cannot help:
+  // a second agent would fail to bind it. eve's own health handler is an
+  // unconditional 200 — `{ok, status: "ready", workflowId}`, with no failure
+  // branch in it — so a non-2xx here is never a sick agent. It is a different
+  // process, a proxy, or a build that never mounted the route. Calling a socket
+  // that answered "not answering" is the same false claim the Postgres row made.
+  if (health.status !== 0) {
+    return { part: "agent", state: "fail", where: portLabel(base),
+             detail: `something answered ${health.status} here, and it is not an eve agent`,
+             fix: "check what is already on this port, or set EVESTACK_AGENT_PORT" };
+  }
+  return { part: "agent", state: "fail", where: portLabel(base),
+           detail: "not answering", fix: "npm run dev" };
 }
 
 /**
@@ -141,15 +165,93 @@ async function probeDashboard(env) {
     /* otherwise keep the default; verify is the command that complains about it */
   }
   const port = portLabel(base);
-  const health = await reachable(new URL("/api/health", base));
+  const health = await reachable(new URL("/api/health", base), { wantBody: true });
   if (health.ok) return { part: "dashboard", state: "ok", where: port, detail: "healthy", url: base };
-  if (health.status === 503) {
-    return { part: "dashboard", state: "fail", where: port, url: base,
-             detail: "up, but answering 503 — its credentials are missing",
-             fix: "docker compose --profile dashboard up -d --force-recreate dashboard" };
+  const row = { part: "dashboard", state: "fail", where: port, url: base };
+  if (health.status !== 0) return { ...row, ...unhealthyDashboard(health) };
+  return { ...row, detail: "not answering", fix: "docker compose --profile dashboard up -d" };
+}
+
+/**
+ * Which of the dashboard's not-ok states this is, read off its own answer.
+ *
+ * app/api/health/route.ts has four of them and every one leaves on a 503. This
+ * row asserted the first for all four — "its credentials are missing", fixed by
+ * force-recreating the container — which is wrong three times out of four, and
+ * wrong in the expensive direction: it recreates a container that was never the
+ * problem, nothing changes, and the next run says the same thing. The body was
+ * naming the actual state the whole time.
+ *
+ * That body is the contract: `status` names the state, `reason` narrows the
+ * degraded one, and a dashboard that cannot reach Postgres carries neither.
+ */
+function unhealthyDashboard(health) {
+  const body = health.body ?? {};
+  switch (body.reason ?? body.status) {
+    case "unconfigured":
+      return { detail: "up, but EVESTACK_AUTH_PASSWORD is not set, so it serves no page but /signin",
+               fix: "docker compose --profile dashboard up -d --force-recreate dashboard" };
+    case "schema-missing":
+      return { detail: "up and connected, but the workflow schema was never created",
+               fix: "npm run db:bootstrap" };
+    case "schema-too-new":
+      return { detail: "up, but older than its own database — traces and costs cannot be served",
+               fix: "docker compose --profile dashboard pull && docker compose --profile dashboard up -d" };
+    default:
+      // Its database, not its container. Recreating the dashboard here would
+      // restart the one process in the pair that was working.
+      if (body.database === "unreachable") {
+        return { detail: "up, but it cannot reach Postgres", fix: "docker compose up -d postgres" };
+      }
+      return { detail: `up, but answering ${health.status}`, note: body.error,
+               fix: "docker compose logs dashboard" };
   }
-  return { part: "dashboard", state: "fail", where: port, url: base, detail: "not answering",
-           fix: "docker compose --profile dashboard up -d" };
+}
+
+/**
+ * A connection that did not open, split the way `doctor` splits it.
+ *
+ * Every one of these used to be "not answering — docker compose up -d
+ * postgres". On the case that matters most that is false twice over: a server
+ * which answers a startup packet and then rejects the password IS answering,
+ * and starting a second one cannot help. That is the defect that made `doctor`
+ * unusable and cost a tester an afternoon, and it was still sitting here.
+ *
+ * `classifyConnectFailure` is the judgement doctor already makes, on the same
+ * error, so the two commands cannot disagree about one socket. What is not
+ * shared is the wording: doctor's paragraph explains, and a status row has to
+ * fit on one line with one thing to type under it.
+ *
+ * `connect` wraps the driver's error in a DoctorError, so the thing worth
+ * classifying is the cause rather than the wrapper.
+ */
+function postgresFailureRow(error) {
+  const cause = error?.cause ?? error;
+
+  // Not a database problem at all — this process cannot load the driver.
+  // `docker compose up -d postgres` would start a database it still could not
+  // open a socket to.
+  if (cause?.code === "ERR_MODULE_NOT_FOUND") {
+    return { state: "fail", detail: "cannot load the `pg` driver, so nothing was asked",
+             fix: "npm i -g evestack" };
+  }
+
+  switch (classifyConnectFailure(cause)) {
+    case "credentials":
+      return { state: "fail", detail: "up, and it rejected these credentials",
+               fix: "check the user and password in WORKFLOW_POSTGRES_URL" };
+    case "no-database":
+      return { state: "fail", detail: "up, but that database does not exist",
+               fix: "check the name after the last / in WORKFLOW_POSTGRES_URL" };
+    case "refused":
+      // The server's own SQLSTATE is the only honest thing to lead with here:
+      // 53300 and 57P03 are different afternoons, and doctor prints the rest.
+      return { state: "fail", detail: `up, and it refused the connection (${cause?.code ?? "unknown"})`,
+               note: cause?.message, fix: "evestack doctor" };
+    default:
+      return { state: "fail", detail: "not answering", fix: "docker compose up -d postgres",
+               note: error instanceof DoctorError ? undefined : error?.message };
+  }
 }
 
 /**
@@ -180,9 +282,7 @@ async function probePostgres(env) {
   try {
     session = await connect({ connectionString: url, timeoutMs: PROBE_MS });
   } catch (error) {
-    return { part: "postgres", state: "fail", where, detail: "not answering",
-             fix: "docker compose up -d postgres",
-             note: error instanceof DoctorError ? undefined : error?.message };
+    return { part: "postgres", where, ...postgresFailureRow(error) };
   }
 
   const { client } = session;
@@ -263,9 +363,11 @@ export async function status(argv, { stdout = process.stdout, stderr = process.s
   const env = projectEnv(found);
   const name = found.dir.split(/[\\/]/).filter(Boolean).pop() ?? "project";
 
-  // In parallel. Four sequential probes at a 2.5s timeout is a ten-second
-  // "glance" on a machine where nothing is running, which is precisely the
-  // machine where someone is typing this repeatedly.
+  // In parallel. Three sequential probes at the 2.5s PROBE_MS timeout is a
+  // seven-and-a-half-second "glance" on a machine where nothing is running,
+  // which is precisely the machine where someone is typing this repeatedly.
+  // The fourth row, model, is read from configuration and never waits, so the
+  // worst case here is one timeout rather than three.
   const { agent, postgres, dashboard, model } = await probeAll(env);
   const results = [agent, postgres, dashboard, model];
 
