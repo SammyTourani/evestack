@@ -18,9 +18,18 @@ import { fileURLToPath } from "node:url";
 
 // One colour table for the whole project, and the only one that asks whether
 // this is a terminal before emitting an escape. `npm run verify | tee log.txt`
-// used to write raw \x1b[31m into the file. Re-exported rather than re-declared
-// so that verify.mjs and dev.mjs keep their single `from "./checks.mjs"` import.
-export { C, c, g } from "./ui.mjs";
+// used to write raw \x1b[31m into the file. Passed straight through so that
+// verify.mjs, dev.mjs and eval.mjs keep their single `from "./checks.mjs"`
+// import.
+//
+// C is IMPORTED and then exported, not re-exported in one line. `export { C }
+// from` forwards the name without binding it locally, so the moment anything in
+// this file used C — stop() and preflight() below both do — it threw
+// `ReferenceError: C is not defined`. On the error path only, which is the one
+// place nobody looks until it is already a bad day.
+import { C } from "./ui.mjs";
+export { c, g } from "./ui.mjs";
+export { C };
 
 /**
  * `.env.local` as a plain object.
@@ -467,6 +476,26 @@ export function eveArgsWithPort(command, passthrough = [], pinnedPort) {
 }
 
 /**
+ * The argv for `eve eval`, pointed at an agent that is already running.
+ *
+ * Separate from eveArgsWithPort because the flag is not the same idea: `eve
+ * eval` takes no --port, it takes a --url, and it BOOTS ITS OWN dev server
+ * when it is not given one. eve refuses to boot a second dev server for an app
+ * root that already has one, so on a project whose agent is running — which is
+ * the state `npm run dev` leaves you in — a bare `eve eval` exits 1 having run
+ * nothing. Handing it the recorded port turns that into a normal run.
+ *
+ * A --url the caller typed always wins, in either spelling, exactly as
+ * eveArgsWithPort leaves a typed --port alone: this is a default, not a rule.
+ */
+export function evalArgsWithTarget(passthrough = [], url) {
+  const args = ["eval", ...passthrough];
+  if (!url) return args;
+  if (passthrough.some((arg) => arg === "--url" || arg.startsWith("--url="))) return args;
+  args.push("--url", url);
+  return args;
+}
+/**
  * Which `eve` to execute: this project's, by absolute path, whenever it exists.
  *
  * `scripts/start.mjs` spawned the bare name `eve` and relied on PATH. That works
@@ -504,4 +533,167 @@ export function eveBinary(scriptUrl, platform = process.platform) {
   const root = dirname(dirname(fileURLToPath(scriptUrl)));
   const local = join(root, "node_modules", ".bin", "eve");
   return existsSync(local) ? local : "eve";
+}
+
+/**
+ * Refuse to start, name the one command that fixes it, and exit 1.
+ *
+ * Here rather than in dev.mjs because `npm run dev` and `npm run eval` stop on
+ * the same conditions, and a second copy of the formatting is a second place
+ * for the two to drift.
+ */
+export function stop(title, lines) {
+  console.error(`\n${C.red}${C.bold}  ${title}${C.reset}\n`);
+  for (const line of lines) console.error(`  ${line}`);
+  console.error();
+  process.exit(1);
+}
+
+/**
+ * The three things that are always wrong first: Postgres is not up, the schema
+ * was never created, or the model is not configured. Checked before anything is
+ * started, because each one otherwise surfaces as a message that names neither
+ * the cause nor a command — the header of scripts/dev.mjs has both verbatim.
+ *
+ * `label` is the command to name when telling the reader to run it again, so
+ * the advice matches whatever they actually typed.
+ *
+ * `requireEmbedModel` adds the SECOND Ollama pull. The agent boots fine without
+ * an embedding model, so `npm run dev` does not ask for one; the eval suite
+ * cannot pass without it, because `remember` fails on its first call and
+ * evals/memory.eval.ts is five gates of remember/recall. Only asked for when
+ * embeddings really come from Ollama.
+ */
+export async function preflight({ label = "npm run dev", requireEmbedModel = false } = {}) {
+  const fileEnv = readEnvFile();
+  const env = (key) => envValue(fileEnv, key);
+
+  /* -- the database ------------------------------------------------------- */
+
+  const pgUrl = env("WORKFLOW_POSTGRES_URL");
+  if (!pgUrl) {
+    // Not fatal. Without it eve falls back to a local on-disk world, which
+    // works — it is just not the durable Postgres this project is about. Say so
+    // once and carry on rather than refusing to start.
+    console.warn(
+      `${C.yellow}  !${C.reset} WORKFLOW_POSTGRES_URL is not set, so sessions are stored under .eve/ ` +
+        "instead of Postgres.\n" +
+        `    ${C.dim}The dashboard reads Postgres, so it will show nothing. .env.example has the line.${C.reset}`,
+    );
+    return;
+  }
+
+  let where = "the configured host";
+  try {
+    const parsed = new URL(pgUrl);
+    where = `${parsed.hostname}:${parsed.port || 5432}`;
+  } catch {
+    stop("WORKFLOW_POSTGRES_URL is not a URL.", ["Check the line in .env.local."]);
+  }
+
+  const probe = await connectPostgres(pgUrl, 4000);
+  if (!probe.ok) {
+    stop(`Postgres is not running, so the agent cannot start.`, [
+      `Nothing is accepting connections on ${C.bold}${where}${C.reset}.`,
+      `${C.dim}${probe.error}${C.reset}`,
+      "",
+      ...(dockerRunning()
+        ? [
+            `${C.bold}Start it:${C.reset}`,
+            "",
+            "    docker compose up -d postgres",
+            "",
+            `${C.dim}Already "Up"? A container whose port bind failed once is not re-bound by a${C.reset}`,
+            `${C.dim}plain restart, and \`docker compose ps\` still calls it healthy. Force it:${C.reset}`,
+            "",
+            "    docker compose up -d --force-recreate postgres",
+          ]
+        : [
+            `${C.bold}Docker is not running.${C.reset} Start Docker Desktop, then:`,
+            "",
+            "    docker compose up -d postgres",
+          ]),
+    ]);
+  }
+
+  /* -- the schema -------------------------------------------------------- */
+
+  const schemas = await schemasPresent(probe.client);
+  await probe.client.end().catch(() => {});
+
+  if (!schemas.has("workflow")) {
+    stop("The database has no workflow schema yet.", [
+      `Postgres is up at ${C.bold}${where}${C.reset}, but nothing has created the tables eve`,
+      "stores sessions in. That is one command, and nothing creates it for you:",
+      "",
+      `    ${C.bold}npm run db:bootstrap${C.reset}`,
+      "",
+      `${C.dim}Then \`${label}\` again.${C.reset}`,
+    ]);
+  }
+
+  /* -- the model --------------------------------------------------------- */
+  // Last, and never fatal for a hosted provider: a wrong key is the provider's
+  // 401 to report, not ours to guess at. For Ollama it IS knowable locally, and
+  // a missing pull is otherwise a failure on the user's first message.
+
+  const provider = (env("EVESTACK_PROVIDER")?.trim() || "openai").toLowerCase();
+  if (provider === "ollama") {
+    const model = env("EVESTACK_MODEL") || "qwen3";
+    // The embedding model is a SECOND, DIFFERENT pull. Wanted only when
+    // embeddings really come from Ollama: an explicit EVESTACK_EMBED_PROVIDER
+    // pointing somewhere else means nothing here will ask Ollama for one.
+    // Same resolution lib/memory.ts uses, narrowed to the local case.
+    const embedsLocally =
+      (env("EVESTACK_EMBED_PROVIDER") || "ollama").trim().toLowerCase() === "ollama";
+    const embedModel =
+      requireEmbedModel && embedsLocally
+        ? env("EVESTACK_EMBED_MODEL") || "nomic-embed-text"
+        : null;
+    const ollama = await inspectOllama(
+      env("OLLAMA_BASE_URL") || "http://127.0.0.1:11434",
+      embedModel ? [model, embedModel] : [model],
+    );
+    if (!ollama.running) {
+      stop("Ollama is not running, and this project is configured to use it.", [
+        `Nothing answered at ${C.bold}${env("OLLAMA_BASE_URL") || "http://127.0.0.1:11434"}${C.reset}.`,
+        "",
+        "  Start Ollama (open the app, or `ollama serve`), then:",
+        "",
+        `    ${C.bold}ollama pull ${model}${C.reset}`,
+        "",
+        `${C.dim}Or switch to a hosted provider by editing EVESTACK_PROVIDER in .env.local.${C.reset}`,
+      ]);
+    }
+    if (ollama.missing.includes(model)) {
+      stop(`Ollama does not have "${model}" yet.`, [
+        "The agent would fail on your first message. Pull it first:",
+        "",
+        `    ${C.bold}ollama pull ${model}${C.reset}`,
+        "",
+        `${C.dim}Models present: ${ollama.models.join(", ") || "none"}${C.reset}`,
+      ]);
+    }
+    if (embedModel && ollama.missing.includes(embedModel)) {
+      stop(`Ollama does not have "${embedModel}" yet, and the evals need it.`, [
+        "The chat model cannot produce embeddings, so `remember` fails on its first",
+        "call and evals/memory.eval.ts cannot pass. It is a separate 274 MB pull:",
+        "",
+        `    ${C.bold}ollama pull ${embedModel}${C.reset}`,
+        "",
+        `${C.dim}Models present: ${ollama.models.join(", ") || "none"}${C.reset}`,
+      ]);
+    }
+  } else {
+    const keyVar = provider === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY";
+    if (!env(keyVar)) {
+      stop(`${keyVar} is not set, so the agent has no model to call.`, [
+        `This project is configured for ${C.bold}${provider}${C.reset}. Add the key to .env.local:`,
+        "",
+        `    ${C.bold}${keyVar}=…${C.reset}`,
+        "",
+        `${C.dim}Or run for free on your own machine: set EVESTACK_PROVIDER=ollama.${C.reset}`,
+      ]);
+    }
+  }
 }

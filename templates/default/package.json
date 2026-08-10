@@ -15,6 +15,7 @@
     "start": "node --env-file-if-exists=.env.local scripts/start.mjs",
     "typecheck": "tsc",
     "test": "node --test test/*.test.mjs",
+    "eval": "node --env-file-if-exists=.env.local scripts/eval.mjs",
     "db:bootstrap": "node scripts/bootstrap.mjs",
     "db:prune": "node --env-file-if-exists=.env.local scripts/prune.mjs",
     "verify": "node --env-file-if-exists=.env.local scripts/verify.mjs",

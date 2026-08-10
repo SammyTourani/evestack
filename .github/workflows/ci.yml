@@ -45,6 +45,25 @@ jobs:
       # a list that will be wrong.
       - run: pnpm -r --if-present run build
       - run: pnpm -r typecheck
+      # The one part of the eval tier that costs nothing: discovery. `--list`
+      # loads evals.config.ts and every *.eval.ts through eve's own loader and
+      # prints what would run — no agent, no database, no model, about a second.
+      # Verified against a dead WORKFLOW_POSTGRES_URL: it still lists.
+      #
+      # tsc above proves those files compile; only the loader proves eve will
+      # accept them, and it rejects things tsc is happy with — an eval carrying
+      # `id` or `name`, a legacy `checks`/`scores` key, an evals/ tree with no
+      # config. That gap is not hypothetical here: the dashboard GENERATES eval
+      # files, and packages/dashboard/lib/promote-eval.ts exists to obey exactly
+      # those rules.
+      #
+      # The suite itself still stays out of this workflow, for the reason at the
+      # top of the file. Measured since: 13 gates green on Ollama in 40s on a
+      # laptop GPU — but a hosted runner has no GPU and would pull 5.2 GB first,
+      # and the evals are nondeterministic by design. They stay nightly, in
+      # .github/workflows/evals.yml.
+      - name: the shipped evals still load
+        run: cd templates/default && npx eve eval --list
       # packages/dashboard/lib/pricing.ts is generated the same way, from
       # Vercel's public model catalog — which raises the obvious objection: a
       # check against a live upstream goes red when a provider reprices
