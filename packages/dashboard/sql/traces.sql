@@ -268,6 +268,12 @@ CREATE INDEX IF NOT EXISTS spans_name_idx
  *     lands first and resolves to NULL. The trigger below re-resolves the whole
  *     trace whenever any span in it is written, so the parent's arrival fixes
  *     its children — that is why the unit of work is the trace, not the row.
+ *     ONLY WHILE THOSE WRITES ARE SERIALIZED, THOUGH. A trigger is stuck with
+ *     the snapshot of the statement that fired it, so two batches for one trace
+ *     in flight at once each re-walk a trace the other half of is invisible in,
+ *     and the parent's arrival fixes nothing. lib/traces.ts runs this again from
+ *     its own transaction once a batch has committed, which is what actually
+ *     makes the answer independent of arrival order. See the triggers below.
  *   CYCLES.  parent_span_id is a single column, so a span has at most one
  *     parent. A cycle is therefore unreachable from any root, and this walk only
  *     ever descends from roots: it cannot enter a cycle, and it cannot visit a
@@ -450,6 +456,32 @@ $fn$;
  * aborts one, the route answers 503, the exporter re-sends, and the re-send is
  * an upsert — so the failure mode is a retry, not a lost span. Worth knowing
  * before adding a second writer that is not an exporter.
+ *
+ * AND CONCURRENCY COSTS MORE THAN A RETRY HERE, WHICH IS WHY THIS TRIGGER IS
+ * NOT THE WHOLE MECHANISM. This function runs inside the statement that fired
+ * it, so it sees that statement's snapshot and nothing committed after it. Two
+ * batches for one trace in flight at once therefore each re-walk a trace the
+ * other half of is invisible in: the one holding the children writes the
+ * `turn_0` alias because the enclosing `workflow.run.id` span is not there yet,
+ * the one holding that span writes nothing because the children are not there
+ * yet, both commit, and the finished trace on disk is one no transaction ever
+ * saw. Nothing writes to that trace again, so it stays wrong — which is the
+ * session page back to "No spans on any of the 1 runs" for a turn whose tool
+ * call /traces/<id> renders in full. Measured on this schema: 40 traces
+ * delivered as two overlapping batches left 93 spans across 31 of them on the
+ * alias, and one hand-run resolve_span_ancestry() changed exactly those 93.
+ *
+ * A per-trace advisory lock in here does NOT fix that, and was tried: the lock
+ * is acquired after the snapshot is taken, so waiting buys no visibility. What
+ * fixes it is running the walk in a transaction that starts after the write has
+ * committed, which insertSpans in lib/traces.ts does for every batch it stores.
+ * This trigger stays, and it is not a weaker copy of that call. It is the only
+ * thing that resolves a write which did not come through insertSpans — a psql
+ * insert, a COPY, a seed — and for any trace that arrives in one statement it is
+ * exactly right, which is nearly all of them, so that call normally finds
+ * nothing to change. What it cannot be is the last word: two writers racing on
+ * one trace defeat it whoever they are, which is why the path that actually
+ * receives OTLP does not rely on it.
  */
 CREATE OR REPLACE FUNCTION evestack.spans_resolve_changed()
 RETURNS trigger

@@ -637,6 +637,50 @@ export async function insertSpans(spans: readonly IngestedSpan[]): Promise<numbe
     written += chunk.length;
   }
 
+  /*
+   * RESOLVE AFTER THE WRITE COMMITS, BECAUSE THE TRIGGER CANNOT.
+   *
+   * sql/traces.sql keeps `resolved_session_id` and `resolved_turn_id` current
+   * with an AFTER STATEMENT trigger that re-walks every trace the statement
+   * touched. That converges only while writes to one trace are serialized, and
+   * they are not: spans export when they END, so a leaf leaves before the
+   * `workflow.execute turnWorkflow` span that carries the run id it needs, and
+   * OTLP promises nothing about the order or the grouping of what arrives.
+   *
+   * A trigger runs inside the statement that fired it and is stuck with that
+   * statement snapshot. So when two batches for one trace overlap, the one
+   * holding the children cannot see the enclosing span and the one holding the
+   * enclosing span cannot see the children. Both commit. The trace is now whole
+   * on disk and neither transaction ever saw it that way, nothing writes to that
+   * trace again, and the children keep the `turn_0` alias permanently — which is
+   * the session page reporting "No spans on any of the 1 runs" for a turn whose
+   * tool call /traces/<id> renders in full.
+   *
+   * Measured on this exact path before this call existed: 40 traces delivered as
+   * two overlapping batches each left 93 spans across 31 of them on the alias,
+   * and a hand-run `SELECT evestack.resolve_span_ancestry()` changed exactly
+   * those 93 rows. Waiting on a per-trace advisory lock inside the trigger fixes
+   * nothing and was tried: the lock is taken after the snapshot is.
+   *
+   * This statement is its own transaction, so its snapshot is taken after every
+   * chunk above committed and it sees whatever else committed while they ran.
+   * Every writer of a trace runs it after its own commit, so the last writer to
+   * commit is the one whose resolve sees the finished trace.
+   *
+   * The trigger stays. It is the only thing that resolves a write that did not
+   * come through here — a `psql` insert, a COPY, a seed — and it is right for any
+   * trace that arrives in one statement, which is nearly all of them, so this
+   * call normally finds nothing to change. It cannot be the last word, though:
+   * two writers racing on one trace defeat it whoever they are.
+   *
+   * Not swallowed. The rows are already stored, so a failure here leaves spans
+   * that render on /traces and not on /sessions — the exact split this resolves.
+   * Letting it throw makes the route answer 503, and OTLP at-least-once turns
+   * that into a re-send whose upsert costs nothing and whose resolve runs again.
+   */
+  const touched = [...new Set(spans.map((span) => span.traceId))];
+  await query("SELECT evestack.resolve_span_ancestry($1::text[])", [touched]);
+
   const days = retentionDays();
   warnExpiredOnArrival(spans, days);
   void maybePrune(days);
