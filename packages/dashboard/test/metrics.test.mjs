@@ -25,11 +25,20 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { readFileSync } from "node:fs";
+
+/** Read out of the SQL rather than restated: see the classification test. */
+const FACTS_SQL = "../sql/facts.sql";
+const OUTCOME_CHECK = /CONSTRAINT fact_turn_outcome CHECK \(\s*outcome IN \(([^)]*)\)/;
+const OUTCOME_VALUE = /'([a-z_]+)'/g;
 
 import {
   AGGREGATIONS,
   CATALOG,
+  FAILED_OUTCOMES,
+  FINISHED_OUTCOMES,
   MetricQueryError,
+  UNFINISHED_OUTCOMES,
   UNITS,
   compileMetricQuery,
   shapeMetricRows,
@@ -86,6 +95,58 @@ test("every declared unit is used by something", () => {
     for (const measure of Object.values(view.measures)) used.add(measure.unit);
   }
   assert.deepEqual([...UNITS].filter((u) => !used.has(u)), []);
+});
+
+/* -------------------------------------------------------------------------- */
+/* the failure rate leaves unfinished turns out of BOTH halves                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * `failure_rate` was `CASE WHEN outcome IN (failed, no_model_call) THEN 1 ELSE 0
+ * END`, averaged. A `running` or `wedged` turn matched neither name, scored 0 --
+ * a SUCCESS -- and stayed in the denominator, so every stuck turn lowered the
+ * reported failure rate. These pin the shape that cannot do that: NULL for an
+ * unfinished turn, which `avg()` drops from the numerator and the denominator
+ * together, and which `count()` then reports as the coverage of the measure.
+ */
+/**
+ * The classification has to cover every outcome the database can store.
+ *
+ * `sql/facts.sql`'s CHECK constraint is the list, and it is read out of the file
+ * rather than restated here. An eighth outcome added there and not classified
+ * would fall through to the ELSE arm of `failure_rate` and be scored as a
+ * success -- silently, and in the flattering direction, which is exactly how
+ * unfinished turns came to be counted as good news in the first place.
+ */
+test("every outcome the fact table can store is classified finished or not", () => {
+  const facts = readFileSync(new URL(FACTS_SQL, import.meta.url), "utf8");
+  const clause = OUTCOME_CHECK.exec(facts);
+  assert.ok(clause, "could not find fact_turn_outcome in sql/facts.sql");
+  const stored = [...clause[1].matchAll(OUTCOME_VALUE)].map((m) => m[1]).sort();
+  assert.ok(stored.length >= 7, `only found ${stored.length} outcomes: ${stored}`);
+
+  const classified = [...UNFINISHED_OUTCOMES, ...FINISHED_OUTCOMES].sort();
+  assert.deepEqual(classified, stored, "an outcome is unclassified, or invented here");
+  for (const outcome of UNFINISHED_OUTCOMES) {
+    assert.ok(!FINISHED_OUTCOMES.includes(outcome), `${outcome} is in both halves`);
+  }
+  for (const outcome of FAILED_OUTCOMES) {
+    assert.ok(FINISHED_OUTCOMES.includes(outcome), `${outcome} fails but never finishes`);
+  }
+});
+test("an unfinished turn contributes NULL to failure_rate, not zero", () => {
+  const { sql } = compile({
+    view: "turns",
+    measures: [{ measure: "failure_rate", aggregation: "avg" }],
+  });
+  for (const outcome of UNFINISHED_OUTCOMES) {
+    assert.ok(sql.includes(`'${outcome}'`), `${outcome} is not tested for in:\n${sql}`);
+  }
+  // The NULL arm has to come FIRST. Behind the failed arm it would still be
+  // right; in front of the ELSE 0 it is what makes the exclusion happen at all.
+  const nullArm = sql.indexOf("THEN NULL");
+  assert.ok(nullArm !== -1, `no NULL arm in:\n${sql}`);
+  assert.ok(nullArm < sql.indexOf("ELSE 0"), "the ELSE 0 would swallow unfinished turns");
 });
 
 test("every declared aggregation compiles to real SQL", () => {

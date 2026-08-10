@@ -1,5 +1,6 @@
 import { UNCONFIGURED_MESSAGE, authConfigured } from "@/lib/auth";
 import { query } from "@/lib/db";
+import { schemaVersionsAhead } from "@/lib/facts";
 import { dashboardVersion } from "@/lib/version";
 
 export const dynamic = "force-dynamic";
@@ -28,7 +29,38 @@ export const dynamic = "force-dynamic";
  * misconfiguration survives to production.
  * An unhealthy HEALTHCHECK marks the container; it does not restart it, so this
  * surfaces the problem without a crash loop.
+ *
+ * That last sentence is why there are now three not-ok states rather than two.
+ * The third is `degraded / schema-too-new`: the database has been migrated by a
+ * NEWER evestack than this image, so sql/traces.sql and sql/facts.sql refuse to
+ * apply (SQLSTATE EV001), every page reading spans or the fact tables fails, and
+ * OTLP ingest answers 503 to every batch. Measured on a real install: a
+ * container in exactly that state reported HEALTHY for two hours while its
+ * resolver had been silently replaced and its trace pages were empty. It is
+ * `degraded` and not a flat failure because half the product genuinely still
+ * works — the `workflow` tables are untouched — and the body says which half.
  */
+/**
+ * Components the database is ahead on, or an empty list if the question could
+ * not be asked.
+ *
+ * Swallowing rather than throwing: an unreadable sql/ directory is a broken
+ * install, but reporting it through the catch below would answer "database
+ * unreachable", which is a confident wrong answer about the healthy half. The
+ * comparison is skipped, loudly, and the other checks still run.
+ */
+async function versionsAhead(): Promise<string[]> {
+  try {
+    return await schemaVersionsAhead();
+  } catch (error) {
+    console.warn(
+      "[evestack] /api/health could not compare its schema version against the database, so " +
+        "it cannot tell you whether this image is older than that database: " +
+        `${error instanceof Error ? error.message : error}`,
+    );
+    return [];
+  }
+}
 export async function GET(): Promise<Response> {
   const headers = { "cache-control": "no-store" };
 
@@ -65,6 +97,67 @@ export async function GET(): Promise<Response> {
           version: dashboardVersion(),
           error:
             "Postgres is reachable but has no agent schema. Run `npm run db:bootstrap` in your agent project.",
+        },
+        { status: 503, headers },
+      );
+    }
+    /*
+     * DEGRADED: the database is newer than this build understands.
+     *
+     * The container is up, Postgres is up, the schema is there, and this
+     * dashboard is the thing that is out of date. sql/traces.sql and
+     * sql/facts.sql refuse to apply against a marker ahead of their own
+     * (SQLSTATE EV001), so every page that reads spans or the fact tables
+     * fails and the OTLP ingest endpoint answers 503 to every batch.
+     *
+     * It is reported here because the alternative was measured: a container
+     * in exactly this state answered `ok` on this endpoint for two hours
+     * while its trace pages were empty and its resolver had been silently
+     * replaced. This route already refuses to pretend for an unconfigured
+     * install and for a missing schema; the same judgement applies.
+     *
+     * `degraded` and not a flat failure, because it is neither: /sessions,
+     * /monitors and /approvals read the workflow tables and are unaffected.
+     * The 503 is what marks the container — Docker reads the status, not the
+     * body — and marking it is the point. An unhealthy HEALTHCHECK does not
+     * restart anything, so this surfaces the mismatch without a crash loop.
+     */
+    const ahead = await versionsAhead();
+    if (ahead.length > 0) {
+      return Response.json(
+        {
+          ok: false,
+          database: "connected",
+          status: "degraded",
+          reason: "schema-too-new",
+          version: dashboardVersion(),
+          /*
+           * Named, because "degraded" on its own tells an operator nothing
+           * about which half of the product they can still trust.
+           *
+           * The rule, so these lists can be maintained rather than guessed at:
+           * anything that applies sql/traces.sql or sql/facts.sql is refused,
+           * and everything reading only the `workflow` tables is untouched.
+           * Each entry was checked against the code, not assumed — /charts is a
+           * static demo and stays up; /sessions calls refreshFacts() inside a
+           * try and degrades to blank fact columns; /sessions/[id] does not, so
+           * the detail view goes with the traces.
+           */
+          unavailable: [
+            "/traces",
+            "/sessions/[id]",
+            "/costs",
+            "/ (overview)",
+            "/api/metrics/query",
+            "/api/ingest/v1/traces",
+          ],
+          degradedButUp: ["/sessions"],
+          available: ["/monitors", "/approvals", "/schedules", "/evals", "/charts"],
+          error:
+            `This dashboard is older than its database (${ahead.join("; ")}). Nothing was ` +
+            "migrated — an older image must leave a newer database alone. Pages that read " +
+            "spans or the fact tables cannot be served and the OTLP ingest endpoint is " +
+            "refusing spans with 503. Run the newer dashboard image.",
         },
         { status: 503, headers },
       );

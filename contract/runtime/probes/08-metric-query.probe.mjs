@@ -27,9 +27,14 @@
  *    here against `count(<column>)` taken straight from the table.
  *
  * 4. THERE IS NO THIRD DEFINITION OF FAILURE. `failure_rate` must equal
- *    lib/monitors.ts's `(errored + noModelCall) / total`, computed here from
+ *    lib/monitors.ts's `failed / finished`, computed here from
  *    `workflow.workflow_runs` rather than from the fact table, so a drift in
- *    either direction shows up.
+ *    either direction shows up. The denominator is FINISHED turns: a running or
+ *    wedged turn is judged neither way, and the version of this that divided by
+ *    every turn in the window scored each of them as a success — so a crashed
+ *    agent lowered the reported failure rate. The turns left out are checked
+ *    twice over, as their own measure and as the rate's coverage, because an
+ *    exclusion nobody can see is the same lie in a quieter voice.
  *
  * 5. A HOSTILE VALUE IS A PARAMETER. The unit tests prove it is not in the
  *    statement text. Only a server can prove that what does reach it is inert.
@@ -281,13 +286,29 @@ export default {
 
       /* ── 4. no third definition of failure ────────────────────────────── */
 
+      // lib/monitors.ts's own predicates, spelled out against workflow_runs. The
+      // denominator is FINISHED turns, not every turn in the window: a running
+      // or wedged turn is judged neither way, and counting it as a success is
+      // what used to make a crashed agent improve the reported failure rate.
       const [monitors] = (
         await client.query(
           `SELECT count(*)::int AS total,
+                  count(*) FILTER (
+                    WHERE NOT (completed_at IS NULL AND error_code IS NULL
+                               AND status IS DISTINCT FROM 'cancelled')
+                  )::int AS finished,
+                  count(*) FILTER (
+                    WHERE completed_at IS NULL AND error_code IS NULL
+                      AND status IS DISTINCT FROM 'cancelled'
+                  )::int AS unfinished,
                   count(*) FILTER (WHERE error_code IS NOT NULL)::int AS errored,
                   count(*) FILTER (
                     WHERE completed_at IS NOT NULL AND attributes ->> '$eve.model' IS NULL
-                  )::int AS no_model_call
+                  )::int AS no_model_call,
+                  count(*) FILTER (
+                    WHERE error_code IS NOT NULL
+                       OR (completed_at IS NOT NULL AND attributes ->> '$eve.model' IS NULL)
+                  )::int AS failed
              FROM workflow.workflow_runs
             WHERE attributes ->> '$eve.type' IN ('turn', 'subagent')
               AND created_at >= ($1::timestamptz AT TIME ZONE 'utc')
@@ -298,19 +319,45 @@ export default {
 
       const rateResult = await metrics.runMetricQuery({
         view: "turns",
-        measures: [{ measure: "failure_rate", aggregation: "avg" }],
+        measures: [
+          { measure: "failure_rate", aggregation: "avg" },
+          { measure: "unfinished", aggregation: "count" },
+        ],
         timeDimension: WINDOW,
       });
       const reported = num(rateResult.data[0]?.avg_failure_rate);
-      const expected =
-        monitors.total === 0 ? 0 : (monitors.errored + monitors.no_model_call) / monitors.total;
-      const agrees = reported !== null && Math.abs(reported - expected) < 1e-12;
+      const expected = monitors.finished === 0 ? null : monitors.failed / monitors.finished;
+      const agrees =
+        expected === null
+          ? reported === null
+          : reported !== null && Math.abs(reported - expected) < 1e-12;
       t.ok(
         agrees,
         "failure_rate is lib/monitors.ts's failure rate, computed from workflow_runs directly",
         agrees
-          ? { actual: `${(reported * 100).toFixed(2)}% of ${monitors.total} turns` }
+          ? {
+              actual: `${((reported ?? 0) * 100).toFixed(2)}% of ${monitors.finished} finished turns`,
+            }
           : { expected, actual: reported },
+      );
+
+      // The exclusion has to be visible, or "not judged" quietly becomes "fine".
+      // Two independent statements of the same number: the measure asked for
+      // directly, and the coverage of the rate above.
+      const unfinishedReported = num(rateResult.data[0]?.count_unfinished);
+      const judged = rateResult.coverage.byMeasure.avg_failure_rate;
+      t.ok(
+        unfinishedReported === monitors.unfinished,
+        "the turns left out of the rate are reported as a count of their own",
+        { expected: monitors.unfinished, actual: unfinishedReported },
+      );
+      t.ok(
+        judged !== undefined && judged.rows === monitors.finished && judged.of === monitors.total,
+        "…and the rate states its own denominator: finished turns of all turns in the window",
+        {
+          expected: `${monitors.finished} of ${monitors.total}`,
+          actual: judged === undefined ? "no coverage" : `${judged.rows} of ${judged.of}`,
+        },
       );
       t.ok(
         monitors.no_model_call > 0,

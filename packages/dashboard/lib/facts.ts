@@ -1,6 +1,6 @@
 import { query } from "./db";
 import { costUsd, isPriced } from "./pricing";
-import { ensureTraceSchema } from "./traces";
+import { ensureTraceSchema, parseSchemaTarget, traceSchemaTarget } from "./traces";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -114,6 +114,48 @@ function ensureFactSchema(): Promise<void> {
       });
   }
   return schemaReady;
+}
+
+/**
+ * Components whose INSTALLED schema version is ahead of what this build
+ * installs, described for a person. Empty when the database is one this build
+ * understands, and empty when evestack has never been set up here.
+ *
+ * A question, not an error handler, and that distinction was a bug before it
+ * was a design note. The first version of this check caught EV001 off a
+ * SELECT — but nothing that merely READS evestack.spans ever raises it. The
+ * guard fires when sql/traces.sql is APPLIED, so a surface that only queries
+ * the table sees a perfectly healthy answer from a database it can no longer
+ * migrate. Measured: the trace-ingest monitor reported "109 spans arrived, ok"
+ * on an install whose ingest endpoint was answering 503 to every batch.
+ *
+ * Two callers, which is why it is here rather than inlined: /api/health, whose
+ * whole job is to say whether this thing works, and lib/alerts.ts, which
+ * otherwise blames the exporter for spans this dashboard is refusing.
+ */
+export async function schemaVersionsAhead(): Promise<string[]> {
+  const [marker] = await query<{ present: string | null }>(
+    "SELECT to_regclass('evestack.schema_version')::text AS present",
+  );
+  if (!marker?.present) return [];
+  const targets: Record<string, number> = {
+    spans: traceSchemaTarget(),
+    facts: factSchemaTarget(),
+  };
+  const rows = await query<{ component: string; version: number }>(
+    "SELECT component, version FROM evestack.schema_version",
+  );
+  return rows
+    // A component this build knows nothing about is not a downgrade. Only the
+    // two whose files carry a guard can be compared against anything.
+    .filter((row) => Object.hasOwn(targets, row.component))
+    .filter((row) => Number(row.version) > targets[row.component])
+    .map((row) => `${row.component} is at v${row.version}, this build installs v${targets[row.component]}`);
+}
+
+/** The fact-layer schema version this build installs. See parseSchemaTarget. */
+export function factSchemaTarget(): number {
+  return parseSchemaTarget(readSchemaSql(), "sql/facts.sql");
 }
 
 function readSchemaSql(): string {

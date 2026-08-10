@@ -1,5 +1,6 @@
 import { gunzipSync, inflateSync } from "node:zlib";
 import { INGEST_UNAUTHENTICATED_MESSAGE, ingestAuthorized } from "@/lib/auth";
+import { isSchemaTooNew } from "@/lib/db";
 import {
   getTraceOverview,
   ingestPolicy,
@@ -59,6 +60,23 @@ const PROTOBUF_TYPES = [
 function status(code: number, message: string, httpStatus: number, headers?: HeadersInit) {
   return Response.json({ code, message }, { status: httpStatus, headers });
 }
+
+/**
+ * Logged at most once per process, and the reason it has to exist.
+ *
+ * Refusing to write into a database this build does not understand is
+ * correct, and 503 + Retry-After is the right OTLP answer: the exporter holds
+ * the batch instead of dropping it. But the two together are silent. The
+ * exporter retries into a void, the 503 goes to the agent and not to a screen,
+ * and the operator sees spans stop arriving with nothing anywhere saying why —
+ * which is the same shape as the bad-ingest-token failure docs/observability
+ * already warns about, and just as hard to diagnose.
+ *
+ * Once, not per batch: an exporter retrying every five seconds would bury the
+ * line it is trying to draw attention to. /api/health reports the same state
+ * as `degraded / schema-too-new` for anything watching that instead.
+ */
+let schemaRefusalLogged = false;
 
 export async function POST(request: Request): Promise<Response> {
   if (!ingestAuthorized(request)) {
@@ -153,6 +171,18 @@ export async function POST(request: Request): Promise<Response> {
   try {
     await insertSpans(parsed.spans);
   } catch (error) {
+    // The refusal that would otherwise be invisible. See schemaRefusalLogged.
+    if (isSchemaTooNew(error) && !schemaRefusalLogged) {
+      schemaRefusalLogged = true;
+      console.error(
+        "[evestack] REFUSING ALL TRACE INGEST: this dashboard is older than its database, " +
+          "so sql/traces.sql was not applied and spans are not being written. Every OTLP " +
+          "batch is answered 503 and your exporter will retry until this is fixed. Run the " +
+          "newer dashboard image, or drop the evestack schema to rebuild the trace tier. " +
+          "This line is printed once per process; /api/health reports the same state as " +
+          `degraded / schema-too-new. Postgres said: ${describe(error)}`,
+      );
+    }
     // 503 is the retryable signal in OTLP. The exporter holds the batch and
     // sends it again, so a Postgres restart costs latency rather than traces.
     return status(UNAVAILABLE, `could not store spans: ${describe(error)}`, 503, {
