@@ -133,7 +133,7 @@ services:
     # went on telling readers to pull 0.1.0. It now `git grep`s every written-out
     # `evestack-dashboard:<version>` in the tree and requires them all to agree,
     # which is why the claim above is safe to make.
-    image: ${EVESTACK_DASHBOARD_IMAGE:-ghcr.io/sammytourani/evestack-dashboard:0.2.0}
+    image: ${EVESTACK_DASHBOARD_IMAGE:-ghcr.io/sammytourani/evestack-dashboard:0.3.0}
     build:
       # The REPOSITORY ROOT, not packages/dashboard. The dashboard depends on
       # @evestack/schedules over pnpm's `workspace:*` protocol, which only
