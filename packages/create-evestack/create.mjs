@@ -448,7 +448,7 @@ async function runStep({ cwd, label, doing, done, command, args, verbose, whenFa
  *
  * Exported, with `only: "database"` to stop after the schema, so that
  * test/bring-up.test.mjs can drive the real Docker path — the async spawn, the
- * progress rows, a container genuinely starting — without a 200 MB image pull
+ * progress rows, a container genuinely starting — without a 230 MB image pull
  * in CI. The first two steps need only the pgvector image the test already
  * requires; the third is the one that costs bandwidth.
  */
@@ -479,7 +479,7 @@ export async function bringUp(target, pm, dashboardPort, { verbose = false, only
 
   if (only === "database") return true;
 
-  // The one that takes real time on a cold machine: a ~200 MB pull.
+  // The one that takes real time on a cold machine: a ~230 MB pull.
   if (
     !(await runStep({
       cwd: target, verbose, label: "dashboard", command: "docker",
@@ -673,7 +673,7 @@ export async function create(argv) {
     // stack — and on a machine short of memory the failure is not a slow reply,
     // it is the whole host going down. qwen3 is 5.2 GB on top of Docker,
     // Postgres, the dashboard and the agent.
-    warn("qwen3 is 5.2 GB. Budget model size + 4 GB free RAM on top of Docker, Postgres");
+    warn("qwen3 is 5.2 GB. Budget both model sizes + 4 GB free RAM on top of Docker, Postgres");
     warn("and the dashboard, or the machine can hang. A hosted key is safer on a laptop.");
     apiKeyLine = "# Local models need no API key.";
   } else {
@@ -686,7 +686,7 @@ export async function create(argv) {
   // ---- integrations ---------------------------------------------------------
   stepHeader(3, "Tools");
   const wantComposio = await confirm(
-    `Enable one-click sign-in to 1,070 tools via Composio? ${C.dim}(Gmail, Slack, Notion, Linear…)${C.reset}`,
+    `Enable one-click sign-in to 1,000+ tools via Composio? ${C.dim}(Gmail, Slack, Notion, Linear…)${C.reset}`,
     true,
   );
   let composioLine = "# COMPOSIO_API_KEY=ak_...";
@@ -709,13 +709,13 @@ export async function create(argv) {
     warn("Docker is not running, so this step is skipped — Postgres and the sandbox need it.");
     dim("Start Docker Desktop and run the commands printed at the end.");
   } else if (nonInteractive || !process.stdout.isTTY) {
-    // In CI, in a heredoc, or under --yes, "shall I pull 200 MB" has nobody to
+    // In CI, in a heredoc, or under --yes, "shall I pull 230 MB" has nobody to
     // answer it, and a scaffolder that does it anyway is one people stop running
     // unattended.
     dim("Skipped: not an interactive terminal. The commands are printed at the end.");
   } else {
     wantStart = await confirm(
-      `Start Postgres, create the schema and pull the dashboard? ${C.dim}(~200 MB)${C.reset}`,
+      `Start Postgres, create the schema and pull the dashboard? ${C.dim}(~230 MB)${C.reset}`,
       true,
     );
     // The same reasoning as the branch above, one step later. If stdin died
@@ -1126,10 +1126,12 @@ export async function create(argv) {
  *
  * This is the piece of teaching the scaffolder never did. It finished by
  * printing a list of commands, which tells someone what to type and nothing
- * about what they now have — and evestack is four processes on three ports with
- * one outbound call, which is exactly the shape that a paragraph fails to
- * explain and a six-line picture does not. Whether there is an outbound call at
- * all depends on the provider, which is what modelEdge below is for.
+ * about what they now have — and evestack is three local processes on three
+ * ports plus a model, which is exactly the shape that a paragraph fails to
+ * explain and a six-line picture does not. Whether that model call leaves the
+ * machine depends on the provider — it does for OpenAI and Anthropic, and does
+ * not for Ollama, which listens on 127.0.0.1:11434 — which is what modelEdge
+ * below is for.
  *
  * Drawn with the ports this project actually chose, not the defaults: on a
  * machine already running one scaffold these are 2001, 5434 and 4001, and a
@@ -1161,6 +1163,11 @@ function architecture({ agentPort, pgPort, dashboardPort, provider, model, up, o
     { indent: 4, inner: 64 },
   );
   say(`      ${c.dim(g.pipe)}`);
+  // This line used to end "the only thing that leaves this machine" for every
+  // provider, which is true for OpenAI and Anthropic and FALSE for Ollama — that
+  // runs on 127.0.0.1:11434 and nothing leaves at all. It undersold the $0
+  // path's best property at the moment someone first reads it. modelEdge is the
+  // branch that fixes it; the copy pass anticipated exactly this shape.
   say(
     `      ${c.dim(`${g.bl}${g.bar}${g.arrow}`)} ${c.bold(provider)} ` +
       `${c.dim(modelEdge(provider, model, ollamaBaseUrl))}`,
@@ -1553,7 +1560,7 @@ export function composeFile(projectName, { pgPort = 5433, dashboardPort = 4000, 
   //
   // The dashboard sits behind a profile so a plain `docker compose up -d` starts
   // Postgres alone — the agent is useful without the dashboard, and pulling a
-  // ~400 MB image is not something to do to someone who only asked for a
+  // ~230 MB image is not something to do to someone who only asked for a
   // database.
   const password = `\${${DB_PASSWORD_VAR}:?missing — it belongs in the .env file beside this one}`;
   return `# evestack — your whole stack, on your machine, for $0.

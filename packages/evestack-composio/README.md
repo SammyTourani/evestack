@@ -1,9 +1,10 @@
 # @evestack/composio
 
-One browser flow signs your agent into 1000+ tools.
+One browser flow signs your agent into 1,000+ tools.
 
-Vercel Connect ships four managed connectors. Composio's catalog is 1,070 toolkits
-(verified against `GET /api/v3/toolkits`). This package wires that catalog into an
+Vercel Connect ships four managed connectors. Composio's catalog is 1,000+ toolkits — we
+counted 1,070 against `GET /api/v3/toolkits` on 2026-08-04 and it moves by ones, so every
+evestack surface says 1,000+. This package wires that catalog into an
 [eve](https://github.com/vercel/eve) agent through Composio's Tool Router, so the
 model gets four meta-tools instead of ten thousand individual ones:
 

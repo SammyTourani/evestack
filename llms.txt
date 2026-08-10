@@ -2,7 +2,7 @@
 
 > A fully free, self-hosted distribution of Vercel's `eve` agent framework. `eve` on your own
 > machine — durable Postgres sessions, a Docker sandbox, a dashboard that observes AND drives
-> the agent, and one-click sign-in to 1,070 toolkits via Composio. $0 infrastructure; the only
+> the agent, and one-click sign-in to 1,000+ toolkits via Composio. $0 infrastructure; the only
 > real cost is model tokens, and Ollama removes that too.
 
 `eve` is a trademark of Vercel. evestack is an independent project, not affiliated with or
@@ -26,7 +26,8 @@ lets a model approve a gated tool call a human was asked to stand at.
 ## Core facts an agent should know before answering questions about this repo
 
 - `@workflow/world-postgres` MUST be pinned to the `beta` npm tag, not `latest`. `latest` is
-  `4.3.3`; `eve` 0.29.x requires the `5.0.0-beta` protocol line and rejects mismatches.
+  `4.3.3`; the `eve` line this repo pins requires the `5.0.0-beta` protocol line and rejects
+  mismatches.
 - The dashboard (`packages/dashboard`) reads `workflow.workflow_runs.attributes` (JSONB)
   directly via SQL — that column holds `eve`'s own `$eve.*` run tags, the same data behind
   Vercel's Agent Runs. It is NOT an OpenTelemetry ingest pipeline for its core view; OTLP
@@ -121,9 +122,10 @@ on advertising them.
 The changelog is grouped by **package**, not by date: seven npm packages and one container
 image ship from this repository and each is versioned independently, so "the latest evestack
 release" is not a thing that exists. A version heading opens with the git tag that release
-would carry (`create-evestack@0.8.0`, `@evestack/dashboard@0.2.0`) and then the date — but only
-ten tags have been cut against 36 listed releases, so most headings name a tag that does not
-exist. Do not report a version as tagged, or as released, on the strength of a heading alone.
+would carry (`create-evestack@0.8.0`, `@evestack/dashboard@0.2.0`) and then the date — but far
+fewer tags have been cut than there are release headings, so most headings name a tag that does
+not exist. Run `git tag` for the real list. Do not report a version as tagged, or as released,
+on the strength of a heading alone.
 
 - [README](https://github.com/SammyTourani/evestack/blob/main/README.md)
 - [CHANGELOG](https://github.com/SammyTourani/evestack/blob/main/CHANGELOG.md)

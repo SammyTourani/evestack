@@ -1,6 +1,6 @@
 import { Section } from "@/components/ui/section";
 import { CountUp } from "@/components/ui/count-up";
-import { stats } from "@/lib/copy";
+import { findingsUrl, stats } from "@/lib/copy";
 
 export function Stats() {
   return (
@@ -33,7 +33,12 @@ export function Stats() {
         ))}
       </dl>
       <p className="mt-4 text-center font-mono text-label-12 uppercase text-gray-700">
-        one real user message, measured in Postgres — see FINDINGS.md
+        one real user message, measured in Postgres — see <a
+          className="text-gray-1000 underline decoration-border-strong underline-offset-4 transition-colors hover:decoration-current"
+          href={findingsUrl}
+        >
+          FINDINGS.md
+        </a>
       </p>
     </Section>
   );

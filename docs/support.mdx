@@ -82,19 +82,24 @@ an older Node fails several commands later in a message that never names the rea
 
 <Warning>
   **Windows is untested. There is no CI job on any Windows runner, and there never has been.**
-  Nine `process.platform === "win32"` branches ship in the code and not one of them is exercised
-  anywhere in the repository. Use WSL2, where the Linux paths run.
+  Twelve `process.platform === "win32"` branches ship in the code, and only one of them is
+  covered by a test — and that one is covered by passing `"win32"` in as an argument, not by
+  running on Windows. Use WSL2, where the Linux paths run.
 </Warning>
 
-This is stated bluntly because the code *looks* like it supports Windows. The nine branches, so
-you can judge the risk yourself:
+This is stated bluntly because the code *looks* like it supports Windows. The twelve branches,
+so you can judge the risk yourself:
 
-- **Opening a browser** — `packages/evestack-cli/src/project.mjs:353`,
+- **Opening a browser** — `packages/evestack-cli/src/project.mjs:356`,
   `packages/evestack-cli/src/tour.mjs:395`, `templates/default/scripts/verify.mjs:571` each pick
   `cmd /c start` over `open` / `xdg-open`.
-- **Spawning `npm` and `docker`** — `packages/create-evestack/create.mjs:142` and `:805`,
-  `templates/default/scripts/dev.mjs:76`, `templates/default/scripts/start.mjs:44` pass
-  `shell: true`, which is how a `.cmd` shim gets found on Windows.
+- **Spawning `npm` and `docker`** — `packages/create-evestack/create.mjs:231`, `:354` and
+  `:1110`, `templates/default/scripts/dev.mjs:81`, `templates/default/scripts/start.mjs:60`,
+  `templates/default/scripts/eval.mjs:148` pass `shell: true`, which is how a `.cmd` shim gets
+  found on Windows.
+- **Naming the `eve` binary** — `templates/default/scripts/checks.mjs:532` returns `eve` rather
+  than `eve.cmd`. This is the one with a test: `templates/default/test/eve-binary.test.mjs:115`
+  calls `eveBinary(url, "win32")` on Linux, which checks the string and nothing about Windows.
 - **Terminal glyphs** — `packages/create-evestack/ui.mjs:68` and
   `templates/default/scripts/ui.mjs:68` fall back to ASCII outside Windows Terminal. That file's
   own comment is the honest summary: the failure mode is "mojibake in a legacy Windows code page

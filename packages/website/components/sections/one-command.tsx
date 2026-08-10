@@ -15,7 +15,7 @@ export function OneCommand() {
             align="left"
             eyebrow="01 · one command"
             title={terminal.caption}
-            sub="npx evestack create writes your env, generates credentials, and prints the three commands that finish the job: Postgres up, bootstrap, dev. Kill the stack, restart it — sessions pick up where they left off."
+            sub="npx evestack create writes your env, generates credentials, and then asks whether to bring the stack up: Postgres, the schema, the dashboard. Say yes and it does all three and offers to start the agent too; say no and it prints the four commands that do it by hand. Kill the stack, restart it — sessions pick up where they left off."
           />
           <dl className="grid grid-cols-3 gap-6 font-mono text-mono-13">
             <div className="flex flex-col gap-1">
@@ -31,6 +31,14 @@ export function OneCommand() {
               <dd className="text-gray-1000">:5433</dd>
             </div>
           </dl>
+          {/* These are the defaults, not a promise. The scaffolder takes the
+              first free port at or above each one, so a second project on the
+              same machine gets 2001 / 4001 / 5434 — and it prints the numbers
+              yours actually got. */}
+          <p className="mt-4 text-copy-14 text-gray-700">
+            Defaults. Each one moves to the next free port if something already has it, and the
+            scaffolder prints the numbers your machine actually got.
+          </p>
         </div>
 
         <div className="flex min-w-0 flex-col gap-4">

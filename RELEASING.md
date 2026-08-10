@@ -170,9 +170,9 @@ Verified, because a scoped name puts a `/` and a leading `@` into a ref:
 through `git tag -l '@evestack/dashboard@*'`, `git rev-parse` and `git describe`. Quote it in the
 shell.
 
-### The ten tags that exist
+### The eleven tags that exist
 
-All ten are annotated and pushed. Two use the superseded `dashboard-v*` form and predate this
+All eleven are annotated and pushed. Two use the superseded `dashboard-v*` form and predate this
 decision; they are public, so they are **not renamed** — a tag that has been pushed is an
 address someone may already have written down.
 
@@ -191,6 +191,7 @@ Regenerate this table rather than trusting it:
 | `@evestack/mcp@0.3.0` | 3d318ce | the convention |
 | `@evestack/sandbox-opensandbox@0.4.0` | 3d318ce | the convention |
 | `create-evestack@0.9.1` | 94dd019 | the convention |
+| `@evestack/dashboard@0.3.1` | 464a85f | the convention |
 
 Four of them naming the same commit is not a mistake: 3d318ce bumped `@evestack/budget`,
 `@evestack/mcp` and `@evestack/sandbox-opensandbox` in one commit, and `evestack` was already
@@ -206,11 +207,11 @@ The dashboard is not on npm. Its tag names the workspace package — `@evestack/
 what the version gate reads out of `package.json` — and the artifact it produces is
 `ghcr.io/sammytourani/evestack-dashboard:<version>`.
 
-Thirty-five versions have been published — 32 on npm, 3 images on GHCR — and ten tags exist, so
-twenty-five releases have none. Five of the ten were cut after the fact, on the evening of
+Thirty-seven versions have been published — 33 on npm, 4 images on GHCR — and eleven tags exist,
+so twenty-six releases have none. Five of the eleven were cut after the fact, on the evening of
 2026-08-09, and only because the evidence left no room to guess: each points at a commit whose
 own `package.json` carries exactly that version, minutes before the registry's timestamp for it.
-Do not backfill the remaining twenty-five on anything weaker. A tag invented today would point at
+Do not backfill the remaining twenty-six on anything weaker. A tag invented today would point at
 whatever commit looks right now, and a tag that might be wrong is worse than a gap CHANGELOG.md
 already documents honestly.
 

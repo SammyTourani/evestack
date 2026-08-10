@@ -55,7 +55,7 @@ Two rules follow:
 ## Content policy
 
 Every page here is written from the verified build in `../FINDINGS.md` and `../README.md` —
-commands that were actually run, numbers that were actually measured (1,070 Composio apps,
+commands that were actually run, numbers that were actually measured (~230 MB of dashboard image,
 the IVFFlat 2-results-at-LIMIT-3-vs-0-at-LIMIT-20 bug, ~90s cooperative cancellation delay).
 No page should ever describe a capability that hasn't been exercised against the real stack.
 If you're adding a page for something new, run it first.

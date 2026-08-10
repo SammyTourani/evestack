@@ -16,12 +16,19 @@ export const site = {
      anyone arriving via npm → GitHub → here got re-pitched three times and
      never landed on one idea. Change it in all four or in none. */
   tagline: "The whole eve stack. On your own machine.",
-  /* Was "… One command." That was false and one `npx` away from being caught:
-     the scaffolder itself prints three more commands (packages/create-evestack/
-     index.mjs:245-251) and the dashboard is a separate clone (:258-260). The
-     count below is the literal number of shell lines in the README block. */
+  /* ONE COMMAND, and the whole page has to mean the same thing by it.
+     `npx evestack create` asks four questions; the fourth is "bring it up?", and
+     yes starts Postgres, creates the schema, pulls the dashboard and then offers
+     to run the agent too (packages/create-evestack/create.mjs:462-478, :746-808).
+     So one command is literally true. Say no and it prints FOUR commands
+     (create.mjs:770-780) — that is the only other number allowed on this page,
+     and it is always labelled as the manual path. The page previously said one,
+     three, four and five in five different places.
+     "1,000+" not "1,070": we counted 1,070 toolkits against Composio's
+     GET /api/v3/toolkits on 2026-08-04 and their public directory listed 1,069
+     five days later, so an exact figure is stale on arrival. */
   subhead:
-    "Durable sessions, sandboxing, memory, approvals, schedules, 1,070 tool integrations, and a dashboard that drives the agent. One command scaffolds it and offers to bring it up.",
+    "Durable sessions, sandboxing, memory, approvals, schedules, 1,000+ tool integrations, and a dashboard that drives the agent. One command scaffolds it and offers to bring it up.",
   eyebrow: "Open source · Apache-2.0",
   command: "npx evestack create",
   github: "https://github.com/SammyTourani/evestack",
@@ -48,6 +55,10 @@ export const site = {
     href: "https://github.com/vercel/eve/issues/1658",
   },
 } as const;
+
+/* The stats strip says "measured in Postgres — see FINDINGS.md" and never said
+   where FINDINGS.md is. It is at the repo root; now it is one click away. */
+export const findingsUrl = `${site.github}/blob/main/FINDINGS.md`;
 
 export const nav = [
   { label: "One command", href: "#one-command" },
@@ -140,7 +151,7 @@ export const comparison = {
     ["Run history", "Retained by the platform", "As long as you keep the rows"],
     ["Dashboard", "Agent Runs, hosted", "Included, and it drives the agent"],
     ["Where your data sits", "Vercel's platform", "Inside your network, always"],
-    ["Setup", "Deploy to Vercel", "npx evestack create, then four commands"],
+    ["Setup", "Deploy to Vercel", "npx evestack create, which offers to bring it up"],
   ],
 } as const;
 
@@ -330,13 +341,13 @@ export const control = {
 /* §11 integrations — brand marks are nominative use (services the agent
    connects to); colored SVGs generated locally by scripts/gen-logos.mjs.
    Slack's mark was removed from simple-icons at the brand's request →
-   named in copy, no chip. "1,070 toolkits" is verified: the
-   evestack-composio README records it against GET /api/v3/toolkits.
+   named in copy, no chip. "1,000+ toolkits" is the count every evestack surface
+   uses; see the note in site.subhead above for why it is not an exact figure.
    hub.calls are action names taken verbatim from evestack-composio's
    source — nothing invented. */
 export const integrations = {
   heading: "Your tools, one click",
-  sub: "Composio wires the agent into 1,070 toolkits — Gmail, GitHub, Slack, Notion, Linear, and everything after. Sign in once from the dashboard.",
+  sub: "Composio wires the agent into 1,000+ toolkits — Gmail, GitHub, Slack, Notion, Linear, and everything after. Sign in once from the dashboard.",
   /* The one place on this site where "Everything runs on your network" stops
      being true, said here rather than left for someone to discover. Composio is
      a hosted third party: it performs the OAuth dance and holds the resulting
@@ -413,23 +424,32 @@ export const integrations = {
        scripts/bootstrap.mjs, the eve dev ready line from FINDINGS.md);
      - the verify panel mirrors templates/default/scripts/verify.mjs exactly —
        the openai path, which is the scaffolder's option 1 with its default
-       model. That run prints these TEN checks. The count was wrong here twice:
-       first as a plain miscount, then as "nine, and the ollama path adds a
-       tenth (`memory`)" — which was also wrong, because verify.mjs:275-276
-       passes `memory` on the openai path too as soon as OPENAI_API_KEY is set
-       (`embeddings via openai/text-embedding-3-small`). The check list is
-       identical on both paths; only memory's detail line differs. docs/cli.mdx
-       :157 has said "ten checks" throughout. So no step body counts the checks.
+       model. That run prints these ELEVEN checks. The count has been wrong here
+       three times: first a plain miscount, then "nine, and the ollama path adds
+       a tenth (`memory`)" — wrong, because verify.mjs:275-276 passes `memory` on
+       the openai path too as soon as OPENAI_API_KEY is set
+       (`embeddings via openai/text-embedding-3-small`) — and then ten, which
+       silently dropped the last one verify.mjs emits on a healthy run. The check
+       list is identical on both paths; only memory's detail line differs.
+       docs/cli.mdx says eleven and names the eleventh. So no step body counts
+       the checks: if this array and verify.mjs ever disagree again, the array is
+       the one that is wrong.
      - the agent answers on 127.0.0.1 and the dashboard is printed as
        localhost — that asymmetry is real (verify.mjs builds the dashboard
        URL for a human to click, findAgent probes loopback).
 
    `commands` splits each line so the payload renders bright over dim
-   boilerplate (the opencode/Convex/Bun convergence). Five command rows in
-   four steps — the same "five commands" the closing section claims. */
+   boilerplate (the opencode/Convex/Bun convergence).
+
+   NO COMMAND COUNT IN THIS SECTION'S COPY. It used to say "Five commands", the
+   closing section said "Five commands", the compare table said "then four
+   commands" and section 01 said "three commands" — four numbers for one job,
+   and not one of them mentioned that answering yes to the scaffolder's fourth
+   question does the middle steps for you. The rows below are the manual path,
+   shown rather than counted; the count that matters is in the hero. */
 export const quickstart = {
   heading: "Running in four steps",
-  sub: "Five commands, with their real receipts.",
+  sub: "The manual path, with its real receipts — the scaffolder offers to do the middle two for you.",
   /* No step bodies, deliberately: the receipt line under each command IS the
      explanation, in the tool's own words. Prose the panel already proves is
      prose the section does not need (user-tightened 2026-08-06). */
@@ -483,6 +503,7 @@ export const quickstart = {
       { name: "agent", detail: "answering at http://127.0.0.1:2000" },
       { name: "dashboard", detail: "answering at http://localhost:4000, database connected" },
       { name: "traces", detail: "the agent's ingest token is accepted by the dashboard" },
+      { name: "dashboard image", detail: "0.3.1, matching the pin" },
     ],
     done: "Everything works.",
     dashboard: { label: "Your dashboard", value: "http://localhost:4000" },
@@ -509,7 +530,7 @@ export const quickstart = {
 
 export const closing = {
   heading: "Your agents, on your infrastructure.",
-  sub: "Five commands, and it's running on your machine.",
+  sub: "One command, and it offers to bring the whole thing up.",
 } as const;
 
 export const footerColumns = [

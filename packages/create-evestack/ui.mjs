@@ -414,7 +414,7 @@ export function showCursor() {
  * into a normal status row.
  *
  * `create` used to print "▚ Starting Postgres" and then hand stdio to Docker
- * for a ~200 MB pull, which its own comment describes as "a long silence
+ * for a ~230 MB pull, which its own comment describes as "a long silence
  * followed by a wall of layer hashes" — the reader cannot tell a slow pull from
  * a hang. This gives every slow step a heartbeat and an elapsed clock.
  *

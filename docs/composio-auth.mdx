@@ -1,6 +1,6 @@
 ---
 title: Composio auth
-description: One browser flow, ~1,070 apps — and the third party that holds your OAuth tokens.
+description: One browser flow, 1,000+ apps — and the third party that holds your OAuth tokens.
 ---
 
 ## What you get
@@ -19,9 +19,17 @@ connects to arbitrary [MCP servers](https://eve.dev/docs).
   registration.
 </Note>
 
-evestack wires in [Composio](https://composio.dev) instead. We verified the live catalog
-against `GET /api/v3/toolkits`: **1,070 toolkits**, including Gmail (61 tools) and GitHub
-(871 tools), each one click to connect.
+evestack wires in [Composio](https://composio.dev) instead: **1,000+ toolkits**, including
+Gmail (61 tools) and GitHub (871 tools), each one click to connect.
+
+<Note>
+  **Why "1,000+" and not an exact figure.** We counted the live catalog against
+  `GET /api/v3/toolkits` and got 1,070 on 2026-08-04; Composio's own public directory listed
+  1,069 five days later. It moves by ones as toolkits are added and retired, so every surface
+  in evestack — this page, the README, the site, the scaffolder's prompt, the dashboard's
+  Integrations page — says **1,000+**, which stays true. The dashboard shows the live number:
+  its *Apps available* tile reads whatever `countToolkits()` returns from your own key.
+</Note>
 
 <Warning>
   **Composio is a hosted third party, and this is the one place evestack's "everything runs on

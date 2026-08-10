@@ -17,9 +17,9 @@ something scripting these commands is a **minor**, not a patch.
   `.github/workflows/publish-dashboard.yml` extracts release notes by matching the
   heading literally. See [RELEASING.md](RELEASING.md#tag-convention) for the convention
   and for the two tags that predate it.
-- Most releases have **no tag** — ten exist, covering 10 of the 36 releases listed below.
-  A heading is therefore the *name a tag would have*, not proof one exists. RELEASING.md
-  says which ten are real, and `git tag` is the check.
+- Most releases have **no tag** — a minority of the headings below have one. A heading is
+  therefore the *name a tag would have*, not proof one exists. RELEASING.md lists the tags
+  that exist, and `git tag` is the check that is never stale.
 - **Dates are `America/Los_Angeles`**, the timezone every commit in this repository is
   stamped in. npm records its `time` field in UTC; those timestamps are converted here,
   so a date can be one day earlier than the value `npm view <pkg> time` prints.

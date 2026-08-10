@@ -28,9 +28,22 @@ npx evestack create my-agent
 ```
 
 Four questions — where, which model, tools, and whether to bring it up — all asked before any
-work starts. Answering yes to the last one starts Postgres, creates the schema, pulls the
-dashboard and then offers to start the agent, so there is nothing left to paste. It finishes by
-drawing the four parts with the ports **your** machine actually had free.
+work starts. Answering **yes** to the last one starts Postgres, creates the schema, pulls the
+dashboard and then offers to start the agent, so there is nothing left to paste. Answering
+**no** — or running under `--yes`, or with Docker not running — leaves all of that to you, and
+it prints the four commands that do it, after a `cd`:
+
+```bash
+cd my-agent
+docker compose up -d postgres              # durable sessions
+npm run db:bootstrap                       # create the workflow schema
+docker compose --profile dashboard up -d   # the dashboard
+npm run dev                                # the agent — holds this terminal
+```
+
+Either way it finishes by drawing the parts with the ports **your** machine actually had free.
+[The quickstart](https://evestack.vercel.app/docs/quickstart) walks that manual path line by
+line.
 
 In another terminal:
 
@@ -51,8 +64,8 @@ The scaffolder generates your credentials and prints them once; `evestack open` 
 again and opens the dashboard. Every route is behind that credential — the dashboard starts runs
 and approves shell commands, so it fails closed.
 
-The last line is a **pull**, not a build: `ghcr.io/sammytourani/evestack-dashboard` is published
-for `linux/amd64` and `linux/arm64`.
+The dashboard step is a **pull**, not a build: `ghcr.io/sammytourani/evestack-dashboard` is
+published for `linux/amd64` and `linux/arm64`, ~230 MB compressed.
 
 Already have an eve project? `npx evestack attach .` adds evestack to it without overwriting
 anything, and prints an undo line for everything it writes.
@@ -70,7 +83,7 @@ anything, and prints an undo line for everything it writes.
 | **Memory** | Semantic recall on the Postgres you already run, via pgvector. No vector service. Needs an embeddings provider — OpenAI, or Ollama locally; Anthropic has none | [docs](docs/memory.mdx) |
 | **Schedules** | Durable cron with a history of every fire, and a pause switch that needs no redeploy | [docs](docs/proactive.mdx) |
 | **Evals** | Promote any real session — especially one that went wrong — into an `evals/*.eval.ts` | [docs](docs/dashboard.mdx) |
-| **Integrations** | One-click OAuth into 1,070 toolkits via Composio | [docs](docs/composio-auth.mdx) |
+| **Integrations** | One-click OAuth into 1,000+ toolkits via Composio | [docs](docs/composio-auth.mdx) |
 | **Skills** | Inspect what the agent has loaded, and scan skills before it does | [docs](docs/dashboard.mdx) |
 | **`evestack doctor`** | Read-only forensics for a durable job that is stuck. Prints the SQL; never writes | [docs](docs/cli.mdx) |
 
@@ -132,12 +145,12 @@ branches that might suggest otherwise:
 | **Linux x86-64** | Tested. Every job in `.github/workflows/ci.yml` runs on `ubuntu-latest` |
 | **Linux arm64** | The dashboard image is built and published for it; the CLI and template are not tested there |
 | **macOS** | Untested by CI — no workflow runs a macOS runner |
-| **Windows** | **Untested.** Nine `process.platform === "win32"` branches ship and none is exercised anywhere. Use WSL2 |
+| **Windows** | **Untested.** Twelve `process.platform === "win32"` branches ship, and the only one with a test is exercised by passing `"win32"` in as an argument on Linux. Use WSL2 |
 | **Postgres** | `pgvector/pgvector:pg17`, which is what both compose files run and what CI starts |
 
 [docs/support.mdx](docs/support.mdx) has the rest of the support statement — which versions get
-fixes (the newest, and only the newest), what a `0.x` bump promises, and where each of the nine
-Windows branches is. [docs/upgrading.mdx](docs/upgrading.mdx) is how you move an existing
+fixes (the newest, and only the newest), what a `0.x` bump promises, and where each of the
+twelve Windows branches is. [docs/upgrading.mdx](docs/upgrading.mdx) is how you move an existing
 project forward: new dashboard image, new template, new eve pin.
 
 ## Repository layout

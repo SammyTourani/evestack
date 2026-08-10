@@ -125,8 +125,11 @@ function usage() {
   say(`  ${C.dim}-V, --version${C.reset}  print create-evestack's version`);
   say();
   // Named here rather than left to be discovered. Both commands exist on the
-  // `evestack` bin too, alongside `doctor`, and someone who reaches for --help
-  // is exactly the person who wants to know that.
-  dim("The same two commands, plus `doctor`, live on one binary: `npx evestack --help`.");
+  // `evestack` bin too, alongside five more, and someone who reaches for --help
+  // is exactly the person who wants to know that. The count is the length of
+  // COMMANDS in packages/evestack-cli/src/cli.mjs; this line said "plus doctor"
+  // and undercounted the other binary by four.
+  dim("Both commands, plus status, tour, open, verify and doctor, live on one");
+  dim("binary: `npx evestack --help`.");
   say();
 }

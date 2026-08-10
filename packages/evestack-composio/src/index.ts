@@ -108,7 +108,7 @@ export function composioUserId(
 }
 
 /**
- * Wire Composio's 1000+ toolkits into an eve agent.
+ * Wire Composio's 1,000+ toolkits into an eve agent.
  *
  * Default-export the result from a file under `agent/tools/` and eve will
  * resolve it at the start of every step:
