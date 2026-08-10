@@ -132,6 +132,45 @@ export interface FleetReport {
   readonly checked: number;
   /** Sessions with an open turn row that the probe bound left unasked. */
   readonly unchecked: number;
+
+  /**
+   * Sessions carrying an open turn that the idle gate skipped, because they
+   * moved too recently to be worth a round trip.
+   *
+   * THIS FIELD EXISTS BECAUSE `checked: 0` HAD TWO MEANINGS AND NO WAY TO TELL
+   * THEM APART. "No session has a turn open, so nothing here could be wedged"
+   * and "a turn is open and this sweep has not looked at it yet" both came back
+   * as `{"wedged":0,...,"checked":0,"unchecked":0}`, and they are opposite
+   * answers. Someone who had just killed an agent mid-turn read the first from
+   * a sweep that meant the second; the report they filed says `checked: 0` with
+   * `unknown: 0` "reads as 'I checked and found nothing', not 'I have not
+   * checked'".
+   *
+   * `unknown` could never have carried this. It means the agent WAS asked and
+   * could not answer. A session that was never asked is a different fact, and
+   * folding the two turns "we have not looked yet" into an agent fault.
+   */
+  readonly tooRecent: number;
+
+  /**
+   * The quiet gate this sweep actually applied, in milliseconds, as Postgres
+   * read it — rounded and clamped by `intervalMilliseconds`, not as asked for.
+   *
+   * A zero is only interpretable next to the threshold that produced it, and
+   * `?idleMinutes=` moves it, so a caller reading a bare `checked: 0` otherwise
+   * cannot tell whether the sweep looked back thirty minutes or thirty days.
+   */
+  readonly idleThresholdMs: number;
+
+  /**
+   * How long an open turn must have been running before it is called wedged.
+   *
+   * The second gate, and the one that surprises people: a session can be past
+   * the quiet gate, probed, and still reported as no news at all, because its
+   * turn has not been open long enough to be a fault. Reporting the number is
+   * what makes "looked, said nothing" readable as "not yet, and here is when".
+   */
+  readonly wedgeAfterMs: number;
 }
 
 /**
@@ -190,6 +229,27 @@ export function uncheckedCandidates(rows: ReadonlyArray<Record<string, unknown>>
   const total = Number(rows[0]?.candidate_count);
   if (!Number.isFinite(total)) return 0;
   return Math.max(0, total - probed);
+}
+
+/**
+ * How many open-turn sessions the idle gate skipped.
+ *
+ * Reads off ANY row the sweep returned, probed or not: `count(*) FILTER (WHERE
+ * NOT quiet) OVER ()` is evaluated before ORDER BY and LIMIT, so a row that
+ * made the probe budget carries the same total as one that did not. That is
+ * the point — the number has to survive a sweep whose entire result was
+ * skipped rows, which is the shape of the case it was added for.
+ *
+ * No rows at all means no session in the database has a turn open, and zero is
+ * then the true answer rather than a fallback. Same bigint-arrives-as-a-string
+ * coercion as `uncheckedCandidates`, and the same refusal to let a NaN reach a
+ * field the banner prints.
+ */
+export function tooRecentCandidates(rows: ReadonlyArray<Record<string, unknown>>): number {
+  if (rows.length === 0) return 0;
+  const total = Number(rows[0]?.too_recent_count);
+  if (!Number.isFinite(total)) return 0;
+  return Math.max(0, total);
 }
 
 /**
@@ -318,53 +378,55 @@ export async function inspectFleet(
   const idleThreshold = options.idleMs ?? IDLE_BEFORE_SUSPECT_MS;
   const limit = Math.min(options.limit ?? MAX_PROBES, 100);
 
-  // Candidates: open sessions that have been quiet a while AND still carry a
-  // turn row nobody closed. The join is to turns rather than to the session row
-  // because the session row's own timestamps do not move as turns run.
+  // Candidates: open sessions that still carry a turn row nobody closed. The
+  // join is to turns rather than to the session row because the session row's
+  // own timestamps do not move as turns run.
+  //
+  // THE IDLE GATE IS NOW A COLUMN RATHER THAN A SECOND TERM IN `HAVING`, and
+  // that is the whole of this rewrite. Filtering on it did not merely leave a
+  // recently-active session unprobed, it ERASED it: the sweep could not count
+  // what it had discarded, so a fleet with a turn open five minutes ago
+  // returned `checked: 0` — byte for byte the answer it returns when no
+  // session has a turn open at all and there is nothing that could be wedged.
+  // Scoring the gate instead of filtering on it costs nothing (the rows are
+  // grouped either way) and is the only reason `tooRecent` can be reported.
+  //
+  // THE PROBE BUDGET IS UNCHANGED. `ORDER BY quiet DESC` spends `LIMIT` on the
+  // sessions that are actually going to be asked about, so the skipped rows
+  // ride back only in whatever budget the quiet ones did not use, and their
+  // count comes from a window function that does not care about LIMIT at all.
+  // Nothing here probes a session the old query would not have probed.
   const rows = await query<Record<string, unknown>>(
     `
-    SELECT s.id AS session_id,
-           s.attributes->>'$eve.title'   AS title,
-           s.attributes->>'$eve.trigger' AS trigger,
-           s.created_at,
-           -- updated_at on the child turns is the truest activity signal we
-           -- have: the session row's own timestamps do not move as turns run,
-           -- so joining to children is what distinguishes "quiet for an hour"
-           -- from "created an hour ago and busy ever since".
-           -- (No backticks in here: this is a template literal, and one inside
-           -- the SQL ends the string with a parse error nowhere near the cause.)
-           GREATEST(s.updated_at, COALESCE(MAX(t.updated_at), s.updated_at)) AS last_activity,
+    WITH open_sessions AS (
+      SELECT s.id AS session_id,
+             s.attributes->>'$eve.title'   AS title,
+             s.attributes->>'$eve.trigger' AS trigger,
+             s.created_at,
+             -- updated_at on the child turns is the truest activity signal we
+             -- have: the session row's own timestamps do not move as turns run,
+             -- so joining to children is what distinguishes "quiet for an hour"
+             -- from "created an hour ago and busy ever since".
+             -- (No backticks in here: this is a template literal, and one inside
+             -- the SQL ends the string with a parse error nowhere near the cause.)
+             GREATEST(s.updated_at, COALESCE(MAX(t.updated_at), s.updated_at)) AS last_activity,
 
-           -- How long the oldest still-open turn has been open. Same filter as
-           -- the HAVING below, so it is null only when every open row was
-           -- created and never picked up and therefore has no started_at; the
-           -- classifier falls back to idle time there.
-           MIN(t.started_at) FILTER (
-             WHERE t.attributes->>'$eve.type' IN ('turn', 'subagent')
-               AND t.completed_at IS NULL
-           ) AS in_flight_since,
+             -- How long the oldest still-open turn has been open. Same filter as
+             -- the HAVING below, so it is null only when every open row was
+             -- created and never picked up and therefore has no started_at; the
+             -- classifier falls back to idle time there.
+             MIN(t.started_at) FILTER (
+               WHERE t.attributes->>'$eve.type' IN ('turn', 'subagent')
+                 AND t.completed_at IS NULL
+             ) AS in_flight_since
+      FROM workflow.workflow_runs s
+      LEFT JOIN workflow.workflow_runs t
+        ON t.attributes->>'$eve.root' = s.id
+      WHERE s.attributes->>'$eve.type' = 'session'
+        AND s.status = 'running'
+      GROUP BY s.id, s.attributes, s.created_at, s.updated_at
 
-           -- Window functions run after HAVING and before LIMIT, so this is the
-           -- true candidate count rather than what fits in one page. Fetching
-           -- limit + 1 rows to detect the overflow, which is what this replaced,
-           -- can only ever report "1 more" — the banner said one further session
-           -- was unchecked while 149 were.
-           COUNT(*) OVER () AS candidate_count
-    FROM workflow.workflow_runs s
-    LEFT JOIN workflow.workflow_runs t
-      ON t.attributes->>'$eve.root' = s.id
-    WHERE s.attributes->>'$eve.type' = 'session'
-      AND s.status = 'running'
-    GROUP BY s.id, s.attributes, s.created_at, s.updated_at
-    -- Both sides of the cut are naive UTC. These columns are timestamp WITHOUT
-    -- time zone; comparing one to a bare now() makes Postgres read it in the
-    -- server's zone, which shifts the idle window by the offset. The CLI port
-    -- of this file hit it for real: a session quiet for three hours looked five
-    -- hours in the future and the sweep returned nothing.
-    HAVING GREATEST(s.updated_at, COALESCE(MAX(t.updated_at), s.updated_at))
-             < (now() AT TIME ZONE 'utc') - ($1 || ' milliseconds')::interval
-
-      -- AND the tables cannot settle it. This line is what makes the sweep
+      -- The tables cannot settle it. This line is what makes the sweep
       -- affordable and complete at once, and it may not grow a backtick: this
       -- is a template literal, and one inside the SQL ends the string with a
       -- parse error nowhere near the cause.
@@ -390,21 +452,48 @@ export async function inspectFleet(
       -- and a turn that never reached the provider have all FINISHED;
       -- monitors.ts counts the last two as failures and this file must not
       -- re-count them as work in flight.
-      AND COUNT(t.id) FILTER (
-            WHERE t.attributes->>'$eve.type' IN ('turn', 'subagent')
-              AND t.completed_at IS NULL
-          ) > 0
-    ORDER BY last_activity ASC
+      HAVING COUNT(t.id) FILTER (
+               WHERE t.attributes->>'$eve.type' IN ('turn', 'subagent')
+                 AND t.completed_at IS NULL
+             ) > 0
+    ),
+    scored AS (
+      -- Both sides of the cut are naive UTC. These columns are timestamp
+      -- WITHOUT time zone; comparing one to a bare now() makes Postgres read it
+      -- in the server's zone, which shifts the idle window by the offset. The
+      -- CLI port of this file hit it for real: a session quiet for three hours
+      -- looked five hours in the future and the sweep returned nothing.
+      SELECT open_sessions.*,
+             last_activity < (now() AT TIME ZONE 'utc') - ($1 || ' milliseconds')::interval AS quiet
+      FROM open_sessions
+    )
+    -- Window functions run after the CTEs and before ORDER BY and LIMIT, so
+    -- both counts describe every open-turn session rather than the page. That
+    -- is what lets a sweep whose whole result was skipped rows still report how
+    -- many it skipped, and it is why fetching limit + 1 rows to detect the
+    -- overflow was replaced: that could only ever say "1 more" while 149 were.
+    SELECT session_id, title, trigger, created_at, last_activity, in_flight_since, quiet,
+           COUNT(*) FILTER (WHERE quiet)     OVER () AS candidate_count,
+           COUNT(*) FILTER (WHERE NOT quiet) OVER () AS too_recent_count
+    FROM scored
+    ORDER BY quiet DESC, last_activity ASC
     LIMIT $2
     `,
     [intervalMilliseconds(idleThreshold), limit],
   );
 
-  // Every row read is probed; the ones over the bound were never fetched.
-  const unchecked = uncheckedCandidates(rows);
+  // Rows the idle gate skipped came back only to be counted. Probing them is
+  // the one thing this must not do: they are the sessions a live conversation
+  // produces, and asking the agent about a turn that started nine seconds ago
+  // spends a round trip to be told what the run rows already said.
+  const quiet = rows.filter((raw) => raw.quiet === true);
+  const tooRecent = tooRecentCandidates(rows);
+
+  // Every quiet row read is probed; the ones over the bound were never fetched.
+  const unchecked = uncheckedCandidates(quiet);
 
   const entries = await Promise.all(
-    rows.map(async (raw): Promise<FleetEntry> => {
+    quiet.map(async (raw): Promise<FleetEntry> => {
       const sessionId = String(raw.session_id);
       // Already Date objects: lib/db.ts installs a type parser that reads
       // eve's zone-less `timestamp` columns as the UTC they actually are.
@@ -459,20 +548,99 @@ export async function inspectFleet(
     }),
   );
 
-  return { entries, checked: entries.length, unchecked };
+  return {
+    entries,
+    checked: entries.length,
+    unchecked,
+    tooRecent,
+    // What Postgres was handed, not what the caller asked for: intervalMilliseconds
+    // rounds and clamps, and a report that quotes the request rather than the cut
+    // would describe a sweep that did not happen.
+    idleThresholdMs: Number(intervalMilliseconds(idleThreshold)),
+    wedgeAfterMs: STUCK_TURN_MS,
+  };
 }
 
-/** The counts a banner needs, without rendering the whole report. */
+/**
+ * The counts a banner needs, without rendering the whole report.
+ *
+ * `active` IS HERE BECAUSE IT WAS THE ONE HEALTH VALUE THIS DID NOT REPORT,
+ * and its absence was silent rather than harmless: `wedged + idle +
+ * awaitingHuman + unknown` was allowed to come out LESS than `checked`, with
+ * nothing in the payload to say where the difference went. Measured against a
+ * fixture holding one session killed 21 minutes earlier — `checked: 2`, and
+ * the four counters summing to 1. A reader reconciling the two sees a sweep
+ * that examined two sessions and reported on one, which is the same
+ * "reported calm while blind" shape as `checked: 0`, one field along.
+ *
+ * The shortfall was exactly the sessions in the window that matters most: past
+ * the quiet gate, so they were probed, and under `STUCK_TURN_MS`, so they were
+ * not yet a fault. All five values now sum to `checked`, and test/fleet.test.mjs
+ * asserts that rather than trusting it.
+ */
 export function summarize(report: FleetReport): {
   wedged: number;
   idle: number;
   awaitingHuman: number;
   unknown: number;
+  active: number;
 } {
   return {
     wedged: report.entries.filter((e) => e.health === "wedged").length,
     idle: report.entries.filter((e) => e.health === "idle").length,
     awaitingHuman: report.entries.filter((e) => e.health === "awaiting-human").length,
     unknown: report.entries.filter((e) => e.health === "unknown").length,
+    active: report.entries.filter((e) => e.health === "active").length,
   };
+}
+
+/**
+ * Whether the banner has anything to say, and in which register.
+ *
+ * Split out of app/fleet-banner.tsx because that file cannot be rendered by a
+ * test: `test/ui-render.mjs` handles neither the `@/` alias nor a CSS module,
+ * and teaching it both means editing a harness other work is editing too —
+ * app/memory/truncation.ts exists for the same reason and set the precedent.
+ * The component is left with markup and nothing to decide.
+ *
+ * `silent` is the answer this exists to get right. It used to be returned for
+ * everything except a wedge, a park or an unreachable agent — so an open turn
+ * the sweep skipped, an open turn it probed and found too young to call a
+ * fault, and a candidate it ran out of budget for all rendered as an empty
+ * page. Two of those are the first hour after a crash, and the third could not
+ * render at all: the `unchecked` line sat behind the early return, reachable
+ * only once something else had already gone wrong.
+ *
+ * `coverage` is NOT a severity and must not be treated as one. It fires while a
+ * turn is legitimately in flight, which is the normal state of a busy agent —
+ * that is why it is a separate register rather than a third alarm, and why the
+ * one thing it is allowed to say is what has not been settled.
+ */
+export function bannerState(report: FleetReport): {
+  counts: ReturnType<typeof summarize>;
+  /** Open turns this sweep settled neither as healthy nor as broken. */
+  unjudged: number;
+  register: "fault" | "todo" | "coverage" | "silent";
+} {
+  const counts = summarize(report);
+
+  // Two populations, one number, because a reader does not care which side of
+  // the quiet gate a turn fell on — only that nothing has judged it.
+  //
+  //   active     probed; its turn has not been open long enough to be a fault.
+  //              The 30-to-60-minute window after a crash.
+  //   tooRecent  moved too recently to be worth a round trip, so never probed.
+  //              The first half hour after a crash, and every turn running now.
+  const unjudged = counts.active + report.tooRecent;
+
+  const register =
+    counts.wedged > 0
+      ? "fault"
+      : counts.awaitingHuman > 0 || counts.unknown > 0
+        ? "todo"
+        : unjudged > 0 || report.unchecked > 0
+          ? "coverage"
+          : "silent";
+
+  return { counts, unjudged, register };
 }

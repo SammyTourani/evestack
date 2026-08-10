@@ -1,9 +1,12 @@
-/* Two severities only. A wedged session is a fault; one waiting on a person is
-   a to-do. Rendering them identically would train the reader to skim past the
-   first because the second is common. */
+/* Two severities and a third register that is not a severity at all. A wedged
+   session is a fault; one waiting on a person is a to-do; a coverage line is
+   neither, and giving it a colour is how a colour stops meaning anything.
+   Rendering the first two identically would train the reader to skim past the
+   fault because the to-do is common. */
 
 .bad,
-.warn {
+.warn,
+.note {
   border-radius: 8px;
   padding: 11px 14px;
   margin: 0 0 18px;
@@ -18,6 +21,13 @@
 .warn {
   border: 1px solid var(--border);
   border-left: 3px solid var(--warn, #c98a2b);
+}
+
+/* No accent bar and no colour: this box only ever holds the faint lines that
+   say what the sweep did not settle. It has to be visible enough to read and
+   quiet enough that its absence is what carries the good news. */
+.note {
+  border: 1px solid var(--border);
 }
 
 .line { margin: 0; }
