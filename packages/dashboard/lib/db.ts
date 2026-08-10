@@ -268,6 +268,17 @@ export async function query<T = Record<string, unknown>>(
 const UNDEFINED_TABLE = "42P01";
 
 /**
+ * This repository's own SQLSTATE, raised by the guard at the top of
+ * `sql/traces.sql` and `sql/facts.sql` when the database is at a HIGHER schema
+ * version than the file being applied.
+ *
+ * Not one of Postgres's: five characters outside classes 00/01/02 are reserved
+ * for exactly this, and a user-defined code is what lets the message be
+ * recognised here without matching on its prose.
+ */
+export const SCHEMA_TOO_NEW = "EV001";
+
+/**
  * Whether a failure is "the schema was never created" rather than "the database
  * is not there".
  *
@@ -302,6 +313,40 @@ export function isMissingTable(error: unknown): boolean {
   return message.includes(UNDEFINED_TABLE);
 }
 
+/**
+ * Whether the database is NEWER than this build understands.
+ *
+ * The third opposite problem, and the one that does not look like a problem.
+ * An older dashboard image pointed at a database a newer one has already
+ * migrated used to apply its own `CREATE OR REPLACE FUNCTION`s over the newer
+ * definitions, leave the version marker claiming the newer version, and then
+ * render pages that were empty or quietly wrong — measured live as a database
+ * reading `spans v4` while running the v3 resolver, with fresh spans resolving
+ * to `turn_0`. The guard in the SQL now refuses to apply anything at all, and
+ * this is what turns that refusal into a sentence instead of a blank page.
+ *
+ * Matched on the SQLSTATE rather than the message, for the same reason
+ * `isMissingSchema` is: the prose can be reworded, and a Postgres locale must
+ * not be able to turn this back into "can't reach the database".
+ */
+export function isSchemaTooNew(error: unknown): boolean {
+  // The driver's own field, when the pg error survived intact.
+  if (
+    error !== null &&
+    typeof error === "object" &&
+    (error as { code?: unknown }).code === SCHEMA_TOO_NEW
+  ) {
+    return true;
+  }
+  // And the flattened form, because `query()` rewraps every failure as a
+  // DatabaseUnavailableError carrying only `describeDbError`'s sentence. That
+  // sentence starts with the SQLSTATE, so the test is anchored rather than a
+  // bare substring search — an id or a model name containing these five
+  // characters must not be read as a version mismatch.
+  const message = error instanceof Error ? error.message : String(error);
+  return new RegExp(`(^|[;\\s])${SCHEMA_TOO_NEW}: `).test(message);
+}
+
 export interface DbFailure {
   readonly title: string;
   readonly detail: string;
@@ -312,6 +357,18 @@ export interface DbFailure {
 /** One classification, so five pages cannot drift into five diagnoses. */
 export function describeDbFailure(error: unknown): DbFailure {
   const detail = describeDbError(error);
+  // First, because it is the one failure whose fix is neither of the other two:
+  // Postgres is up, the schema is there, and it is this dashboard that is out
+  // of date. Telling someone to bootstrap or to start a container here would
+  // send them to change the healthy half.
+  if (isSchemaTooNew(error)) {
+    return {
+      title: "This dashboard is older than its database",
+      detail,
+      guidance:
+        "A newer evestack already migrated this database, so nothing was changed and no page here can be trusted to read it. Run the newer dashboard image — or, if you meant to go back, drop the `evestack` schema and let this one rebuild it. The `workflow` tables holding your sessions are not affected either way.",
+    };
+  }
   if (isMissingSchema(error)) {
     return {
       title: "The database has no agent schema yet",

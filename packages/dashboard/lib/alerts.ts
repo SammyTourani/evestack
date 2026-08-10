@@ -30,7 +30,9 @@
  *                         ingest path fails SILENTLY on a bad token — the 401
  *                         goes to the agent's exporter, not to anyone's screen
  *                         (docs/observability.mdx) — so the only symptom is a
- *                         trace tier that stays empty while work happens
+ *                         trace tier that stays empty while work happens.
+ *                         `unknown` when the trace tier cannot be read at all,
+ *                         which is a different question with a different fix
  *   sandbox_networked     a sandbox not on NetworkMode=none
  *   sandbox_long_lived    a sandbox up past the hour, with no idle timeout
  *   schedule_failing      a schedule with a failing streak
@@ -49,7 +51,7 @@
 
 import { dailySpendCap } from "./budget-env";
 import { query } from "./db";
-import { STUCK_TURN_MS } from "./facts";
+import { STUCK_TURN_MS, schemaVersionsAhead } from "./facts";
 import { freshFacts } from "./metrics";
 import { getMonitorSummary } from "./monitors";
 import { getSchedules } from "./schedules";
@@ -140,15 +142,36 @@ export async function evaluateAlerts(): Promise<AlertResult[]> {
   if (summary.status === "fulfilled") {
     const s = summary.value;
     const rate = s.turns.failureRate;
+    const n = (value: number): string => value.toLocaleString("en-US");
+    // Unfinished turns are not in the rate, so they have to be in the sentence.
+    // Dropping them from the arithmetic and saying nothing would replace one
+    // quiet answer with another: the reader would see a rate over ten turns and
+    // no sign of the ninety that are stuck behind it.
+    const stalledNote =
+      s.turns.stalled === 0 ? "" : `, ${n(s.turns.stalled)} of them stalled for over an hour`;
+    const unfinishedNote =
+      s.turns.unfinished === 0
+        ? ""
+        : ` ${n(s.turns.unfinished)} more ${s.turns.unfinished === 1 ? "turn has" : "turns have"} not finished and ${s.turns.unfinished === 1 ? "is" : "are"} judged neither way${stalledNote}.`;
     out.push({
       id: "turn_failure_rate",
       title: "Turn failure rate",
       severity: "page",
-      state: s.turns.total === 0 ? "unknown" : rate > THRESHOLDS.failureRate ? "firing" : "ok",
+      /*
+       * `finished`, not `total`. With `total` here a window in which every turn
+       * was still running reported a rate of 0 and a state of `ok` — the
+       * denominator fix in lib/monitors.ts would have moved the lie from the
+       * number into the verdict. Nothing judged is `unknown`, which this file's
+       * header calls the one state a monitor must not collapse into `ok`.
+       */
+      state:
+        s.turns.finished === 0 ? "unknown" : rate > THRESHOLDS.failureRate ? "firing" : "ok",
       detail:
         s.turns.total === 0
           ? `No turns in the last ${WINDOW_HOURS}h, so there is no rate to judge.`
-          : `${pct(rate)} of ${s.turns.total.toLocaleString("en-US")} turns failed — ${s.turns.errored} carried an error code and ${s.turns.noModelCall} finished without ever reaching a model.`,
+          : s.turns.finished === 0
+            ? `None of the ${n(s.turns.total)} turns in the last ${WINDOW_HOURS}h have finished, so none can be judged${stalledNote}.`
+            : `${pct(rate)} of ${n(s.turns.finished)} finished turns failed — ${n(s.turns.errored)} carried an error code and ${n(s.turns.noModelCall)} finished without ever reaching a model.${unfinishedNote}`,
       threshold: `at or under ${pct(THRESHOLDS.failureRate)}`,
       href: "/monitors",
     });
@@ -229,19 +252,35 @@ export async function evaluateAlerts(): Promise<AlertResult[]> {
 
   /* ── the ingest path, which fails silently ───────────────────────────────── */
   if (ingest.status === "fulfilled") {
-    const { activeTurns, spansLastHour } = ingest.value;
-    const broken = activeTurns > 0 && spansLastHour === 0;
+    const { activeTurns, spansLastHour, behind } = ingest.value;
+    // `null` means the trace tier could not be read at all, which is not the
+    // same question as "no spans arrived" and must not be answered with the
+    // ingest-token advice. See ingestHealth().
+    const unreadable = spansLastHour === null;
+    const broken = !unreadable && activeTurns > 0 && spansLastHour === 0;
+    const arrived = (spansLastHour ?? 0).toLocaleString("en-US");
+    const turnWord = `turn${activeTurns === 1 ? "" : "s"}`;
+    const REFUSED =
+      `This dashboard is older than its database (${behind.join("; ")}), so the trace tier ` +
+      "will not load and the OTLP ingest endpoint is answering 503 to every batch. Spans are " +
+      "not being written, and nothing here can say anything about your exporter until that is " +
+      "fixed. Run the newer dashboard image.";
+    const TOKEN =
+      `${activeTurns} ${turnWord} ran in the last hour and no spans arrived. A bad ingest ` +
+      "token fails with a 401 the agent's exporter swallows, so this is usually the only " +
+      "visible symptom.";
     out.push({
       id: "no_spans_while_active",
       title: "Trace ingest",
       severity: "warn",
-      state: activeTurns === 0 ? "unknown" : broken ? "firing" : "ok",
-      detail:
-        activeTurns === 0
+      state: unreadable || activeTurns === 0 ? "unknown" : broken ? "firing" : "ok",
+      detail: unreadable
+        ? REFUSED
+        : activeTurns === 0
           ? "No turns ran in the last hour, so an empty trace tier says nothing either way."
           : broken
-            ? `${activeTurns} turn${activeTurns === 1 ? "" : "s"} ran in the last hour and no spans arrived. A bad ingest token fails with a 401 the agent's exporter swallows, so this is usually the only visible symptom.`
-            : `${spansLastHour.toLocaleString("en-US")} spans arrived in the last hour across ${activeTurns} turn${activeTurns === 1 ? "" : "s"}.`,
+            ? TOKEN
+            : `${arrived} spans arrived in the last hour across ${activeTurns} ${turnWord}.`,
       threshold: "spans arriving while turns run",
       href: "/traces",
     });
@@ -540,7 +579,13 @@ async function dailySpend(): Promise<{ total: number; unpriced: string[]; unpric
   return { total, unpriced, unpricedTurns };
 }
 
-async function ingestHealth(): Promise<{ activeTurns: number; spansLastHour: number }> {
+async function ingestHealth(): Promise<{
+  activeTurns: number;
+  /** Null when this build cannot migrate the database, so the count means nothing. */
+  spansLastHour: number | null;
+  /** Components the database is ahead on, for the detail sentence. */
+  behind: string[];
+}> {
   const [turns] = await query<{ n: string }>(
     // (now() AT TIME ZONE 'utc') — see the wedged() query above for why.
     // workflow_runs.created_at is naive UTC; this one shifts the other way and
@@ -555,19 +600,28 @@ async function ingestHealth(): Promise<{ activeTurns: number; spansLastHour: num
       WHERE attributes->>'$eve.type' IN ('turn','subagent')
         AND created_at >= (now() AT TIME ZONE 'utc') - interval '1 hour'`,
   );
-  let spansLastHour = 0;
-  try {
-    const [spans] = await query<{ n: string }>(
-      `SELECT count(*)::text AS n FROM evestack.spans WHERE received_at >= now() - interval '1 hour'`,
-    );
-    spansLastHour = Number(spans?.n ?? 0);
-  } catch {
-    // The spans table is created lazily on first ingest. Not existing is the
-    // strongest possible evidence that nothing has ever been exported, which is
-    // exactly what this check is about — so it counts as zero, not as an error.
-    spansLastHour = 0;
+  // Asked, not inferred from a thrown error. Nothing that merely SELECTs from
+  // evestack.spans raises EV001 — the guard fires when the schema file is
+  // APPLIED — so an image too old to migrate this database still reads a
+  // healthy span count out of it while its own ingest route answers 503 to
+  // every batch. Measured exactly that way before this line existed.
+  const behind = await schemaVersionsAhead();
+  let spansLastHour: number | null = behind.length > 0 ? null : 0;
+  if (spansLastHour !== null) {
+    try {
+      const [spans] = await query<{ n: string }>(
+        `SELECT count(*)::text AS n FROM evestack.spans WHERE received_at >= now() - interval '1 hour'`,
+      );
+      spansLastHour = Number(spans?.n ?? 0);
+    } catch {
+      // The spans table is created lazily on first ingest. Not existing is the
+      // strongest possible evidence that nothing has ever been exported, which
+      // is exactly what this check is about — so it counts as zero, not as an
+      // error.
+      spansLastHour = 0;
+    }
   }
-  return { activeTurns: Number(turns?.n ?? 0), spansLastHour };
+  return { activeTurns: Number(turns?.n ?? 0), spansLastHour, behind };
 }
 
 async function failingSchedules(): Promise<{ name: string; streak: number }[]> {

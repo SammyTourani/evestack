@@ -11,7 +11,99 @@
 -- needs its own ALTER, since CREATE TABLE IF NOT EXISTS silently does nothing
 -- once the table is there.
 
+/*
+ * ONE TRANSACTION, AND THAT IS LOAD-BEARING.
+ *
+ * The guard below refuses to touch a database newer than this file. The refusal
+ * is only worth anything if the statements AFTER it cannot run anyway, and the
+ * two ways this file gets applied disagree about that:
+ *
+ *   the dashboard  sends the whole file as one query, which Postgres already
+ *                  runs as a single implicit transaction
+ *   `psql -f`      runs a statement per transaction and, without
+ *                  `ON_ERROR_STOP`, keeps going after an error — so the guard
+ *                  raised, psql printed it, and psql ran every statement after
+ *                  it anyway. Measured against a live v4 database and
+ *                  sql/traces.sql, which duly put its v3 resolver back. The
+ *                  behaviour is psql's, not one file's, so both files carry this.
+ *
+ * BEGIN/COMMIT makes both paths agree: after the guard raises, everything else
+ * is a no-op inside an aborted transaction and the COMMIT rolls it back. Piping
+ * this into `psql -1` adds two harmless "already/no transaction in progress"
+ * warnings; nothing else changes.
+ *
+ * Nothing in this file refuses a transaction block — no CONCURRENTLY, no
+ * VACUUM. Anything added that does has to be moved out past the COMMIT, and
+ * then it is outside the guard and has to be safe on any version.
+ *
+ * Applying by hand: `psql -v ON_ERROR_STOP=1 -f <this file>`. Without the flag
+ * the outcome is identical, it just prints one "current transaction is aborted"
+ * line per skipped statement under the one error that matters.
+ */
+BEGIN;
+
 CREATE SCHEMA IF NOT EXISTS evestack;
+
+-- --------------------------------------------------------------------------
+-- The version marker, and the downgrade guard. Both are first in the file on
+-- purpose — see the guard.
+-- --------------------------------------------------------------------------
+
+-- What version of this file an existing database has actually had applied.
+--
+-- This replaces a guard that read `session_id`'s generated expression and ran
+-- the migration only when it did NOT contain 'ai.settings.context.eve.session.id'.
+-- That guard could only ever fire once: the moment the expression it tests for
+-- was in place, every later migration written inside it became silently inert on
+-- every existing database while passing perfectly on a fresh one. A version
+-- number cannot fail that way, because it is not derived from the change.
+CREATE TABLE IF NOT EXISTS evestack.schema_version (
+  component  text PRIMARY KEY,
+  version    integer     NOT NULL,
+  applied_at timestamptz NOT NULL DEFAULT now()
+);
+
+/*
+ * REFUSE TO RUN AT ALL AGAINST A DATABASE NEWER THAN THIS FILE.
+ *
+ * The migration at the bottom moves the marker FORWARD only, which stops an
+ * older image decrementing the number — and stopped nothing else. Every
+ * `CREATE OR REPLACE FUNCTION` below is unconditional, so an older image
+ * happily replaced a newer database's resolver while the marker went on
+ * claiming the newer version. Observed live: the marker read `spans v4` while
+ * `resolve_span_ancestry` was the v3 body, and fresh spans went back to
+ * resolving as `turn_0`. Because the marker still said v4, the migration that
+ * would have repaired it could never re-run. The guard silently lied.
+ *
+ * So the gate covers the DDL, not just the data, and it does that by being
+ * FIRST. Position is the whole mechanism: an operator piping this file into
+ * `psql` gets a statement per transaction, so a check placed after the function
+ * definitions would abort a replacement that had already been committed. Only
+ * `CREATE SCHEMA` and the marker table above run ahead of it, and both are
+ * no-ops on any database that could trip it.
+ *
+ * Rejected: re-applying the functions unconditionally on every boot. That makes
+ * "last image to boot wins", which is the same race with better odds.
+ *
+ * `EV001` is this repository's SQLSTATE for it. lib/db.ts matches on it to tell
+ * a person their dashboard is older than their database, rather than rendering
+ * the empty pages this failure otherwise looks like.
+ */
+DO $guard$
+DECLARE
+  -- Must equal the migration's own `target` at the bottom of this file;
+  -- test/schema-guard.test.mjs reads both out of the file and fails if they part.
+  target    constant integer := 4;
+  installed integer;
+BEGIN
+  SELECT version INTO installed FROM evestack.schema_version WHERE component = 'spans';
+  IF COALESCE(installed, 0) > target THEN
+    RAISE EXCEPTION
+      'evestack.spans is at schema version %, and this build of evestack only understands version %. Nothing was applied: an older image must leave a newer database alone rather than half-downgrade it. Run the image that installed version %, or drop the evestack schema to rebuild the trace tier from scratch.',
+      installed, target, installed
+      USING ERRCODE = 'EV001';
+  END IF;
+END $guard$;
 
 CREATE TABLE IF NOT EXISTS evestack.spans (
   trace_id        text        NOT NULL,
@@ -425,28 +517,20 @@ END
 $fn$;
 
 -- --------------------------------------------------------------------------
--- Schema version and migrations.
+-- Migrations. The marker table and the downgrade guard are at the top of the
+-- file, because the guard has to run before the functions above.
 -- --------------------------------------------------------------------------
-
--- What version of this file an existing database has actually had applied.
---
--- This replaces a guard that read `session_id`'s generated expression and ran
--- the migration only when it did NOT contain 'ai.settings.context.eve.session.id'.
--- That guard could only ever fire once: the moment the expression it tests for
--- was in place, every later migration written inside it became silently inert on
--- every existing database while passing perfectly on a fresh one. A version
--- number cannot fail that way, because it is not derived from the change.
-CREATE TABLE IF NOT EXISTS evestack.schema_version (
-  component  text PRIMARY KEY,
-  version    integer     NOT NULL,
-  applied_at timestamptz NOT NULL DEFAULT now()
-);
 
 -- Bump this, and add the matching `IF installed < N` step below, for any change
 -- to evestack.spans that CREATE TABLE IF NOT EXISTS cannot apply on its own.
 -- Every step must be safe to re-run: a fresh database gets the whole table from
 -- the CREATE TABLE above and then runs every step as a no-op on its way to the
 -- current version.
+--
+-- Bump the guard's copy at the top of the file in the same edit. There are two
+-- because a plpgsql block cannot export a constant and the guard has to run
+-- several hundred lines earlier than this one; test/schema-guard.test.mjs reads
+-- both numbers out of the file and fails if they disagree.
 DO $mig$
 DECLARE
   target    constant integer := 4;
@@ -584,3 +668,5 @@ CREATE INDEX IF NOT EXISTS spans_resolved_turn_only_idx
 -- Retention scans this, and so does anything asking for a time window.
 CREATE INDEX IF NOT EXISTS spans_start_time_idx
   ON evestack.spans (start_time);
+
+COMMIT;

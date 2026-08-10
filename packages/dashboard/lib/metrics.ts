@@ -179,13 +179,74 @@ export interface ViewDef {
 }
 
 /**
+ * The two halves of `fact_turn.outcome`, and the only place either list is
+ * written down.
+ *
+ * `sql/facts.sql`'s CHECK constraint enumerates all seven values; these split
+ * them into the ones that reached a verdict and the ones that did not.
+ * `test/metrics.test.mjs` reads that constraint out of the SQL file and fails if
+ * a new outcome appears here without being classified, because the failure mode
+ * of forgetting is silent: an unclassified value falls into the "finished and
+ * fine" arm below and improves the number.
+ */
+export const UNFINISHED_OUTCOMES = ["running", "wedged"] as const;
+
+/** The finished outcomes that are failures. `lib/monitors.ts` owns the vocabulary. */
+export const FAILED_OUTCOMES = ["failed", "no_model_call"] as const;
+
+/**
+ * Every outcome that means the turn is over, however it went.
+ *
+ * Derived, so a value can be unfinished or finished but never neither and never
+ * both. The literals come from `sql/facts.sql`'s CHECK constraint.
+ */
+export const FINISHED_OUTCOMES = (
+  ["ok", "failed", "no_model_call", "cancelled", "budget_stopped", "wedged", "running"] as const
+).filter((o) => !(UNFINISHED_OUTCOMES as readonly string[]).includes(o));
+
+/** Literals from this file only. Nothing a caller supplies ever reaches it. */
+const sqlList = (values: readonly string[]): string => values.map((v) => `'${v}'`).join(", ");
+
+const UNFINISHED_PREDICATE_SQL = `outcome IN (${sqlList(UNFINISHED_OUTCOMES)})`;
+
+/**
  * `failure_rate` restates `lib/monitors.ts`: a turn is failed when it carries an
  * error_code OR finished without ever recording a model call. `sql/facts.sql`
  * folds exactly those two into `outcome`'s first two arms so that this
  * expression, the monitors page and the fact table cannot disagree about the
  * error rate. Averaging a 0/1 gives the fraction, which is what `percent` means.
+ *
+ * ── WHY THE FIRST ARM IS NULL AND NOT 0 ──────────────────────────────────────
+ *
+ * It used to be `CASE WHEN outcome IN ('failed','no_model_call') THEN 1 ELSE 0
+ * END`. A `running` or `wedged` turn matched neither name, so it scored 0 — a
+ * SUCCESS — and stayed in the denominator. Every stuck turn therefore lowered
+ * the reported failure rate: a crashed agent made this number look better, on
+ * the one page someone opens to find out whether the agent has crashed.
+ *
+ * `avg()` ignores NULLs, so NULL takes an unfinished turn out of the numerator
+ * AND the denominator in one expression. The rate is `failed / finished`, which
+ * is the standard definition and the only one that cannot move in the flattering
+ * direction during an incident. A window in which nothing finished reports
+ * `null` — not judged — rather than a confident 0%.
+ *
+ * The excluded turns do not disappear. `count(<this expression>)` is the
+ * coverage column every measure already gets, so a response says "1,914 of
+ * 1,922" and the stat tile prints it; `unfinished` below is the same number
+ * asked for directly.
  */
-const TURN_FAILED_SQL = "CASE WHEN outcome IN ('failed', 'no_model_call') THEN 1 ELSE 0 END";
+const TURN_FAILED_SQL =
+  `CASE WHEN ${UNFINISHED_PREDICATE_SQL} THEN NULL ` +
+  `WHEN outcome IN (${sqlList(FAILED_OUTCOMES)}) THEN 1 ELSE 0 END`;
+
+/**
+ * 1 for a turn that has not reached a verdict, NULL otherwise.
+ *
+ * NULL rather than 0 so that `count()` — which counts non-NULLs — is the count
+ * of unfinished turns, and so the measure's own coverage column reports the same
+ * number rather than the window size.
+ */
+const TURN_UNFINISHED_SQL = `CASE WHEN ${UNFINISHED_PREDICATE_SQL} THEN 1 END`;
 
 const TURNS: ViewDef = {
   label: "Turns",
@@ -295,6 +356,18 @@ const TURNS: ViewDef = {
       unit: "percent",
       sql: TURN_FAILED_SQL,
       aggregations: ["avg"],
+    },
+    // The turns `failure_rate` had to leave out, as a number rather than as an
+    // absence. Excluding them from the rate is correct and, on its own, quiet:
+    // an agent whose every turn is wedged has no failure rate at all, and a
+    // dashboard that only removed them would show an em dash where it used to
+    // show 0%. `count` only — a running turn is a fact, not a magnitude, and
+    // `avg` of a column that is 1 or NULL is always 1.
+    unfinished: {
+      label: "Unfinished turns",
+      unit: "count",
+      sql: TURN_UNFINISHED_SQL,
+      aggregations: ["count"],
     },
     // count_distinct only. `count(session_id)` is how many ROWS carry a
     // session, which under the label "Sessions" would report 1,922 turns as

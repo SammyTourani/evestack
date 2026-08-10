@@ -86,7 +86,7 @@ function Series({ summary }: { summary: MonitorSummary }) {
               <div
                 className={styles.bar}
                 style={{ height: `${height}%` }}
-                title={`${stamp(bucket.start)} — ${bucket.turns} turn${bucket.turns === 1 ? "" : "s"}, ${bucket.failed} failed${bucket.p95Ms === null ? "" : `, p95 ${duration(bucket.p95Ms)}`}`}
+                title={`${stamp(bucket.start)} — ${bucket.turns} turn${bucket.turns === 1 ? "" : "s"}, ${bucket.failed} failed${bucket.unfinished === 0 ? "" : `, ${bucket.unfinished} unfinished`}${bucket.p95Ms === null ? "" : `, p95 ${duration(bucket.p95Ms)}`}`}
               >
                 <div className={styles.barFailed} style={{ height: `${failedShare}%` }} />
               </div>
@@ -96,9 +96,11 @@ function Series({ summary }: { summary: MonitorSummary }) {
         })}
       </div>
       <p className={styles.note}>
-        Turns per bucket, with the failed share in red. An empty bucket is a real zero and is drawn
-        as one — skipping it would redraw a quiet hour as continuous load. Tick labels are each
-        bucket&rsquo;s start time in UTC.
+        Turns per bucket, with the failed share in red. Counts, not the rate above: an unfinished
+        turn is part of the bar&rsquo;s height because it is throughput, and is in the tooltip
+        because it is not a success. An empty bucket is a real zero and is drawn as one — skipping
+        it would redraw a quiet hour as continuous load. Tick labels are each bucket&rsquo;s start
+        time in UTC.
       </p>
     </section>
   );
@@ -187,9 +189,13 @@ export default async function MonitorsPage({
               <div className="stat-value">{turns.total.toLocaleString()}</div>
             </div>
             <div className="stat">
-              <div className="stat-label">Failure rate</div>
+              {/* The denominator is named in the label, not buried in a
+                  footnote: the number is `failed / finished`, and a reader who
+                  divides it back out against the Turns tile beside it would
+                  otherwise get a different answer whenever anything is open. */}
+              <div className="stat-label">Failure rate (of finished)</div>
               <div className={`stat-value ${failing > 0 ? styles.bad : ""}`}>
-                {pct(turns.failureRate)}
+                {turns.finished === 0 ? "—" : pct(turns.failureRate)}
               </div>
             </div>
             <div className="stat">
@@ -199,6 +205,18 @@ export default async function MonitorsPage({
             <div className="stat">
               <div className="stat-label">No model call</div>
               <div className="stat-value">{turns.noModelCall.toLocaleString()}</div>
+            </div>
+            {/* Not folded into the rate, so it gets its own tile. An unfinished
+                turn used to score as a success inside the rate, which meant a
+                crashed agent made this page look better. */}
+            <div className="stat">
+              <div className="stat-label">Unfinished</div>
+              <div className={`stat-value ${turns.stalled > 0 ? styles.bad : ""}`}>
+                {turns.unfinished.toLocaleString()}
+                {turns.stalled > 0 && (
+                  <span className={styles.running}> · {turns.stalled} stalled</span>
+                )}
+              </div>
             </div>
             <div className="stat">
               <div className="stat-label">Sessions</div>
@@ -210,6 +228,26 @@ export default async function MonitorsPage({
               </div>
             </div>
           </div>
+
+          {turns.unfinished > 0 && (
+            <p className={styles.warnBox}>
+              {turns.unfinished.toLocaleString()} of these {turns.total.toLocaleString()} turns{" "}
+              {turns.unfinished === 1 ? "has" : "have"} not reached a verdict, so{" "}
+              {turns.unfinished === 1 ? "it is" : "they are"} in neither half of the failure rate —
+              the rate above is over the {turns.finished.toLocaleString()} that finished.
+              {turns.stalled > 0 && (
+                <>
+                  {" "}
+                  {turns.stalled.toLocaleString()} {turns.stalled === 1 ? "has" : "have"} been open
+                  for more than an hour, which is the point evestack calls a turn wedged; nothing in
+                  eve will resume {turns.stalled === 1 ? "it" : "them"}.
+                </>
+              )}{" "}
+              A turn parked on an unanswered approval is <em>not</em> counted here: eve emits{" "}
+              <code>turn.completed</code> before it parks, so the run row says finished while the
+              work is not.
+            </p>
+          )}
 
           {turns.noModelCall > 0 && (
             <p className={styles.warnBox}>

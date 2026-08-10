@@ -336,6 +336,17 @@ export async function ranked(
     const raw = row[options.dimension];
     const label = raw === null || raw === undefined ? "(none)" : String(raw);
     const rate = options.withFailures ? num(row.avg_failure_rate) : null;
+    /*
+     * The denominator is the measure's COVERAGE, not the group's row count.
+     *
+     * `failure_rate` is NULL for a turn that has not reached a verdict, so the
+     * rate is over the finished ones and `coverage.avg_failure_rate` is exactly
+     * how many those were. Multiplying by `rows` instead would rebuild the
+     * numerator against a bigger population and report more failures than
+     * happened — the mirror image of the bug that made unfinished turns count as
+     * successes. `rows` is still what a caller without `withFailures` sees.
+     */
+    const judged = rate === null ? 0 : (row.coverage.avg_failure_rate ?? 0);
     const rows = row.rows;
     return {
       id: label,
@@ -343,7 +354,7 @@ export async function ranked(
       value: num(row[valueKey]),
       // TopList wants a numerator and a denominator, not a rate, so it can show
       // "3 of 214" rather than a bare percentage nobody can weigh.
-      ...(rate === null ? {} : { errors: Math.round(rate * rows), total: rows }),
+      ...(rate === null ? {} : { errors: Math.round(rate * judged), total: judged }),
       ...(durationKey === null ? {} : { durationMs: num(row[durationKey]) }),
     };
   });

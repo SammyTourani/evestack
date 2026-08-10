@@ -49,9 +49,16 @@ import { installStubPool, uninstallStubPool, undefinedTable } from "./stub-pool.
 
 /* ── fixtures ──────────────────────────────────────────────────────────────── */
 
-/** One row of lib/monitors.ts's turn-statistics query. */
-const turnStats = (over = {}) => [
-  {
+/**
+ * One row of lib/monitors.ts's turn-statistics query.
+ *
+ * `finished` defaults to `total` — everything reached a verdict — so a fixture
+ * that has no opinion about unfinished turns reads the way it did before the
+ * failure rate's denominator moved off `total`. A fixture that DOES have an
+ * opinion sets `finished`, `unfinished` and `stalled` explicitly.
+ */
+const turnStats = (over = {}) => {
+  const merged = {
     total: 100,
     errored: 0,
     no_model_call: 0,
@@ -63,8 +70,9 @@ const turnStats = (over = {}) => [
     max: 5000,
     count: 100,
     ...over,
-  },
-];
+  };
+  return [{ unfinished: 0, stalled: 0, finished: merged.total, ...merged }];
+};
 
 const SPEND_SQL = "FROM evestack.fact_turn";
 const REFRESH_SQL = "evestack.refresh_facts";
@@ -76,6 +84,11 @@ const TURN_STATS_SQL = "AS no_model_call";
 // and quietly answered the span count with the turn count.
 const INGEST_TURNS_SQL = "(now() AT TIME ZONE 'utc') - interval '1 hour'";
 const SPANS_SQL = "FROM evestack.spans WHERE received_at";
+// lib/facts.ts#schemaVersionsAhead, which ingestHealth() now asks before it
+// trusts a span count. Two statements: does the marker table exist, and what
+// does it say.
+const MARKER_PRESENT_SQL = "to_regclass('evestack.schema_version')";
+const MARKER_ROWS_SQL = "SELECT component, version FROM evestack.schema_version";
 
 async function evaluate(routes = []) {
   const pool = installStubPool(routes);
@@ -295,7 +308,7 @@ test("one failure past the threshold fires", async () => {
   ]);
   assert.equal(get("turn_failure_rate").state, "firing");
   assert.equal(get("turn_failure_rate").severity, "page");
-  assert.match(get("turn_failure_rate").detail, /11\.0% of 100 turns failed/);
+  assert.match(get("turn_failure_rate").detail, /11\.0% of 100 finished turns failed/);
 });
 
 test("the detail names both ways a turn can fail, because they overlap", async () => {
@@ -306,9 +319,64 @@ test("the detail names both ways a turn can fail, because they overlap", async (
     [TURN_STATS_SQL, turnStats({ total: 10, errored: 5, no_model_call: 5, failed: 5 })],
   ]);
   assert.equal(get("turn_failure_rate").state, "firing");
-  assert.match(get("turn_failure_rate").detail, /50\.0% of 10 turns failed/);
+  assert.match(get("turn_failure_rate").detail, /50\.0% of 10 finished turns failed/);
   assert.match(get("turn_failure_rate").detail, /5 carried an error code/);
   assert.match(get("turn_failure_rate").detail, /5 finished without ever reaching a model/);
+});
+
+/* -- turn failure rate: unfinished turns ----------------------------------- */
+
+test("a crashed agent cannot improve the reported failure rate", async () => {
+  // The finding, as an assertion. The same two failures out of the same ten
+  // finished turns; the only difference is ninety wedged turns alongside them.
+  // Under the old denominator the second window reported 2%, and stopped paging.
+  const clean = await evaluate([
+    [TURN_STATS_SQL, turnStats({ total: 10, finished: 10, errored: 2, failed: 2 })],
+  ]);
+  const wedging = await evaluate([
+    [
+      TURN_STATS_SQL,
+      turnStats({ total: 100, finished: 10, unfinished: 90, stalled: 90, errored: 2, failed: 2 }),
+    ],
+  ]);
+  assert.match(clean.get("turn_failure_rate").detail, /20\.0%/);
+  assert.match(wedging.get("turn_failure_rate").detail, /20\.0%/);
+  assert.equal(wedging.get("turn_failure_rate").state, "firing");
+});
+
+test("an unfinished turn leaves the rate and is named beside it", async () => {
+  // Twenty turns, ten finished, two of those failed. The rate is 2 of 10, not
+  // 2 of 20 -- and the ten still open are stated rather than dropped.
+  const { get } = await evaluate([
+    [
+      TURN_STATS_SQL,
+      turnStats({ total: 20, finished: 10, unfinished: 10, stalled: 0, errored: 2, failed: 2 }),
+    ],
+  ]);
+  const alert = get("turn_failure_rate");
+  assert.equal(alert.state, "firing", "2 of 10 is 20%, past the 10% threshold");
+  assert.match(alert.detail, /20\.0% of 10 finished turns failed/);
+  assert.match(alert.detail, /10 more turns have not finished/);
+  assert.ok(
+    !/of 20 finished/.test(alert.detail),
+    "the window size must not be presented as the judged population",
+  );
+});
+
+test("a window where nothing has finished is unknown, never a clean 0%", async () => {
+  // The whole D4a bug, one level up. With `total` as the denominator these ten
+  // running turns each scored 0 -- a success -- so the alert read 0.0% and `ok`:
+  // a completely wedged agent reported a perfect failure rate. Moving the
+  // denominator to `finished` makes the rate undefined, and an undefined rate
+  // has to be `unknown`, which this module's header calls the one state that
+  // must never collapse into `ok`.
+  const { get } = await evaluate([
+    [TURN_STATS_SQL, turnStats({ total: 10, finished: 0, unfinished: 10, stalled: 4, count: 0 })],
+  ]);
+  assert.equal(get("turn_failure_rate").state, "unknown");
+  assert.notEqual(get("turn_failure_rate").state, "ok");
+  assert.match(get("turn_failure_rate").detail, /None of the 10 turns/);
+  assert.match(get("turn_failure_rate").detail, /4 of them stalled/);
 });
 
 test("no turns at all is unknown — there is no rate to be wrong about", async () => {
@@ -546,6 +614,30 @@ test("a spans table that has never been created counts as zero spans, not an err
   assert.ok(!/Could not be evaluated/.test(get("no_spans_while_active").detail));
 });
 
+test("a trace tier this build cannot migrate is unknown, not a bad ingest token", async () => {
+  // A database migrated by a NEWER evestack makes sql/traces.sql abort, so the
+  // ingest route answers 503 to every batch and spans stop arriving — but the
+  // cause is this image being old, not the exporter. And the span count cannot
+  // reveal it: SELECTing the table still works, so this monitor read a healthy
+  // number off a database it could no longer migrate. Measured on a live
+  // install, which reported "109 spans arrived, ok" while ingest was refusing.
+  const { get } = await evaluate([
+    [INGEST_TURNS_SQL, [{ n: "3" }]],
+    [MARKER_PRESENT_SQL, [{ present: "evestack.schema_version" }]],
+    [MARKER_ROWS_SQL, [{ component: "spans", version: 99 }]],
+    // Readable, and beside the point. If the count is what decides this, the
+    // monitor reports ok and sends someone to check their ingest token.
+    [SPANS_SQL, [{ n: "109" }]],
+  ]);
+  const alert = get("no_spans_while_active");
+  assert.equal(alert.state, "unknown");
+  assert.notEqual(alert.state, "ok", "read a healthy span count off a database it cannot migrate");
+  assert.match(alert.detail, /older than its database/);
+  assert.match(alert.detail, /spans is at v99/);
+  assert.match(alert.detail, /503/);
+  assert.ok(!/401/.test(alert.detail), "still offers the ingest-token fix");
+  assert.ok(!/109/.test(alert.detail), "reports a count it just said it cannot trust");
+});
 /* ── the machine, and the schedules ────────────────────────────────────────── */
 
 test("no Docker socket means the containers were never looked at", async () => {

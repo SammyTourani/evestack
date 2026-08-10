@@ -520,6 +520,33 @@ export function ensureTraceSchema(): Promise<void> {
   return schemaReady;
 }
 
+/**
+ * The version an evestack schema file installs, read out of the file's own
+ * downgrade guard.
+ *
+ * NOT restated in TypeScript, and that is the point. The number already exists
+ * twice inside each SQL file — once in the guard at the top, once in the
+ * migration it protects — because a plpgsql block cannot export a constant and
+ * the two run hundreds of lines apart. test/schema-guard.test.mjs pins those
+ * two to each other. A third copy over here would be a third thing to forget
+ * on the next bump, and the only one no test could catch by reading the file.
+ */
+export function parseSchemaTarget(sql: string, what: string): number {
+  const found = /target\s+constant\s+integer\s*:=\s*(\d+)/.exec(sql);
+  if (!found) {
+    throw new Error(
+      `${what} declares no target constant, so this build cannot say which schema version ` +
+        "it installs. The downgrade guard at the top of the file is where it is declared.",
+    );
+  }
+  return Number(found[1]);
+}
+
+/** The `spans` schema version this build installs. See parseSchemaTarget. */
+export function traceSchemaTarget(): number {
+  return parseSchemaTarget(readSchemaSql(), "sql/traces.sql");
+}
+
 function readSchemaSql(): string {
   let dir = process.cwd();
   for (let up = 0; up < 5; up += 1) {

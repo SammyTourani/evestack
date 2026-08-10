@@ -76,6 +76,37 @@
 --                attributes or in the AI SDK's `gen_ai.usage.*`. Datadog splits
 --                cost five ways; we can honestly split it four.
 
+/*
+ * ONE TRANSACTION, AND THAT IS LOAD-BEARING.
+ *
+ * The guard below refuses to touch a database newer than this file. The refusal
+ * is only worth anything if the statements AFTER it cannot run anyway, and the
+ * two ways this file gets applied disagree about that:
+ *
+ *   the dashboard  sends the whole file as one query, which Postgres already
+ *                  runs as a single implicit transaction
+ *   `psql -f`      runs a statement per transaction and, without
+ *                  `ON_ERROR_STOP`, keeps going after an error — so the guard
+ *                  raised, psql printed it, and psql ran every statement after
+ *                  it anyway. Measured against a live v4 database and
+ *                  sql/traces.sql, which duly put its v3 resolver back. The
+ *                  behaviour is psql's, not one file's, so both files carry this.
+ *
+ * BEGIN/COMMIT makes both paths agree: after the guard raises, everything else
+ * is a no-op inside an aborted transaction and the COMMIT rolls it back. Piping
+ * this into `psql -1` adds two harmless "already/no transaction in progress"
+ * warnings; nothing else changes.
+ *
+ * Nothing in this file refuses a transaction block — no CONCURRENTLY, no
+ * VACUUM. Anything added that does has to be moved out past the COMMIT, and
+ * then it is outside the guard and has to be safe on any version.
+ *
+ * Applying by hand: `psql -v ON_ERROR_STOP=1 -f <this file>`. Without the flag
+ * the outcome is identical, it just prints one "current transaction is aborted"
+ * line per skipped statement under the one error that matters.
+ */
+BEGIN;
+
 CREATE SCHEMA IF NOT EXISTS evestack;
 
 CREATE TABLE IF NOT EXISTS evestack.schema_version (
@@ -83,6 +114,39 @@ CREATE TABLE IF NOT EXISTS evestack.schema_version (
   version    integer NOT NULL,
   applied_at timestamptz NOT NULL DEFAULT now()
 );
+
+/*
+ * REFUSE TO RUN AT ALL AGAINST A DATABASE NEWER THAN THIS FILE.
+ *
+ * Same guard, same position and the same reasoning as `sql/traces.sql`'s, and
+ * this file needed it more: the block below DROPS all three fact tables
+ * whenever the marker is not the version it expects, and `CREATE OR REPLACE
+ * FUNCTION evestack.refresh_facts` at the bottom is unconditional. So an older
+ * image did not merely fail to upgrade a newer database — it dropped that
+ * database's fact tables, rebuilt them in the older shape, put the older
+ * refresh function back and then stamped the marker back down to its own
+ * version, all without a word.
+ *
+ * First in the file for the reason traces.sql gives: piped into `psql` this is
+ * a statement per transaction, so a guard placed after the DDL would only ever
+ * be an opinion about work already committed.
+ */
+DO $guard$
+DECLARE
+  -- Must equal the `target` in the migration immediately below and the version
+  -- stamped further down; test/schema-guard.test.mjs reads all three out of the
+  -- file and fails if they part.
+  target    constant integer := 2;
+  installed integer;
+BEGIN
+  SELECT version INTO installed FROM evestack.schema_version WHERE component = 'facts';
+  IF COALESCE(installed, 0) > target THEN
+    RAISE EXCEPTION
+      'evestack fact tables are at schema version %, and this build of evestack only understands version %. Nothing was applied: an older image must leave a newer database alone rather than half-downgrade it. Run the image that installed version %, or drop the evestack schema to rebuild the fact layer from scratch.',
+      installed, target, installed
+      USING ERRCODE = 'EV001';
+  END IF;
+END $guard$;
 
 -- The migration, such as it is. These tables are a cache of a join, so a schema
 -- change drops them and lets the next refresh rebuild — which is both correct
@@ -100,12 +164,17 @@ CREATE TABLE IF NOT EXISTS evestack.schema_version (
 -- watermark would otherwise leave every already-materialized row holding the
 -- old answer forever, which is the same "silently inert on the databases that
 -- need it" failure the comment above describes.
+--
+-- `IS DISTINCT FROM` and not `<`, because NULL — never refreshed — has to drop
+-- too. The downgrade half of it is unreachable: the guard above has already
+-- refused anything ahead of `target`.
 DO $$
 DECLARE
+  target    constant integer := 2;
   installed integer;
 BEGIN
   SELECT version INTO installed FROM evestack.schema_version WHERE component = 'facts';
-  IF installed IS DISTINCT FROM 2 THEN
+  IF installed IS DISTINCT FROM target THEN
     DROP TABLE IF EXISTS evestack.fact_tool_call;
     DROP TABLE IF EXISTS evestack.fact_turn;
     DROP TABLE IF EXISTS evestack.fact_watermark;
@@ -263,9 +332,16 @@ CREATE TABLE IF NOT EXISTS evestack.fact_watermark (
   spans_watermark timestamptz
 );
 
+-- FORWARD ONLY, like traces.sql's. Without the WHERE this line was the second
+-- half of the downgrade: an older image stamped its own lower number over a
+-- newer one, and the next boot of the newer image then saw a version it had
+-- "already applied". The guard at the top of the file is what stops the
+-- downgrade; this is what stops the marker lying about it if one ever gets past.
 INSERT INTO evestack.schema_version (component, version)
 VALUES ('facts', 2)
-ON CONFLICT (component) DO UPDATE SET version = EXCLUDED.version, applied_at = now();
+ON CONFLICT (component) DO UPDATE
+  SET version = EXCLUDED.version, applied_at = now()
+  WHERE evestack.schema_version.version < EXCLUDED.version;
 
 /* -------------------------------------------------------------------------- */
 /* the refresh                                                                 */
@@ -772,3 +848,5 @@ BEGIN
   RETURN QUERY SELECT v_turns_examined, v_turns_changed, v_tools_examined, v_tools_changed;
 END;
 $function$;
+
+COMMIT;
