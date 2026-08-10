@@ -77,7 +77,7 @@ out:
 
 ```bash
 # in .env (NOT .env.local — Compose only interpolates from .env and the shell)
-EVESTACK_DASHBOARD_IMAGE=ghcr.io/sammytourani/evestack-dashboard:0.3.1
+EVESTACK_DASHBOARD_IMAGE=ghcr.io/sammytourani/evestack-dashboard:0.4.0
 ```
 
 Then:
@@ -126,9 +126,9 @@ npm run verify
   accepted the session but returned no handles"** without it. That is every new chat and every
   fork, on the dashboard's only route for starting a conversation.
 
-  Dashboard `0.3.1` no longer requires it and works against both, so `0.31.3` is safe once you
-  are on that image. The pin above is the version the contract suite and the runtime probes are
-  green against; `docs/upstream.mdx` tracks where the pin is going next.
+  Dashboard `0.3.1` and later no longer require it and work against both, so `0.31.3` is safe
+  once you are on `0.3.1` or newer. The pin above is the version the contract suite and the
+  runtime probes are green against; `docs/upstream.mdx` tracks where the pin is going next.
 </Warning>
 
 Three things to know before you run that:

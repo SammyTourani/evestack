@@ -52,11 +52,17 @@ They are summarised rather than itemised, deliberately.
 
 ## Unreleased
 
-Nothing is waiting to be published. The five packages that were queued here — the
-scaffolder, the CLI, `@evestack/mcp`, `@evestack/budget` and
-`@evestack/sandbox-opensandbox` — went to npm on 2026-08-09 and their entries have moved
-down into their own sections; the dashboard image followed at `0.3.0`. Every published
-version now matches the tree it was built from, verified package by package.
+**`@evestack/dashboard@0.4.0` is waiting to be published.** Its entry is written up in full
+under its own section below; this is the pointer, because the pending state is the dangerous
+one. The tree installs **spans v4** and **facts v2**, and the newest image GHCR serves is
+`0.3.1`, which installs spans v3 and facts v1 — so until that image ships, the schema work
+is unreachable for every user, and anyone reading a version number alone cannot tell the two
+schemas apart. That is the condition the bump ends and the publish completes.
+
+The five packages that were queued here — the scaffolder, the CLI, `@evestack/mcp`,
+`@evestack/budget` and `@evestack/sandbox-opensandbox` — went to npm on 2026-08-09 and their
+entries have moved down into their own sections; the dashboard image followed at `0.3.0`,
+then `0.3.1`.
 
 What remains below ships in no artifact. It is recorded because the *symptom* reached
 users even though the code never did — the state this section exists to make visible,
@@ -737,6 +743,65 @@ First release (952f0f9).
 `ghcr.io/sammytourani/evestack-dashboard:<version>` (`linux/amd64` and `linux/arm64`),
 built and pushed by `.github/workflows/publish-dashboard.yml` on a tag push. The version
 here is the image tag. Dates are the git tag's, not npm's.
+
+### @evestack/dashboard@0.4.0 — unreleased
+
+A minor, not a patch, and the reason is the schema. This image installs **spans v4** and
+**facts v2**; every published image up to and including `0.3.1` installs spans v3 and facts
+v1. Two different schemas under one version number is the state this bump exists to end —
+`0.3.1` had been serving both, because the release gate checks that the written-out tags
+*agree* with each other, not that the number *increments* when the schema moves.
+
+<Warning>
+  **Rolling back to `0.3.1` or earlier over a v4 database is not a clean downgrade, and this
+  release cannot stop it.** The guard added here lives in *this* image's SQL and only refuses
+  to run when `installed > target`. An older image has no such guard: `sql/traces.sql` moves
+  the spans marker forward only (`WHERE version < EXCLUDED.version`), but its
+  `CREATE OR REPLACE FUNCTION resolve_span_ancestry` sits at file top level and runs
+  unconditionally — so the marker stays at 4 while the v3 resolver replaces the v4 one, and
+  because the marker never moved, no later migration re-applies it. `sql/facts.sql` has no
+  such `WHERE`, so its marker does decrement (2 → 1) and the fact tables are dropped and
+  rebuilt on the way down. Measured on a controlled single-variable rollback: `facts` went
+  2 → 1 and the resolver's md5 changed while `spans` stayed at 4. Re-upgrading repairs both.
+  Pull forward, not back.
+</Warning>
+
+#### Changed
+
+- **The dashboard schema moved: spans v3 → v4, facts v1 → v2.** The version markers are the
+  release-visible part of the span-resolution and fact-tier work below; the bump is what
+  makes them addressable by a tag instead of hiding behind one that already means something
+  else.
+- **Every migration is now gated on the version marker before it touches DDL, not just
+  data.** An image older than the database it finds leaves it strictly alone and says so,
+  rather than half-downgrading it in silence.
+
+#### Fixed
+
+- **A trace split across two overlapping ingest batches kept the `turn_0` alias.** An
+  `AFTER STATEMENT` trigger only sees its own statement's snapshot, so when the batch
+  carrying the children and the batch carrying the enclosing `workflow.run.id` span are in
+  flight at once, neither can see the other: both commit, and the finished trace on disk is
+  one no transaction ever saw. The session page then reported "No spans on any of the 1
+  runs" for a turn whose tool call `/traces/<id>` rendered in full. `insertSpans` now
+  re-resolves the traces it touched from its own transaction once every chunk has committed,
+  so the last writer to commit is the one whose walk sees the finished trace. The trigger
+  stays — it is the only thing that resolves a write that did not arrive through
+  `insertSpans`. Measured: 40 traces delivered as two overlapping batches left 93 stale spans
+  across 31 of them.
+- **Seven more surfaces where a check that could not run reported the reassuring value.**
+  The fleet banner returned `null` on a failed sweep, which its own contract reads as
+  "nothing is open"; `lib/sandboxes.ts` skipped containers Docker would not describe and
+  then counted them in "All 6 running sandboxes are network-isolated" on a PAGE-severity
+  alert; the failing-streak query ranked over unresolved runs, so a worker that died
+  mid-run sat on top of twenty failures and produced streak 0; failed chart queries
+  degraded to the empty result a genuinely quiet window earns; `/evals` rendered "Ended
+  badly: 0" from a swallowed count; and `/api/budget` classified errors by substring, so
+  permission-denied answered "No budget data yet" at HTTP 200. Each now carries an explicit
+  unreadable/unknown state.
+- **`/api/health` distinguishes its not-ok states,** so a client can tell an unconfigured
+  dashboard from one that cannot reach Postgres from one that is older than its own
+  database. `evestack status` reads that body instead of blaming credentials for all four.
 
 ### @evestack/dashboard@0.3.1 — 2026-08-09
 

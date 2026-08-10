@@ -503,7 +503,7 @@ export const quickstart = {
       { name: "agent", detail: "answering at http://127.0.0.1:2000" },
       { name: "dashboard", detail: "answering at http://localhost:4000, database connected" },
       { name: "traces", detail: "the agent's ingest token is accepted by the dashboard" },
-      { name: "dashboard image", detail: "0.3.1, matching the pin" },
+      { name: "dashboard image", detail: "0.4.0, matching the pin" },
     ],
     done: "Everything works.",
     dashboard: { label: "Your dashboard", value: "http://localhost:4000" },
