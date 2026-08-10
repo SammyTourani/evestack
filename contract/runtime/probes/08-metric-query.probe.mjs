@@ -48,15 +48,21 @@
  * probing a copy of the code instead of the code is how a probe stays green
  * while the product is broken. Nothing in the `workflow` schema is touched.
  */
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  WORKFLOW_RUNS_DDL,
+  createFixtureDatabase,
+  fixtureDatabaseUnavailable,
+} from "../lib/fixture-db.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DASHBOARD = join(HERE, "../../../packages/dashboard");
 
-async function connect() {
+async function connect(connectionString) {
   const { default: pg } = await import("pg");
-  const client = new pg.Client({ connectionString: process.env.WORKFLOW_POSTGRES_URL });
+  const client = new pg.Client({ connectionString });
   await client.connect();
   await client.query("SET statement_timeout = '60s'");
   return client;
@@ -76,35 +82,22 @@ export default {
     "that is wrong presents 3% of the fleet as the fleet, and a failure rate that drifts from " +
     "lib/monitors.ts means the same turn is a failure on one page and a success on another.",
 
-  async available() {
-    if (!process.env.WORKFLOW_POSTGRES_URL) return ["WORKFLOW_POSTGRES_URL is not set"];
-    try {
-      const client = await connect();
-      const { rows } = await client.query(
-        "SELECT to_regclass('workflow.workflow_runs')::text AS runs",
-      );
-      await client.end();
-      if (!rows[0]?.runs) return ["workflow.workflow_runs does not exist"];
-      return [];
-    } catch (error) {
-      return [`cannot reach Postgres: ${error.message}`];
-    }
-  },
+  available: fixtureDatabaseUnavailable,
 
   async run(t) {
     // `runMetricQuery` refreshes the facts first, and lib/facts.ts reads its
     // DDL relative to the working directory — which is how the dashboard runs.
     // Restored in the `finally` below. Same move as probe 07.
     const cwd = process.cwd();
+    const ambient = process.env.WORKFLOW_POSTGRES_URL;
     process.chdir(DASHBOARD);
     // The repo's one TypeScript-resolution shim; importing it registers an
     // in-thread resolve hook.
     await import(join(DASHBOARD, "test/register-ts-resolve.mjs"));
     const metrics = await import(join(DASHBOARD, "lib/metrics.ts"));
     const db = await import(join(DASHBOARD, "lib/db.ts"));
-    const client = await connect();
 
-    // A window wide enough to hold the whole seeded month and any live traffic.
+    // A window wide enough to hold the whole fixture.
     const now = Date.now();
     const WINDOW = {
       from: new Date(now - 60 * 86_400_000).toISOString(),
@@ -113,7 +106,26 @@ export default {
     const WHERE_WINDOW = "created_at >= $1::timestamptz AND created_at < $2::timestamptz";
     const bounds = [WINDOW.from, WINDOW.to];
 
+    // One query against the CONFIGURED database before anything is repointed.
+    // It is the same refresh this probe has always done there, and it doubles
+    // as the warm-up for three once-per-process bootstraps — sql/traces.sql,
+    // sql/facts.sql and sql/query-indexes.sql — which every later probe in this
+    // shared process would otherwise inherit as "already applied" against a
+    // database that no longer exists.
+    await metrics.runMetricQuery({ view: "turns", timeDimension: WINDOW });
+
+    const fixture = await createFixtureDatabase("metric-query");
+    let client = null;
     try {
+      client = await connect(fixture.url);
+      await client.query(WORKFLOW_RUNS_DDL);
+      // The shipped DDL, unmodified, at its real schema names.
+      await client.query(readFileSync(join(DASHBOARD, "sql", "traces.sql"), "utf8"));
+      await client.query(readFileSync(join(DASHBOARD, "sql", "facts.sql"), "utf8"));
+      await seed(client, now);
+      await db.closePool();
+      process.env.WORKFLOW_POSTGRES_URL = fixture.url;
+
       /* ── 1. every catalog entry executes ──────────────────────────────── */
 
       for (const [viewName, view] of Object.entries(metrics.CATALOG)) {
@@ -484,8 +496,6 @@ export default {
         { actual: `${elapsed.toFixed(0)}ms` },
       );
     } finally {
-      process.chdir(cwd);
-      await client.end();
       // closePool(), not getPool().end(). Both close the sockets; only one
       // clears the module global, and every probe in this tier shares a
       // process. Ending it here without forgetting it left the next probe that
@@ -494,7 +504,149 @@ export default {
       // the pool", before its first assertion. It failed on ordering, so it was
       // invisible to a single --only run and appeared the first time the whole
       // tier ran together in CI.
-      await db.closePool();
+      //
+      // It also has to happen BEFORE the fixture database is dropped, or the
+      // pool is still holding a socket to it.
+      await db.closePool().catch(() => {});
+      if (ambient === undefined) delete process.env.WORKFLOW_POSTGRES_URL;
+      else process.env.WORKFLOW_POSTGRES_URL = ambient;
+      await client?.end().catch(() => {});
+      const leaked = await fixture.dispose();
+      if (leaked) t.note(leaked);
+      process.chdir(cwd);
     }
   },
 };
+
+/**
+ * The population, and why each row is here.
+ *
+ * ─ Why a fixture at all ─
+ *
+ * This probe used to read whatever database it was pointed at, and three of its
+ * assertions were about the SHAPE of that data rather than about the code:
+ * partial TTFT coverage, an unpriced model existing, and enough distinct models
+ * for a LIMIT to truncate. On a real install those are properties of the
+ * traffic. Two of them held on a seeded corpus and stopped holding on a small
+ * one — and the TTFT one is worse than that: it was passing BECAUSE span
+ * attribution was broken, so once turns were fully traced, every turn had a
+ * TTFT and "partial coverage" became unsatisfiable. An anti-vacuity check that
+ * fails when the product improves is a check nobody will keep.
+ *
+ * So the conditions are constructed here instead. Every one of them is now a
+ * property of eight rows written three lines apart, which means the assertion
+ * that reads it is about the query and not about the weather.
+ *
+ * ─ The eight turns ─
+ *
+ *   ok_ttft        priced model, chat span WITH a time-to-first-chunk
+ *   ok_nottft      priced model, chat span WITHOUT one   <- partial TTFT coverage
+ *   free           ollama, which the catalog prices at a REAL zero
+ *   unpriced       a model the catalog has never heard of <- null, not $0.00
+ *   no_model       finished, never called a model         <- outcome no_model_call
+ *   errored        error_code set                         <- outcome failed
+ *   running        no completed_at, no error              <- excluded from the rate
+ *   yesterday      a second calendar day                  <- more than one daily bucket
+ *
+ * Three distinct model ids plus the null one is what makes `limit: 2` truncate,
+ * and the first three sit inside the trailing three hours so the minute series
+ * has both full and empty buckets in it.
+ */
+async function seed(client, now) {
+  const stamp = (ms) => new Date(ms).toISOString().replace("T", " ").replace("Z", "");
+  const SESSION = "wrun_fx_session";
+
+  await client.query(
+    `INSERT INTO workflow.workflow_runs (id, status, created_at, started_at, updated_at, attributes)
+     VALUES ($1, 'completed', $2::timestamp, $2::timestamp, $2::timestamp,
+             jsonb_build_object('$eve.type','session','$eve.trigger','http'))`,
+    [SESSION, stamp(now - 40 * 3_600_000)],
+  );
+
+  let nano = BigInt(now - 40 * 3_600_000) * 1_000_000n;
+
+  const addTurn = async (id, { model, at, done = true, errorCode = null, ttft = null }) => {
+    const created = stamp(at);
+    const completed = done ? stamp(at + 4_000) : null;
+    const attributes = {
+      "$eve.type": "turn",
+      "$eve.root": SESSION,
+      "$eve.parent": SESSION,
+      "$eve.tool_count": "14",
+      ...(model === null
+        ? {}
+        : {
+            "$eve.model": model,
+            "$eve.input_tokens": "1200",
+            "$eve.output_tokens": "300",
+            "$eve.cache_read_tokens": "100",
+            "$eve.cache_write_tokens": "0",
+          }),
+    };
+    await client.query(
+      `INSERT INTO workflow.workflow_runs
+         (id, status, error_code, created_at, started_at, completed_at, updated_at, attributes)
+       VALUES ($1, $2, $3, $4::timestamp, $4::timestamp, $5::timestamp, $4::timestamp, $6::jsonb)`,
+      [
+        id,
+        done ? (errorCode === null ? "completed" : "failed") : "running",
+        errorCode,
+        created,
+        completed,
+        JSON.stringify(attributes),
+      ],
+    );
+    // One engine step per turn, so the LEFT JOIN LATERAL in sql/facts.sql has
+    // something to count rather than proving only that it tolerates nothing.
+    await client.query(
+      `INSERT INTO workflow.workflow_steps (run_id, step_id, step_name, started_at, completed_at)
+       VALUES ($1::varchar, $2::text, 'turnStep', $3::timestamp, $3::timestamp)`,
+      [id, `${id}:1`, created],
+    );
+    if (model === null) return;
+
+    nano += 1_000_000n;
+    const chat = {
+      "agent.turn.id": id,
+      "agent.session.id": SESSION,
+      "eve.environment": "production",
+      "gen_ai.provider.name": model.split("/")[0],
+      "gen_ai.response.finish_reasons": ["stop"],
+      "gen_ai.client.operation.time_per_output_chunk": 0.02,
+      ...(ttft === null ? {} : { "gen_ai.client.operation.time_to_first_chunk": ttft }),
+    };
+    await client.query(
+      `INSERT INTO evestack.spans
+         (trace_id, span_id, name, start_unix_nano, end_unix_nano, start_time, end_time, attributes)
+       VALUES ($1, $2, $3, $4::bigint, $4::bigint + 1000000000, to_timestamp($4::bigint / 1e9),
+               to_timestamp($4::bigint / 1e9) + interval '1 second', $5::jsonb)`,
+      [`trace_${id}`, `${id}_chat`.slice(-16), `chat ${model.split("/")[1]}`, nano.toString(), JSON.stringify(chat)],
+    );
+    nano += 1_000_000n;
+    await client.query(
+      `INSERT INTO evestack.spans
+         (trace_id, span_id, name, start_unix_nano, end_unix_nano, start_time, end_time, attributes)
+       VALUES ($1, $2, 'execute_tool bash', $3::bigint, $3::bigint + 500000000,
+               to_timestamp($3::bigint / 1e9),
+               to_timestamp($3::bigint / 1e9) + interval '0.5 second', $4::jsonb)`,
+      [`trace_${id}`, `${id}_tool`.slice(-16), nano.toString(), JSON.stringify({ "agent.turn.id": id })],
+    );
+  };
+
+  await addTurn("wrun_fx_ok_ttft", { model: "openai/gpt-5-mini", at: now - 10 * 60_000, ttft: 0.42 });
+  await addTurn("wrun_fx_ok_nottft", { model: "openai/gpt-5-mini", at: now - 45 * 60_000 });
+  await addTurn("wrun_fx_free", { model: "ollama/qwen3", at: now - 2 * 3_600_000, ttft: 1.1 });
+  await addTurn("wrun_fx_unpriced", { model: "acme/not-in-the-catalog", at: now - 5 * 3_600_000, ttft: 0.9 });
+  await addTurn("wrun_fx_no_model", { model: null, at: now - 6 * 3_600_000 });
+  await addTurn("wrun_fx_errored", {
+    model: "openai/gpt-5-mini",
+    at: now - 7 * 3_600_000,
+    errorCode: "MODEL_CALL_FAILED",
+    ttft: 0.5,
+  });
+  await addTurn("wrun_fx_running", { model: "openai/gpt-5-mini", at: now - 8 * 3_600_000, done: false });
+  await addTurn("wrun_fx_yesterday", { model: "ollama/qwen3", at: now - 30 * 3_600_000, ttft: 0.7 });
+
+  await client.query("ANALYZE workflow.workflow_runs");
+  await client.query("ANALYZE evestack.spans");
+}
