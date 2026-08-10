@@ -1712,6 +1712,18 @@ services:
       # Where the Skills page looks. Points at the mount below, and without both
       # halves the page scans the wrong directory — see the volume's comment.
       EVESTACK_SKILLS_DIR: /agent-skills
+      # ── /sandboxes is OFF, and this is one of the three lines that turn it on
+      #
+      # This variable and the mount at the end of \`volumes:\` below are halves of
+      # one switch, and neither half does anything alone: set this and the page
+      # reports that the daemon did not answer, because that path is not in this
+      # container; mount it and leave this unset and the page reports the feature
+      # is off. The \`group_add:\` under that mount is the third line, and it is
+      # not optional either — the comment there says why.
+      #
+      # The value is the path INSIDE this container, which is the right-hand side
+      # of the mount. Keep the two strings identical.
+      # EVESTACK_DOCKER_SOCKET: /var/run/docker.sock
     volumes:
       # YOUR agent/skills, so the Skills page scans the skills your agent
       # actually loads.
@@ -1733,6 +1745,50 @@ services:
       # Read-only: the dashboard has no reason to write here, and this container
       # already holds a database URL and can start agent runs.
       - ./agent/skills:/agent-skills:ro
+
+      # ── MOUNTING THIS MAKES THE DASHBOARD ROOT ON YOUR MACHINE ─────────────
+      #
+      # Read that plainly before uncommenting it. A process that can talk to the
+      # Docker socket can start a container with \`/\` bind-mounted and write
+      # anything, anywhere, as root. This container already takes a password on
+      # loopback and can start agent runs; the socket hands whoever gets past
+      # that the whole machine. It ships commented out because that is a choice
+      # somebody has to make deliberately, not a default to inherit.
+      #
+      # What it buys: /sandboxes lists the containers eve is running — which of
+      # them still has the network, which has been up for hours, which belongs to
+      # a session that no longer exists. Nothing on that page writes. The
+      # dashboard issues GET requests only and has no stop or remove button.
+      #
+      # THERE IS NO READ-ONLY DOCKER SOCKET, and \`:ro\` is not one. Measured
+      # against Docker 29.2.1: through a \`:ro\` socket mount, as a non-root
+      # container user, \`POST /containers/create\` with \`Binds: ["/:/host"]\`
+      # answered 201 Created. So \`:ro\` is left off rather than written down as
+      # a reassurance that does not hold — a label is a weaker thing than being
+      # right. A socket that really is read-only means a filtering proxy in front
+      # of the daemon, with the variable above pointing at the proxy.
+      #
+      # The LEFT side is a path on the DAEMON filesystem, which under Docker
+      # Desktop and Colima is a VM and not your host. /var/run/docker.sock is
+      # right for Docker Desktop, Colima and Linux; rootless Docker keeps it
+      # under XDG_RUNTIME_DIR. Confirm yours with \`docker context inspect\`.
+      # - /var/run/docker.sock:/var/run/docker.sock
+    # The third line, and the one that is easiest to leave out.
+    #
+    # Unless your daemon publishes the socket world-writable it is mode 660, owned
+    # by a group this image is not in — it runs as \`node\`, uid 1000 — so the
+    # mount ALONE answers \`connect EACCES\` and the page then reports the
+    # daemon unreachable, which reads like a broken feature and not a missing
+    # line. Read the number from the daemon, not from your own /etc/group:
+    #
+    #   docker run --rm -v /var/run/docker.sock:/var/run/docker.sock alpine:3 \\
+    #     stat -c '%g' /var/run/docker.sock
+    #
+    # The placeholder is deliberately not a plausible number. A wrong one is
+    # another EACCES to chase; this one refuses to create the container at all,
+    # with \`Unable to find group REPLACE_WITH_YOUR_DOCKER_GID\`.
+    # group_add:
+    #   - "REPLACE_WITH_YOUR_DOCKER_GID"
     ports:
       # 127.0.0.1 on purpose. The process inside binds 0.0.0.0 because nothing
       # could reach it otherwise; the published mapping is where exposure is

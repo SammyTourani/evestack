@@ -388,3 +388,138 @@ test("omitting the ports keeps the documented defaults", () => {
   assert.match(text, /- "127\.0\.0\.1:5433:5432"/);
   assert.match(text, /- "127\.0\.0\.1:\$\{DASHBOARD_PORT:-4000\}:4000"/);
 });
+
+/* -------------------------------------------------------------------------- */
+/* the /sandboxes switch                                                       */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The half of the sandbox feature that shipped, and the half that did not.
+ *
+ * packages/dashboard/.env.example documents EVESTACK_DOCKER_SOCKET as the way to
+ * turn the /sandboxes page on, and this generated compose file had no socket
+ * mount and not even a commented-out one — so following that documentation got
+ * you "docker did not answer in 3000ms" instead of a container list. The
+ * documented path could not work as written from a scaffolded project, which is
+ * the only kind of project this file exists for.
+ *
+ * It stays commented out. Mounting the Docker socket into a container that
+ * already takes a password on loopback and starts agent runs is root on the
+ * host, so the choice belongs to a person; what was missing was the ability to
+ * make that choice, not the default.
+ *
+ * THREE lines, not one, and that is what most of these tests are about. The
+ * suggestion this came from was a single commented mount, and a single mount
+ * was measured on 2026-08-10 (Docker 29.2.1, socket srw-rw---- root:991) to
+ * answer `connect EACCES /var/run/docker.sock`: the dashboard image runs as USER
+ * node, uid 1000, and belongs to no group that owns the socket. A mount with
+ * no group_add is a second broken documented path wearing a different error.
+ */
+
+/** The commented-out line whose body starts with `needle`, or undefined. */
+const commentedLine = (text, needle) =>
+  text
+    .split("\n")
+    .find((line) =>
+      line.trim().startsWith("#") && line.trim().slice(1).trimStart().startsWith(needle));
+
+/** Lines that are NOT comments and whose trimmed form starts with `needle`. */
+const liveLines = (text, needle) =>
+  text
+    .split("\n")
+    .filter((line) => line.trim().startsWith("#") === false && line.trim().startsWith(needle));
+
+/** The body of a commented list item, so `# - a:b` reads back as `a:b`. */
+const commentedItem = (text, needle) =>
+  commentedLine(text, needle).trim().slice(1).trim().slice(1).trim();
+
+const indentOf = (line) => line.length - line.trimStart().length;
+
+test("the socket mount ships commented out, so nothing is mounted by default", () => {
+  const text = compose();
+  // Nothing live. A generated file that mounts the daemon into a container
+  // reachable with a password is the failure this block is arranged around.
+  assert.deepEqual(liveLines(text, "- /var/run/docker.sock"), [], "the compose file MOUNTS the Docker socket");
+  assert.deepEqual(liveLines(text, "group_add:"), [], "group_add is live, so the mount above it probably is too");
+  assert.deepEqual(liveLines(text, "EVESTACK_DOCKER_SOCKET:"), [], "the dashboard is handed a socket path nobody opted into");
+});
+
+test("all three halves of the switch are there to uncomment", () => {
+  // Any two of these without the third is a page that reports a failure rather
+  // than a container list.
+  const text = compose();
+  assert.ok(commentedLine(text, "EVESTACK_DOCKER_SOCKET:"), "no EVESTACK_DOCKER_SOCKET line to uncomment");
+  assert.ok(commentedLine(text, "- /var/run/docker.sock"), "no socket mount to uncomment");
+  assert.ok(commentedLine(text, "group_add:"), "no group_add, so the mount alone answers EACCES");
+  assert.ok(commentedLine(text, '- "REPLACE_WITH_YOUR_DOCKER_GID"'), "group_add has no item under it");
+});
+
+test("the variable and the mount name the same path inside the container", () => {
+  // The original bug one level up: two halves of one switch that disagree.
+  // EVESTACK_DOCKER_SOCKET is read inside the container, and the right-hand
+  // side of the mount is where the socket lands inside the container.
+  const text = compose();
+  const declared = commentedLine(text, "EVESTACK_DOCKER_SOCKET:").split(":").at(-1).trim();
+  const parts = commentedItem(text, "- /var/run/docker.sock").split(":");
+  assert.equal(parts[1], declared, "the variable and the mount disagree about the in-container path");
+  assert.equal(parts[0], "/var/run/docker.sock", "the daemon-side path is not the documented default");
+});
+
+test("the socket mount does not label itself read-only", () => {
+  // Measured, not assumed: through a :ro socket mount, as a non-root
+  // container user, POST /containers/create with a bind of the host root
+  // answered 201. The Docker API has no read-only mode, so :ro here would be
+  // a reassurance the interface does not honour — and the mount beside it that
+  // IS read-only says so and means it.
+  const text = compose();
+  const mount = commentedLine(text, "- /var/run/docker.sock");
+  assert.equal(mount.trimEnd().endsWith(":ro"), false, "the socket mount claims to be read-only");
+  assert.ok(text.includes("THERE IS NO READ-ONLY DOCKER SOCKET"), "the file drops :ro without saying why");
+  assert.ok(text.includes("- ./agent/skills:/agent-skills:ro"), "the skills mount stopped being read-only");
+});
+
+test("a half-applied edit fails loudly rather than as an unreachable daemon", () => {
+  // The gid is host-specific, so this file cannot ship a working number. It
+  // ships a placeholder rather than a plausible default on purpose: a wrong
+  // number is another connect EACCES to chase from the page, while a
+  // non-numeric group stops the container being created at all. Docker answers
+  // Unable to find group REPLACE_WITH_YOUR_DOCKER_GID.
+  const text = compose();
+  const gid = commentedItem(text, '- "REPLACE_WITH_YOUR_DOCKER_GID"').replaceAll('"', "");
+  assert.ok(Number.isNaN(Number(gid)), "a numeric placeholder gid would fail as a silent EACCES");
+  // And the number comes from the daemon rather than from the host group file:
+  // under Docker Desktop and Colima those are two different machines.
+  assert.ok(text.includes("stat -c '%g' /var/run/docker.sock"));
+});
+
+test("uncommenting the three lines lands them at the indentation YAML needs", () => {
+  const text = compose();
+  const lines = text.split("\n");
+  const skillsMount = lines.find((l) => l.trim() === "- ./agent/skills:/agent-skills:ro");
+  const socketMount = commentedLine(text, "- /var/run/docker.sock");
+  // Measured on the line the edit produces: deleting the "# " is the whole edit.
+  assert.equal(indentOf(socketMount.replace("# ", "")), indentOf(skillsMount), "the socket mount would not be a sibling of the skills mount");
+  const skillsVar = lines.find((l) => l.trim().startsWith("EVESTACK_SKILLS_DIR:"));
+  const socketVar = commentedLine(text, "EVESTACK_DOCKER_SOCKET:");
+  assert.equal(indentOf(socketVar.replace("# ", "")), indentOf(skillsVar), "the socket variable would not be an environment key");
+  const ports = lines.find((l) => l.trim() === "ports:" && indentOf(l) === 4);
+  const groupAdd = commentedLine(text, "group_add:");
+  const groupItem = commentedLine(text, '- "REPLACE_WITH_YOUR_DOCKER_GID"');
+  assert.equal(indentOf(groupAdd.replace("# ", "")), indentOf(ports), "group_add would not be a service key");
+  assert.equal(indentOf(groupItem.replace("# ", "")), indentOf(groupAdd.replace("# ", "")) + 2, "the group item is not nested under group_add");
+  // Order matters as much as indentation: the mount has to fall inside the
+  // volumes list of the dashboard, and group_add has to fall outside it.
+  const at = (line) => text.indexOf(line);
+  assert.ok(at(skillsMount) < at(socketMount), "the socket mount is not inside the volumes list");
+  assert.ok(at(socketMount) < at(groupAdd), "group_add is inside the volumes list, where it is not a key");
+  assert.ok(at(groupAdd) < at("    extra_hosts:"), "group_add is not in the dashboard service");
+});
+
+test("the file states what the mount costs before it shows how to enable it", () => {
+  // The /sandboxes page explains the risk well, but the compose file is where
+  // someone actually types the change, and it used to say nothing at all.
+  const text = compose();
+  const warning = text.indexOf("MOUNTING THIS MAKES THE DASHBOARD ROOT ON YOUR MACHINE");
+  assert.ok(warning > -1, "the compose file mounts the daemon without saying what that costs");
+  assert.ok(warning < text.indexOf("# - /var/run/docker.sock"), "the mount appears above the warning");
+});
