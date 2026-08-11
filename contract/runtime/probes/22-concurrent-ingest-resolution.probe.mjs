@@ -8,17 +8,29 @@
  * "SELECT evestack.resolve_span_ancestry();" repaired every one of them. Whoever
  * looked at the function found the correct function. Nothing had been downgraded.
  *
- * The mechanism is the trigger's snapshot. sql/traces.sql keeps the resolved
- * columns current with an AFTER STATEMENT trigger that re-walks the whole trace,
- * which is the right unit of work and does converge for out-of-order arrival —
- * as long as the writes are serialized. A trigger runs inside the statement that
- * fired it, so it can only see that statement's snapshot. Spans export when they
- * END, so leaves leave before the workflow span carrying the run id they need,
- * and two batches for one trace are routinely in flight at once. Each then
- * re-walks a trace the other half of is invisible in: one writes the alias
- * because the enclosing span is not there, the other writes nothing because the
- * children are not there. Both commit. The finished trace on disk is one that no
- * transaction ever saw, and nothing is scheduled to look again.
+ * The mechanism is that a trigger runs before its own transaction commits.
+ * sql/traces.sql keeps the resolved columns current with an AFTER STATEMENT
+ * trigger that re-walks the whole trace, which is the right unit of work and
+ * does converge for out-of-order arrival — as long as the writes are serialized.
+ * A trigger fires inside the TRANSACTION that wrote the rows, and the other
+ * writer's transaction is open too; no snapshot shows uncommitted rows. Spans
+ * export when they END, so leaves leave before the workflow span carrying the
+ * run id they need, and two batches for one trace are routinely in flight at
+ * once. Each then re-walks a trace the other half of is UNCOMMITTED in: one
+ * writes the alias because the enclosing span is not visible, the other writes
+ * nothing because the children are not visible. Both commit. The finished trace
+ * on disk is one that no transaction ever saw, and nothing is scheduled to look
+ * again.
+ *
+ * NOT "the trigger is pinned to its firing statement's snapshot", which is what
+ * this said and is false: a trigger function is VOLATILE, and a volatile plpgsql
+ * function takes a fresh snapshot at the start of every query it runs. Measured
+ * on this schema — a statement trigger read a table, slept 400ms while another
+ * session inserted and committed, and its second read saw the new row. The
+ * correction matters to this probe rather than being pedantry about Postgres:
+ * losing the race depends on WHEN the other batch commits, so the failure is
+ * probabilistic, which is why 31 of 40 traces came out stale and not 40 of 40,
+ * and why forty traces rather than one is what makes a false green impossible.
  *
  * That is invisible to every other check. Every row is present, /traces renders
  * the whole waterfall from them, the resolver is the new one, the schema marker
@@ -94,7 +106,7 @@ export default {
   why:
     "The session page joins spans to turns on spans.resolved_turn_id, which the ancestry walk " +
     "fills from the enclosing workflow.run.id. The walk is kept current by an AFTER STATEMENT " +
-    "trigger, and a trigger only ever sees the snapshot of the statement that fired it — so two " +
+    "trigger, and a trigger runs before its own transaction commits — so two " +
     "ingest batches for one trace in flight at once each resolve without the other, both commit, " +
     "and the trace is left holding the turn_0 alias with nothing scheduled to fix it. Every span " +
     "is present and /traces renders them; only /sessions goes blank.",

@@ -268,12 +268,13 @@ CREATE INDEX IF NOT EXISTS spans_name_idx
  *     lands first and resolves to NULL. The trigger below re-resolves the whole
  *     trace whenever any span in it is written, so the parent's arrival fixes
  *     its children — that is why the unit of work is the trace, not the row.
- *     ONLY WHILE THOSE WRITES ARE SERIALIZED, THOUGH. A trigger is stuck with
- *     the snapshot of the statement that fired it, so two batches for one trace
- *     in flight at once each re-walk a trace the other half of is invisible in,
- *     and the parent's arrival fixes nothing. lib/traces.ts runs this again from
- *     its own transaction once a batch has committed, which is what actually
- *     makes the answer independent of arrival order. See the triggers below.
+ *     ONLY WHILE THOSE WRITES ARE SERIALIZED, THOUGH. The trigger fires inside
+ *     the transaction that did the writing, before it commits, and a concurrent
+ *     writer has not committed either — so two batches for one trace in flight
+ *     at once each re-walk a trace the other half of is UNCOMMITTED in, and the
+ *     parent's arrival fixes nothing. lib/traces.ts runs this again from its own
+ *     transaction once a batch has committed, which is what actually makes the
+ *     answer independent of arrival order. See the triggers below.
  *   CYCLES.  parent_span_id is a single column, so a span has at most one
  *     parent. A cycle is therefore unreachable from any root, and this walk only
  *     ever descends from roots: it cannot enter a cycle, and it cannot visit a
@@ -458,23 +459,64 @@ $fn$;
  * before adding a second writer that is not an exporter.
  *
  * AND CONCURRENCY COSTS MORE THAN A RETRY HERE, WHICH IS WHY THIS TRIGGER IS
- * NOT THE WHOLE MECHANISM. This function runs inside the statement that fired
- * it, so it sees that statement's snapshot and nothing committed after it. Two
- * batches for one trace in flight at once therefore each re-walk a trace the
- * other half of is invisible in: the one holding the children writes the
- * `turn_0` alias because the enclosing `workflow.run.id` span is not there yet,
- * the one holding that span writes nothing because the children are not there
- * yet, both commit, and the finished trace on disk is one no transaction ever
- * saw. Nothing writes to that trace again, so it stays wrong — which is the
- * session page back to "No spans on any of the 1 runs" for a turn whose tool
- * call /traces/<id> renders in full. Measured on this schema: 40 traces
- * delivered as two overlapping batches left 93 spans across 31 of them on the
- * alias, and one hand-run resolve_span_ancestry() changed exactly those 93.
+ * NOT THE WHOLE MECHANISM. THE REASON IS COMMITS, NOT SNAPSHOTS. This function
+ * runs inside the TRANSACTION that fired it, before that transaction commits,
+ * and a second writer for the same trace has not committed either — and nothing
+ * can see another transaction's uncommitted rows, however new a snapshot it
+ * takes. So two batches for one trace in flight at once each re-walk a trace
+ * the other half of is UNCOMMITTED in: the one holding the children writes the
+ * `turn_0` alias because the enclosing `workflow.run.id` span is not visible
+ * yet, the one holding that span writes nothing because the children are not
+ * visible yet, both commit, and the finished trace on disk is one no
+ * transaction ever saw. Nothing writes to that trace again, so it stays wrong —
+ * which is the session page back to "No spans on any of the 1 runs" for a turn
+ * whose tool call /traces/<id> renders in full.
  *
- * A per-trace advisory lock in here does NOT fix that, and was tried: the lock
- * is acquired after the snapshot is taken, so waiting buys no visibility. What
- * fixes it is running the walk in a transaction that starts after the write has
- * committed, which insertSpans in lib/traces.ts does for every batch it stores.
+ * THIS COMMENT USED TO SAY the trigger "sees that statement's snapshot and
+ * nothing committed after it", which is false and was the stated reason for the
+ * paragraph below. A trigger function is VOLATILE, and a volatile plpgsql
+ * function takes a FRESH snapshot at the start of each query it runs, so it
+ * does see whatever committed while it was working. Measured on this schema: a
+ * statement-level trigger counted a table twice with a 400ms sleep between,
+ * another session inserted and committed during the sleep, and the trigger read
+ * 0 then 1. What it cannot see is a transaction that has not committed at all.
+ *
+ * That distinction decides how the failure behaves, which is why it is worth
+ * getting right: it is a RACE, not a certainty. Whether a batch loses depends on
+ * whether the other one committed before this walk's query started. Measured on
+ * the real path, 40 traces delivered as two overlapping batches left 93 spans
+ * across 31 of them on the alias — 31 of 40, not 40 of 40 — and one hand-run
+ * resolve_span_ancestry() changed exactly those 93. Forced to full overlap
+ * (both INSERTs issued before either COMMIT) the same scenario loses every time.
+ *
+ * WHAT FIXES IT is running the walk in a transaction that starts after the
+ * write has committed, which insertSpans in lib/traces.ts does for every batch
+ * it stores: the last writer to commit is the one whose resolve sees the whole
+ * trace. That is true at any isolation level, because the snapshot is taken by
+ * a transaction that begins after the commits.
+ *
+ * A PER-TRACE ADVISORY LOCK IN HERE IS NOT THE REASON THIS IS DESIGNED THIS
+ * WAY, AND THE TREE USED TO CLAIM IT HAD BEEN TRIED AND FAILED. It had not been
+ * tried, no artifact was ever left, and the reason given — "the lock is
+ * acquired after the snapshot is taken, so waiting buys no visibility" — was a
+ * corollary of the false mechanism above. Measured now, on this schema:
+ * `pg_advisory_xact_lock(hashtext(trace_id))` at the top of this function makes
+ * the second writer wait for the first to COMMIT, and its walk then does see the
+ * first writer's rows. The forced-overlap scenario that leaves 3 of 5 spans on
+ * the alias without it leaves 0 with it, and a hand-run resolve afterwards
+ * changes 0 rows. It works.
+ *
+ * It is still not what this uses, for reasons that are about cost rather than
+ * correctness, and they should be argued rather than asserted: the lock is held
+ * until the writing transaction commits, so it serializes every writer of a
+ * trace on the hottest insert path in this schema; its correctness depends on
+ * READ COMMITTED, and a session at REPEATABLE READ takes ONE snapshot for the
+ * whole transaction — which is the frozen trigger the old comment described, and
+ * there the lock really would buy nothing; and a batch spanning several traces
+ * has to take its locks in a consistent order or add a second deadlock surface
+ * to a path that can already deadlock on rows. The post-commit resolve costs one
+ * statement per batch and needs none of that to be true.
+ *
  * This trigger stays, and it is not a weaker copy of that call. It is the only
  * thing that resolves a write which did not come through insertSpans — a psql
  * insert, a COPY, a seed — and for any trace that arrives in one statement it is

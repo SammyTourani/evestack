@@ -647,20 +647,37 @@ export async function insertSpans(spans: readonly IngestedSpan[]): Promise<numbe
    * `workflow.execute turnWorkflow` span that carries the run id it needs, and
    * OTLP promises nothing about the order or the grouping of what arrives.
    *
-   * A trigger runs inside the statement that fired it and is stuck with that
-   * statement snapshot. So when two batches for one trace overlap, the one
-   * holding the children cannot see the enclosing span and the one holding the
-   * enclosing span cannot see the children. Both commit. The trace is now whole
-   * on disk and neither transaction ever saw it that way, nothing writes to that
-   * trace again, and the children keep the `turn_0` alias permanently — which is
-   * the session page reporting "No spans on any of the 1 runs" for a turn whose
-   * tool call /traces/<id> renders in full.
+   * A trigger runs inside the TRANSACTION that fired it, before that
+   * transaction commits, and the other batch's transaction has not committed
+   * either — and no snapshot, however fresh, shows a transaction's uncommitted
+   * rows. So when two batches for one trace overlap, the one holding the
+   * children cannot see the enclosing span and the one holding the enclosing
+   * span cannot see the children. Both commit. The trace is now whole on disk
+   * and neither transaction ever saw it that way, nothing writes to that trace
+   * again, and the children keep the `turn_0` alias permanently — which is the
+   * session page reporting "No spans on any of the 1 runs" for a turn whose tool
+   * call /traces/<id> renders in full.
    *
-   * Measured on this exact path before this call existed: 40 traces delivered as
-   * two overlapping batches each left 93 spans across 31 of them on the alias,
-   * and a hand-run `SELECT evestack.resolve_span_ancestry()` changed exactly
-   * those 93 rows. Waiting on a per-trace advisory lock inside the trigger fixes
-   * nothing and was tried: the lock is taken after the snapshot is.
+   * NOT because the trigger is frozen at its firing statement's snapshot, which
+   * is what this comment used to say. A trigger function is VOLATILE and a
+   * volatile plpgsql function takes a fresh snapshot at the start of every query
+   * it runs; measured on this schema, one read 0 rows and its next read, 400ms
+   * later, saw the row a concurrent session had committed in between. That makes
+   * this a race rather than a certainty, which is exactly what the numbers show:
+   * 40 traces delivered as two overlapping batches left 93 spans across 31 of
+   * them on the alias — 31 of 40 — and a hand-run
+   * `SELECT evestack.resolve_span_ancestry()` changed exactly those 93 rows.
+   *
+   * A per-trace advisory lock inside the trigger was written down here as tried
+   * and useless, "the lock is taken after the snapshot is". That was a corollary
+   * of the false mechanism and nothing had ever tried it. Measured now, it
+   * works: the second writer waits for the first to commit and its walk sees the
+   * first writer's rows. It is not used because it serializes every writer of a
+   * trace on the hottest insert path, because its correctness depends on READ
+   * COMMITTED (at REPEATABLE READ the trigger really does hold one snapshot for
+   * the whole transaction, and waiting really would buy nothing), and because a
+   * multi-trace batch has to order its locks or add a deadlock surface. See the
+   * long version above the trigger in sql/traces.sql.
    *
    * This statement is its own transaction, so its snapshot is taken after every
    * chunk above committed and it sees whatever else committed while they ran.
