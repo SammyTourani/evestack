@@ -86,7 +86,7 @@ A `macos-latest` job runs on every PR. It is marked `continue-on-error: true`, s
 without being able to block a merge — the table above says *partly* tested, and that is the
 honest word for it.
 
-**What it runs.** `pnpm -r typecheck`; the static contract tier (`node contract/run.mjs` — 512
+**What it runs.** `pnpm -r typecheck`; the static contract tier (`node contract/run.mjs` — 545
 assertions, under two seconds on darwin); `create-evestack`'s suite, whose file-mode assertions
 gate on `process.platform !== "win32"` and check that generated credential files land at `0600`,
 which is the likeliest place for an APFS-versus-ext4 difference to surface on a

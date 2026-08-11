@@ -47,6 +47,8 @@ const FIXTURE_SESSION = "probe_fleet_blind_session";
 const FIXTURE_TURN = "probe_fleet_blind_turn";
 /** Deliberately absent from the pricing catalog. See the health/detail block. */
 const UNPRICED_MODEL = "probe-vendor/no-catalog-entry-v0";
+/** Finished sessions, so the population exceeds anything findings can count. */
+const FIXTURE_SETTLED = "probe_fleet_blind_settled";
 
 const UNREACHABLE_IDLE_MINUTES = 43_200;
 
@@ -107,7 +109,7 @@ export default {
 
   async run(t) {
     const client = await connect();
-    let planted = false;
+    const created = [];
     try {
       // Negative control. If the endpoint answered everybody, the zeros below
       // would be an unauthenticated stranger zeros and would prove nothing
@@ -170,6 +172,7 @@ export default {
                    now(), now(), now())`,
           [FIXTURE_SESSION, JSON.stringify({ "$eve.type": "session", "$eve.title": "probe-fleet-blind" })],
         );
+        created.push(FIXTURE_SESSION);
         await client.query(
           `insert into workflow.workflow_runs
              (id, deployment_id, status, name, attributes, created_at, updated_at, started_at, completed_at)
@@ -193,8 +196,25 @@ export default {
             }),
           ],
         );
-        planted = true;
+        created.push(FIXTURE_TURN);
         t.note("planted a running session with one open turn, so the gate has a candidate");
+
+        // Settled sessions, so the POPULATION is strictly larger than anything a
+        // findings field can report. Without them the fixture is the only row in
+        // a fresh database, total is 1, and `tooRecent: 1` clears a `>= total`
+        // bar on its own — which is how the first version of the assertion below
+        // stayed green with the field it exists to check DELETED.
+        for (let i = 0; i < 3; i += 1) {
+          const id = `${FIXTURE_SETTLED}_${i}`;
+          await client.query(
+            `insert into workflow.workflow_runs
+               (id, deployment_id, status, name, attributes, created_at, updated_at, started_at, completed_at)
+             values ($1, 'probe-fleet-blind', 'completed'::workflow.status, 'probe.session', $2::jsonb,
+                     now(), now(), now(), now())`,
+            [id, JSON.stringify({ "$eve.type": "session", "$eve.title": "probe-fleet-blind settled" })],
+          );
+          created.push(id);
+        }
       }
 
       /* ── the two sweeps ────────────────────────────────────────────────── */
@@ -265,16 +285,38 @@ export default {
       const total = totalRows[0].n;
       t.note(`${total} session(s) in the database at the time of the sweep`);
 
+      // EQUALS, not >=, and paired with a proof that the equality could not be a
+      // coincidence. The first version of this asserted `some count >= total`,
+      // and that could not fail: on a fresh database the fixture is the only
+      // session, so `tooRecent: 1 >= total: 1` cleared the bar with the
+      // population field DELETED — measured. A huge hardcoded constant cleared
+      // it in every state, because `>=` never checks the number is right.
+      //
+      // The settled sessions planted above are what make this sharp: findings
+      // can only ever count CANDIDATES, and there are strictly more sessions
+      // than candidates now, so no findings field can reach the total by
+      // accident. A field that equals it is reporting the population.
+      const findings = ["checked", "unchecked", "tooRecent"].reduce(
+        (sum, k) => sum + (typeof blind[k] === "number" ? blind[k] : 0),
+        0,
+      );
       t.ok(
-        counts.some(([, v]) => v >= total) || accounted >= total,
-        "the payload accounts for the sessions it did not examine, so 0 findings is readable",
+        findings < total,
+        "the fixture leaves more sessions than the sweep can possibly have found",
         {
-          expected: `some count reaching the ${total} session(s) in the database`,
+          expected: `checked+unchecked+tooRecent < ${total}`,
+          actual: `${findings} vs ${total} — without this the next assertion could pass by coincidence`,
+        },
+      );
+      t.ok(
+        counts.some(([, v]) => v === total),
+        "the payload states the population it swept against, so 0 findings is readable",
+        {
+          expected: `a count equal to ${total}, the sessions in the database`,
           actual:
-            `${JSON.stringify(Object.fromEntries(counts))} sums to ${accounted}. ` +
-            `A reader cannot tell 0-of-0 from 0-of-${total}. /api/health/detail already ` +
-            "reports the session total, so this is a number the product has rather than one " +
-            "it would have to invent.",
+            `${JSON.stringify(Object.fromEntries(counts))}. A reader cannot tell 0-of-0 from ` +
+            `0-of-${total}. Findings count candidates; nothing here counts what was there to ` +
+            "sweep. /api/health/detail already reports the session total.",
         },
       );
 
@@ -318,30 +360,31 @@ export default {
         actual: `${detail.status} ${JSON.stringify(body).slice(0, 160)}`,
       });
 
-      const planted_ = (body.recentSessions ?? []).find((r) => r.id === FIXTURE_SESSION);
-      if (planted && planted_) {
+      const ours = (body.recentSessions ?? []).find((r) => r.id === FIXTURE_SESSION);
+      const wePlanted = created.includes(FIXTURE_TURN);
+      if (wePlanted && ours) {
         // A value assertion, not a shape one. The fixture turn ran a model the
         // catalog does not have, so a correct payload reports 0 dollars AND
         // names the model it could not price. A field that is present and always
         // empty is a confident zero wearing a different name.
         t.ok(
-          Array.isArray(planted_.unpricedModels) &&
-            planted_.unpricedModels.includes(UNPRICED_MODEL),
+          Array.isArray(ours.unpricedModels) &&
+            ours.unpricedModels.includes(UNPRICED_MODEL),
           "the route names the model it could not price, beside the zero it reports",
           {
             expected: `unpricedModels containing ${UNPRICED_MODEL}`,
             actual: JSON.stringify({
-              costUsd: planted_.costUsd,
-              unpricedModels: planted_.unpricedModels,
+              costUsd: ours.costUsd,
+              unpricedModels: ours.unpricedModels,
             }),
           },
         );
         t.ok(
-          Number.isFinite(planted_.costUsd),
+          Number.isFinite(ours.costUsd),
           "and the cost beside it is a real number rather than absent or NaN",
-          { expected: "a finite number", actual: String(planted_.costUsd) },
+          { expected: "a finite number", actual: String(ours.costUsd) },
         );
-      } else if (planted) {
+      } else if (wePlanted) {
         t.ok(false, "the planted session reaches /api/health/detail", {
           expected: `${FIXTURE_SESSION} among recentSessions`,
           actual: `ids: ${(body.recentSessions ?? []).map((r) => r.id).join(", ") || "none"}`,
@@ -349,14 +392,22 @@ export default {
       }
 
     } finally {
-      // Ordered child-then-parent, and unconditional on `planted` being true so
-      // a run that died between the two inserts still cleans up after itself. A
-      // left-behind running session with an open turn is not inert: the fleet
-      // sweep would report it wedged an hour later, on a stack nobody broke.
-      if (planted) {
+      // Every row this probe actually inserted, in reverse order of creation so
+      // children go before parents. `created` is appended to AFTER each insert
+      // returns, so a run that dies partway through removes exactly what it made.
+      //
+      // The previous version claimed to be "unconditional on `planted`" and then
+      // opened with `if (planted)` — with `planted = true` set after BOTH
+      // inserts, so the one case the comment named was the one case it did not
+      // handle. Measured: forcing the second insert to fail left a `running`
+      // session row behind, and every later run then died on a duplicate primary
+      // key until someone deleted it by hand. A left-behind running session with
+      // an open turn is not inert either: the fleet sweep calls it wedged an hour
+      // later, on a stack nobody broke.
+      if (created.length > 0) {
         await client
           .query("delete from workflow.workflow_runs where id = any($1::text[])", [
-            [FIXTURE_TURN, FIXTURE_SESSION],
+            [...created].reverse(),
           ])
           .catch(() => {});
       }

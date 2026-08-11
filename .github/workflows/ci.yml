@@ -839,7 +839,7 @@ jobs:
   #
   # So this job takes the part that IS portable and is also where the real
   # macOS risk lives:
-  #   - the static contract tier (measured: 512 assertions, 1.8s on darwin)
+  #   - the static contract tier (measured: 545 assertions, 1.8s on darwin)
   #   - the POSIX file-mode assertions in create-evestack's suite, which gate on
   #     `process.platform !== "win32"` and assert 0600 on generated credential
   #     files. APFS vs ext4 is the most plausible source of a genuine

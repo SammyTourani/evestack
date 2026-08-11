@@ -571,8 +571,23 @@ export async function inspectFleet(
 
   // The denominator, and deliberately a separate statement rather than a column
   // on the candidate query: that query's WHERE already excludes every settled
-  // session, so it cannot count what it filtered out. One index-only count over
-  // a column already indexed for the session list.
+  // session, so it cannot count what it filtered out.
+  //
+  // WHAT IT COSTS, measured on PostgreSQL 17.10 with query-indexes.sql applied,
+  // because an earlier version of this comment guessed and was wrong in three
+  // ways at once. It claimed "one index-only count over a column already
+  // indexed". It is not index-only — the planner chose a Bitmap Heap Scan at
+  // 10k sessions and a Seq Scan at 100k, and even with both disabled and the
+  // visibility map fully set it is a heap-touching Index Scan, because the
+  // predicate reads a jsonb attribute rather than a column. At 100k sessions it
+  // is 18.25 ms, about 42% of the endpoint's total 43 ms.
+  //
+  // Kept anyway, and the tradeoff stated rather than hidden: this is the number
+  // that makes the other four legible, the endpoint is polled by a monitor
+  // rather than rendered per keystroke, and 18 ms at a hundred thousand sessions
+  // is a price worth paying to stop a zero reading as an all-clear. If it ever
+  // stops being worth it, the fix is a partial index on the attribute, not
+  // dropping the field.
   const [population] = await query<{ n: string | number }>(
     `select count(*)::int as n
        from workflow.workflow_runs
