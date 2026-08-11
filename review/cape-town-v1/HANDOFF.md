@@ -113,11 +113,36 @@ then two integration passes.
 Ranked by how much damage a mistake would do.
 
 1. **`packages/dashboard/lib/traces.ts` — the concurrent-ingest fix.** The subtlest change in
-   the set. An `AFTER STATEMENT` trigger is pinned to its statement's snapshot, so when two
-   OTLP batches for one trace overlap in flight, neither transaction ever sees the whole trace
-   and the turn alias sticks forever. The fix re-resolves after the chunks commit. Verify the
-   claim that it holds under concurrency, not just that it compiles — four simultaneous turns
-   was the bar, and a per-trace advisory lock was tested and does *not* work.
+   the set. An `AFTER STATEMENT` trigger runs inside the transaction that fired it, before
+   that transaction commits, and no snapshot shows another transaction's uncommitted rows — so
+   when two OTLP batches for one trace overlap in flight, neither sees the whole trace and the
+   turn alias sticks. The fix re-resolves after the chunks commit. It was verified under real
+   concurrency, not just compiled: `contract/runtime/probes/22-concurrent-ingest-resolution`
+   drives 40 traces as two overlapping batches each against a live Postgres and runs on every PR.
+
+   > **CORRECTION — two claims in this entry were wrong, and one of them was an instruction.**
+   >
+   > It originally said the trigger "is pinned to its statement's snapshot". It is not: a
+   > trigger function is VOLATILE, and a volatile plpgsql function takes a fresh snapshot at
+   > the start of every query it runs. Measured on this schema — one read saw 0 rows and its
+   > next read, 400 ms later, saw a row a concurrent session had committed in between. The real
+   > mechanism is transaction visibility, not snapshot freezing, and the difference is not
+   > academic: it makes the failure a **race** rather than a certainty, which is the only story
+   > that fits the measurement. 40 overlapping traces left 31 stale, not 40.
+   >
+   > It also told reviewers "a per-trace advisory lock was tested and does *not* work". **It
+   > was never tested, and it does work.** That sentence was a corollary of the false mechanism
+   > above, and it was the most damaging thing in this document — a standing instruction not to
+   > try the textbook fix, resting on an experiment nobody ran. Measured now: with
+   > `pg_advisory_xact_lock` the second writer waits for the first to commit and its walk sees
+   > the first writer's rows — 0 stale spans, against 3 under forced overlap without it.
+   >
+   > The lock is still not used, on grounds that are now honest rather than invented: it
+   > serializes every writer of a trace on the hottest insert path; its correctness depends on
+   > READ COMMITTED (at REPEATABLE READ the trigger really does hold one snapshot for the whole
+   > transaction, and waiting really would buy nothing); and a multi-trace batch would have to
+   > order its locks or accept a deadlock surface. The long version is above the trigger in
+   > `sql/traces.sql`.
 2. **`packages/dashboard/sql/traces.sql` and `facts.sql` — the version guard.** Two literals in
    `traces.sql` must agree; `test/schema-guard.test.mjs` is the arbiter and must never be edited
    to pass. Note the guard cannot protect against a rollback to today's published image, because

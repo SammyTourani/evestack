@@ -233,16 +233,26 @@ test("the span read asks for resolved_turn_id, or none of the above can be true"
  * right to read, which stopped being true the moment the traffic was real.
  *
  * sql/traces.sql keeps `resolved_turn_id` current with an AFTER STATEMENT
- * trigger. A trigger runs inside the statement that fired it, so it only ever
- * sees that statement's snapshot — and spans export when they END, so the leaves
- * of a turn leave before the workflow span carrying the run id they need, and
- * two batches for one trace are routinely in flight at once. Each then resolves
- * a trace the other half of is invisible in, both commit, and the trace is left
- * on the `turn_0` alias with nothing scheduled to look again. Measured on the
- * real path: 40 traces delivered as two overlapping batches left 93 spans across
- * 31 of them stale, and a hand-run resolve changed exactly those 93 rows. That is
- * the defect at the top of this file, back again, from a direction no unit test
- * of the read path can see.
+ * trigger. A trigger runs inside the TRANSACTION that fired it, before that
+ * transaction commits — and the other batch's transaction has not committed
+ * either, so no snapshot, however fresh, can show it. Spans export when they
+ * END, so the leaves of a turn leave before the workflow span carrying the run
+ * id they need, and two batches for one trace are routinely in flight at once.
+ * Each then resolves a trace the other half of is invisible in, both commit, and
+ * the trace is left on the `turn_0` alias with nothing scheduled to look again.
+ * That is the defect at the top of this file, back again, from a direction no
+ * unit test of the read path can see.
+ *
+ * NOT because the trigger is frozen at its firing statement's snapshot, which is
+ * what this comment used to say and what five other places in the tree said with
+ * it. A trigger function is VOLATILE, and a volatile plpgsql function takes a
+ * fresh snapshot at the start of every query it runs — measured on this schema,
+ * one read saw 0 rows and its next read, 400ms later, saw a row a concurrent
+ * session had committed in between. The distinction is not pedantry: it makes
+ * this a RACE rather than a certainty, which is what the numbers actually show.
+ * 40 traces delivered as two overlapping batches left 93 spans across 31 of them
+ * stale — 31 of 40, not 40 of 40 — and a hand-run resolve changed exactly those
+ * 93 rows. The old story could not account for the nine that came out right.
  *
  * So insertSpans finishes the job in its own transaction once the write has
  * committed. contract/runtime/probes/22-concurrent-ingest-resolution.probe.mjs

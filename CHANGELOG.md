@@ -779,10 +779,14 @@ v1. Two different schemas under one version number is the state this bump exists
 #### Fixed
 
 - **A trace split across two overlapping ingest batches kept the `turn_0` alias.** An
-  `AFTER STATEMENT` trigger only sees its own statement's snapshot, so when the batch
-  carrying the children and the batch carrying the enclosing `workflow.run.id` span are in
-  flight at once, neither can see the other: both commit, and the finished trace on disk is
-  one no transaction ever saw. The session page then reported "No spans on any of the 1
+  `AFTER STATEMENT` trigger runs inside the transaction that fired it, before that
+  transaction commits — and no snapshot shows another transaction's uncommitted rows. So
+  when the batch carrying the children and the batch carrying the enclosing
+  `workflow.run.id` span are in flight at once, neither can see the other: both commit, and
+  the finished trace on disk is one no transaction ever saw. (An earlier entry here said the
+  trigger "only sees its own statement's snapshot". That was wrong — a volatile plpgsql
+  function takes a fresh snapshot per query — and it mattered, because it made the failure
+  sound certain when it is a race: 31 of 40 overlapping traces went stale, not 40.) The session page then reported "No spans on any of the 1
   runs" for a turn whose tool call `/traces/<id>` rendered in full. `insertSpans` now
   re-resolves the traces it touched from its own transaction once every chunk has committed,
   so the last writer to commit is the one whose walk sees the finished trace. The trigger
