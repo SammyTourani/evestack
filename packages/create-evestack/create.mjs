@@ -427,7 +427,7 @@ export function looksLikeANetworkFailure(output) {
  * that never started produces a second, more confusing error on top of the
  * first.
  */
-async function runStep({ cwd, label, doing, done, command, args, verbose, whenFailed }) {
+async function runStep({ cwd, label, doing, done, command, args, verbose, whenFailed, explain }) {
   if (verbose) say(`  ${g.MARK} ${c.bold(label)} ${c.dim(doing)}`);
   const t = verbose ? null : task(label, doing);
   const result = await run(cwd, command, args, { verbose });
@@ -436,10 +436,82 @@ async function runStep({ cwd, label, doing, done, command, args, verbose, whenFa
     else ok(done);
     return true;
   }
-  if (t) t.fail(whenFailed);
-  else warn(whenFailed);
+  // `explain` reads the failure and replaces the generic line when it recognises
+  // one. It is given the chance BEFORE `whenFailed` is printed rather than after,
+  // because a wrong sentence on screen is not repaired by a right one under it.
+  const explained = explain?.(result.output) ?? null;
+  if (t) t.fail(explained?.headline ?? whenFailed);
+  else warn(explained?.headline ?? whenFailed);
+  // `--verbose` streamed the child's output straight to the terminal, so there is
+  // nothing captured to re-print; the explanation is still worth saying.
   printTail(result.output);
+  for (const line of explained?.detail ?? []) dim(line);
+  if (explained) blank();
   return false;
+}
+
+/**
+ * The registry said no, and `docker compose logs dashboard` will not say so.
+ *
+ * A pull that fails leaves NO container, so the generic "the logs have the
+ * reason" advice is not merely unhelpful here — it is wrong, and it sends the
+ * reader to an empty output to look for an error that was on screen a moment
+ * ago and scrolled. That mattered the day this was written: the tree pins
+ * `0.4.0` and GHCR does not have it, so a project scaffolded from this tree
+ * gets a bare `manifest unknown` and nothing to do about it.
+ *
+ * The repository's own docker-compose.yml survives an unpublished tag because it
+ * carries `build:` alongside `image:`. A scaffolded project cannot: it holds no
+ * dashboard source and no Dockerfile, so there is nothing for `build:` to point
+ * at. What it CAN do is find a local build — Compose only pulls an image it does
+ * not already have, and the repository's `build:` tags its result with exactly
+ * the name this compose file names — so "build it in a clone, once" is a real
+ * fallback and is the third option below.
+ *
+ * Narrow on purpose. A port conflict, a full disk and a dead daemon all fail
+ * this same step, and answering any of them with a registry explanation would be
+ * worse than the generic line. Only the registry's own vocabulary matches.
+ *
+ * Exported so test/bring-up.test.mjs can pin the strings without a daemon.
+ */
+const REGISTRY_REFUSALS = [
+  "manifest unknown",
+  "manifest for",
+  "not found: name unknown",
+  "pull access denied",
+  "repository does not exist",
+  "denied: denied",
+  "requested access to the resource is denied",
+  "unauthorized: authentication required",
+];
+
+export function dashboardPullFailure(output, image = DASHBOARD_IMAGE) {
+  const haystack = String(output ?? "").toLowerCase();
+  if (!REGISTRY_REFUSALS.some((phrase) => haystack.includes(phrase))) return null;
+  return {
+    headline: `could not be pulled — the registry has no ${image}`,
+    detail: [
+      "`docker compose logs dashboard` has nothing to show: the pull failed, so no",
+      "container was ever created. Three ways forward, and the agent works without",
+      "any of them:",
+      "",
+      `  1. Check whether the tag is really there:`,
+      `       docker manifest inspect ${image}`,
+      "",
+      "  2. Point at a tag that is, in .env beside the compose file (NOT .env.local —",
+      "     Compose interpolates from .env and the shell only):",
+      `       EVESTACK_DASHBOARD_IMAGE=${image.replace(/:[^:]*$/, ":latest")}`,
+      "",
+      "  3. Build it once from a clone. The repository's own compose file carries",
+      "     `build:` beside `image:` and tags the result with the same name this",
+      "     project asks for, so this project then finds it locally with no further",
+      "     configuration:",
+      `       git clone ${REPO} && cd evestack`,
+      "       docker compose build dashboard",
+      "",
+      "Then re-run: docker compose --profile dashboard up -d",
+    ],
+  };
 }
 
 /**
@@ -487,6 +559,9 @@ export async function bringUp(target, pm, dashboardPort, { verbose = false, only
       doing: `pulling ${DASHBOARD_IMAGE.split("/").pop()}`,
       done: `up on :${dashboardPort}`,
       whenFailed: "did not start — `docker compose logs dashboard` has the reason",
+      // True for a container that started and died, and false for the one
+      // failure that has no container at all. See dashboardPullFailure.
+      explain: dashboardPullFailure,
     }))
   ) {
     // Not fatal, and said so: the agent is useful without the dashboard, and
@@ -1659,6 +1734,30 @@ services:
     # Pinned to a tag, not \`latest\`: this is the image version tested against
     # the agent template this project was scaffolded from. \`latest\` exists in
     # the registry for anyone who would rather track the newest.
+    #
+    # NO \`build:\` HERE, AND THAT IS NOT AN OVERSIGHT. The evestack repository's
+    # own docker-compose.yml carries \`build:\` beside \`image:\`, so an unpublished
+    # tag there just builds from source. This project holds no dashboard source
+    # and no Dockerfile, so there is nothing for a \`build:\` to point at, and a
+    # tag missing from the registry fails here as:
+    #
+    #   Error response from daemon: manifest unknown
+    #
+    # with NO container created — which means \`docker compose logs dashboard\`
+    # prints nothing, and is the wrong place to look. Three ways out:
+    #
+    #   docker manifest inspect ${DASHBOARD_IMAGE}   # is the tag there at all?
+    #
+    #   EVESTACK_DASHBOARD_IMAGE=...:latest   in .env beside this file. NOT
+    #   .env.local — Compose interpolates from .env and the shell only.
+    #
+    #   Build it once from a clone: the repository's \`build:\` tags its result
+    #   with exactly the name below, and Compose only pulls an image it does not
+    #   already have, so this project then finds it with no further change:
+    #     git clone ${REPO} && cd evestack && docker compose build dashboard
+    #
+    # The agent is fully usable without any of this. The dashboard sits behind a
+    # profile precisely so that it is optional.
     image: \${EVESTACK_DASHBOARD_IMAGE:-${DASHBOARD_IMAGE}}
     profiles: ["dashboard"]
     restart: unless-stopped
