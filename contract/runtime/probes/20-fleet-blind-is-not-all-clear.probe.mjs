@@ -41,6 +41,11 @@ const USER = process.env.EVESTACK_PROBE_DASHBOARD_USER ?? null;
 const PASSWORD = process.env.EVESTACK_PROBE_DASHBOARD_PASSWORD ?? null;
 
 /** Well past any plausible retention, so nothing can be idle for this long. */
+// Ids the fixture below uses. Distinctive so a leftover row is obviously the
+// probe's and can be removed by hand without guessing.
+const FIXTURE_SESSION = "probe_fleet_blind_session";
+const FIXTURE_TURN = "probe_fleet_blind_turn";
+
 const UNREACHABLE_IDLE_MINUTES = 43_200;
 
 async function call(path, init = {}) {
@@ -100,6 +105,7 @@ export default {
 
   async run(t) {
     const client = await connect();
+    let planted = false;
     try {
       // Negative control. If the endpoint answered everybody, the zeros below
       // would be an unauthenticated stranger zeros and would prove nothing
@@ -112,21 +118,66 @@ export default {
         actual: String(anonymous.status),
       });
 
+      // Anti-vacuity, and it has to count the right population.
+      //
+      // This used to count SESSIONS, and that is not what the idle gate acts on.
+      // inspectFleet's candidate set is sessions that are `status = 'running'`
+      // AND still carry a turn row with `completed_at IS NULL` — a closed
+      // session is never a candidate at any threshold. So on a database full of
+      // finished sessions there is nothing for `idleMinutes` to include or
+      // exclude, both sweeps return the same all-clear, and that answer is
+      // CORRECT rather than blind: `checked: 0, tooRecent: 0` is the documented
+      // encoding of "no session in this database has a turn open".
+      //
+      // The weaker guard let CI reach the comparison below with four finished
+      // sessions and fail on a difference that could not exist. The probe was
+      // wrong, not the endpoint — and a probe that fails where the product is
+      // right is worse than no probe, because the next person silences it.
       const { rows: population } = await client.query(
-        "select count(*)::int as sessions from workflow.workflow_runs" +
-          " where attributes->>$1 = 'session'",
-        ["$eve.type"],
+        `select count(*)::int as candidates
+           from workflow.workflow_runs s
+          where s.attributes->>$1 = 'session'
+            and s.status = 'running'
+            and exists (
+              select 1 from workflow.workflow_runs t
+               where t.attributes->>$2 = s.id
+                 and t.attributes->>$1 in ('turn', 'subagent')
+                 and t.completed_at is null
+            )`,
+        ["$eve.type", "$eve.root"],
       );
-      const sessions = population[0].sessions;
-      t.note(`${sessions} session(s) in the database at the time of the sweep`);
+      const found = population[0].candidates;
+      t.note(`${found} pre-existing session(s) with an open turn`);
 
-      // Anti-vacuity. On an empty database, a sweep that looked at nothing is
-      // simply correct, and everything below would pass for the wrong reason.
-      t.ok(sessions > 0, "there are sessions, so a sweep reporting nothing is a claim about them", {
-        expected: "at least one session run",
-        actual: "none: point this probe at a database with traffic",
-      });
-      if (sessions === 0) return;
+      // If the stack under test has none, MAKE one rather than skipping or
+      // failing. A probe that only runs when someone else happens to have left
+      // a turn in flight is a probe that runs on a developer's laptop and never
+      // in CI — which is exactly how this one reached main untested. Two rows,
+      // removed in the `finally` below whatever happens.
+      //
+      // `updated_at = now()` is what makes the fixture answer both questions: a
+      // session quiet for 0 ms is past an `idleMinutes=0` gate and nowhere near
+      // a 30-day one, so one sweep must classify it and the other must report it
+      // as skipped. If those two answers are the same bytes, the endpoint cannot
+      // say what it did not look at, which is the whole claim.
+      if (found === 0) {
+        await client.query(
+          `insert into workflow.workflow_runs
+             (id, deployment_id, status, name, attributes, created_at, updated_at, started_at)
+           values ($1, 'probe-fleet-blind', 'running'::workflow.status, 'probe.session', $2::jsonb,
+                   now(), now(), now())`,
+          [FIXTURE_SESSION, JSON.stringify({ "$eve.type": "session", "$eve.title": "probe-fleet-blind" })],
+        );
+        await client.query(
+          `insert into workflow.workflow_runs
+             (id, deployment_id, status, name, attributes, created_at, updated_at, started_at, completed_at)
+           values ($1, 'probe-fleet-blind', 'running'::workflow.status, 'probe.turn', $2::jsonb,
+                   now(), now(), now(), null)`,
+          [FIXTURE_TURN, JSON.stringify({ "$eve.type": "turn", "$eve.root": FIXTURE_SESSION })],
+        );
+        planted = true;
+        t.note("planted a running session with one open turn, so the gate has a candidate");
+      }
 
       /* ── the two sweeps ────────────────────────────────────────────────── */
 
@@ -215,6 +266,17 @@ export default {
         },
       );
     } finally {
+      // Ordered child-then-parent, and unconditional on `planted` being true so
+      // a run that died between the two inserts still cleans up after itself. A
+      // left-behind running session with an open turn is not inert: the fleet
+      // sweep would report it wedged an hour later, on a stack nobody broke.
+      if (planted) {
+        await client
+          .query("delete from workflow.workflow_runs where id = any($1::text[])", [
+            [FIXTURE_TURN, FIXTURE_SESSION],
+          ])
+          .catch(() => {});
+      }
       await client.end().catch(() => {});
     }
   },
