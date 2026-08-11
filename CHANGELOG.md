@@ -764,7 +764,7 @@ First release (952f0f9).
 built and pushed by `.github/workflows/publish-dashboard.yml` on a tag push. The version
 here is the image tag. Dates are the git tag's, not npm's.
 
-### @evestack/dashboard@0.4.0 — unreleased
+### @evestack/dashboard@0.4.0 — 2026-08-11
 
 A minor, not a patch, and the reason is the schema. This image installs **spans v4** and
 **facts v2**; every published image up to and including `0.3.1` installs spans v3 and facts
