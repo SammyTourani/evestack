@@ -251,6 +251,75 @@ CREATE INDEX IF NOT EXISTS spans_name_idx
 -- does not make. The projected columns above cover the lookups that matter.
 
 -- --------------------------------------------------------------------------
+-- What produced the data that is already stored.
+-- --------------------------------------------------------------------------
+
+/*
+ * THE VERSION MARKER SAYS WHAT WAS INSTALLED. IT DOES NOT SAY WHAT RAN.
+ *
+ * The guard above stops an older image applying itself over a newer database.
+ * It cannot stop the rollback that already happened, because the image being
+ * rolled back TO does not contain it: published 0.3.1 has no guard, and its
+ * stamp is forward-only, so applying it over a 0.4.0 database leaves the marker
+ * reading `spans 4` while `resolve_span_ancestry` is the v3 body. Every span
+ * ingested during that window is stored with the tracer-local `turn_0` alias.
+ *
+ * Re-upgrading did not repair them and could not tell that anything was wrong.
+ * The guard does not fire — installed 4 is not GREATER than target 4 —
+ * CREATE OR REPLACE puts the v4 function back, and the migration's step 4 is
+ * `IF installed < 4`, which is false, so the three repairs inside it never run.
+ * The spans stay mis-attributed for as long as the install exists, with no
+ * signal anywhere: the marker is current, the function is current, the rows are
+ * all present, and only /sessions is wrong.
+ *
+ * A version number cannot close that, because the damage is not a function of
+ * the version: it is a function of WHICH BODY was in the database while spans
+ * were arriving, and nothing recorded that. So this records it. The fingerprint
+ * below is written on every apply, unconditionally, BEFORE the CREATE OR
+ * REPLACE further down replaces anything — so it always describes the resolver
+ * that was actually running, not the one the last upgrade intended. The
+ * migration then compares it against the body this file installs, and treats a
+ * difference the same way it treats an out-of-date version: the stored
+ * resolved_* columns were computed by a resolver that is not this one, so they
+ * are recomputed.
+ *
+ * That covers the rollback in both directions and every other way the two can
+ * part — a hand-edited function, an older image with no guard, a restore of a
+ * dump taken mid-window. It is also nearly free when nothing is wrong: two
+ * catalogue lookups and an md5 per boot, and no repair unless the answer moved.
+ *
+ * `prosrc` and not `pg_get_functiondef`: prosrc is the body verbatim as it was
+ * submitted, so it is stable across server versions, while the deparsed
+ * definition is reconstructed and could be reformatted by a major upgrade. A
+ * spurious difference would only cost one idempotent re-resolve, but it would
+ * also teach whoever saw it to distrust this.
+ */
+CREATE TABLE IF NOT EXISTS evestack.schema_fingerprint (
+  object      text PRIMARY KEY,
+  fingerprint text        NOT NULL,
+  recorded_at timestamptz NOT NULL DEFAULT now()
+);
+
+DO $installed_resolver$
+DECLARE
+  body text;
+BEGIN
+  SELECT p.prosrc INTO body
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+   WHERE n.nspname = 'evestack' AND p.proname = 'resolve_span_ancestry';
+
+  -- Unconditional, and that is the whole mechanism: this row records what IS
+  -- in the database, so an image that replaced the function without updating a
+  -- version cannot leave a stale claim behind. 'absent' rather than NULL keeps
+  -- a fresh install distinguishable from a row that was never written.
+  INSERT INTO evestack.schema_fingerprint (object, fingerprint)
+  VALUES ('resolve_span_ancestry', COALESCE(md5(body), 'absent'))
+  ON CONFLICT (object) DO UPDATE
+    SET fingerprint = EXCLUDED.fingerprint, recorded_at = now();
+END $installed_resolver$;
+
+-- --------------------------------------------------------------------------
 -- Ancestor inheritance, materialized.
 -- --------------------------------------------------------------------------
 
@@ -610,9 +679,24 @@ DECLARE
   target    constant integer := 4;
   installed integer;
   current_expr text;
+  -- The resolver that was in the database when this file started, and the one
+  -- it has just installed. See "What produced the data that is already stored"
+  -- above: a rollback moves the second without moving the version, so the
+  -- version alone cannot say whether the stored columns need recomputing.
+  ran_before   text;
+  runs_now     text;
+  resolver_changed boolean;
 BEGIN
   SELECT version INTO installed FROM evestack.schema_version WHERE component = 'spans';
   installed := COALESCE(installed, 0);
+
+  SELECT fingerprint INTO ran_before
+    FROM evestack.schema_fingerprint WHERE object = 'resolve_span_ancestry';
+  SELECT md5(p.prosrc) INTO runs_now
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+   WHERE n.nspname = 'evestack' AND p.proname = 'resolve_span_ancestry';
+  resolver_changed := ran_before IS DISTINCT FROM runs_now;
 
   -- 1: teach the id columns the AI SDK vocabulary.
   --
@@ -673,7 +757,15 @@ BEGIN
   -- every span stored before this release holds the alias, and the triggers only
   -- fire on write, so without this the fix would apply to future spans and leave
   -- every session already in the database reading "no spans on any of the 1 runs".
-  IF installed < 4 THEN
+  --
+  -- OR the resolver changed under us, which the version cannot see. A rollback
+  -- to an image with no guard puts an older body back and leaves the marker
+  -- alone, so `installed < 4` is false on a database whose spans were resolved
+  -- by something else entirely; the fingerprint recorded before the replacement
+  -- above is what notices. Every statement in here is idempotent, so running it
+  -- for either reason costs a walk that changes nothing when nothing is wrong —
+  -- and on a fresh database the walk is over an empty table.
+  IF installed < 4 OR resolver_changed THEN
     PERFORM evestack.resolve_span_ancestry();
 
     -- The fact tables key on resolved_turn_id and refresh from a watermark over
@@ -701,6 +793,16 @@ BEGIN
   ON CONFLICT (component) DO UPDATE
     SET version = EXCLUDED.version, applied_at = now()
     WHERE evestack.schema_version.version < EXCLUDED.version;
+
+  -- And the fingerprint now names the body that produced the data, which on a
+  -- fresh database it did not: the block above the resolver records what it
+  -- FOUND, and on a fresh database that is 'absent'. Without this line the very
+  -- next boot would compare 'absent' against the body it just installed, call
+  -- that a change, and re-walk the whole table for nothing.
+  INSERT INTO evestack.schema_fingerprint (object, fingerprint)
+  VALUES ('resolve_span_ancestry', runs_now)
+  ON CONFLICT (object) DO UPDATE
+    SET fingerprint = EXCLUDED.fingerprint, recorded_at = now();
 END $mig$;
 
 -- The triggers and the indexes on the migrated columns come after the migration

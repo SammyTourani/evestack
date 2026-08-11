@@ -77,6 +77,13 @@ const VERSION_SQL = "SELECT component, version FROM evestack.schema_version";
  * actually installs; and that the file is one transaction so the statements
  * after it cannot run when it raises. Every file that carries a guard is
  * checked, and they are found by scanning sql/ rather than by a list.
+ *
+ * And one invariant belonging to the guard's blind spot rather than to the
+ * guard: a rollback to an image that predates the guard is not something the
+ * guard can refuse, so sql/traces.sql fingerprints the resolver it FINDS and
+ * repairs when that is not the one it installs. Taking that fingerprint before
+ * the replacement is the entire mechanism, and position is not something a
+ * reviewer checks twice.
  */
 
 const SQL_DIR = new URL("../sql/", import.meta.url);
@@ -239,6 +246,41 @@ test("the guard is checking the same version number the migration installs", () 
         "exact failure the guard was added to stop. Bumping only the guard means the migration " +
         "never installs the version the marker will claim.",
     );
+  }
+});
+
+test("a fingerprint of what was already installed is taken before it is replaced", () => {
+  /*
+   * THE SECOND HALF OF "THE MARKER SAYS WHAT WAS INSTALLED, NOT WHAT RAN".
+   *
+   * The version guard cannot see a rollback to an image that predates it:
+   * published 0.3.1 has no guard and a forward-only stamp, so applying it over
+   * a 0.4.0 database leaves the marker at 4 with the v3 resolver in place, and
+   * the re-upgrade's `IF installed < 4` is false. sql/traces.sql therefore
+   * records a fingerprint of the function body it FINDS, and the migration
+   * repairs when that differs from the body it installs.
+   *
+   * That only works if the recording happens BEFORE the CREATE OR REPLACE. One
+   * statement moved below it and the fingerprint describes the body this file
+   * just installed, always matches, and the repair can never fire again — a
+   * permanent no-op that changes no structure and breaks no other test, which
+   * is the same shape as a guard reading the wrong component.
+   */
+  for (const name of FILES) {
+    const sql = code(name);
+    const writes = [...sql.matchAll(/INSERT INTO evestack\.schema_fingerprint[\s\S]{0,200}?VALUES \('(\w+)'/g)];
+    for (const object of new Set(writes.map((match) => match[1]))) {
+      const firstWrite = writes.find((match) => match[1] === object).index;
+      const replaced = sql.indexOf(`CREATE OR REPLACE FUNCTION evestack.${object}`);
+      if (replaced === -1) continue; // a fingerprint of something this file does not install
+      assert.ok(
+        firstWrite < replaced,
+        `${name} records the fingerprint of evestack.${object} AFTER replacing it, so it ` +
+          "fingerprints its own new body every time, never sees a difference, and never " +
+          "repairs. The whole point is to observe what was in the database before this file " +
+          "touched it.",
+      );
+    }
   }
 });
 
