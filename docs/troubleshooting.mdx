@@ -199,23 +199,34 @@ copied.
 same empty repository to a project that has no marker of its own. That is also what finally makes
 the `.gitignore` either of them writes mean anything.
 
-Both of them can only act at the moment they run, though, and **nothing checks afterwards** —
-`npm run dev` does not look, `npm run verify` does not look, and eve logs nothing when its source
-root leaves the project. So the fence is gone, silently, in every one of these:
+Both of them can only act at the moment they run, and **eve itself never mentions it again** —
+`npm run dev` does not look, and eve logs nothing when its source root leaves the project. So the
+fence can go silently, in every one of these:
 
 | How the marker disappears | What warns you |
 | --- | --- |
 | `git` was not installed, or `git init` failed | `create` and `attach` both say so, once, at the time |
-| You deleted `.git` — including by following the `rm -rf .git` line in `attach`'s own undo list | nothing |
-| The project reached this machine as a tarball, a zip, `git archive`, or an `rsync --exclude=.git` | nothing |
-| It was scaffolded before the scaffolder shipped the fence | nothing |
-| It is a copy inside an image built with `.git` in `.dockerignore` | nothing — though this only bites if the image's working directory sits under a marked ancestor |
+| You deleted `.git` — including by following the `rm -rf .git` line in `attach`'s own undo list | `npm run verify` |
+| The project reached this machine as a tarball, a zip, `git archive`, or an `rsync --exclude=.git` | `npm run verify` |
+| It was scaffolded before the scaffolder shipped the fence | `npm run verify` |
+| It is a copy inside an image built with `.git` in `.dockerignore` | `npm run verify` — though this only bites if the image's working directory sits under a marked ancestor |
 
-The check is one command, and it costs nothing to run in a project that is already fine:
+**`npm run verify` is the check.** It walks the same markers eve walks and reports a `fence` line
+with one of three outcomes: a pass when the marker is this project, a warning naming your home
+directory when there is no marker anywhere above, and a warning naming the directory and the file
+when the walk lands somewhere that holds an `.npmrc`. A marker above you that has nothing to copy
+is a pass, not a warning, on purpose — a line that is yellow in every workspace on every run is a
+line people stop reading.
+
+This is newer than most installs, so if your project's `scripts/verify.mjs` has no `fence` line it
+predates the check, and the one-command version is:
 
 ```bash
-node -e "console.log(require('node:fs').existsSync('.git') ? 'fenced' : 'NOT fenced — run git init')"
+node -e "console.log(require('node:fs').existsSync('.git') ? 'fenced' : 'no marker in this directory — see below before running git init')"
 ```
+
+Read the next paragraph before acting on that output: it checks this directory only, and there is
+one shape of project where `git init` is the wrong response.
 
 `attach` is idempotent about this: re-running `npx evestack attach` in a project whose `.git` has
 gone will put the empty repository back.
@@ -228,6 +239,29 @@ deliberately does not fence; it reads the workspace root's `.npmrc` and `package
 warns only if one of them holds a literal credential. If it does, move the secret to your own
 `~/.npmrc` or replace it with an environment reference (`_authToken=${NPM_TOKEN}`) — the copies
 then carry a variable name instead of a token.
+
+<Warning>
+  **In an npm or yarn workspace, check that root's `.npmrc` by hand.** `npm run verify`'s fence
+  walk looks for `.git` and `pnpm-workspace.yaml` only — it does not know the third marker, a
+  `package.json` carrying a `workspaces` key. So in a package whose only marker above it is an
+  npm/yarn workspace root, verify reports *"no `.git` here or above, so eve's dev watcher will
+  walk to your home directory"* and suggests `git init`. Both halves are wrong for that project:
+  eve stops at the workspace root, and `git init` is the one thing you should not do there.
+
+  Measured on a tree of exactly that shape — a `packages/my-agent` under a root whose
+  `package.json` declares `workspaces` and whose `.npmrc` holds a token — verify's walk returns
+  no marker while eve's returns the workspace root, and the `.npmrc` sitting in it is the file
+  that gets copied. Until the walk learns the third marker, in an npm or yarn workspace do this
+  instead of trusting the `fence` line:
+
+  ```bash
+  # the nearest package.json above you that declares workspaces, and whether it holds a credential
+  node -e "const{existsSync,readFileSync}=require('node:fs'),{join,resolve,dirname}=require('node:path');\
+let d=resolve('.');for(;;){try{if(JSON.parse(readFileSync(join(d,'package.json'),'utf8')).workspaces){\
+console.log('workspace root:',d);console.log('.npmrc there?',existsSync(join(d,'.npmrc')));break}}catch{}\
+const p=dirname(d);if(p===d){console.log('no workspace root above this directory');break}d=p}"
+  ```
+</Warning>
 
 The underlying bug is eve's, not evestack's, and it is still present in the newest published eve.
 A full write-up with a minimal reproduction is drafted and ready to file at

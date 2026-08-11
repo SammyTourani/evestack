@@ -2,33 +2,21 @@
 
 **For a reviewer picking this up cold, human or agent. Nothing here is pushed to `main`.**
 
-> **CORRECTION (round 3).** Four numbers in this file were wrong. They are corrected in place
-> below and each one is annotated where it appears; the mechanism behind two of them is worth
-> more than the numbers. Summary, so nobody acts on the old ones: the branch has **diverged**
-> from `main` rather than merely being ahead of it, and the count is not 24; **16 commits are
-> signed**, not "all unsigned"; the leaked-`.npmrc` count is **ten**, not 23; and "all fixed"
-> was written sixteen lines above an admission that one was not.
+## What this is, in one paragraph
 
-~~24 commits ahead of `main` (`464a85f`)~~ **The branch has diverged from `main`; `464a85f` is
-the merge-base, not `main`'s tip. Run
-`git rev-list --left-right --count main...HEAD` — it was `1 29` at `2d4e86d`.** Everything was
-produced by an acceptance test run as a stranger, then seventeen fix agents across two rounds,
-then two integration passes.
+An acceptance test run as a stranger against the shipped product, then seventeen fix agents
+across two rounds, then two integration passes, then a correction round that audited this
+packet's own claims. The branch has **diverged** from `main` — it is not simply ahead — and
+`464a85f` is the merge-base, not `main`'s tip. There is no commit count in this document on
+purpose; every one written here has been wrong within a day. Ask instead:
 
-> *Corrected on review (round 3).* Two errors in one line.
->
-> **The count.** "24" was not a miscount so much as a number that cannot hold still: this file
-> was added by `412c761`, and at that commit `git rev-list --count 464a85f..HEAD` was exactly
-> **25**. The sentence was written before the commit that contained it existed, and counted the
-> branch without itself. **A count of your own branch includes the commit you are writing** —
-> which is why no bare figure is restored here. It was 28 at `2ada44c` and 29 at `2d4e86d`, the
-> commit that made this correction; whatever it is when you read it, the command above is the
-> only answer that stays true.
->
-> **"ahead of `main`" is only half the topology.** `main` has moved to `fe4adb3` and holds one
-> commit this branch does not. The branch has **diverged**, and a reviewer planning the merge
-> needs the other side of that. `fe4adb3` is the topology-table fix, which also exists here as
-> `3fdaadc` — see the cherry-pick note under the signing correction below.
+```bash
+git rev-list --left-right --count main...HEAD   # was `1 29` at 2d4e86d
+```
+
+`main` holds one commit this branch does not (`fe4adb3`, the topology-table fix, which also
+exists here as `3fdaadc` — see the cherry-pick table below). A reviewer planning the merge needs
+that side of it too.
 
 ## Read in this order
 
@@ -45,23 +33,31 @@ then two integration passes.
 
 ## The state you are inheriting
 
-- `node contract/run.mjs` → **23 contracts, 530 assertions, green**. Floor raised from 508;
-  no entry was ever lowered.
-- `pnpm -r test` → **1161 green**. One package cannot run: `packages/website` Playwright needs
-  `:3000`, held by an unrelated process on the test machine. Proven pre-existing.
+- `node contract/run.mjs` → **23 contracts, 545 assertions, green** *(re-measured at `8528cd4`;
+  this line said 530, which was true at `412c761` and has moved twice since — re-run it rather
+  than quoting it)*. Floor raised from 508; no entry was ever lowered.
+- `pnpm -r test` → **1210 tests, 1210 pass, 0 fail**, across 10 of 11 workspace projects
+  *(re-measured at `8528cd4`; this line said 1161)*. The eleventh is `packages/website`:
+  Playwright needs `:3000`, held by an unrelated process on the test machine. Proven
+  pre-existing.
+- `node --test contract/lib/*.test.mjs` → 35 pass; `contract/runtime/lib/*.test.mjs` → 22 pass.
+- GitHub Actions on `8528cd4` → 9 of 9 jobs green, runtime tier included.
 - Dashboard bumped **0.3.1 → 0.4.0**, because the tree now installs spans v4 / facts v2 while
   the published `0.3.1` installs v3 / v1.
-- ~~**Commits are unsigned** (`git log --format=%G?` → `N`). 1Password was locked.~~
-  **Corrected on review (round 3): 16 commits carry a signature.** (Sixteen is stable — they are
-  the original fix-agent commits. The unsigned count is not: it grows with every commit added
-  after, which is why it is stated as a set below rather than as a fraction.) They carry real
-  `BEGIN SSH SIGNATURE` blocks (ed25519) in the commit object itself.
+- **16 commits are signed; the rest are not, and the unsigned ones are the cherry-picks** (see
+  the table below — de-duplicating the pairs and re-signing are the same job). Sixteen is stable:
+  they are the original fix-agent commits, carrying real `BEGIN SSH SIGNATURE` blocks (ed25519)
+  in the commit object. The unsigned count is not stable, so it is given as a set, not a
+  fraction.
 
-  **`%G?` was the wrong instrument, and it fails in the direction that reassures.** It reports
-  `N` for a signature it cannot *verify* as readily as for one that is *absent*, and this
-  checkout has no `gpg.ssh.allowedSignersFile` — `git config --get gpg.ssh.allowedSignersFile`
-  exits 1. Run the original command and git says so out loud on stderr while printing `N`
-  anyway:
+  <details>
+  <summary><strong>Why an earlier draft said "all unsigned" — the instrument, not the fact</strong></summary>
+
+  **`git log --format=%G?` was the wrong instrument, and it fails in the direction that
+  reassures.** It reports `N` for a signature it cannot *verify* as readily as for one that is
+  *absent*, and this checkout has no `gpg.ssh.allowedSignersFile` — `git config --get
+  gpg.ssh.allowedSignersFile` exits 1. Run the original command and git says so out loud on
+  stderr while printing `N` anyway:
 
   ```
   $ git log --format='%G?' 464a85f..HEAD
@@ -80,9 +76,12 @@ then two integration passes.
   ```
 
   → **16 SIGNED, and the rest unsigned** (12 of them at `2ada44c`). Configure
-  `gpg.ssh.allowedSignersFile` before making any claim about signature *validity*; presence is all that is asserted here, and it is all `%G?` was
-  being used to assert. GitHub's own Verified badge was **not** checked from this worktree —
-  these commits are not pushed — so do not carry that claim forward without looking.
+  `gpg.ssh.allowedSignersFile` before making any claim about signature *validity*; presence is
+  all that is asserted here, and it is all `%G?` was being used to assert. GitHub's own Verified
+  badge was **not** checked from this worktree — these commits are not pushed — so do not carry
+  that claim forward without looking.
+
+  </details>
 
   **The unsigned ones are not a lapse, they are the cherry-picks.** Four subjects appear
   twice in this range, and in every pair the original is signed and the copy is not:
@@ -283,12 +282,86 @@ Ranked by how much damage a mistake would do.
   universality it does not deliver. Either widen the pattern to root-level `*.md` (the paths are
   a `readdirSync` away, which is this contract's own stated argument for existing) or narrow the
   docstring. Do not leave them disagreeing. **Not mine to fix — `contract/` is another lane's.**
-- **`docs/support.mdx:124` cites the wrong line for the win32 browser branch.** It points at
-  `templates/default/scripts/verify.mjs:571`; `:571` is the `function pinnedDashboardTag() {`
-  signature (its `evestack-dashboard:` regex is `:574`). The `cmd /c start` branch is in
-  `openBrowser()` at
-  **`:584-586`**. The other two citations in that bullet were not re-checked. `docs/` was out of
-  scope for this lane.
+- ~~**`docs/support.mdx:124` cites the wrong line for the win32 browser branch.**~~ **Closed in
+  round 4.** The correction above was itself stale by the time it was written: `8528cd4` added
+  the fence block to `verify.mjs`, so the `cmd /c start` branch is at **`:651`**, not `:584-586`.
+  The other two citations in that bullet were off by one (`project.mjs:357`, `tour.mjs:396`), and
+  a fourth error nobody had noticed: the bullet below it quoted `shell: true` as if it were the
+  literal in the source, and `rg -n 'shell\s*:\s*true'` finds that string in **no** shipped file
+  — the code reads `shell: process.platform === "win32"`. `create.mjs:1110` was also wrong; the
+  third occurrence is `:1185`. All fixed, and each bullet now carries the `rg` that finds the
+  lines instead of relying on the number surviving.
+
+### Opened in round 4 — a documentation lane read the new pages as a stranger and ran the commands
+
+The pages this branch added or rewrote had never been read by anyone who was not their author.
+Running every runnable command in them found six defects, four of them on `docs/uninstall.mdx`,
+which is the page that tells people to delete things. All six are fixed in `docs/`; they are
+recorded here because the *shape* of them recurs.
+
+- **`uninstall.mdx` assumed every project came from `create`.** An attached project may hold
+  `docker-compose.evestack.yml` beside a `docker-compose.yml` that is the user's own. Bare
+  `docker compose --profile dashboard down -v` there resolves the **user's** project. Measured in
+  a directory holding both files: `docker compose --profile dashboard config --volumes` printed
+  `their-precious-data`. The page's "list first" safeguard did not help, because the list command
+  had the same defect as the removal command — it confirmed the wrong target.
+- **`config --volumes` was presented as naming the volume "exactly".** It prints the compose
+  *key* (`evestack-pgdata`), which is the same string in every evestack project on the machine,
+  not the real volume (`<project>_evestack-pgdata`). On a page whose whole doctrine is "remove by
+  exact name", the command offered as the exact-name step did not give one.
+- **`--remove-orphans` does not catch a profile-gated container.** The page said it did. Measured
+  on Compose v5.1.0: `docker compose down --remove-orphans` without `--profile dashboard` leaves
+  the dashboard container, says nothing about it, and then cannot remove the network
+  (*"Resource is still in use"*). Compose knows that service — it filtered it out — so it is not
+  an orphan.
+- **Section 5's greps match on the image column,** so `pgvector` matched every container running
+  `pgvector/pgvector` regardless of owner, and the page closed with *"whatever these print,
+  delete it by the exact name they printed."* Run on the development machine, the first grep
+  printed a hand-started database belonging to no evestack project.
+- **`157 MB unique` per extra sandbox template was off by ~2400x.** `docker system df -v` reports
+  `SIZE 665MB / SHARED 665.3MB / UNIQUE 65.77kB`; the 157 MB was the eve base image's CONTENT
+  SIZE, a different image in a different column. It over-stated the payoff of a destructive
+  cleanup.
+- **`upgrading.mdx` still listed `/charts` as a page that survives the EV001 downgrade** — the
+  exact claim correction #8 above removed from `app/api/health/route.ts`. The route's `available`
+  list has four entries and `app/charts/page.tsx` calls `notFound()` in production. The fix
+  landed in the code and not in the doc that repeats it, which is how a corrected error comes
+  back.
+
+**Contract 16's blind spot is wider than round 3 recorded.** Round 3 found that root-level files
+(`./CHANGELOG.md`, `./LICENSE`) are unchecked. The same `PATH_PATTERN` also cannot see the most
+common form of pointing a reader somewhere — a link from one docs page to another:
+
+```
+const PATH_PATTERN =
+  /(?<![A-Za-z0-9._/-])((?:docs|packages|contract|templates|registry|scripts|\.github)\/…\.[a-z]{2,4})\b/g;
+```
+
+`](/docs/local-setup#…)` fails it twice: a `/` immediately precedes `docs`, and there is no file
+extension. Proven by mutation on the page this lane was editing — `/docs/local-setup` changed to
+`/docs/local-setup-NOPE` and `node contract/run.mjs` still reported
+**`PASS docs/every-documented-path-exists 79 assertions`**. There are **61** such links across
+`docs/`, resolving to 124 distinct targets, and none of them is covered. All 61 currently resolve
+— checked by hand this round, once, which is exactly the guarantee a contract is supposed to
+replace.
+
+Three open items this lane could not fix, because they are code:
+
+- **`docs/troubleshooting.mdx` and `templates/default/scripts/verify.mjs` disagree about how many
+  source-root markers there are, on the same branch.** The doc was corrected to three (`.git`,
+  `pnpm-workspace.yaml`, a `package.json` with `workspaces`) by `15e7c3b`; `8528cd4` then wrote
+  the new fence check with `MARKERS = [".git", "pnpm-workspace.yaml"]` and a comment restating
+  the two-marker version the doc had just fixed. Measured on a `packages/my-agent` under an
+  npm-workspace root holding an `.npmrc` with a token: verify's walk returns `null` and warns
+  *"no `.git` here or above… will walk to your home directory"* with the fix `git init`, while
+  eve's walk stops at the workspace root — the directory whose `.npmrc` is the one that gets
+  copied. So the new credential check misses npm and yarn workspaces, and the remediation it
+  prints is the one thing the docs say not to do there. `docs/` now carries a warning and a
+  by-hand one-liner; the walk itself needs the third marker.
+- **`docs/upgrading.mdx`'s dashboard-upgrade steps cannot succeed today.** They pin `0.4.0`;
+  a manifest request for it returns HTTP 404 and the published tags are
+  `["0.1.0","latest","0.2.0","0.3.0","0.3.1"]`. `README.md` says so, `upgrading.mdx` did not. A
+  warning has been added, but the real fix is task 29 — cut the release.
 
 ## A note on method
 

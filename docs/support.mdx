@@ -120,13 +120,15 @@ runtime tier that does not run there. The job narrows the macOS gap; it does not
 This is stated bluntly because the code *looks* like it supports Windows. The twelve branches,
 so you can judge the risk yourself:
 
-- **Opening a browser** — `packages/evestack-cli/src/project.mjs:356`,
-  `packages/evestack-cli/src/tour.mjs:395`, `templates/default/scripts/verify.mjs:571` each pick
-  `cmd /c start` over `open` / `xdg-open`.
+- **Opening a browser** — `packages/evestack-cli/src/project.mjs:357`,
+  `packages/evestack-cli/src/tour.mjs:396`, `templates/default/scripts/verify.mjs:651` each pick
+  `cmd /c start` over `open` / `xdg-open`. Find them with
+  `rg -n "cmd\", \[\"/c\", \"start\"" packages templates` rather than by line number.
 - **Spawning `npm` and `docker`** — `packages/create-evestack/create.mjs:231`, `:354` and
-  `:1110`, `templates/default/scripts/dev.mjs:81`, `templates/default/scripts/start.mjs:60`,
-  `templates/default/scripts/eval.mjs:148` pass `shell: true`, which is how a `.cmd` shim gets
-  found on Windows.
+  `:1185`, `templates/default/scripts/dev.mjs:81`, `templates/default/scripts/start.mjs:60`,
+  `templates/default/scripts/eval.mjs:148` pass `shell: process.platform === "win32"`, which is
+  how a `.cmd` shim gets found on Windows. Find them with
+  `rg -n 'shell: process.platform' packages templates`.
 - **Naming the `eve` binary** — `templates/default/scripts/checks.mjs:532` returns `eve` rather
   than `eve.cmd`. This is the one with a test: `templates/default/test/eve-binary.test.mjs:115`
   calls `eveBinary(url, "win32")` on Linux, which checks the string and nothing about Windows.

@@ -33,7 +33,7 @@ So these are the pieces, they move independently, and you move each one yourself
 | In your project | What it is | How it moves |
 | --- | --- | --- |
 | `agent/`, `lib/`, `evals/`, `test/`, `tsconfig.json`, `HEARTBEAT.md` | Your code. Copied from `templates/default` at scaffold time, then yours | By hand, from a diff |
-| `scripts/*.mjs` — `bootstrap`, `checks`, `dev`, `prune`, `retention`, `start`, `ui`, `verify` | evestack's helper scripts, copied the same way. Most people never edit these | By hand, from a diff |
+| `scripts/*.mjs` — `approval-demo`, `bootstrap`, `checks`, `dev`, `eval`, `prune`, `retention`, `start`, `ui`, `verify` | evestack's helper scripts, copied the same way. Most people never edit these | By hand, from a diff |
 | `deploy/` — `README.md`, `evestack-agent.service`, `dev.evestack.agent.plist` | a systemd unit and a launchd plist for running the agent as a service, plus the notes for both. Copied, not generated | By hand, from a diff |
 | `package.json` dependencies — `eve`, `@evestack/*`, `ai`, `@workflow/world-postgres` | Ordinary npm | `npm install` |
 | `docker-compose.yml` — Postgres, and the dashboard behind a `dashboard` profile | Generated with the ports your machine had free, and committed | Edit the image tag |
@@ -55,10 +55,14 @@ node -p "require('./package.json').dependencies.eve"
 # the dashboard image tag your compose file names
 grep image: docker-compose.yml
 
-# whether the four parts are up, and the dashboard's own URL and version
+# whether the four parts are up, and where your dashboard actually is
 npx evestack status
 npx evestack open --no-open
 ```
+
+Neither of those prints the running dashboard's **version** — `status` answers "is it up",
+`open` answers "where is it and what is the password". The version comes from `/api/health`, and
+the next block is how to ask it without guessing a port.
 
 <Warning>
   **Do not reach for `curl http://127.0.0.1:4000/api/health` here.** This section's whole job is
@@ -92,6 +96,24 @@ The dashboard is a container, so this is a repull and a restart. Your compose fi
 `${EVESTACK_DASHBOARD_IMAGE:-ghcr.io/sammytourani/evestack-dashboard:<tag>}`, so you can override
 it without editing a committed file — the generated `.env` already carries the line, commented
 out:
+
+<Warning>
+  **Pick a tag that exists.** The examples below say `0.4.0` because that is what this tree pins,
+  and `0.4.0` **is not published yet** — a manifest request for it against GHCR returns 404, so
+  `docker compose pull` fails rather than upgrading anything. The published tags at the time of
+  writing were `0.1.0`, `0.2.0`, `0.3.0`, `0.3.1` and `latest`. Ask the registry rather than
+  trusting this list, which will age:
+
+  ```bash
+  curl -s "https://ghcr.io/token?scope=repository:sammytourani/evestack-dashboard:pull&service=ghcr.io" \
+    | sed 's/.*"token":"\([^"]*\)".*/\1/' \
+    | xargs -I{} curl -s -H "Authorization: Bearer {}" \
+        https://ghcr.io/v2/sammytourani/evestack-dashboard/tags/list
+  ```
+
+  See [CHANGELOG.md](https://github.com/SammyTourani/evestack/blob/main/CHANGELOG.md) under
+  *Unreleased* for why the pin runs ahead of the registry.
+</Warning>
 
 ```bash
 # in .env (NOT .env.local — Compose only interpolates from .env and the shell)
@@ -162,10 +184,13 @@ version in version control.
     which also marks the container unhealthy in `docker ps`. The body lists which pages are
     unavailable, which are degraded and which still work.
   - `/traces`, `/sessions/[id]`, `/costs`, the overview and `/api/metrics/query` fail; `/sessions`
-    degrades to blank fact columns; `/monitors`, `/approvals`, `/schedules`, `/evals` and
-    `/charts` still work — the first four because they read only the `workflow` tables, `/charts`
-    because it is a static demo. The health response carries the same three lists, so read it
-    rather than this paragraph if they ever disagree.
+    degrades to blank fact columns; `/monitors`, `/approvals`, `/schedules` and `/evals` still
+    work, because they read only the `workflow` tables. That is four working pages, not five —
+    `/charts` is **not** one of them and is deliberately absent from all three lists:
+    `app/charts/page.tsx` calls `notFound()` when `NODE_ENV` is production, so in any image you
+    can pull it is a 404 whatever the schema says. It used to be listed here as "a static demo
+    and stays up", which was wrong in both halves. The health response carries the same three
+    lists, so read it rather than this paragraph if they ever disagree.
   - `POST /api/ingest/v1/traces` answers 503 to every batch — and the OTLP exporter reports a
     rejected batch as a success, so on the agent's side this looks like nothing at all.
 
