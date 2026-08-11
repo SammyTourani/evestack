@@ -187,15 +187,22 @@ jobs:
       # suite simply never being staged, turns a step whose name promises
       # coverage into a green no-op — which is the precise vacuity the suite
       # below was written to forbid, reproduced in the harness that runs it.
+      # Two globs, each counted separately: `contract/lib` is the STATIC runner's
+      # regression suite and `contract/runtime/lib` is the runtime probe
+      # runner's. Counting them together would let one cover for the other's
+      # absence, which is the same "a glob that matches nothing exits 0" hole
+      # one level up.
       - name: contract runner regression suite
         run: |
-          found=$(ls contract/runtime/lib/*.test.mjs 2>/dev/null | wc -l)
-          if [ "$found" -lt 1 ]; then
-            echo "::error::no contract/runtime/lib/*.test.mjs matched — the suite is not in the commit, and node --test would have exited 0 having run nothing"
-            exit 1
-          fi
-          echo "running $found runner-regression file(s)"
-          node --test 'contract/runtime/lib/*.test.mjs'
+          for glob in 'contract/lib/*.test.mjs' 'contract/runtime/lib/*.test.mjs'; do
+            found=$(ls $glob 2>/dev/null | wc -l)
+            if [ "$found" -lt 1 ]; then
+              echo "::error::no $glob matched — the suite is not in the commit, and node --test would have exited 0 having run nothing"
+              exit 1
+            fi
+            echo "running $found runner-regression file(s) from $glob"
+            node --test "$glob"
+          done
 
       # chromium only — the suite pins one browser, and --with-deps pulls the
       # system libraries a bare runner does not have.
