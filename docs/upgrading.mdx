@@ -55,13 +55,31 @@ node -p "require('./package.json').dependencies.eve"
 # the dashboard image tag your compose file names
 grep image: docker-compose.yml
 
-# what the running dashboard says it is — /api/health is the one
-# unauthenticated route, and it reports its own version
-curl -s http://127.0.0.1:4000/api/health
-
-# and whether the four parts are up at all
+# whether the four parts are up, and the dashboard's own URL and version
 npx evestack status
+npx evestack open --no-open
 ```
+
+<Warning>
+  **Do not reach for `curl http://127.0.0.1:4000/api/health` here.** This section's whole job is
+  to tell you which stack you are looking at, and 4000 is not necessarily yours: the scaffolder
+  takes the first free port at or after 4000, so a second project on the same machine is
+  published on 4001 or later and records that in its own `.env.local`. Measured on a project
+  whose dashboard was on 4001, the line above returned `{"ok":true,...}` from a *different*
+  project's dashboard — a healthy answer about somebody else's stack, which is the one wrong
+  answer this section cannot afford. `npx evestack status` and `npx evestack open` read the port
+  out of `EVESTACK_DASHBOARD_URL` in your project, so they answer about your project.
+
+  If you want the raw JSON, take the origin out of the project rather than typing a port:
+
+  ```bash
+  DASH=$(grep -m1 '^EVESTACK_DASHBOARD_URL=' .env.local | cut -d= -f2- | sed 's#/api/.*##')
+  curl -s "$DASH/api/health"
+  ```
+
+  `EVESTACK_DASHBOARD_URL` is written by `create` and by `attach` and holds the ingest endpoint,
+  so its origin is your dashboard. It is the same line `evestack open` and `evestack verify` read.
+</Warning>
 
 Compare those against a freshly published `create-evestack`: scaffold a throwaway project (next
 section) and read its `package.json` and `docker-compose.yml`. That pair — template plus image
@@ -85,25 +103,79 @@ Then:
 ```bash
 docker compose --profile dashboard pull dashboard
 docker compose --profile dashboard up -d dashboard
-curl -s http://127.0.0.1:4000/api/health
+
+# confirm it — and read the `version`, not the `ok`
+DASH=$(grep -m1 '^EVESTACK_DASHBOARD_URL=' .env.local | cut -d= -f2- | sed 's#/api/.*##')
+curl -s "$DASH/api/health"
 ```
 
 Editing the tag inside `docker-compose.yml` works too, and is the better choice if you want the
 version in version control.
+
+<Warning>
+  **`"ok":true` is not confirmation that the upgrade landed.** That field answers "is this process
+  up and can it reach Postgres", and it answered `true` before the pull as well. The field that
+  moves is `version`, which the running image reports out of its own `package.json` — so the
+  upgrade is confirmed when the number in the response equals the tag you just pulled, and not
+  before:
+
+  ```json
+  {"ok":true,"database":"connected","version":"0.4.0"}
+  ```
+
+  If it still reports the old number, the container was not recreated. `docker compose --profile
+  dashboard up -d dashboard` recreates it only when the image reference it resolves has changed;
+  `docker compose --profile dashboard up -d --force-recreate dashboard` is the hammer.
+</Warning>
 
 <Note>
   **There is no migration step, and that is by design.** A self-hosted install has no migration
   runner to hang one off, so the dashboard creates what it needs on first use: `evestack.spans`
   on the first trace read, the budget tables on the first budget write, and `sql/facts.sql`,
   `sql/alerts.sql`, `sql/approvals.sql`, `sql/memory-audit.sql` and `sql/query-indexes.sql`
-  applied once per process from disk. Every statement in those files is `CREATE … IF NOT EXISTS`,
-  `CREATE OR REPLACE`, or `ADD COLUMN IF NOT EXISTS` — `sql/alerts.sql` already carries two
-  columns added after the first release, with a backfill beside them. A newer image migrates
-  itself forward on the first request that touches the table.
-
-  The reverse is not covered: rolling the image *back* over a schema a newer one has written is
-  not something anything here tests.
+  applied once per process from disk. Most statements in those files are `CREATE … IF NOT
+  EXISTS`, `CREATE OR REPLACE` or `ADD COLUMN IF NOT EXISTS` — `sql/alerts.sql` already carries
+  two columns added after the first release, with a backfill beside them — so **going forward** a
+  newer image migrates itself on the first request that touches the table.
 </Note>
+
+<Warning>
+  **Going backward, a newer database now REFUSES an older image, and that is the most visible
+  behaviour change on this release.** Two of those files are not idempotent in the sense the note
+  above describes, and both are versioned:
+
+  - `sql/traces.sql` carries a schema marker for `spans` and `sql/facts.sql` one for `facts`.
+    Each file opens with a guard that raises SQLSTATE **`EV001`** when the database's marker is
+    *ahead* of the version that file understands, and the guard is deliberately the first
+    statement so that nothing is applied before it runs.
+  - `sql/facts.sql` then `DROP TABLE`s all three fact tables whenever the marker is not its own
+    version, and rebuilds them — the fact tables are a cache of a join, so rebuilding is the only
+    strategy that cannot leave a column half-populated. That drop is exactly why the guard exists:
+    without it an older image did not merely fail to upgrade a newer database, it dropped that
+    database's fact tables, rebuilt them in the older shape, and stamped the marker back down to
+    its own version without a word.
+
+  So rolling the dashboard image back over a database a newer image has written does not
+  half-downgrade it — it stops. What you see:
+
+  - `/api/health` answers **503** with `{"ok":false,"status":"degraded","reason":"schema-too-new"}`,
+    which also marks the container unhealthy in `docker ps`. The body lists which pages are
+    unavailable, which are degraded and which still work.
+  - `/traces`, `/sessions/[id]`, `/costs`, the overview and `/api/metrics/query` fail; `/sessions`
+    degrades to blank fact columns; `/monitors`, `/approvals`, `/schedules`, `/evals` and
+    `/charts` still work — the first four because they read only the `workflow` tables, `/charts`
+    because it is a static demo. The health response carries the same three lists, so read it
+    rather than this paragraph if they ever disagree.
+  - `POST /api/ingest/v1/traces` answers 503 to every batch — and the OTLP exporter reports a
+    rejected batch as a success, so on the agent's side this looks like nothing at all.
+
+  The way out is forward: run the newer image again. Dropping the `evestack` schema also works and
+  costs you every span and every materialized fact in it.
+
+  Stated from the guards and the health route rather than from a test run: the EV001 path has no
+  automated coverage yet, because exercising it needs two dashboard images and a live Postgres.
+  If you hit it and it behaves differently, that is worth an issue.
+</Warning>
 
 ### Upgrade eve and the evestack packages
 
