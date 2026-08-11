@@ -81,9 +81,18 @@ const SANDBOX_IMAGE =
  *
  * An unrecognized value is a hard error rather than a silent fall back to
  * either side, because "allow_all" and "none" are typos, not choices — and
- * guessing wrong here means either a broken shell or an open one.
+ * guessing wrong here means either a broken shell or an open one. The throw
+ * leaves from the lazy `backend` factory below, which eve calls on first
+ * framework access and does not catch (`lazyBackend` in its runtime memoizes
+ * the result and nothing more), so a typo is a sandbox that will not start
+ * rather than a sandbox that starts open.
+ *
+ * Exported for test/sandbox-network.test.mjs. Contract 18 drives eve's own
+ * binding and proves `deny-all` still becomes `docker run --network none`; that
+ * says nothing about whether THIS file still asks for deny-all, and the contract
+ * stays green when it stops. This is the half on our side of that line.
  */
-function resolveNetworkPolicy(): DockerSandboxNetworkPolicy {
+export function resolveNetworkPolicy(): DockerSandboxNetworkPolicy {
   const configured = process.env.EVESTACK_SANDBOX_NETWORK?.trim();
   if (configured === undefined || configured === "") return "deny-all";
   if (configured === "allow-all" || configured === "deny-all") return configured;
