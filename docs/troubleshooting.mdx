@@ -169,12 +169,14 @@ The giveaway is a doubled path in the log line, naming files you never put in th
 add /Users/me/.npmrc, add /Users/me/.yarnrc, add /Users/me/.yarnrc.yml), rebuilding authored artifacts...
 ```
 
-**The project has no `.git`.** eve resolves its dev source root by walking up from the app
-directory until it finds `.git` or `pnpm-workspace.yaml`. A project with neither keeps walking,
-and on a machine where the dotfiles live in git, the walk stops at `$HOME` and calls it the
-source root. Everything follows from that: the lockfile watcher watches 20 paths, 15 of them
-outside the project and none of them existing, and chokidar reacts to a watch target that does
-not exist by watching its parent directory instead. That parent is your home directory.
+**The project has no source-root marker.** eve resolves its dev source root by walking up from
+the app directory until it finds `.git`, `pnpm-workspace.yaml`, or a `package.json` with a
+`workspaces` key — three markers, not two, and the third is easy to miss because an npm or yarn
+workspace root does not have to contain either of the other files. A project with none of them
+keeps walking, and on a machine where the dotfiles live in git, the walk stops at `$HOME` and
+calls it the source root. Everything follows from that: the lockfile watcher watches 20 paths, 15
+of them outside the project and none of them existing, and chokidar reacts to a watch target that
+does not exist by watching its parent directory instead. That parent is your home directory.
 
 It is not only noise. Files matching eve's workspace-metadata list are **copied** into
 `.eve/dev-runtime/snapshots/<id>/source/`, and `.npmrc` is on that list — so a registry
@@ -193,10 +195,39 @@ repository at the project root ends the walk. Measured before and after: the sou
 to the project, watch paths drop from 20 to 5, and nothing outside the project is watched or
 copied.
 
-`create-evestack` does this for you — it has run `git init` at the end of `create` since the
-scaffolder started shipping this fix, which is also what finally makes the `.gitignore` it writes
-mean anything. You only hit this if the project was scaffolded some other way, or if the
-`git init` step warned that it could not run.
+`create-evestack` does this for you — `create` runs `git init` at the end, and `attach` adds the
+same empty repository to a project that has no marker of its own. That is also what finally makes
+the `.gitignore` either of them writes mean anything.
+
+Both of them can only act at the moment they run, though, and **nothing checks afterwards** —
+`npm run dev` does not look, `npm run verify` does not look, and eve logs nothing when its source
+root leaves the project. So the fence is gone, silently, in every one of these:
+
+| How the marker disappears | What warns you |
+| --- | --- |
+| `git` was not installed, or `git init` failed | `create` and `attach` both say so, once, at the time |
+| You deleted `.git` — including by following the `rm -rf .git` line in `attach`'s own undo list | nothing |
+| The project reached this machine as a tarball, a zip, `git archive`, or an `rsync --exclude=.git` | nothing |
+| It was scaffolded before the scaffolder shipped the fence | nothing |
+| It is a copy inside an image built with `.git` in `.dockerignore` | nothing — though this only bites if the image's working directory sits under a marked ancestor |
+
+The check is one command, and it costs nothing to run in a project that is already fine:
+
+```bash
+node -e "console.log(require('node:fs').existsSync('.git') ? 'fenced' : 'NOT fenced — run git init')"
+```
+
+`attach` is idempotent about this: re-running `npx evestack attach` in a project whose `.git` has
+gone will put the empty repository back.
+
+**The one case where `git init` is the wrong answer** is a project that really is a package inside
+a workspace — a `pnpm-workspace.yaml` or a `workspaces` package.json above you. eve reaches your
+workspace siblings by walking out of the project and into that root, so a marker here would put
+them outside the source root and the build would stop finding them. `attach` detects this and
+deliberately does not fence; it reads the workspace root's `.npmrc` and `package.json` instead and
+warns only if one of them holds a literal credential. If it does, move the secret to your own
+`~/.npmrc` or replace it with an environment reference (`_authToken=${NPM_TOKEN}`) — the copies
+then carry a variable name instead of a token.
 
 The underlying bug is eve's, not evestack's, and it is still present in the newest published eve.
 A full write-up with a minimal reproduction is drafted and ready to file at

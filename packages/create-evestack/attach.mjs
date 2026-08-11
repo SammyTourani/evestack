@@ -529,7 +529,14 @@ function buildPlan({
       add(
         ".git/",
         "an empty repo — keeps eve's dev snapshots inside this project",
-        "rm -rf .git (only if you have not committed anything since)",
+        // The one undo line in this list that has a consequence beyond undoing.
+        // Every other entry here removes something attach added; this one
+        // removes the FENCE, and eve's walk immediately goes back to whatever
+        // is above the project — which is the configuration the ~/.npmrc copy
+        // was found in. Nothing checks for it afterwards: `npm run dev` does not
+        // look, and attach only looks when it is re-run. So the undo says what
+        // it costs, in the one place the reader is looking when they do it.
+        "rm -rf .git — but eve then snapshots from above this directory again",
         () => initGitRepository(target),
       );
     } else {
