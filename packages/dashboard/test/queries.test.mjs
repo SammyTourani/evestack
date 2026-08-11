@@ -225,3 +225,44 @@ test("the same model twice is named once, and an empty session names nothing", (
   ]);
   assert.deepEqual(priceOf([]).unpricedModels, []);
 });
+
+test("a model id containing the delimiter is not truncated, mispriced, or hidden", () => {
+  // `cost_parts` is "model|input|output|cacheRead|cacheWrite", built by Postgres
+  // concatenating `$eve.model` verbatim. Nothing anywhere enforces that a model
+  // id has no pipe in it — it is a provider-supplied string.
+  //
+  // Splitting from the LEFT and destructuring five fields shifted every field by
+  // one for such an id, and got three things wrong at once: the model was
+  // truncated at the pipe, so an uncatalogued id could match a PRICED prefix and
+  // vanish from unpricedModels; the truncated tail landed where input tokens go;
+  // and the real input count landed where output goes — so it was billed. On the
+  // id below the old code charged $2.025 for a model with no price at all.
+  const rogue = "openai/gpt-5-mini|rogue";
+  const { costUsd, unpricedModels } = priceOf([part(rogue)]);
+  assert.deepEqual(unpricedModels, [rogue], "the whole id is the model, pipe included");
+  assert.equal(costUsd, 0, "and an id the catalog does not have costs nothing, rather than being billed at its prefix's rate");
+});
+
+test("the counts are read from the right, so only the model may contain a delimiter", () => {
+  // The four counts are always last and always numbers; the model is whatever
+  // precedes them. This pins the direction of the split rather than the shape of
+  // any one id.
+  const { costUsd } = priceOf(["openai/gpt-5-mini|1000000|1000000|0|0"]);
+  const withPipes = priceOf(["a|b|c|1000000|1000000|0|0"]);
+  assert.ok(costUsd > 0, "a normal id still prices");
+  assert.deepEqual(withPipes.unpricedModels, ["a|b|c"], "three pipes in the id, four counts off the end");
+});
+
+test("a malformed element with too few fields is no model, not a model named nothing", () => {
+  assert.deepEqual(priceOf(["justamodel"]).unpricedModels, []);
+  assert.deepEqual(priceOf(["a|1|2|3"]).unpricedModels, []);
+  assert.equal(priceOf(["justamodel"]).costUsd, 0);
+});
+
+test("unpricedModels is ordered, because lib/facts.ts orders the same fact", () => {
+  // Two library surfaces presenting one fact in two orders is a diff a monitor
+  // reads as a change. facts.ts returns `.sort()`; the Set here preserved
+  // ARRAY_AGG's row order, which has no ORDER BY behind it.
+  const { unpricedModels } = priceOf([part("zzz/unknown"), part("aaa/unknown")]);
+  assert.deepEqual(unpricedModels, ["aaa/unknown", "zzz/unknown"]);
+});

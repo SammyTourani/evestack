@@ -806,13 +806,34 @@ function sumCostParts(parts: string[]): { usd: number; unpriced: string[] } {
   let total = 0;
   const unpriced = new Set<string>();
   for (const part of parts) {
-    const [model, input, output, cacheRead, cacheWrite] = part.split("|");
-    total += costUsd(model ?? null, NUM(input), NUM(output), NUM(cacheRead), NUM(cacheWrite));
+    // Split from the RIGHT. The four counts are always numbers and always last;
+    // the model is whatever precedes them, pipes and all.
+    //
+    // Splitting from the left and destructuring five fields assumed no model id
+    // contains the delimiter, and nothing enforces that — `$eve.model` is a
+    // provider-supplied string that Postgres concatenates verbatim. An id with
+    // one pipe in it shifted every field by a position: the model was truncated
+    // at the pipe (so a genuinely uncatalogued id could match a priced prefix
+    // and be left OUT of unpricedModels), and the remaining counts moved up one,
+    // which BILLED it — the truncated tail landed where input tokens go and the
+    // real input count landed where output goes. Measured on a crafted id:
+    // $2.025 charged for a model that has no price at all.
+    const fields = part.split("|");
+    const [input, output, cacheRead, cacheWrite] = fields.slice(-4);
+    // Only when there are counts to take. A malformed element with fewer than
+    // five fields yields "" here, which must read as "no model" rather than as
+    // a model named the empty string.
+    const model = fields.length > 4 ? fields.slice(0, -4).join("|") : "";
+    total += costUsd(model || null, NUM(input), NUM(output), NUM(cacheRead), NUM(cacheWrite));
     // Asked per element, not per distinct model afterwards, because this is the
     // only place that still holds the exact string costUsd() was given. A caller
     // reconstructing it from `models` is the indirection that let a confident
     // zero out in the first place.
     if (model && !isPriced(model)) unpriced.add(model);
   }
-  return { usd: total, unpriced: [...unpriced] };
+  // Sorted, because `lib/facts.ts` sorts the same concept and two library
+  // surfaces presenting one fact in two orders is a diff a monitor sees as a
+  // change. The Set preserved insertion order, which here is ARRAY_AGG's row
+  // order with no ORDER BY — whatever the scan happened to produce.
+  return { usd: total, unpriced: [...unpriced].sort() };
 }

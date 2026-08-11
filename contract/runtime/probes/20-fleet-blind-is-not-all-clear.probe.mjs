@@ -45,6 +45,8 @@ const PASSWORD = process.env.EVESTACK_PROBE_DASHBOARD_PASSWORD ?? null;
 // probe's and can be removed by hand without guessing.
 const FIXTURE_SESSION = "probe_fleet_blind_session";
 const FIXTURE_TURN = "probe_fleet_blind_turn";
+/** Deliberately absent from the pricing catalog. See the health/detail block. */
+const UNPRICED_MODEL = "probe-vendor/no-catalog-entry-v0";
 
 const UNREACHABLE_IDLE_MINUTES = 43_200;
 
@@ -173,7 +175,23 @@ export default {
              (id, deployment_id, status, name, attributes, created_at, updated_at, started_at, completed_at)
            values ($1, 'probe-fleet-blind', 'running'::workflow.status, 'probe.turn', $2::jsonb,
                    now(), now(), now(), null)`,
-          [FIXTURE_TURN, JSON.stringify({ "$eve.type": "turn", "$eve.root": FIXTURE_SESSION })],
+          [
+            FIXTURE_TURN,
+            JSON.stringify({
+              "$eve.type": "turn",
+              "$eve.root": FIXTURE_SESSION,
+              // An id the pricing catalog has never heard of, with real token
+              // counts behind it. That makes this fixture serve the second
+              // assertion block below as well as the sweep: costUsd() answers 0
+              // for it, exactly as it answers 0 for a genuinely free model, and
+              // only `unpricedModels` can tell a reader which 0 they are looking at.
+              "$eve.model": UNPRICED_MODEL,
+              "$eve.input_tokens": "1000000",
+              "$eve.output_tokens": "1000000",
+              "$eve.cache_read_tokens": "0",
+              "$eve.cache_write_tokens": "0",
+            }),
+          ],
         );
         planted = true;
         t.note("planted a running session with one open turn, so the gate has a candidate");
@@ -280,6 +298,56 @@ export default {
           actual: `keys: ${Object.keys(blind).join(", ")}`,
         },
       );
+
+      /* ── 4. the sibling endpoint, same doctrine ────────────────────────── */
+
+      // /api/fleet must not report a zero it did not look for. /api/health/detail
+      // must not report a dollar zero it could not compute. Same rule, two
+      // endpoints, and this is the one a monitor polls for SPEND.
+      //
+      // It lives here rather than in probes/18 because 18 needs only Postgres —
+      // it calls queries.listSessions() in-process and never issues an HTTP
+      // request. So the route file itself was covered by nothing: deleting the
+      // `unpricedModels` line from app/api/health/detail/route.ts restored the
+      // original defect with every check in the repository still green. An
+      // in-process assertion about a library cannot guard what a route ships.
+      const detail = await call("/api/health/detail");
+      const body = await json(detail);
+      t.ok(detail.status === 200, "/api/health/detail answers a credentialed caller", {
+        expected: "200",
+        actual: `${detail.status} ${JSON.stringify(body).slice(0, 160)}`,
+      });
+
+      const planted_ = (body.recentSessions ?? []).find((r) => r.id === FIXTURE_SESSION);
+      if (planted && planted_) {
+        // A value assertion, not a shape one. The fixture turn ran a model the
+        // catalog does not have, so a correct payload reports 0 dollars AND
+        // names the model it could not price. A field that is present and always
+        // empty is a confident zero wearing a different name.
+        t.ok(
+          Array.isArray(planted_.unpricedModels) &&
+            planted_.unpricedModels.includes(UNPRICED_MODEL),
+          "the route names the model it could not price, beside the zero it reports",
+          {
+            expected: `unpricedModels containing ${UNPRICED_MODEL}`,
+            actual: JSON.stringify({
+              costUsd: planted_.costUsd,
+              unpricedModels: planted_.unpricedModels,
+            }),
+          },
+        );
+        t.ok(
+          Number.isFinite(planted_.costUsd),
+          "and the cost beside it is a real number rather than absent or NaN",
+          { expected: "a finite number", actual: String(planted_.costUsd) },
+        );
+      } else if (planted) {
+        t.ok(false, "the planted session reaches /api/health/detail", {
+          expected: `${FIXTURE_SESSION} among recentSessions`,
+          actual: `ids: ${(body.recentSessions ?? []).map((r) => r.id).join(", ") || "none"}`,
+        });
+      }
+
     } finally {
       // Ordered child-then-parent, and unconditional on `planted` being true so
       // a run that died between the two inserts still cleans up after itself. A
