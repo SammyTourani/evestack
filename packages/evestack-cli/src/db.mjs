@@ -120,8 +120,15 @@ export function redact(connectionString) {
  *
  * The split is on whether Postgres itself answered, which is knowable rather
  * than guessable: a rejection carries a five-character SQLSTATE and a severity,
- * and a transport failure carries a Node errno, which always begins with E and
- * is never five characters. No SQLSTATE class begins with E.
+ * and a transport failure carries a Node errno, which always begins with E.
+ *
+ * BOTH halves of that test are load-bearing, and the length alone is not enough:
+ * EPIPE is five characters. What separates the two vocabularies is the leading
+ * E — no SQLSTATE class begins with one (they are digits, or 0A/HV/P0/XX and
+ * friends) — so a code is only read as a SQLSTATE when it is five characters
+ * AND does not start with E. Drop the `!code.startsWith("E")` and a broken pipe
+ * mid-connect is classified as a server rejection, which sends someone to check
+ * a password that was never the problem.
  */
 export function classifyConnectFailure(error) {
   const code = typeof error?.code === "string" ? error.code : "";

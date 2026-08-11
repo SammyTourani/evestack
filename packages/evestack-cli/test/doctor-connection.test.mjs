@@ -146,13 +146,60 @@ test("the real environment beats the file, so a container needs no project", asy
   });
 });
 
+/*
+ * WORKFLOW_POSTGRES_URL= in a shell profile, and the two independent things
+ * that stop it from beating a real answer with the empty string.
+ *
+ * They are separated because one test cannot pin both, and the one that shipped
+ * here pinned neither on its own. `resolveConnection` reads
+ *
+ *     const fromEnvironment = process.env.WORKFLOW_POSTGRES_URL || process.env.DATABASE_URL;
+ *     if (fromEnvironment) return …
+ *
+ * With only WORKFLOW_POSTGRES_URL set to "", `||` collapses it to `undefined`
+ * before the `if` ever sees it, so swapping `||` for `??` OR loosening the `if`
+ * to `!== undefined` still gives the right answer — each mutation is covered for
+ * by the other. Two arrangements tell them apart: both variables empty is the
+ * only one the `if` decides alone, and one empty beside one real is the only one
+ * the operator decides alone.
+ */
 test("an exported-but-empty variable is not a connection string", async () => {
-  // The old chain used ??, so WORKFLOW_POSTGRES_URL= in a shell profile beat
-  // every real answer with the empty string.
   const dir = project({ ".env.local": `WORKFLOW_POSTGRES_URL=${URL_IN_FILE}\n` });
   await withoutEnv(() => {
     process.env.WORKFLOW_POSTGRES_URL = "";
     assert.equal(resolveConnection(undefined, { from: dir }).connectionString, URL_IN_FILE);
+  });
+
+  // Both names exported empty — a compose file with `DATABASE_URL: ""` next to a
+  // stale profile is enough. This is the arrangement where `||` hands the empty
+  // string straight to the guard, so the guard is the only thing rejecting it.
+  await withoutEnv(() => {
+    process.env.WORKFLOW_POSTGRES_URL = "";
+    process.env.DATABASE_URL = "";
+    assert.equal(
+      resolveConnection(undefined, { from: dir }).connectionString,
+      URL_IN_FILE,
+      "an empty string is a variable nobody set, not a connection string of length zero",
+    );
+  });
+});
+
+test("an empty WORKFLOW_POSTGRES_URL does not hide an exported DATABASE_URL", async () => {
+  // The arrangement `??` gets wrong, and it is not a contrived one: a stale
+  // `export WORKFLOW_POSTGRES_URL=` in a shell profile, in a shell where a
+  // container or a `docker compose exec` has set DATABASE_URL. `""` is not
+  // nullish, so `??` stops there, the guard below rejects it, and doctor walks
+  // on to the project file — silently diagnosing a DIFFERENT database from the
+  // one the environment named. `||` steps over the empty string to DATABASE_URL,
+  // which is what `doctor --help` documents the order as doing.
+  const dir = project({ ".env.local": `WORKFLOW_POSTGRES_URL=${URL_IN_FILE}\n` });
+  const exported = "postgres://ops@db.internal:5432/exported";
+  await withoutEnv(() => {
+    process.env.WORKFLOW_POSTGRES_URL = "";
+    process.env.DATABASE_URL = exported;
+    const resolved = resolveConnection(undefined, { from: dir });
+    assert.equal(resolved.connectionString, exported, "the environment answered, so the file is not consulted");
+    assert.equal(resolved.project, null, "and nothing walked up looking for one");
   });
 });
 
@@ -226,6 +273,10 @@ function pgError(code, message, severity) {
 
 const REFUSED = pgError("ECONNREFUSED", "connect ECONNREFUSED 127.0.0.1:5433");
 const NO_HOST = pgError("ENOTFOUND", "getaddrinfo ENOTFOUND db.invalid");
+// Node errnos that are exactly as long as a SQLSTATE. EPIPE is what a server
+// killed mid-handshake looks like from here; ETIME is the same length again.
+const BROKEN_PIPE = pgError("EPIPE", "write EPIPE");
+const TIMER_EXPIRED = pgError("ETIME", "connect ETIME 127.0.0.1:5433");
 const BAD_PASSWORD = pgError("28P01", "password authentication failed for user evestack", "FATAL");
 const NO_HBA = pgError("28000", "no pg_hba.conf entry for host", "FATAL");
 const NO_DATABASE = pgError("3D000", "database nope does not exist", "FATAL");
@@ -239,6 +290,22 @@ test("a refused socket and a rejected password are not the same failure", () => 
   assert.equal(classifyConnectFailure(NO_HBA), "credentials");
   assert.equal(classifyConnectFailure(NO_DATABASE), "no-database");
   assert.equal(classifyConnectFailure(TOO_MANY), "refused");
+});
+
+test("a five-character Node errno is still a transport failure, not a SQLSTATE", () => {
+  // The split reads a code as a SQLSTATE when it is five characters AND does not
+  // begin with E, and only the second half tells EPIPE from 28P01: every errno
+  // above happens to be longer than five, so the length test alone looks
+  // sufficient right up until a socket breaks. Classified as a server rejection,
+  // a broken pipe prints "Postgres is up and refused the connection (EPIPE)" and
+  // sends someone to check a password that was never asked for.
+  assert.equal(classifyConnectFailure(BROKEN_PIPE), "unreachable");
+  assert.equal(classifyConnectFailure(TIMER_EXPIRED), "unreachable");
+  assert.match(
+    connectFailureMessage(TARGET, BROKEN_PIPE),
+    /Cannot reach Postgres/,
+    "and the advice is the one for a database that is not there",
+  );
 });
 
 const TARGET = "postgres://evestack:hunter2@127.0.0.1:5433/evestack";
