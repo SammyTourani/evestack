@@ -943,14 +943,6 @@ export const listSpansBySession = cache(
 );
 
 /**
- * The session's spans as a forest, with session and turn ids filled in from the
- * nearest ancestor that has them.
- *
- * Without that inheritance an `ai.toolCall` cannot be attributed to a turn at
- * all: the AI SDK creates it and stamps none of eve's ids on it. Its parent
- * chain is the only thing that knows where it belongs.
- */
-/**
  * How many spans the session really has.
  *
  * listSpansBySession caps its window, and the detail page used to report
@@ -981,6 +973,25 @@ export async function getSpanTree(sessionId: string): Promise<SpanNode[]> {
   return buildSpanTree(await listSpansBySession(sessionId));
 }
 
+/**
+ * The session's spans as a forest, with session and turn ids filled in from the
+ * nearest ancestor that has them.
+ *
+ * Without that inheritance an `ai.toolCall` cannot be attributed to a turn at
+ * all: the AI SDK creates it and stamps none of eve's ids on it. Its parent
+ * chain is the only thing that knows where it belongs.
+ *
+ * `resolvedTurnId` is inherited HERE TOO, and leaving it out was a way of
+ * putting the whole `turn_0` defect back one layer up. callTurnId() reads
+ * `resolvedTurnId ?? turnId`, so a span the database walk has not reached yet —
+ * a child that landed after the last resolve, which is the ordinary case for a
+ * trace still arriving — carried a NULL resolved id and an INHERITED `turn_0`,
+ * and was keyed on the alias while its already-resolved siblings were keyed on
+ * the run. Two groups for one turn, from the same tree, in the same render.
+ * Inheriting both columns keeps the fallback where it was meant to be: the
+ * declared id is used when NOTHING in the chain resolved, not when this
+ * particular row has not been resolved yet.
+ */
 export function buildSpanTree(spans: readonly SpanRow[]): SpanNode[] {
   const nodes = new Map<string, SpanNode>();
   for (const span of spans) {
@@ -1001,6 +1012,7 @@ export function buildSpanTree(spans: readonly SpanRow[]): SpanNode[] {
     node.sessionId ??= inherited?.sessionId ?? null;
     node.rootSessionId ??= inherited?.rootSessionId ?? null;
     node.turnId ??= inherited?.turnId ?? null;
+    node.resolvedTurnId ??= inherited?.resolvedTurnId ?? null;
     for (const child of node.children) visit(child, depth + 1, node);
   };
   for (const root of roots) visit(root, 0, null);
