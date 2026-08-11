@@ -34,6 +34,19 @@
  * added, with no list to remember — which is the only version of this guard
  * that survives the next person.
  *
+ * That paragraph was true of one spelling and false of the other, and the gap
+ * is worth keeping written down because it is easy to reintroduce. `every alert
+ * produced` only ever ranged over the alerts that WERE produced: a tenth alert
+ * reporting `state: "ok"` from its catch block failed two assertions here with
+ * no test edit, while the same alert written as
+ *
+ *     try { out.push(...) } catch { /* table not created yet *\/ }
+ *
+ * left the list entirely the moment its query threw and passed every one of
+ * them. Measured, on this checkout. A population you filter is not a population
+ * you counted, so the sweep is now compared — set against set — with a run of
+ * the same function against a database that could answer.
+ *
  * ── The two shapes ───────────────────────────────────────────────────────────
  *
  * BLIND IS NOT CLEAR. Take a working stack, remove one input, and the output
@@ -54,7 +67,7 @@
  * and none of them is reachable from a pure function.
  */
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { afterEach, test } from "node:test";
 
 // The `@/` alias, which app/api/health/route.ts uses. See charts-loader.mjs.
@@ -74,6 +87,99 @@ afterEach(() => uninstallStubPool());
 /* -------------------------------------------------------------------------- */
 
 /**
+ * A database that answers every question this build knows how to ask.
+ *
+ * The reference run. Every route below exists so that one source is ANSWERED
+ * rather than merely unroutable: the stub pool returns zero rows for a query no
+ * route matches, so a fixture of `[]` would be a database that is present and
+ * empty, not one that is well. The difference matters here because the whole
+ * point of the comparison below is that the two runs differ in exactly one
+ * thing — whether the database could be read — and an empty-database reference
+ * would let a check that only fails on real data agree with itself.
+ *
+ * Nothing here is asserted on. It is the control, and `healthyAlertIds()`
+ * checks that it is one.
+ */
+const HEALTHY_DATABASE = [
+  ["evestack.refresh_facts", []],
+  ["FROM evestack.fact_turn", [{ model: "sonnet", priced: true, cost: "1.25", n: "40" }]],
+  [
+    "AS no_model_call",
+    [
+      {
+        total: 40,
+        finished: 40,
+        unfinished: 0,
+        stalled: 0,
+        errored: 1,
+        no_model_call: 0,
+        failed: 1,
+        p50: 900,
+        p75: 1400,
+        p95: 3000,
+        p99: 4000,
+        max: 5000,
+        count: 40,
+      },
+    ],
+  ],
+  ["completed_at IS NULL", [{ n: "0" }]],
+  ["(now() AT TIME ZONE 'utc') - interval '1 hour'", [{ n: "12" }]],
+  ["to_regclass('evestack.schema_version')", [{ present: "evestack.schema_version" }]],
+  // v1 rather than v99: the database is exactly as new as this build, so
+  // nothing is refused and the span count below means what it says.
+  ["SELECT component, version FROM evestack.schema_version", [{ component: "spans", version: 1 }]],
+  ["FROM evestack.spans WHERE received_at", [{ n: "340" }]],
+  ["to_regclass('evestack.schedule_runs')", [{ exists: true }]],
+];
+
+/**
+ * The ids a run of `evaluateAlerts()` produced, sorted.
+ *
+ * Taken from the RESULT on both sides of every comparison below, so no alert id
+ * is ever typed as an expectation. That is the whole mechanism: alert number ten
+ * is compared against itself on the day it is written, by a line nobody has to
+ * remember to extend. (One id is named further down, in the trace-ingest test,
+ * because that test is about one specific monitor's sentence rather than about
+ * the population.)
+ */
+const idsOf = (alerts) => alerts.map((a) => a.id).sort();
+
+/**
+ * The inventory this build produces when every question can be answered.
+ *
+ * Two controls on the fixture itself, because a reference set that silently
+ * collapsed would make every comparison below pass by agreeing with nothing:
+ *
+ *   NOTHING REJECTED. `unknownFrom()` is the only thing in lib/alerts.ts that
+ *   writes "Could not be evaluated", and it is reached only from a settled
+ *   REJECTION — so one of those sentences in the reference run means the
+ *   fixture is not healthy and the comparison is between two blind runs.
+ *   (The sandbox pair reports `unknown` here, because EVESTACK_DOCKER_SOCKET is
+ *   not set on a test machine and the containers on it were genuinely never
+ *   looked at. That is a measured verdict from a source that answered, it does
+ *   not go through `unknownFrom`, and it is not what this is testing.)
+ *
+ *   A FLOOR. Nine checks ship today. The number is a floor and not an
+ *   enumeration: it never needs raising when a tenth alert is added, and it
+ *   fails loudly if the sweep ever stops producing the ones already here.
+ */
+async function healthyAlertIds() {
+  installStubPool(HEALTHY_DATABASE);
+  const alerts = await evaluateAlerts();
+  assert.deepEqual(
+    alerts.filter((a) => /Could not be evaluated/.test(a.detail)).map((a) => `${a.id}: ${a.detail}`),
+    [],
+    "the reference database is not answering, so it cannot say what a healthy sweep produces",
+  );
+  assert.ok(
+    alerts.length >= 9,
+    `the reference run produced only ${alerts.length} alerts: ${alerts.map((a) => a.id)}`,
+  );
+  return idsOf(alerts);
+}
+
+/**
  * The strongest single statement of the rule available in this codebase.
  *
  * Nine checks fold a database answer into `ok` / `firing` / `unknown`, and
@@ -81,14 +187,37 @@ afterEach(() => uninstallStubPool());
  * most dangerous thing an alerting page can do". This turns the whole database
  * off and asserts that header.
  *
- * Enumerated from the RESULT, never from a list here, so alert number ten is
- * covered by the same line on the day it is written.
+ * ── Both halves, because the property is two-sided ───────────────────────────
+ *
+ * An alert that cannot answer must STILL BE THERE and must SAY it could not
+ * look. Asserting only the second half is a guard against one spelling of the
+ * defect and no guard at all against the other, which was measured: a tenth
+ * alert written as
+ *
+ *     try { out.push(...) } catch { /* table not created yet *\/ }
+ *
+ * disappears from the list entirely the moment its query throws, reports
+ * nothing, and passed every assertion in this file untouched — while the same
+ * alert written to report `state: "ok"` from its catch failed two of them. The
+ * enumerated nine-id list in test/alerts-evaluate.test.mjs is not the guard
+ * either: it fires on an id being ADDED, so an author who adds their new id to
+ * it makes the whole suite green with an alert that vanishes whenever its table
+ * is missing.
+ *
+ * So the identical set is asserted against a run that COULD answer, and the
+ * expected list comes from that run rather than from a literal here.
  */
-test("with the database refusing every query, not one alert says ok", async () => {
+test("with the database refusing every query, every alert is still there and none says ok", async () => {
+  const expected = await healthyAlertIds();
+
   installStubPool([[/.*/, new Error("57P01: terminating connection, administrator command")]]);
   const alerts = await evaluateAlerts();
 
-  assert.ok(alerts.length >= 9, `only ${alerts.length} alerts were produced`);
+  assert.deepEqual(
+    idsOf(alerts),
+    expected,
+    "an alert the healthy sweep produces is missing from the blind one: it did not report that it could not look, it reported nothing",
+  );
   assert.deepEqual(
     alerts.filter((a) => a.state === "ok").map((a) => `${a.id}: ${a.detail}`),
     [],
@@ -104,14 +233,23 @@ test("with the database refusing every query, not one alert says ok", async () =
  * `evestack.schedule_runs` are all created lazily, so "the relation is missing"
  * is a NORMAL state the code has explicit handling for, and explicit handling
  * for an absent table is exactly where "absent" gets quietly rendered as
- * "empty, therefore fine".
+ * "empty, therefore fine" — or, as the mutation above records, quietly dropped
+ * from the page altogether by a `catch` that only meant to be forgiving.
  */
-test("with every evestack table missing, not one alert says ok", async () => {
+test("with every evestack table missing, every alert is still there and none says ok", async () => {
+  const expected = await healthyAlertIds();
+
   installStubPool([
     [/evestack\./, undefinedTable("evestack.fact_turn")],
     [/.*/, undefinedTable("workflow.workflow_runs")],
   ]);
   const alerts = await evaluateAlerts();
+
+  assert.deepEqual(
+    idsOf(alerts),
+    expected,
+    "an alert vanished when its table did not exist, which is the state this whole file is about",
+  );
   assert.deepEqual(
     alerts.filter((a) => a.state === "ok").map((a) => a.id),
     [],
@@ -473,6 +611,78 @@ test("/api/health does not answer ok against a database this build cannot read",
     ]);
     const healthy = await (await GET()).json();
     assert.equal(healthy.ok, true, `refused a healthy database: ${JSON.stringify(healthy)}`);
+  } finally {
+    for (const key of ["EVESTACK_AUTH_USER", "EVESTACK_AUTH_PASSWORD"]) {
+      if (previous[key] === undefined) delete process.env[key];
+      else process.env[key] = previous[key];
+    }
+  }
+});
+
+/**
+ * The same rule applied to the sentence the degraded payload adds: a page it
+ * calls still-working is one this build actually serves.
+ *
+ * `available` carried `/charts` for as long as the list existed, under a comment
+ * asserting that "each entry was checked against the code, not assumed". It had
+ * not been: app/charts/page.tsx calls `notFound()` when NODE_ENV is production,
+ * so the one page the payload named as a consolation prize was the one page that
+ * 404s on every image anyone can pull. Nothing was wrong with the mechanism —
+ * the list is hand-written and nothing read it, so "checked" was a claim about
+ * an author's memory, and this file exists because that is not a check.
+ *
+ * ── What is detected, and what is not ────────────────────────────────────────
+ *
+ * The lists are read out of the ROUTE's own answer rather than restated here, so
+ * a sixth entry is walked the day it is added. Each is resolved to the file that
+ * serves it, which is the assertion that would have failed on `/charts` if that
+ * page had simply not existed.
+ *
+ * The production check is a heuristic and is written down as one: a page source
+ * containing both `notFound(` and the literal `"production"` is taken to remove
+ * itself from a production build. It cannot see a page that 404s for a reason
+ * spelled some other way, and reading the branch properly needs a parser rather
+ * than a regex. It does catch the shape the defect took, and every entry in
+ * these lists is a static page today.
+ */
+test("every page the degraded payload calls available is one this build serves", async () => {
+  const previous = { ...process.env };
+  process.env.EVESTACK_AUTH_USER = "guard";
+  process.env.EVESTACK_AUTH_PASSWORD = "guard-password";
+  try {
+    const { GET } = await import("../app/api/health/route.ts");
+    installStubPool([
+      ["to_regclass('workflow.workflow_runs')", [{ present: "workflow.workflow_runs" }]],
+      ["to_regclass('evestack.schema_version')", [{ present: "evestack.schema_version" }]],
+      ["SELECT component, version FROM evestack.schema_version", [{ component: "spans", version: 99 }]],
+    ]);
+    const degraded = await (await GET()).json();
+
+    // The fixture control: with no lists in the payload the loop below would
+    // assert nothing at all and report a pass.
+    const claimed = [...(degraded.available ?? []), ...(degraded.degradedButUp ?? [])];
+    assert.ok(
+      claimed.length >= 5,
+      `the degraded payload claims only ${claimed.length} working pages: ${JSON.stringify(degraded)}`,
+    );
+
+    for (const entry of claimed) {
+      // "/ (overview)" — the annotation is for the reader, the path is the claim.
+      const path = entry.replace(/\s*\(.*\)\s*$/, "").trim();
+      const dir = new URL(`../app${path === "/" ? "/" : `${path}/`}`, import.meta.url);
+      const served = ["page.tsx", "route.ts"]
+        .map((file) => new URL(file, dir))
+        .find((at) => existsSync(at));
+      assert.ok(served, `the degraded payload names ${entry}, and app${path} serves nothing`);
+
+      const source = readFileSync(served, "utf8");
+      assert.ok(
+        !(source.includes("notFound(") && source.includes('"production"')),
+        `${entry} is listed as working, but ${served.pathname.split("/app/")[1]} removes itself ` +
+          "from a production build — the payload is advertising a 404 to an operator who has " +
+          "just been told half their dashboard is down",
+      );
+    }
   } finally {
     for (const key of ["EVESTACK_AUTH_USER", "EVESTACK_AUTH_PASSWORD"]) {
       if (previous[key] === undefined) delete process.env[key];

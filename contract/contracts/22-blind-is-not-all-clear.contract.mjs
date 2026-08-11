@@ -69,12 +69,46 @@ const BEHAVIOURAL = "packages/dashboard/test/blind-is-not-all-clear.test.mjs";
  * stop covering alert number ten, which is the whole failure this contract
  * exists to prevent: a guard that has to be remembered is a guard that will not
  * be.
+ *
+ * The alert sweep needs two of them because the property is two-sided, and it
+ * was measured one-sided: a tenth alert reporting `state: "ok"` from its catch
+ * failed the first fragment's assertions, while the same alert written as
+ * `try { out.push(...) } catch {}` — gone from the list entirely the moment its
+ * query throws — passed every one of them. `healthyAlertIds()` is the fix: the
+ * blind run's id set is compared against a run that COULD answer, so an alert
+ * that vanishes is as loud as an alert that lies.
  */
 const POPULATION_ASSERTIONS = [
   ['a.state === "ok"', "every alert produced, not a list of alert ids"],
+  ["healthyAlertIds()", "every alert still being PRESENT when blind, against a run that answered"],
   ["declaredHealths()", "every SessionHealth read out of lib/fleet.ts, not restated"],
   ["UNFINISHED_OUTCOMES", "every unfinished outcome, read from the metric catalog"],
 ];
+
+/**
+ * The same file with its prose removed, because prose is not a guard.
+ *
+ * `t.contains` is a raw substring search over the whole file, comments and all,
+ * and 182 of that file's 482 lines are comment. Measured on this checkout:
+ * replacing it with a comment-only stub quoting the fragments above left this
+ * contract at 18/18 PASS and the suite at 23 contracts, 530 assertions, all
+ * green — and `node --test` scores a file containing no tests as ONE PASSING
+ * TEST, so the dashboard suite passed too. The guard had been deleted and both
+ * of the things that watch it reported green.
+ *
+ * Block comments and whole-line `//` comments go. A trailing comment after code
+ * on the same line stays, because telling one from a `//` inside a string or a
+ * regex literal needs a parser rather than a regex — and that residual is
+ * narrow, since the fragment would have to sit on a line already carrying code.
+ * The test count asserted below is what closes the case the stub actually took.
+ */
+function code(source) {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, "\n")
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("//"))
+    .join("\n");
+}
 
 export default {
   id: "health/a-signal-that-could-not-look-never-reads-as-all-clear",
@@ -108,8 +142,20 @@ export default {
     if (guard !== null) {
       const glob = read("packages/dashboard/package.json");
       t.contains(glob, "test/*.test.mjs", "the dashboard test script still globs test/*.test.mjs");
+
+      const source = code(guard);
+
+      // A floor, not a count. It never needs raising when a test is added, and
+      // it is the one thing a file with no tests in it cannot satisfy — which
+      // is the state `node --test` reports as one passing test.
+      const declared = source.match(/^test\(/gm) ?? [];
+      t.ok(declared.length >= 11, `${BEHAVIOURAL} still declares tests, not just prose`, {
+        expected: "at least 11 top-level test() declarations",
+        actual: `${declared.length}. A file with none scores as ONE PASSING TEST under node --test.`,
+      });
+
       for (const [fragment, why] of POPULATION_ASSERTIONS) {
-        t.contains(guard, fragment, `the guard still asserts over ${why}`);
+        t.contains(source, fragment, `the guard still asserts over ${why}`);
       }
     }
 

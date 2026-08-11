@@ -135,6 +135,17 @@ test("every check reports, even when nothing can be answered", async () => {
   // rather than taking the other eight with it — a page that renders nothing
   // because one check threw hides the seven that were fine and the one that was
   // firing.
+  //
+  // This list is an INVENTORY, and it is deliberately the one assertion in the
+  // alerting tests that has to be edited by hand: adding an alert should require
+  // saying so somewhere a reviewer reads. It is not the population guard, and it
+  // was mistaken for one. Nothing here throws, so an alert written as
+  // `try { out.push(...) } catch {}` is present in this run and absent only on a
+  // database that cannot answer — which this fixture is not. The author who adds
+  // their tenth id below therefore turns this file green and proves nothing about
+  // the state the alert exists for. test/blind-is-not-all-clear.test.mjs is where
+  // that is caught: it takes the id set from a run that COULD answer and demands
+  // the identical set from one that could not.
   const { alerts } = await evaluate();
   assert.deepEqual(
     [...alerts].map((alert) => alert.id).sort(),

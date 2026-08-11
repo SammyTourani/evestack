@@ -142,10 +142,26 @@ export async function GET(): Promise<Response> {
            * The rule, so these lists can be maintained rather than guessed at:
            * anything that applies sql/traces.sql or sql/facts.sql is refused,
            * and everything reading only the `workflow` tables is untouched.
-           * Each entry was checked against the code, not assumed — /charts is a
-           * static demo and stays up; /sessions calls refreshFacts() inside a
-           * try and degrades to blank fact columns; /sessions/[id] does not, so
-           * the detail view goes with the traces.
+           * /sessions calls refreshFacts() inside a try and degrades to blank
+           * fact columns; /sessions/[id] does not, so the detail view goes with
+           * the traces.
+           *
+           * `/charts` used to be the fifth entry in `available`, under a
+           * sentence claiming every entry here had been checked against the
+           * code and that /charts "is a static demo and stays up". Both halves
+           * were false. app/charts/page.tsx:103 calls notFound() when NODE_ENV
+           * is production — deliberately, it is a development gallery — so the
+           * page this payload was advertising answers 404 on every image anyone
+           * can pull, which the branch review proved on the published image, on
+           * the merged image and on a container built by hand. It is not
+           * degraded and it is not available; in a production build it is not
+           * there at all, so it belongs to none of these lists.
+           *
+           * The claim of having been checked was the more expensive half of
+           * that defect, because it is the reason nobody checked. So the claim
+           * is gone and a check stands in its place:
+           * test/blind-is-not-all-clear.test.mjs reads these lists out of this
+           * route's own answer and opens the file that serves each one.
            */
           unavailable: [
             "/traces",
@@ -156,7 +172,7 @@ export async function GET(): Promise<Response> {
             "/api/ingest/v1/traces",
           ],
           degradedButUp: ["/sessions"],
-          available: ["/monitors", "/approvals", "/schedules", "/evals", "/charts"],
+          available: ["/monitors", "/approvals", "/schedules", "/evals"],
           error:
             `This dashboard is older than its database (${ahead.join("; ")}). Nothing was ` +
             "migrated — an older image must leave a newer database alone. Pages that read " +
