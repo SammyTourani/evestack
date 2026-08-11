@@ -36,6 +36,13 @@ export async function GET(): Promise<Response> {
           tokens: s.includingSubagents.inputTokens + s.includingSubagents.outputTokens,
           costUsd: s.includingSubagents.costUsd,
           models: s.includingSubagents.models,
+          // Ships beside costUsd, never instead of it. A non-empty list means
+          // costUsd covers only part of what ran and the rest is unknown — not
+          // free. Without it a monitor reading `costUsd: 0` cannot tell an
+          // uncatalogued model from Ollama, because costUsd() returns 0 for
+          // both, and the product's stated promise is that an unpriced model is
+          // "never a silent $0.00". This is the surface that promise was false on.
+          unpricedModels: s.includingSubagents.unpricedModels,
         })),
       },
       { headers },

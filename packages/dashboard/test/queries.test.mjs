@@ -4,6 +4,7 @@ import {
   encodeSessionCursor,
   nextSessionCursor,
   parseSessionCursor,
+  priceOf,
   toTurnRow,
 } from "../lib/queries.ts";
 
@@ -155,4 +156,72 @@ test("tools offered is null when untagged, while tokens are zero when untagged",
   );
   assert.equal(tagged.toolsOffered, 12);
   assert.equal(tagged.inputTokens, 40);
+});
+
+/**
+ * The one about lying, on the JSON surface.
+ *
+ * `costUsd()` returns 0 for a model the catalog has never heard of, which is
+ * the same number it returns for one that is genuinely free. `/costs` and the
+ * `/sessions` page already tell those apart by reading `fact_turn.priced`;
+ * `lib/queries.ts` did not, so `listSessions()` and `/api/health/detail` — the
+ * surface a monitor polls — reported an unknown bill as a confident $0.00,
+ * against a product promise that an unpriced model is "never a silent $0.00".
+ *
+ * These assert the distinction directly rather than through a live database,
+ * because the guarantee is arithmetic and a guarantee that can only be checked
+ * where Postgres is running is a guarantee nobody runs.
+ */
+const UNCATALOGUED = "probe-vendor/no-catalog-entry-v0";
+const part = (model, input = 1_000_000, output = 1_000_000) =>
+  `${model}|${input}|${output}|0|0`;
+
+test("an uncatalogued model costs nothing AND says it was never priced", () => {
+  const { costUsd, unpricedModels } = priceOf([part(UNCATALOGUED)]);
+  assert.equal(costUsd, 0, "costUsd() has no price to apply, so the sum is 0");
+  assert.deepEqual(
+    unpricedModels,
+    [UNCATALOGUED],
+    "and that 0 must arrive carrying the reason it is 0",
+  );
+});
+
+test("a genuinely free model costs nothing and is NOT called unpriced", () => {
+  // `ollama/*` is in the catalog at zero, so this 0 is a real $0.00 rather
+  // than a missing price. If this ever reports unpriced, every local install
+  // grows a permanent false warning.
+  const { costUsd, unpricedModels } = priceOf([part("ollama/qwen3")]);
+  assert.equal(costUsd, 0);
+  assert.deepEqual(unpricedModels, []);
+});
+
+test("the two zeroes are distinguishable, which is the whole claim", () => {
+  const unknown = priceOf([part(UNCATALOGUED)]);
+  const free = priceOf([part("ollama/qwen3")]);
+  assert.equal(unknown.costUsd, free.costUsd, "the numbers are identical...");
+  assert.notDeepEqual(
+    unknown.unpricedModels,
+    free.unpricedModels,
+    "...so the number alone can never carry the difference",
+  );
+});
+
+test("a partly-priced session reports a real number and still names the gap", () => {
+  const { costUsd, unpricedModels } = priceOf([
+    part("openai/gpt-5-mini"),
+    part(UNCATALOGUED),
+  ]);
+  assert.ok(costUsd > 0, "the priced half is real spend and must be reported");
+  assert.deepEqual(
+    unpricedModels,
+    [UNCATALOGUED],
+    "a positive total is the more dangerous case: it looks complete",
+  );
+});
+
+test("the same model twice is named once, and an empty session names nothing", () => {
+  assert.deepEqual(priceOf([part(UNCATALOGUED), part(UNCATALOGUED)]).unpricedModels, [
+    UNCATALOGUED,
+  ]);
+  assert.deepEqual(priceOf([]).unpricedModels, []);
 });

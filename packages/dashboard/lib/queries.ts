@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { query } from "./db";
-import { costUsd } from "./pricing";
+import { costUsd, isPriced } from "./pricing";
 import { ensureTraceSchema } from "./traces";
 
 /**
@@ -50,6 +50,20 @@ export interface SessionRollup {
   cacheReadTokens: number;
   models: string[];
   costUsd: number;
+  /**
+   * The models in this rollup that the catalog has no price for. Empty means
+   * `costUsd` covers everything that ran; non-empty means it covers only part
+   * and the rest is unknown, not free.
+   *
+   * It travels WITH the number rather than being derivable from `models`,
+   * because every caller that forgot to derive it published a confident zero.
+   * `costUsd()` returns 0 for a model it has never heard of, which is
+   * byte-identical to what it returns for one that is genuinely free — on the
+   * $0 Ollama path both are 0 and only one of them is true. `/costs` and the
+   * `/sessions` page already read `fact_turn.priced` and say so; this is the
+   * same fact on the JSON surface a monitor polls, which had no way to ask.
+   */
+  unpricedModels: string[];
 }
 
 export interface SessionRow extends SessionRollup {
@@ -484,13 +498,13 @@ export async function listSessions(
     outputTokens: NUM(r.output_tokens),
     cacheReadTokens: NUM(r.cache_read_tokens),
     models: (r.models as string[]) ?? [],
-    costUsd: sumCostParts((r.cost_parts as string[]) ?? []),
+    ...priceOf((r.cost_parts as string[]) ?? []),
     includingSubagents: {
       inputTokens: NUM(r.all_input_tokens),
       outputTokens: NUM(r.all_output_tokens),
       cacheReadTokens: NUM(r.all_cache_read_tokens),
       models: (r.all_models as string[]) ?? [],
-      costUsd: sumCostParts((r.all_cost_parts as string[]) ?? []),
+      ...priceOf((r.all_cost_parts as string[]) ?? []),
     },
     cursor: encodeSessionCursor({
       createdAt: String(r.cursor_created_at),
@@ -686,12 +700,17 @@ export async function getSession(sessionId: string): Promise<Omit<SessionRow, "c
 }
 
 function rollup(runs: TurnRow[]): SessionRollup {
+  const models = [...new Set(runs.map((t) => t.model).filter((m): m is string => !!m))];
   return {
     inputTokens: runs.reduce((s, t) => s + t.inputTokens, 0),
     outputTokens: runs.reduce((s, t) => s + t.outputTokens, 0),
     cacheReadTokens: runs.reduce((s, t) => s + t.cacheReadTokens, 0),
-    models: [...new Set(runs.map((t) => t.model).filter((m): m is string => !!m))],
+    models,
     costUsd: runs.reduce((s, t) => s + t.costUsd, 0),
+    // This path prices per turn rather than through sumCostParts, so the set is
+    // re-derived here. Same question, same answer: which of the models that
+    // actually ran is missing from the catalog.
+    unpricedModels: models.filter((m) => !isPriced(m)),
   };
 }
 
@@ -702,6 +721,8 @@ export async function getTotals(): Promise<{
   inputTokens: number;
   outputTokens: number;
   costUsd: number;
+  /** See `SessionRollup.unpricedModels`. Same rule, install-wide. */
+  unpricedModels: string[];
 }> {
   const [row] = await query<Record<string, unknown>>(
     `
@@ -753,7 +774,7 @@ export async function getTotals(): Promise<{
     turns: NUM(row?.turns),
     inputTokens: NUM(row?.input_tokens),
     outputTokens: NUM(row?.output_tokens),
-    costUsd: sumCostParts((row?.cost_parts as string[]) ?? []),
+    ...priceOf((row?.cost_parts as string[]) ?? []),
   };
 }
 
@@ -765,11 +786,33 @@ export async function getTotals(): Promise<{
  * once the billable-input clamp has been applied, which is why getTotals()
  * applies that clamp in SQL before it groups.
  */
-function sumCostParts(parts: string[]): number {
+/**
+ * The two fields that must never travel apart, shaped for a spread.
+ *
+ * Returning them together is the point: a caller cannot take the number and
+ * leave the caveat, because there is one expression and it yields both.
+ *
+ * Exported for `test/queries.test.mjs`. The guarantee this function carries —
+ * that a zero from an uncatalogued model is distinguishable from a zero from a
+ * free one — was previously only checkable against a live Postgres, so on any
+ * machine without one it was checkable nowhere.
+ */
+export function priceOf(parts: string[]): { costUsd: number; unpricedModels: string[] } {
+  const { usd, unpriced } = sumCostParts(parts);
+  return { costUsd: usd, unpricedModels: unpriced };
+}
+
+function sumCostParts(parts: string[]): { usd: number; unpriced: string[] } {
   let total = 0;
+  const unpriced = new Set<string>();
   for (const part of parts) {
     const [model, input, output, cacheRead, cacheWrite] = part.split("|");
     total += costUsd(model ?? null, NUM(input), NUM(output), NUM(cacheRead), NUM(cacheWrite));
+    // Asked per element, not per distinct model afterwards, because this is the
+    // only place that still holds the exact string costUsd() was given. A caller
+    // reconstructing it from `models` is the indirection that let a confident
+    // zero out in the first place.
+    if (model && !isPriced(model)) unpriced.add(model);
   }
-  return total;
+  return { usd: total, unpriced: [...unpriced] };
 }
