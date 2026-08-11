@@ -31,9 +31,61 @@ function sink() {
 
 const noEnv = () => undefined;
 
-/** A stub agent. `events` are written to the stream route, one JSON per line. */
+/**
+ * How small a piece the stream is written in. Every event line here is longer
+ * than this, so no event can arrive whole.
+ */
+const PIECE_BYTES = 13;
+
+/**
+ * A stub agent. `events` are written to the stream route, one JSON per line, in
+ * pieces that are guaranteed to land as separate chunks on the client.
+ *
+ * ─ Why this is gated on the reader rather than just written twice ────────────
+ *
+ * It used to be `res.write(payload.slice(0, 7)); res.write(payload.slice(7))`,
+ * with a comment saying the parser "has to reassemble events split across chunk
+ * boundaries". Measured: those two writes COALESCE. Node corks the response for
+ * the duration of the handler, so an instrumented client received ONE 442-byte
+ * chunk and the reassembly this fixture exists to exercise never happened — the
+ * naive `split("\n")` it was written to forbid would have passed.
+ *
+ * A sleep between the writes does split them, on this machine, today. Instead
+ * the server writes the next piece only once the client has actually read the
+ * previous one: the stub and the client are in the same process, so that is a
+ * promise rather than a timer. It cannot coalesce, and `seen.chunks` /
+ * `seen.largest` record what the client really received, so a test can assert
+ * the split happened rather than assume it. A fixture that quietly stops
+ * splitting is the same defect as the one it replaced.
+ */
 async function withAgent(events, run, { status = 202, body } = {}) {
-  const seen = { authorization: null, message: null };
+  const seen = { authorization: null, message: null, chunks: 0, largest: 0 };
+
+  // Resolved by the counting fetch below, once per chunk delivered.
+  let delivered = () => {};
+  const read = () => new Promise((resolve) => { delivered = resolve; });
+
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const response = await realFetch(input, init);
+    if (!String(input).endsWith("/stream") || !response.body) return response;
+    const source = response.body.getReader();
+    const counted = new ReadableStream({
+      async pull(controller) {
+        const { done, value } = await source.read();
+        if (done) {
+          controller.close();
+          return;
+        }
+        seen.chunks += 1;
+        seen.largest = Math.max(seen.largest, value.byteLength);
+        controller.enqueue(value);
+        delivered();
+      },
+    });
+    return new Response(counted, { status: response.status, headers: response.headers });
+  };
+
   const server = createServer((req, res) => {
     if (req.method === "POST" && req.url === "/eve/v1/session") {
       seen.authorization = req.headers.authorization ?? null;
@@ -48,13 +100,18 @@ async function withAgent(events, run, { status = 202, body } = {}) {
     }
     if (req.url?.startsWith("/eve/v1/session/") && req.url.endsWith("/stream")) {
       res.writeHead(200, { "content-type": "application/x-ndjson" });
-      // Deliberately not one line per write: the parser has to reassemble
-      // events split across chunk boundaries, which is the normal case on a
-      // real socket and the thing a naive split("\n") gets wrong.
-      const payload = events.map((e) => `${JSON.stringify(e)}\n`).join("");
-      res.write(payload.slice(0, 7));
-      res.write(payload.slice(7));
-      res.end();
+      const payload = Buffer.from(events.map((e) => `${JSON.stringify(e)}\n`).join(""), "utf8");
+      void (async () => {
+        for (let at = 0; at < payload.length; at += PIECE_BYTES) {
+          // Armed BEFORE the write, so the resolve cannot be missed.
+          const arrived = read();
+          res.write(payload.subarray(at, at + PIECE_BYTES));
+          // The race is a deadlock guard, not the mechanism: a client that never
+          // reads should make its own test fail, not hang the suite.
+          await Promise.race([arrived, new Promise((resolve) => setTimeout(resolve, 250))]);
+        }
+        res.end();
+      })();
       return;
     }
     res.writeHead(404).end();
@@ -64,6 +121,7 @@ async function withAgent(events, run, { status = 202, body } = {}) {
   try {
     return await run(base, seen);
   } finally {
+    globalThis.fetch = realFetch;
     server.close();
   }
 }
@@ -78,12 +136,26 @@ test("assembles the reply from message.appended deltas", async () => {
     { type: "message.completed", data: { message: "Postgres on your own machine.", finishReason: "stop" } },
     { type: "turn.completed", data: {} },
   ];
-  await withAgent(events, async (base) => {
+  await withAgent(events, async (base, seen) => {
     const out = sink();
     const reply = await streamReply(base, "sess_123", noEnv, out);
     assert.equal(reply.text, "Postgres on your own machine.");
     assert.equal(reply.failed, null);
     assert.match(out.text, /Postgres on your own machine\./);
+
+    // The precondition, asserted rather than assumed. Not "there was more than
+    // one chunk" — that is satisfied by a split anywhere, including between two
+    // whole events — but "the largest chunk the client received was smaller than
+    // the shortest event", which can only be true if every single one of them
+    // spanned a boundary. Without this the test silently degrades into "one
+    // write, one chunk, parser never exercised" the moment the stub's writes
+    // coalesce again. Which is how it shipped.
+    const shortest = Math.min(...events.map((event) => Buffer.byteLength(`${JSON.stringify(event)}\n`)));
+    assert.ok(
+      seen.chunks > 1 && seen.largest < shortest,
+      `${seen.chunks} chunk(s), largest ${seen.largest} bytes against a shortest event of ${shortest}: ` +
+        "at least one event arrived whole, so the reassembly was not exercised",
+    );
   });
 });
 
