@@ -36,6 +36,19 @@ export const site = {
      noun a reader has to decode; this leads with the verb, which is the thing
      they came to find out. */
   tagline: "Run AI agents on your own machine.",
+  /* The same sentence, split where the hero should break it.
+
+     Two lines rather than one because at desktop width the headline ran nearly
+     the full measure as a single line, which reads as a banner rather than as
+     a statement, and left the 3D stack behind it with nowhere to sit. Breaking
+     after "agents" puts the subject on the first line and the promise on the
+     second.
+
+     Kept as a SEPARATE field rather than as `<br>` in the string, because
+     `tagline` is the locked one-liner shared with the README, both npm
+     descriptions and the OG card, and none of those want markup. A test
+     asserts these join back to it exactly, so the two cannot drift. */
+  taglineLines: ["Run AI agents", "on your own machine."],
   /* Was a list of eight nouns, six of them jargon: "Durable sessions,
      sandboxing, memory, approvals, schedules, 1,070 tool integrations, and a
      dashboard that drives the agent. One command scaffolds it and offers to
@@ -45,8 +58,22 @@ export const site = {
      who does not already run this kind of infrastructure cannot tell what any
      of it buys them. Same four promises, said as a person would say them, and
      each one is a thing you can picture. */
+  /* Cut from 37 words to 19 (2026-08-11). It had become a paragraph: four
+     clauses listing the sandbox, the database and the dashboard, all of which
+     have their own section further down and none of which a reader needs
+     before deciding whether to keep scrolling.
+
+     What survives is the locked one-liner's second sentence, then the two
+     facts that actually differentiate: it is free and open source, and the
+     data stays somewhere you control.
+
+     NOT "nothing leaves your machine", which would be the punchier line and is
+     false. Prompts go to whichever model provider you configured unless you
+     run Ollama, and Composio is hosted when you enable it. llms.txt is
+     explicit that the stack must never be described as fully local without
+     that caveat, and a hero is the worst place to start owing one. */
   subhead:
-    "One command gives you the whole stack. Free and open source, with your conversations in a database you own, code running in a safe sandbox, and a dashboard that lets you watch every agent and approve anything risky before it happens.",
+    "One command gives you the whole stack. Free, open source, and your data stays in a database you own.",
   /* `eyebrow` and `why` were both removed 2026-08-11, one day after being
      added, at Sammy's call. The eyebrow was a mono all-caps strip above the
      headline and the why was a grey line under the subhead; together they put

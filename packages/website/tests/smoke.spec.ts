@@ -95,6 +95,13 @@ test.describe("evestack landing page", () => {
     const hero = page.locator("#hero");
     await expect(hero.getByRole("heading", { level: 1 })).toContainText("Run AI agents");
     await expect(hero.locator('[data-hero="sub"]')).toContainText(/open source/i);
+
+    /* The headline renders as two spans so it breaks where copy.ts says. They
+       must still be the locked one-liner: it is shared verbatim with the
+       README, both npm descriptions and the OG card, and a split field is
+       exactly the kind of thing that gets edited on one side only. */
+    expect(site.taglineLines.join(" ")).toBe(site.tagline);
+    await expect(hero.locator("h1 > span")).toHaveCount(site.taglineLines.length);
     // …and the two cut elements stay cut.
     await expect(hero.locator('[data-hero="eyebrow"]')).toHaveCount(0);
     await expect(hero.locator('[data-hero="why"]')).toHaveCount(0);

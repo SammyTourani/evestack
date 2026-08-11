@@ -53,15 +53,41 @@ export function Hero() {
         />
 
         <HeroClient>
+          {/* Two lines, broken where copy.ts says rather than wherever the
+              measure happens to run out.
+
+              `block` per line instead of a <br>: a break element is invisible
+              to `text-wrap: balance` and to any future SplitText, and it puts
+              the line structure in the markup where it can be styled. The
+              spans carry no width of their own, so each line still wraps on
+              its own if a narrow viewport needs it to.
+
+              text-balance moves from the h1 to each span. On the h1 it would
+              re-break the whole headline and undo the split; on a span it only
+              acts when that line is too wide for the viewport, which is a
+              phone. Without it "on your own machine." breaks to "on your own"
+              plus an orphaned "machine."; with it the two halves even out. */}
           <h1
             id="hero-heading"
-            className="max-w-4xl text-balance text-heading-40 sm:text-heading-48 lg:text-heading-56"
+            className="max-w-4xl text-heading-40 sm:text-heading-48 lg:text-heading-56"
           >
-            {site.tagline}
+            {site.taglineLines.map((line, i) => (
+              <span key={line} className="block text-balance">
+                {line}
+                {/* The space belongs to the text, not the layout. Two adjacent
+                    block spans concatenate with nothing between them, so the
+                    accessible name came out "Run AI agentson your own machine."
+                    and that is what a screen reader would have said. A trailing
+                    space collapses in a block box, so it costs nothing visually
+                    and restores the sentence. Caught by the smoke test that
+                    compares the h1 against the canonical tagline. */}
+                {i < site.taglineLines.length - 1 ? " " : null}
+              </span>
+            ))}
           </h1>
           <p
             data-hero="sub"
-            className="max-w-2xl text-balance text-copy-16 text-gray-900 md:text-copy-18"
+            className="max-w-xl text-balance text-copy-16 text-gray-900 md:text-copy-18"
           >
             {site.subhead}
           </p>
