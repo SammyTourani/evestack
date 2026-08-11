@@ -29,8 +29,8 @@
  */
 import { spawn } from "node:child_process";
 
-import { readFileSync } from "node:fs";
-import { basename } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 
 import {
   C,
@@ -466,6 +466,72 @@ if (asJson) {
  * Any check not named here still prints, under "other": a group table that
  * silently drops a check would be the worst possible bug in a verifier.
  */
+/* -------------------------------------------------------------------------- */
+/* the source-root fence                                                       */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * The scaffolder fenced this project so eve's dev watcher cannot reach past it.
+ * NOTHING HAS CHECKED SINCE.
+ *
+ * eve resolves its development source root by walking UP from the project until
+ * it finds a `.git` or `pnpm-workspace.yaml`, and `WORKSPACE_METADATA_FILE_NAMES`
+ * includes `.npmrc` — so if the walk leaves this directory it will find, watch,
+ * and COPY the first `.npmrc` above it, auth token included, into
+ * `.eve/dev-runtime/snapshots/`. On a machine whose home directory is a dotfiles
+ * repo that is `~/.npmrc`, and copies accumulate one per rebuild.
+ *
+ * `create` and `attach` both run `git init` to stop that, and a test now asserts
+ * on the CONTENT of eve's copy plan rather than on a `.git` existing. But both
+ * can only fence at the moment they run. Four ordinary things reopen it and none
+ * of them says so: deleting `.git`, extracting the project from a tarball,
+ * scaffolding with an older create-evestack, and moving the project under a
+ * parent that has its own marker. eve logs nothing when its source root leaves
+ * the project, so the first sign is a credential sitting in a directory nobody
+ * opens.
+ *
+ * A check is cheap and the failure is silent, which is the combination that
+ * earns one.
+ */
+{
+  const projectRoot = process.cwd();
+  const MARKERS = [".git", "pnpm-workspace.yaml"];
+  const hasMarker = (dir) => MARKERS.some((m) => existsSync(join(dir, m)));
+
+  // The first marker at or above the project — eve stops at the first one it
+  // finds, so the first is the only one that matters.
+  let found = null;
+  for (let dir = resolve(projectRoot); ; dir = dirname(dir)) {
+    if (hasMarker(dir)) { found = dir; break; }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+  }
+
+  if (found === resolve(projectRoot)) {
+    pass("fence", "eve's dev watcher stops at this project");
+  } else if (found === null) {
+    warn(
+      "fence",
+      "no .git here or above, so eve's dev watcher will walk to your home directory and copy any .npmrc it finds there",
+      "git init",
+    );
+  } else if (existsSync(join(found, ".npmrc"))) {
+    warn(
+      "fence",
+      `eve's dev watcher resolves to ${found}, which holds an .npmrc — it will be copied into .eve/dev-runtime/snapshots/, credentials included`,
+      "git init",
+    );
+  } else {
+    // The fence is loose but there is nothing above to lose. Reported as a pass
+    // rather than a warning on purpose: running this inside the evestack
+    // monorepo, or in any pnpm workspace, legitimately resolves to the workspace
+    // root, and a line that is yellow every single time is a line people learn
+    // to skip — which is what would make the yellow one above invisible on the
+    // day it matters.
+    pass("fence", `eve's dev watcher resolves to ${found}, which holds no .npmrc to copy`);
+  }
+}
+
 const GROUPS = [
   ["foundation", ["config", "docker", "postgres", "schema", "pgvector"]],
   ["model", ["model", "memory"]],
