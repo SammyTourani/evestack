@@ -8,9 +8,17 @@ import { cn } from "@/lib/utils";
 export function SpotlightCard({
   className,
   children,
+  /* The lit colour, and the radius it carries. Defaults are the neutral grey
+     lift the bento has always used — §09's path cards tint theirs toward the
+     accent that column owns, which is the whole reason this is a prop and not
+     a second component. Any CSS colour works; pass it with its own alpha. */
+  spotlight = "var(--ds-gray-200)",
+  radius = 240,
 }: {
   className?: string;
   children: React.ReactNode;
+  spotlight?: string;
+  radius?: number;
 }) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -30,8 +38,7 @@ export function SpotlightCard({
         aria-hidden
         className="pointer-events-none absolute inset-0 z-0 opacity-0 transition-opacity duration-300 group-hover:opacity-100"
         style={{
-          background:
-            "radial-gradient(240px circle at var(--mx, 50%) var(--my, 50%), var(--ds-gray-200), transparent 70%)",
+          background: `radial-gradient(${radius}px circle at var(--mx, 50%) var(--my, 50%), ${spotlight}, transparent 70%)`,
         }}
       />
       <div className="relative z-10 h-full">{children}</div>

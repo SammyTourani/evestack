@@ -10,19 +10,55 @@
 export const site = {
   name: "evestack",
   mark: "▚",
-  title: "evestack — the self-hosted distribution of eve",
+  title: "evestack: run AI agents on your own machine",
   /* One sentence, used verbatim on the site, the README, the GitHub description
      and npm. It was four different sentences across those four surfaces, so
      anyone arriving via npm → GitHub → here got re-pitched three times and
-     never landed on one idea. Change it in all four or in none. */
-  tagline: "The whole eve stack. On your own machine.",
-  /* Was "… One command." That was false and one `npx` away from being caught:
-     the scaffolder itself prints three more commands (packages/create-evestack/
-     index.mjs:245-251) and the dashboard is a separate clone (:258-260). The
-     count below is the literal number of shell lines in the README block. */
+     never landed on one idea. Change it in all four or in none.
+
+     REWRITTEN 2026-08-09 for launch. Was "The whole eve stack. On your own
+     machine." — which required the reader to already know what eve is before
+     they could evaluate this, and invited "so it's a stale copy of eve?" as
+     the first question. Only 18 distinct GitHub accounts have ever filed a
+     self-hosted eve issue, so leading with eve addresses ~18 people. The
+     cadence is deliberately unchanged; only the word that gated comprehension
+     moved. eve is now named where an engine belongs — under the hood, in
+     `attribution` below and in §Compare. See ~/Desktop/evestack-launchkit/
+     positioning.md. */
+  /* PLAIN-ENGLISH PASS 2026-08-09, at Sammy's direction, and it is the launch
+     kit's locked one-liner rather than a new invention:
+
+       "Run AI agents on your own machine. One command gives you the whole stack."
+
+     The page renders that one string across two elements — this is sentence
+     one, `subhead` opens with sentence two — so the five surfaces that must
+     carry the same one-liner still do. "The whole agent stack." led with a
+     noun a reader has to decode; this leads with the verb, which is the thing
+     they came to find out. */
+  tagline: "Run AI agents on your own machine.",
+  /* Was a list of eight nouns, six of them jargon: "Durable sessions,
+     sandboxing, memory, approvals, schedules, 1,070 tool integrations, and a
+     dashboard that drives the agent. One command scaffolds it and offers to
+     bring it up."
+
+     Nobody outside this repo says "scaffolds" or "bring it up", and a reader
+     who does not already run this kind of infrastructure cannot tell what any
+     of it buys them. Same four promises, said as a person would say them, and
+     each one is a thing you can picture. */
   subhead:
-    "Durable sessions, sandboxing, memory, approvals, schedules, 1,070 tool integrations, and a dashboard that drives the agent. One command scaffolds it and offers to bring it up.",
-  eyebrow: "Open source · Apache-2.0",
+    "One command gives you the whole stack. Your conversations are saved in a database you own, code runs in a safe sandbox, and a dashboard lets you watch every agent and approve anything risky before it happens.",
+  /* THE WHY, which the page did not have (added 2026-08-11).
+     A visitor read "Run AI agents on your own machine" and the next thought is
+     "why would I want that instead of a hosted one?". The answer was on the
+     page, but scattered across a features cell, another features cell, and a
+     comparison table five sections down, so the reader had to assemble it. One
+     line, at the moment the question forms.
+
+     It names the reader rather than the feature. "Your prompts stay private"
+     is a capability; "you do not want your prompts going through someone
+     else's servers" is a person. */
+  why: "For anyone who does not want their prompts, their data, or their agents running on someone else's servers.",
+  eyebrow: "Free and open source · Apache-2.0",
   command: "npx evestack create",
   github: "https://github.com/SammyTourani/evestack",
   /* Was "… tested against every eve release since 0.29.5". Every package here
@@ -30,7 +66,7 @@ export const site = {
      install against it, so the sentence claimed testing on a version the code
      refuses to run on. The contract suite is the real, checkable claim. */
   attribution:
-    "evestack is built on vercel/eve (Apache-2.0) and pinned to it by a contract suite that runs on every commit.",
+    "evestack is built on eve, Vercel's open source agent framework. A test suite checks every commit against it, so evestack tracks new eve releases instead of drifting away from them.",
   /* Footer, one line, small. Not a banner.
      The point of a non-affiliation notice is that somebody who wonders "is this
      an official Vercel thing?" can find the answer — so it goes where a reader
@@ -44,30 +80,38 @@ export const site = {
      from `vercel-gh-bot-3[bot]` and is still an unmerged draft, so neither is
      claimed here. Verify: `gh api repos/vercel/eve/issues/1658`. */
   byline: {
-    text: "Found vercel/eve#1658 — denying a tool approval permanently fails the durable session (p1, open).",
+    text: "Found vercel/eve#1658: denying a tool approval permanently breaks the session (p1, open).",
     href: "https://github.com/vercel/eve/issues/1658",
   },
 } as const;
 
+/* Four items, all words a visitor already knows. "One command" named the
+   section by its headline rather than by what is in it, "Observability" is a
+   term you only reach for once you already own the problem, and "Compare"
+   pointed at a table that now sits far enough down the page that advertising
+   it up here was sending people the wrong way first. */
 export const nav = [
-  { label: "One command", href: "#one-command" },
-  { label: "Compare", href: "#compare" },
+  { label: "Setup", href: "#one-command" },
   { label: "Features", href: "#features" },
-  { label: "Observability", href: "#observability" },
-  { label: "Quickstart", href: "#quickstart" },
+  { label: "Dashboard", href: "#observability" },
+  { label: "How it works", href: "#architecture" },
 ] as const;
 
 
-/* §9 stats — every value from FINDINGS.md (one real user message). */
-export const stats = [
-  { value: 38, suffix: "", label: "events persisted from one message" },
-  { value: 3, suffix: "", label: "runs per user message" },
-  { value: 0, prefix: "$", decimals: 2, label: "infrastructure cost", accent: true },
-  { value: 5, suffix: "", label: "span levels per model call" },
-] as const;
+/* THE STATS STRIP IS GONE (2026-08-09). It read: 38 events persisted from one
+   message · 3 runs per user message · $0.00 infrastructure · 5 span levels per
+   model call.
 
-/* The one sanctioned text-scramble stat. */
-export const scrambleStat = "100% yours";
+   Every number was true and traceable to FINDINGS.md, and three of the four
+   told a visitor nothing they could act on. "38 events persisted" is a fact
+   about our implementation, not a benefit; a reader cannot tell whether 38 is
+   good. Only the $0 landed, and that already has its own cell in the features
+   grid, stated as "no hosting bill" where it means something. A row of
+   impressive-looking numbers that do not survive the question "so what?" costs
+   a full section of scroll and buys nothing.
+
+   `scrambleStat` went with it; the one sanctioned text-scramble now lives
+   inline in observability.tsx, which is where it was actually rendered. */
 
 /* §3 terminal — mirrors the scaffolder's real flow: the exact next-steps
    create-evestack prints, the standard Postgres ready log, and the verified
@@ -94,7 +138,7 @@ export const scrambleStat = "100% yours";
 export const terminal = {
   prompt: "npx evestack create",
   lines: [
-    { text: "… prompts for a model key, writes .env.local, installs deps", kind: "dim" as const },
+    { text: "… asks a few questions, saves your settings, installs everything", kind: "dim" as const },
     { text: "docker compose up -d postgres", kind: "cmd" as const },
     { text: "evestack-postgres-1 | database system is ready to accept connections", kind: "ok" as const },
     { text: "npm run db:bootstrap", kind: "cmd" as const },
@@ -103,7 +147,16 @@ export const terminal = {
     { text: "eve dev ready on http://localhost:2000", kind: "ok" as const },
     { text: "[world-postgres] Re-enqueued 2 active run(s) on startup", kind: "ok" as const },
   ],
-  caption: "One command scaffolds it, and offers to bring it up for you.",
+  caption: "One command sets it all up, then offers to start it for you.",
+  /* WHAT AN AGENT ACTUALLY DOES, added 2026-08-11. The page described the
+     machinery in detail and never once said what you would build with it. The
+     only concrete tasks anywhere were rows inside the dashboard demo, which
+     reads as UI furniture rather than as examples.
+
+     These three are the demo's own rows, verbatim from lib/demo-data.ts, so
+     the line and the table beside it are the same three jobs and a reader
+     can see the claim land in the panel to its right. */
+  examples: "People run things like: draft the release notes, send the deploy summary, summarize yesterday's error logs.",
 } as const;
 
 /* §4 comparison — the axis is WHERE IT RUNS, not what anything costs.
@@ -124,87 +177,129 @@ export const terminal = {
    (vercel.com/docs/passport); it has nothing to do with tool approvals, and
    eve's HITL approvals are Apache-2.0 framework functionality that behaves the
    same off Vercel. The Dashboard row already carries the real difference. */
+/* REFRAMED AND MOVED DOWN 2026-08-09. It used to be §02, titled "Same
+   framework. Your infrastructure.", and its opening sentence was "eve is
+   Apache-2.0 and Vercel documents self-hosting it."
+
+   That is a comparison against a product most visitors have never heard of,
+   placed second on the page, written in words that only parse if you already
+   know what eve is. For the reader this site is actually for, it was the
+   earliest point at which the page stopped making sense.
+
+   It is now §07, where a reader who has seen what the thing does is ready to
+   ask "so why not just pay someone?", and it is retitled to that question. The
+   sub is also where eve finally gets named and explained in one sentence,
+   which is the right place for it: an engine, introduced once the car has been
+   driven. */
 export const comparison = {
-  heading: "Same framework. Your infrastructure.",
-  /* The trailing clause was "… and tested against every eve release since
-     0.29.5" — the same sentence deleted from `site.attribution` above, for the
-     same reason: every publishable package declares `eve: ">=0.30.0 <1.0.0"`,
-     which excludes 0.29.5, so it claimed testing on a version the code refuses
-     to install against. It was fixed in one field and left standing here, and
-     shipped live for four days. Both now say the checkable thing instead. */
-  sub: "eve is Apache-2.0 and Vercel documents self-hosting it. evestack ships that path end to end: the durable store, the sandbox, and the dashboard, wired together and pinned to eve by a contract suite that runs on every commit.",
-  columns: ["", "Managed", "Self-hosted with evestack"],
+  heading: "Run it yourself, or pay someone to run it",
+  sub: "Both options use the same open source framework underneath. It is called eve, and Vercel builds it. The difference is whose computer your agents run on, and who can see what they are doing.",
+  columns: ["", "A hosted service", "evestack on your hardware"],
   rows: [
-    ["Runs on", "Vercel's infrastructure", "Your machine, VPS, or cluster"],
-    ["Session state", "Vercel Workflows", "Your Postgres on :5433"],
-    ["Run history", "Retained by the platform", "As long as you keep the rows"],
-    ["Dashboard", "Agent Runs, hosted", "Included, and it drives the agent"],
-    ["Where your data sits", "Vercel's platform", "Inside your network, always"],
-    ["Setup", "Deploy to Vercel", "npx evestack create, then four commands"],
+    ["Runs on", "Someone else's servers", "Your machine, server, or cluster"],
+    ["Where conversations are stored", "Their platform", "A Postgres database you own"],
+    ["How long history is kept", "Set by the provider", "As long as you keep the rows"],
+    ["Dashboard", "Included, and it watches", "Included, and it can also act"],
+    ["Who can reach your data", "You and the provider", "You"],
+    ["Setup", "Deploy to their platform", "One command, then four more"],
   ],
 } as const;
 
 /* §6 bento features. */
+/* PLAIN-ENGLISH PASS 2026-08-09. Every title here used to be the name of the
+   mechanism rather than the name of the benefit: "Durable sessions", "Private
+   by construction", "Full-depth trace ingest", "Human-in-the-loop",
+   "Restart-proof runs". Four of those six are terms you only know if you have
+   already built this yourself, which means the grid was legible only to people
+   who did not need it.
+
+   Titles are now what the reader gets. The mechanism did not disappear, it
+   moved into the body where it belongs, and each body still names the real
+   thing (Postgres, the setting, the log line) so nothing became vaguer in the
+   process. The demos underneath are unchanged. */
 export const features = {
-  heading: "Everything you need to run agents on your own metal",
-  sub: "Durable execution, sandboxing, human-in-the-loop, and observability — wired together, verified by running it.",
+  heading: "Everything you need, already wired together",
+  sub: "Agents that survive a restart, run code safely, work to a schedule, and ask before they do anything you would not want.",
   cells: [
     {
-      title: "Durable sessions",
-      body: "Every step checkpointed to Postgres. Kill the stack mid-conversation, start it again, and the session resumes with its memory intact.",
+      /* MERGED 2026-08-11. This cell and "Survives a reboot" were the same
+         promise twice: one said state is saved, the other said restarts are
+         survivable, which is the same sentence read from either end. Six cells
+         where two say one thing is five cells of information in a six cell
+         grid. The freed slot went to schedules, which the page had lost
+         entirely in the plain-English pass. */
+      title: "Nothing gets lost",
+      body: "Every step is saved to your database the moment it happens. Shut it down mid conversation, or reboot the machine with agents halfway through a job, and they pick themselves back up where they stopped.",
       demo: "events" as const,
     },
     {
-      title: "$0 infrastructure",
-      body: "Postgres, sandbox, and dashboard run on your machine. The dashboard's Infrastructure tile reads $0.00 because there is nothing to bill.",
+      title: "No hosting bill",
+      body: "The database, the sandbox and the dashboard all run on your machine, so there is nothing to bill. The only thing you pay for is the AI model, and you can run that locally too.",
       demo: "cost" as const,
     },
     {
-      title: "Private by construction",
-      body: "Set EVESTACK_TRACE_CONTENT=off and prompts and tool results never leave the agent — spans keep timing and tokens only.",
+      title: "Your prompts stay private",
+      body: "Flip one setting and the words in your conversations never leave the agent. You still get timings and token counts, just not the content.",
       demo: "privacy" as const,
     },
     {
-      /* Was "Full-depth tracing … The span tree is the product.", corrected
-         down to "queryable today, not yet rendered as a view" on the grounds
-         that "no dashboard page renders any of it yet". That correction has
-         since gone stale in the other direction: app/traces/[id]/page.tsx:72-74
-         calls the exact three functions this comment named as unrendered —
-         getSpanTree, listModelCalls, listToolCalls — and app/traces/page.tsx
-         renders the overview, with Traces in the nav. Claim the screen now. */
-      title: "Full-depth trace ingest",
-      body: "agent.session down to every model stream, exported to your own OTLP endpoint and stored in your Postgres — prompts and tool arguments included, and rendered as a span tree you can open per session.",
+      /* Was "Full-depth trace ingest", body opening "agent.session down to
+         every model stream, exported to your own OTLP endpoint". Accurate, and
+         unreadable unless you already run tracing infrastructure. The claim is
+         the same; it is now stated as what you can see rather than as the
+         protocol that carries it. */
+      title: "See every step it took",
+      body: "Open any conversation and follow exactly what happened: each turn, every tool the agent reached for, and every call it made to the model, with what went in and what came back.",
       demo: "spans" as const,
     },
     {
-      title: "Human-in-the-loop",
-      body: "Gated tools park the session until you approve or deny — from the dashboard, not a hosted console.",
+      title: "It asks before it acts",
+      body: "Mark any tool as needing permission. The agent stops and waits while you approve or deny it in the dashboard, and every decision is recorded.",
       demo: "approval" as const,
     },
     {
-      title: "Restart-proof runs",
-      body: "[world-postgres] Re-enqueued 2 active run(s) on startup — the log line that proves your agents survive a reboot.",
+      /* RECOVERED 2026-08-11. Scheduled runs were listed in the old hero
+         subhead's string of eight nouns; the plain-English pass cut that list
+         and nothing took the capability with it, so the page stopped
+         mentioning it at all. It matters more than its old billing did: it is
+         the thing that separates "a chatbot I talk to" from "software that
+         does work while I am asleep", which is most of what an agent is for. */
+      title: "Runs while you sleep",
+      body: "Give an agent a schedule and it works on its own. Every run is kept, so you can see what happened at 3am, and you can pause one without taking anything else down.",
       demo: "restart" as const,
     },
   ],
 } as const;
 
 /* §7 architecture nodes + beams. */
+/* PLAIN-ENGLISH PASS 2026-08-09. The heading was "One compose file. Everything
+   on localhost." and the sub explained the system in terms of the protocols
+   between its parts (workflow tables, OTLP, spans). That is the right level of
+   detail for someone deciding how to operate it and the wrong level for
+   someone deciding whether they want it.
+
+   Four parts, said as four jobs. The port numbers stay on the diagram, because
+   a reader who does care needs them and they cost one line each. */
 export const architecture = {
-  heading: "One compose file. Everything on localhost.",
-  sub: "Postgres runs in Docker; the agent is a process on your machine that spawns per-session sandbox containers. The dashboard reads run state straight from the workflow tables and receives spans over OTLP. Everything speaks localhost.",
+  heading: "Four pieces, all on your machine",
+  sub: "The agent does the work. Postgres remembers every conversation. Docker keeps any code the agent runs inside a box where it cannot touch the rest of your computer. The dashboard shows you all of it, and none of it talks to the outside world.",
   nodes: [
-    { id: "agent", title: "agent runtime", detail: "eve dev · :2000" },
-    { id: "postgres", title: "Postgres", detail: "Docker · :5433" },
-    { id: "sandbox", title: "sandbox", detail: "per-session containers" },
-    { id: "dashboard", title: "dashboard", detail: "observe + control · :4000" },
+    { id: "agent", title: "the agent", detail: "does the work · :2000" },
+    { id: "postgres", title: "Postgres", detail: "remembers everything · :5433" },
+    { id: "sandbox", title: "sandbox", detail: "runs code safely" },
+    { id: "dashboard", title: "dashboard", detail: "watch and control · :4000" },
   ],
   beams: [
-    { from: "agent", to: "postgres", label: "workflow events" },
-    { from: "agent", to: "sandbox", label: "exec" },
-    { from: "agent", to: "dashboard", label: "OTLP → :4000" },
-    { from: "dashboard", to: "postgres", label: "SQL" },
+    { from: "agent", to: "postgres", label: "saves every step" },
+    { from: "agent", to: "sandbox", label: "runs code" },
+    { from: "agent", to: "dashboard", label: "sends traces" },
+    { from: "dashboard", to: "postgres", label: "reads history" },
   ],
+  /* Intro for the code cards that now close this section. Replaced the deleted
+     §08 heading "The code is the pitch", which assumed a reader who already
+     wanted to see source. This asks them to check rather than telling them
+     the code is the argument. */
+  codeLead: "Here are the actual files that do it, read straight from the repository.",
   srSummary:
     "Architecture: the eve agent runtime on port 2000 writes workflow events to Postgres on port 5433 running in Docker, executes code in per-session Docker sandbox containers, and exports OTLP traces to the dashboard on port 4000, which also reads run state directly from Postgres over SQL.",
 } as const;
@@ -243,34 +338,64 @@ export const architecture = {
 
    It is replaced by packages/website/public/screenshots/*, captured from the
    dashboard in this repo. Every claim below names a file that renders it. */
+/* PLAIN-ENGLISH PASS 2026-08-10. The heading named the storage engine
+   ("read straight from your own Postgres") and the sub opened with four terms
+   of art in a row: session list, run trees, token rollups, $eve.* data, ingest
+   pipeline. The section's actual promise is much easier to say, and much more
+   interesting: you can see everything your agents did, and you can stop them.
+
+   THE CONTROL SECTION IS NOW PART OF THIS ONE. It used to be §07, "Observability
+   you can act on", 62 words and its own full section of scroll for one idea
+   that belongs in the same breath as watching: seeing and intervening are the
+   same feature described from two ends. `control` below still holds the demo's
+   own strings. */
 export const observability = {
-  heading: "Every session, read straight from your own Postgres.",
-  sub: "Session list, run trees, token rollups, and a cost we compute ourselves — the same $eve.* data your agent already writes, queried from the database you own. No ingest pipeline to keep in sync.",
-  /* Each of these is a shipped file, named so the claim is checkable. */
+  heading: "Watch your agents. Step in when it matters.",
+  /* The evals clause was added 2026-08-11. Turning a real run, especially a
+     failed one, into a test is on the launch kit's capability list and was
+     nowhere on this page. It is the most advanced idea here, so it gets a
+     plain sentence at the end rather than a cell of its own: a beginner can
+     skip it, and the person who has been burned by a flaky agent will stop
+     dead on it. */
+  sub: "Every conversation your agents have is right there, read out of your own database. See what they did, what it cost, and how long it took. When one wants to do something you have flagged as risky, it waits for you to say yes. And when a run goes wrong, you can turn that exact run into a test so it does not go wrong the same way twice.",
+  /* RESTORED AND NOW RENDERED, 2026-08-11.
+
+     I deleted this on the grounds that no component read it, which was true
+     and was the wrong conclusion. Contract 16 catches exactly that move:
+
+       "A capability list that silently emptied would pass every assertion
+        below by having none to make."  -- 16-documented-paths.contract.mjs:134
+
+     It requires at least four `source:` paths here and then asserts each one
+     exists on disk. So this list is not decoration that happened to go
+     unrendered; it is the carrier of a repo-wide invariant, that a claim about
+     the dashboard names the file which backs it. Deleting the copy deleted the
+     invariant, and the suite shrank by three assertions without a single test
+     going red.
+
+     The real defect was that it was never rendered. That is fixed: the
+     Dashboard section renders these four under the panel, source path and all.
+     The path is the point. It is small and quiet, and the reader who wants to
+     check can. */
   capabilities: [
     {
-      /* The source path moved and the claim had to move with it. Dashboard v2
-         made app/page.tsx an overview of charts and monitors; the session list
-         is its own page now. Leaving the old path here would have broken the one
-         rule this list has — that naming the file is what makes the claim
-         checkable — by pointing a reader at a file that renders something else. */
-      title: "Session list",
-      body: "Every agent run on the machine, with outcome, trigger, model, provider, environment and turns. Searchable, filterable by facet, sortable, and exportable as CSV.",
+      title: "Every conversation, in one list",
+      body: "How each run ended, what started it, which model it used, and how many turns it took. Search, filter, sort, or export the lot as a spreadsheet.",
       source: "packages/dashboard/app/sessions/page.tsx",
     },
     {
-      title: "Run tree",
-      body: "Each session expands into its turns and subagents, with duration, tokens, cache reads and writes, tool count and per-run cost.",
+      title: "Open one and see inside",
+      body: "Each conversation opens into its turns, including work it handed to a helper agent, with timings, tokens and cost per turn.",
       source: "packages/dashboard/app/sessions/[id]/page.tsx",
     },
     {
-      title: "Cost we compute, labelled honestly",
-      body: "eve emits gen_ai.usage.cost only for AI-Gateway calls, and a self-hosted agent calls its provider directly — so we price token counts ourselves. A model with no configured price renders `unpriced` and an em dash, never $0.00.",
+      title: "Costs you can trust",
+      body: "Your provider does not return a price when you call it directly, so we work it out from token counts. No price for a model means we label it unpriced, never a quiet $0.00.",
       source: "packages/dashboard/lib/pricing.ts",
     },
     {
-      title: "Approvals",
-      body: "Gated tool calls park the session and wait for a decision in the browser, resolved through eve's ordinary follow-up route.",
+      title: "A record of every decision",
+      body: "When a tool needs permission the conversation pauses until someone answers in the browser. Who approved what, and when, is kept.",
       source: "packages/dashboard/app/approvals/page.tsx",
     },
   ],
@@ -295,15 +420,15 @@ export const observability = {
       name: "sessions",
       width: 2880,
       height: 1800,
-      alt: "The evestack dashboard's Sessions page: a red banner reading '8 sessions wedged — a turn started and never finished, nothing in eve will notice or retry it' with links to each, above a searchable table of 250 real runs showing outcome, trigger, model, provider, environment, run type and turn count. Rows span openai/gpt-5-mini, anthropic/claude-sonnet-5, ollama/qwen3 and acme/experimental-v1, with two 'failed' rows in red among the 'ok' ones.",
-      caption: "Sessions — the dashboard in this repo, captured running against a live agent.",
+      alt: "The evestack dashboard's Sessions page: a red banner reading '8 sessions wedged, a turn started and never finished, nothing in eve will notice or retry it' with links to each, above a searchable table of 250 real runs showing outcome, trigger, model, provider, environment, run type and turn count. Rows span openai/gpt-5-mini, anthropic/claude-sonnet-5, ollama/qwen3 and acme/experimental-v1, with two 'failed' rows in red among the 'ok' ones.",
+      caption: "Sessions, the dashboard in this repo, captured running against a live agent.",
     },
     detail: {
       name: "session-detail",
       width: 2880,
       height: 1800,
       alt: "A session detail page in the evestack dashboard: a scheduled run titled 'Write a detailed essay about database indexing', completed, open 1m 45s end to end, with tiles reading 4 turns, 28.5s turn time, 73,077 tokens in, 6,192 out and $0.02 spend. Below, a timeline of all four turns with their durations and costs, and turn 1 of 4 on openai/gpt-5-mini expanded to show 6.08s duration, 2.47s to first chunk, an output rate of 343.1 tokens per second, 15,223 tokens in, 2,088 out, 7,744 cache writes, 5 steps, 0 retries and 18 tools offered against 0 called.",
-      caption: "One session's run tree — same capture session.",
+      caption: "One session's run tree, from the same capture.",
     },
   },
   spanTree: [
@@ -316,10 +441,16 @@ export const observability = {
   ],
 } as const;
 
-/* §10 control plane. */
+/* The approve/deny demo. It no longer has a section of its own — it now sits
+   inside §Dashboard, because "you can see it" and "you can stop it" are one
+   idea and it was costing a whole screen of scroll to say the second half.
+
+   The heading here is kept for the sub-block's own label. It was "Observability
+   you can act on", which is a phrase that only means something to a reader who
+   already uses the word observability. */
 export const control = {
-  heading: "Observability you can act on",
-  sub: "Approve or deny gated tool calls, start sessions, cancel runs, and chat with the agent — from the browser, with every decision recorded.",
+  heading: "It waits for you",
+  sub: "Mark a tool as risky and the agent will not use it until you say so. Approve or deny it in the browser, and the decision is written down.",
   demo: {
     tool: "send_email",
     args: '{ "to": "team@…", "subject": "Deploy done" }',
@@ -335,8 +466,8 @@ export const control = {
    hub.calls are action names taken verbatim from evestack-composio's
    source — nothing invented. */
 export const integrations = {
-  heading: "Your tools, one click",
-  sub: "Composio wires the agent into 1,070 toolkits — Gmail, GitHub, Slack, Notion, Linear, and everything after. Sign in once from the dashboard.",
+  heading: "Connect the tools you already use",
+  sub: "Sign in once from the dashboard and your agent can use Gmail, GitHub, Slack, Notion, Linear and about a thousand more.",
   /* The one place on this site where "Everything runs on your network" stops
      being true, said here rather than left for someone to discover. Composio is
      a hosted third party: it performs the OAuth dance and holds the resulting
@@ -344,9 +475,9 @@ export const integrations = {
      unset, `composioTools()` resolves to no tools and logs one line
      (packages/evestack-composio; see /docs/composio-auth). */
   caveat: {
-    text: "The one exception to “everything runs on your network”: Composio is a hosted third party, and it holds the OAuth tokens for the accounts you connect. It is off unless you set COMPOSIO_API_KEY — with no key the agent boots with its sandbox and memory and simply has no connectors.",
+    text: "This is the one part that does not run on your machine. Connecting accounts is handled by a company called Composio, and they hold the sign in tokens for the accounts you connect. It is switched off until you add a Composio key, and without one the agent still runs perfectly well, just with no outside accounts attached.",
     href: "/docs/composio-auth",
-    linkLabel: "Read the tradeoff in full",
+    linkLabel: "Read the full tradeoff",
   },
   hub: {
     /* left / right tile columns around the agent node — icon-only,
@@ -401,126 +532,138 @@ export const integrations = {
   ],
 } as const;
 
-/* §12 quickstart — the pipeline and the receipt.
+/* §12 quickstart — the fork in the road.
 
-   The steps render as a self-completing pipeline (stations flip ✓, a spine
-   draws down) beside a "receipt": the output of a first `npm run verify`,
-   line for line. Nothing here is typed or invented — the premium convention
-   (and ours) is finished, real artifacts:
+   This section used to be a self-completing pipeline beside a verbatim
+   `npm run verify` receipt: four stations, a spine drawing downward, ten check
+   lines flipping from ghost to ink. It was accurate, it was well made, and it
+   was too much. A visitor who has reached the bottom of this page does not need
+   more PROOF — they have had eleven sections of it. They need to be told what
+   to do next, and as of the agent pack there are two honest answers to that
+   rather than one.
 
-     - each step's receipt line is verbatim from the tool that prints it
-       (packages/create-evestack/create.mjs ok() lines, templates/default/
-       scripts/bootstrap.mjs, the eve dev ready line from FINDINGS.md);
-     - the verify panel mirrors templates/default/scripts/verify.mjs exactly —
-       the openai path, which is the scaffolder's option 1 with its default
-       model. That run prints these TEN checks. The count was wrong here twice:
-       first as a plain miscount, then as "nine, and the ollama path adds a
-       tenth (`memory`)" — which was also wrong, because verify.mjs:275-276
-       passes `memory` on the openai path too as soon as OPENAI_API_KEY is set
-       (`embeddings via openai/text-embedding-3-small`). The check list is
-       identical on both paths; only memory's detail line differs. docs/cli.mdx
-       :157 has said "ten checks" throughout. So no step body counts the checks.
-     - the agent answers on 127.0.0.1 and the dashboard is printed as
-       localhost — that asymmetry is real (verify.mjs builds the dashboard
-       URL for a human to click, findAgent probes loopback).
+   So it is a fork, not a pipeline: run five commands yourself, or hand the
+   whole thing to the agent you already have open. Each column is one glance.
+   The receipt panel, the four stations and the spine are gone, along with the
+   .qs/.qsp choreography in globals.css that drove them.
 
-   `commands` splits each line so the payload renders bright over dim
-   boilerplate (the opencode/Convex/Bun convergence). Five command rows in
-   four steps — the same "five commands" the closing section claims. */
+   The commands themselves are unchanged, still split pre/payload so dim
+   boilerplate carries a bright payload — five rows, the same "five commands"
+   the closing section claims. `npm run db:bootstrap`, never the upstream
+   bootstrap bin; the note on the terminal artwork above says why. */
 export const quickstart = {
-  heading: "Running in four steps",
-  sub: "Five commands, with their real receipts.",
-  /* No step bodies, deliberately: the receipt line under each command IS the
-     explanation, in the tool's own words. Prose the panel already proves is
-     prose the section does not need (user-tightened 2026-08-06). */
-  steps: [
-    {
-      slug: "scaffold",
-      title: "Scaffold",
-      commands: [{ pre: "npx ", cmd: "evestack create" }],
-      /* The scaffolder's last ok() before "Done." — picked over its longer
-         `Generated .env.local with a unique auth password and trace-ingest
-         token`, which wrapped to two lines and made this step taller than
-         the rest. Every receipt is now one line, verbatim. */
-      receipt: "Dependencies installed",
-    },
-    {
-      slug: "postgres",
-      title: "Durable Postgres",
-      commands: [
-        { pre: "docker ", cmd: "compose up -d postgres" },
-        /* `npm run db:bootstrap`, never the upstream bootstrap bin — see the
-           note on the terminal artwork above for what that one actually does. */
-        { pre: "npm run ", cmd: "db:bootstrap" },
-      ],
-      receipt: "Schema created.",
-    },
-    {
-      slug: "run",
-      title: "Run your agent",
-      commands: [{ pre: "npm run ", cmd: "dev" }],
-      receipt: "eve dev ready on http://localhost:2000",
-    },
-    {
-      slug: "verify",
-      title: "Check it",
-      commands: [{ pre: "npm run ", cmd: "verify" }],
-      /* The rail's last receipt is the panel's payoff line — same run, and
-         every receipt here is now a verbatim quote rather than a summary. */
-      receipt: "Everything works.",
-    },
-  ],
-  verify: {
-    header: "evestack verify",
-    checks: [
-      { name: "config", detail: ".env.local" },
-      { name: "docker", detail: "daemon is responding" },
-      { name: "postgres", detail: "reachable at 127.0.0.1:5433" },
-      { name: "schema", detail: "workflow tables exist" },
-      { name: "pgvector", detail: "installed — long-term memory can store vectors" },
-      { name: "model", detail: "openai/gpt-5-mini, OPENAI_API_KEY is set" },
-      { name: "memory", detail: "embeddings via openai/text-embedding-3-small" },
-      { name: "agent", detail: "answering at http://127.0.0.1:2000" },
-      { name: "dashboard", detail: "answering at http://localhost:4000, database connected" },
-      { name: "traces", detail: "the agent's ingest token is accepted by the dashboard" },
+  heading: "Two ways in.",
+  /* The chip on the fork divider. One word, and it has to be the word that
+     says these are alternatives rather than steps — which is the entire
+     argument the section is making. */
+  divider: "or",
+  commands: {
+    title: "Run it yourself",
+    hint: "Node 24+, Docker, and a model key.",
+    rows: [
+      { pre: "npx ", cmd: "evestack create" },
+      { pre: "docker ", cmd: "compose up -d postgres" },
+      { pre: "npm run ", cmd: "db:bootstrap" },
+      { pre: "npm run ", cmd: "dev" },
+      { pre: "npm run ", cmd: "verify" },
     ],
-    done: "Everything works.",
-    dashboard: { label: "Your dashboard", value: "http://localhost:4000" },
-    /* The real script prints the generated password here — a per-project
-       secret, so the receipt masks it the way the demo masks API keys.
-       (The script's closing curl snippet was rendered here once and cut for
-       space at the user's call — restore from git if it earns its lines.) */
-    signin: { label: "Sign in", user: "evestack", mask: "••••••••••" },
-    prompt: "Open the dashboard now? (Y/n)",
-    /* Bun links its install script; the receipt links its own source. */
-    source: {
-      label: "verify.mjs",
-      href: `${site.github}/blob/main/templates/default/scripts/verify.mjs`,
-    },
+    /* verify.mjs's real closing line, and the only receipt kept from the
+       deleted panel — it is the payoff that panel existed to deliver. */
+    receipt: "Everything works.",
   },
-  /* The 2026 install path (Convex, Clerk, better-auth all ship one): the
-     machine-readable summary really is served at /llms.txt (app/llms.txt). */
   agent: {
-    lead: "For coding agents:",
-    display: "evestack.vercel.app/llms.txt",
-    copy: "https://evestack.vercel.app/llms.txt",
+    title: "Hand it to your agent",
+    hint: "Claude Code, Cursor, or a local model.",
+    /* What is actually in the pack, so the button is not a mystery box. Each
+       line is a file in /skills/evestack, not a promise made here. */
+    gets: [
+      "The five commands, and what each one is for",
+      "The CLI, the dashboard API, tools, skills and memory",
+      "The failure modes that present as something else",
+    ],
+    foot: "Nothing to install, and nothing to fetch once it is pasted.",
+    read: "Read it first ↗",
+    /* Composed from the REAL pack at build time (quickstart.tsx reads
+       lib/agent-pack.ts), never typed in. A hardcoded size is wrong the first
+       time anyone edits a reference file, and this is a number on a page whose
+       whole contract is that its numbers are reproducible. */
+    packFormat: (references: number, kb: number) =>
+      `SKILL.md + ${references} references · ${kb} KB`,
   },
 } as const;
 
+/* The agent pack. ONE artifact — written once in /skills/evestack, served three
+   ways (copy, `npx evestack skills`, fetch) — so nothing below restates its
+   content. The button fetches /agent.md at click time rather than inlining
+   ~30 KB of markdown into this page's payload.
+
+   The two deeplinks hardcode the production origin deliberately. They hand a
+   URL to a third party that then has to fetch it, and claude.ai can reach
+   neither a protected preview deployment nor a localhost dev server — a
+   relative link would be right for this page and useless at its destination.
+   Same reasoning that already hardcodes the llms.txt URL below. */
+const PACK_URL = "https://evestack.vercel.app/agent.md";
+const DEEPLINK = encodeURIComponent(
+  `Read ${PACK_URL}. It is the setup pack for evestack, a self-hosted ` +
+    `distribution of Vercel's eve agent framework. Then help me get it running.`,
+);
+
+export const agentPack = {
+  label: "Set up your agent",
+  copied: "Copied, paste it in",
+  failed: "Could not copy. Open /agent.md",
+  announce: "The evestack agent pack is on your clipboard.",
+  menuLabel: "More ways to give this to an agent",
+  /* Relative: this one IS fetched by the page, from whatever origin serves it. */
+  href: "/agent.md",
+  menu: [
+    {
+      label: "Open in Claude",
+      hint: "Starts a chat with the pack linked",
+      href: `https://claude.ai/new?q=${DEEPLINK}`,
+      external: true,
+    },
+    {
+      label: "Open in ChatGPT",
+      hint: "Starts a chat with the pack linked",
+      href: `https://chatgpt.com/?q=${DEEPLINK}`,
+      external: true,
+    },
+    {
+      label: "Install it as a skill",
+      hint: "npx evestack skills",
+      href: "/docs/agent-setup",
+      external: false,
+    },
+    {
+      label: "View the raw pack",
+      hint: "/agent.md",
+      href: "/agent.md",
+      external: true,
+    },
+    {
+      label: "Every doc, one file",
+      hint: "/llms-full.txt",
+      href: "/llms-full.txt",
+      external: true,
+    },
+  ],
+} as const;
+
 export const closing = {
-  heading: "Your agents, on your infrastructure.",
-  sub: "Five commands, and it's running on your machine.",
+  heading: "Your agents, on your hardware.",
+  sub: "Five commands and it is running on your machine.",
 } as const;
 
 export const footerColumns = [
   {
-    title: "Product",
+    title: "The site",
     links: [
-      { label: "One command", href: "#one-command" },
-      { label: "Compare", href: "#compare" },
+      { label: "Setup", href: "#one-command" },
       { label: "Features", href: "#features" },
-      { label: "Observability", href: "#observability" },
-      { label: "Quickstart", href: "#quickstart" },
+      { label: "Dashboard", href: "#observability" },
+      { label: "How it works", href: "#architecture" },
+      { label: "Compare", href: "#compare" },
     ],
   },
   {
@@ -531,16 +674,16 @@ export const footerColumns = [
          verifiable artifact here and was reachable from nowhere on the
          landing page. */
       { label: "GitHub", href: site.github },
-      { label: "License — Apache-2.0", href: `${site.github}/blob/main/LICENSE` },
-      { label: "eve (upstream)", href: "https://eve.dev" },
+      { label: "License: Apache-2.0", href: `${site.github}/blob/main/LICENSE` },
+      { label: "eve, the framework underneath", href: "https://eve.dev" },
     ],
   },
   {
-    title: "Self-host",
+    title: "Get started",
     links: [
-      { label: "Quickstart", href: "#quickstart" },
-      { label: "Architecture", href: "#architecture" },
-      { label: "Control plane", href: "#control" },
+      { label: "Two ways in", href: "#quickstart" },
+      { label: "Set up with your agent", href: "/docs/agent-setup" },
+      { label: "Troubleshooting", href: "/docs/troubleshooting" },
     ],
   },
 ] as const;

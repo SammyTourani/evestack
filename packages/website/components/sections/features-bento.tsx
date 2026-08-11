@@ -71,15 +71,28 @@ function CellDemo({ kind }: { kind: (typeof features.cells)[number]["demo"] }) {
           </div>
         </div>
       );
+    /* Was the `[world-postgres] Re-enqueued 2 active run(s) on startup` log
+       line, which proved the restart claim for the cell that has since been
+       merged into "Nothing gets lost". This cell is schedules now, so the
+       resting frame is a schedule: a real cron expression, the name the
+       template ships (`agent/schedules/heartbeat.ts`), and the state that
+       makes the "pause one without taking anything else down" claim visible. */
     case "restart":
       return (
-        <p data-demo="restart" className="font-mono text-mono-13 text-gray-900">
-          <span
-            aria-hidden
-            className="mr-2 inline-block h-2 w-2 animate-pulse rounded-full bg-ok motion-reduce:animate-none"
-          />
-          [world-postgres] Re-enqueued 2 active run(s) on startup
-        </p>
+        <div data-demo="restart" className="flex flex-col gap-2 font-mono text-mono-13">
+          <p className="text-gray-1000">
+            <span
+              aria-hidden
+              className="mr-2 inline-block h-2 w-2 animate-pulse rounded-full bg-ok motion-reduce:animate-none"
+            />
+            heartbeat
+            <span className="ml-2 text-gray-700">0 * * * *</span>
+          </p>
+          <p className="text-gray-700">
+            last run 41m ago <span className="text-ok">ok</span>
+          </p>
+          <p className="text-gray-700">next in 19m</p>
+        </div>
       );
   }
 }
@@ -87,7 +100,7 @@ function CellDemo({ kind }: { kind: (typeof features.cells)[number]["demo"] }) {
 export function FeaturesBento() {
   return (
     <Section id="features">
-      <SectionHeading id="features-heading" eyebrow="04 · features" title={features.heading} sub={features.sub} />
+      <SectionHeading id="features-heading" eyebrow="02 · features" title={features.heading} sub={features.sub} />
       <ul
         data-reveal="stagger"
         data-bento

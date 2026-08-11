@@ -35,8 +35,8 @@ export function ClosingCta() {
           >
             documentation
           </a>{" "}
-          — architecture, the self-hosting runbook, and which eve version this is verified
-          against.
+          first. It covers how the pieces fit together, how to run this on a server rather
+          than a laptop, and how to fix it when something breaks.
         </p>
       </div>
     </Section>

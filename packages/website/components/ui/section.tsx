@@ -21,7 +21,7 @@ export function Section({
     <section
       id={id}
       aria-labelledby={labelledBy ?? `${id}-heading`}
-      className={cn("scroll-mt-16 py-24", rule && "section-rule", className)}
+      className={cn("scroll-mt-16 py-20", rule && "section-rule", className)}
     >
       <div className={cn("site-container", containerClassName)}>{children}</div>
     </section>

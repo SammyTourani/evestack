@@ -43,12 +43,12 @@ const CHAT = [
   { role: "user" as const, text: "Which sessions failed in the last hour?" },
   {
     role: "assistant" as const,
-    text: "None — every session completed cleanly. The longest ran 41.0s with 13 tool calls.",
+    text: "None. Every session completed cleanly. The longest ran 41.0s with 13 tool calls.",
   },
   { role: "user" as const, text: "What did the deploy email session cost?" },
   {
     role: "assistant" as const,
-    text: "Deploy summary email ran 3 turns with 5 tool calls in 18.2s — $0.0034 in model spend. Infrastructure: $0.00.",
+    text: "Deploy summary email ran 3 turns with 5 tool calls in 18.2s, costing $0.0034 in model spend. Infrastructure: $0.00.",
   },
 ];
 const CHAT_WORDS = CHAT.map((m) => m.text.split(" "));

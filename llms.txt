@@ -23,6 +23,23 @@ runs, sending turns, answering approvals, cancelling — are withheld from `tool
 unless `EVESTACK_MCP_ALLOW_CONTROL=1`.** Do not advise anyone to set that without saying that it
 lets a model approve a gated tool call a human was asked to stand at.
 
+## If you are an agent someone just pointed at this project
+
+There is a skill pack written for exactly that: `https://evestack.vercel.app/agent.md`. It is one
+self-contained document — the mental model, the five-command bring-up, the CLI, how to add tools
+and skills, the dashboard's HTTP API, and the failure modes that present as something else. Every
+reference is inlined rather than linked, so it needs no fetch tool after the first one, and it
+opens with instructions for saving itself as a durable skill (`.claude/skills/`, `agent/skills/`,
+`.cursor/rules/`). Source: `/skills/evestack` in this repository. `npx evestack skills` installs
+the same files locally.
+
+`https://evestack.vercel.app/llms-full.txt` is the other end of the range: every documentation
+page below, concatenated in reading order, ~240 KB. Use it when you want the whole corpus in one
+request instead of nineteen.
+
+This file stays what it is — an index. Prefer `/agent.md` when the task is *doing something with
+evestack*, and this file when you only need to know where something lives.
+
 ## Core facts an agent should know before answering questions about this repo
 
 - `@workflow/world-postgres` MUST be pinned to the `beta` npm tag, not `latest`. `latest` is
@@ -98,6 +115,7 @@ on advertising them.
 
 - [Introduction](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/index.mdx)
 - [Quickstart](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/quickstart.mdx)
+- [Set up with an agent](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/agent-setup.mdx)
 - [Local setup](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/local-setup.mdx)
 - [Architecture](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/architecture.mdx)
 - [Dashboard](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/dashboard.mdx)

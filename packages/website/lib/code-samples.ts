@@ -176,7 +176,7 @@ export async function getCodeSamples(): Promise<CodeSample[]> {
         ),
         "docker-compose.yml",
       ),
-      note: "The whole stack is a compose file",
+      note: "The whole setup is one Docker file",
     },
     {
       filename: "agent/agent.ts",
@@ -200,7 +200,7 @@ export async function getCodeSamples(): Promise<CodeSample[]> {
         ),
         "agent/agent.ts",
       ),
-      note: "Durable Postgres sessions, direct provider — no gateway",
+      note: "Sessions saved to Postgres, talking to the model directly",
     },
     {
       filename: "agent/instrumentation.ts",
@@ -231,7 +231,7 @@ export async function getCodeSamples(): Promise<CodeSample[]> {
         ),
         "agent/instrumentation.ts",
       ),
-      note: "Ten lines of OTLP and the dashboard sees everything",
+      note: "Ten lines, and the dashboard can see everything",
     },
   ];
 }

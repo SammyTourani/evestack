@@ -40,8 +40,13 @@ const SCAFFOLD_COMMANDS = new Set(["create", "attach"]);
  * Routed before parseArgs for the same reason the scaffolder is: these own
  * their own flags. `evestack verify --json` must reach the checker, not die on
  * doctor's parser calling --json unknown for a command it does not handle.
+ *
+ * `skills` is here for the routing rule, not because it is project-scoped —
+ * it writes into `.claude/skills` just as happily outside a project as in one.
+ * What it shares with the other four is that it owns `--dir`, `--print` and
+ * `--force`, none of which doctor's parser has ever heard of.
  */
-const PROJECT_COMMANDS = new Set(["status", "verify", "open", "tour"]);
+const PROJECT_COMMANDS = new Set(["status", "verify", "open", "tour", "skills"]);
 
 /**
  * Which scaffolder command this argv is, or null for everything else.
@@ -78,6 +83,7 @@ export const USAGE = `evestack — the whole eve stack, on your own machine
   evestack tour              a guided first run, on a stack that is already up
   evestack open              the dashboard URL and its password, in a browser
   evestack verify            check every part and name the fix for anything broken
+  evestack skills            teach your coding agent this project
   evestack attach [dir]      add evestack to an eve project you already have
   evestack doctor            a run stopped moving — read-only forensics
 
@@ -208,7 +214,7 @@ async function printVersion(stdout) {
 }
 
 /** Every verb this binary answers to, for the router and for did-you-mean. */
-export const COMMANDS = ["create", "status", "tour", "open", "verify", "attach", "doctor"];
+export const COMMANDS = ["create", "status", "tour", "open", "verify", "skills", "attach", "doctor"];
 
 /**
  * Edit distance, capped at 2.
@@ -254,6 +260,7 @@ async function runProjectCommand(name, argv, { stdout, stderr }) {
     tour: () => import("./tour.mjs"),
     verify: () => import("./project.mjs"),
     open: () => import("./project.mjs"),
+    skills: () => import("./skills.mjs"),
   };
   try {
     const module = await MODULES[name]();

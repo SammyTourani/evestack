@@ -1,377 +1,181 @@
-"use client";
-
-import { useEffect, useRef, useState } from "react";
 import { Section, SectionHeading } from "@/components/ui/section";
-import { quickstart } from "@/lib/copy";
-import { cn } from "@/lib/utils";
+import { SpotlightCard } from "@/components/ui/spotlight-card";
+import { CommandRow } from "@/components/ui/command-row";
+import { AgentPackButton } from "@/components/ui/agent-pack-button";
+import { agentPackFiles, agentPackSize } from "@/lib/agent-pack";
+import { quickstart, agentPack } from "@/lib/copy";
 
-/* §9 quickstart — the pipeline and the receipt.
+/* §09 — the fork in the road.
 
-   Left: the four steps as a pipeline that completes itself once, in view —
-   stations flip to ✓, an ok-green spine draws downward station to station,
-   and each step's real receipt line rises in. Right: the verify receipt —
-   the full output of `npm run verify`, pre-rendered as dim ghost lines
-   (layout never shifts, the promise is visible before it "runs") that flip
-   to full ink in a cascade and end on the line the script really ends on.
+   What was here before: a four-station pipeline that completed itself as you
+   scrolled (dots flipping to ✓, an ok-green spine drawing downward, per-step
+   receipts rising in) beside a full `npm run verify` receipt — ten check lines
+   pre-rendered as dim ghosts that flipped to ink in a cascade. All of it
+   correct, none of it deleted lightly. It went because of what it was FOR: it
+   argued "this really works" to someone who had already been shown eleven
+   sections of evidence, in the one slot on the page where the reader has
+   stopped evaluating and started deciding.
 
-   Deliberately NOT a typing demo: §01 owns typing. This section trades in
-   finished, real artifacts — a run that already happened, stamped onto the
-   page. One shot, no loop; it settles and stays settled.
+   ── the visual pass (round 2) ───────────────────────────────────────────
+   The two-card version that replaced it was correct and flat. This round gives
+   it the depth and colour the rest of the page has, using the page's OWN
+   vocabulary rather than a new one:
 
-   Interaction grammar (the research consensus, three sites each):
-     - every command row IS its copy button — the `$` prompt is aria-hidden
-       decoration and never enters the clipboard; boilerplate renders dim,
-       the payload bright;
-     - the copy glyph swaps to an ok-green check for 1.5s;
-     - the receipt links its own source (verify.mjs) the way Bun links its
-       install script.
+     - SpotlightCard, the bento's cursor-tracking lift, tinted per column
+       toward the accent that column owns;
+     - a raised surface (.path-card) — lit top edge plus a wide soft shadow,
+       which is what reads as raised where a border alone reads as drawn;
+     - one accent rail per card, fading out at both ends: ok-green for the
+       path that ends in a green receipt, blue for the path that ends in the
+       ▚ mark's own colour;
+     - the dot lattice this site uses behind Observability and the hub,
+       masked to an ellipse so it never reaches the section edges.
 
-   Motion contract (identical to MonitorsPanel): SSR renders the SETTLED
-   state — every station ✓, spine drawn, receipt at full ink — which is the
-   no-JS and reduced-motion truth. Client-side, with motion allowed, the
-   component ARMS itself (data-armed hides the played pieces), then one
-   IntersectionObserver per column stamps data-live and pure CSS
-   transition/animation delays play the whole choreography. No timers. */
+   Deliberately NOT used: the tri-gradient. It is the hero glow's, and the
+   closing CTA's beam, and that scarcity is the reason both land. A third
+   instance here would spend it.
 
-const STEP_BEAT = 0.45; // seconds between stations completing
-
-function CopyIcon({ copied }: { copied: boolean }) {
-  return copied ? (
-    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden className="text-ok">
-      <path d="M2.5 8.5 6 12l7.5-8" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  ) : (
-    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.2" aria-hidden>
-      <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" />
-      <path d="M10.5 5.5v-2a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 3.5V9A1.5 1.5 0 0 0 4 10.5h1.5" />
-    </svg>
-  );
-}
-
-/* The whole row is the button (Convex/opencode): click anywhere to copy.
-   Payload = pre + cmd, never the prompt. */
-function CommandRow({ pre, cmd }: { pre: string; cmd: string }) {
-  const [copied, setCopied] = useState(false);
-  const full = pre + cmd;
-  return (
-    <button
-      type="button"
-      aria-label={`Copy "${full}"`}
-      onClick={async () => {
-        try {
-          await navigator.clipboard.writeText(full);
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        } catch {
-          /* clipboard unavailable — no-op */
-        }
-      }}
-      /* A filled plate, not an outlined box: five hairline rectangles
-         stacked down the rail read as clutter, one quiet surface each does
-         not. The panel keeps the border, so card and chip stay distinct. */
-      className="group/cmd flex w-full items-center gap-3 rounded-lg bg-gray-100 px-4 py-2 text-left font-mono text-mono-13 transition-colors hover:bg-gray-200"
-    >
-      <span aria-hidden className="select-none text-gray-600">
-        $
-      </span>
-      <span className="min-w-0 flex-1 truncate">
-        <span className="text-gray-700">{pre}</span>
-        <span className="font-medium text-gray-1000">{cmd}</span>
-      </span>
-      <span className="text-gray-600 transition-colors group-hover/cmd:text-gray-1000">
-        <CopyIcon copied={copied} />
-      </span>
-      <span aria-live="polite" className="sr-only">
-        {copied ? "Copied" : ""}
-      </span>
-    </button>
-  );
-}
-
-function AgentPath() {
-  const [copied, setCopied] = useState(false);
-  return (
-    <p className="mt-12 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 font-mono text-label-12 text-gray-700">
-      {quickstart.agent.lead}
-      <button
-        type="button"
-        aria-label={`Copy "${quickstart.agent.copy}"`}
-        onClick={async () => {
-          try {
-            await navigator.clipboard.writeText(quickstart.agent.copy);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1500);
-          } catch {
-            /* no-op */
-          }
-        }}
-        className="inline-flex items-center gap-1.5 text-gray-1000 underline decoration-border-strong underline-offset-4 transition-colors hover:decoration-current"
-      >
-        {quickstart.agent.display}
-        <CopyIcon copied={copied} />
-      </button>
-      <span aria-live="polite" className="sr-only">
-        {copied ? "Copied" : ""}
-      </span>
-    </p>
-  );
-}
-
-export function Quickstart() {
-  const railRef = useRef<HTMLDivElement>(null);
-  const olRef = useRef<HTMLOListElement>(null);
-  const panelRef = useRef<HTMLElement>(null);
-  const [armed, setArmed] = useState(false);
-  const [railLive, setRailLive] = useState(false);
-  const [panelLive, setPanelLive] = useState(false);
-  const [spineH, setSpineH] = useState<number | null>(null);
-
-  /* The spine must STOP at the last station, not run on past it — a line
-     trailing below the final ✓ reads as unfinished. Its length is the last
-     item's offset (dot centers sit 1rem into each item, so the difference
-     between the first and last is exactly dot-centre to dot-centre), which
-     is content-dependent and therefore measured rather than hardcoded.
-     Re-measured on reflow; the CSS carries a full-height fallback for the
-     frame before this runs and for no-JS. */
-  useEffect(() => {
-    const ol = olRef.current;
-    if (!ol) return;
-    const measure = () => {
-      const last = ol.lastElementChild as HTMLElement | null;
-      if (last) setSpineH(last.offsetTop);
-    };
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(ol);
-    return () => ro.disconnect();
-  }, []);
-
-  /* Arm only client-side with motion allowed; play once per column when it
-     enters the viewport (MonitorsPanel's exact machinery). Two observers so
-     the stacked mobile layout plays the receipt when the receipt arrives,
-     not while it is still below the fold. */
-  useEffect(() => {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const rail = railRef.current;
-    const panel = panelRef.current;
-    if (!rail || !panel) return;
-    setArmed(true);
-    const watch = (el: Element, fire: () => void) => {
-      const io = new IntersectionObserver(
-        ([entry]) => {
-          if (!entry.isIntersecting) return;
-          io.disconnect();
-          fire();
-        },
-        { rootMargin: "0px 0px -22% 0px" },
-      );
-      io.observe(el);
-      return io;
-    };
-    const a = watch(rail, () => setRailLive(true));
-    const b = watch(panel, () => setPanelLive(true));
-    return () => {
-      a.disconnect();
-      b.disconnect();
-    };
-  }, []);
-
-  const { verify } = quickstart;
-  /* Receipt cascade timing: header first, checks at a steady 100ms, then the
-     payoff block on widening beats. All of it is transition/animation-delay
-     math — one data-live stamp plays everything. */
-  const checkDelay = (i: number) => 0.3 + i * 0.1;
-  const doneAt = 0.3 + verify.checks.length * 0.1 + 0.35;
+   Still no scroll choreography, no timers, no armed state. Everything above is
+   paint and hover — the settled render IS the design, which is also what makes
+   it identical under reduced motion and no-JS. */
+export async function Quickstart() {
+  /* Both numbers come off the real artifact at build time. The reference count
+     and the byte size are exactly the kind of figure that gets typed once and
+     is wrong a week later, and this page's contract is that its numbers are
+     reproducible — so they are read, not written. */
+  const [bytes, files] = await Promise.all([agentPackSize(), agentPackFiles()]);
+  const referenceCount = files.filter((file) => file.path.startsWith("references/")).length;
+  const kilobytes = Math.round(bytes / 1024);
 
   return (
-    <Section id="quickstart">
-      <SectionHeading
-        id="quickstart-heading"
-        eyebrow="09 · quickstart"
-        title={quickstart.heading}
-        sub={quickstart.sub}
+    <Section id="quickstart" className="relative overflow-hidden">
+      {/* The lattice, masked to an ellipse behind the cards. Same recipe as
+          Observability §07 so the two sections read as one system. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 [background-image:radial-gradient(var(--ds-border-subtle)_1px,transparent_1px)] [background-size:24px_24px] [mask-image:radial-gradient(ellipse_58%_62%_at_50%_52%,black_28%,transparent_76%)]"
       />
 
-      {/* The receipt centres on the rail's midpoint. The two columns are
-          tuned to near-equal height (the receipt breathes like a terminal,
-          the rail stays tight), so centring reads as symmetry rather than as
-          a panel floating in a taller column. */}
-      <div className="grid items-center gap-12 lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)] xl:gap-16">
-        {/* ── the pipeline ─────────────────────────────────────────── */}
-        <div
-          ref={railRef}
-          className="qs relative"
-          data-armed={armed || undefined}
-          data-live={railLive || undefined}
-          style={spineH != null ? ({ "--qs-spine": `${spineH}px` } as React.CSSProperties) : undefined}
-        >
-          {/* ONE continuous spine, not a segment per step: steps are not the
-              same height (02 carries two commands), so per-step segments came
-              out visibly different lengths and read as an accident. A single
-              track with a single fill draws straight through every station
-              and terminates on the last one. */}
+      <div className="relative">
+        <SectionHeading id="quickstart-heading" eyebrow="07 · start" title={quickstart.heading} />
+
+        <div className="relative mx-auto grid max-w-5xl gap-8 lg:grid-cols-2 lg:gap-14">
+          {/* The fork, made literal. Desktop only: stacked, the cards already
+              read as a sequence and a divider between them would say "and". */}
           <span
             aria-hidden
-            className="pointer-events-none absolute left-[15.5px] top-4 h-[var(--qs-spine,calc(100%-1.75rem))] w-px bg-border-subtle"
+            className="pointer-events-none absolute left-1/2 top-0 hidden h-full w-8 -translate-x-1/2 lg:block"
           >
-            <span data-qs-seg className="absolute inset-0 origin-top bg-ok/60" />
+            <span className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 bg-gradient-to-b from-transparent via-border-default to-transparent" />
+            <span className="absolute left-1/2 top-1/2 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-border-subtle bg-background-100 font-mono text-label-12 text-gray-600">
+              {quickstart.divider}
+            </span>
           </span>
 
-          <ol ref={olRef}>
-            {quickstart.steps.map((step, i) => (
-              <li
-                key={step.slug}
-                id={`quickstart-${step.slug}`}
-                className="relative pb-9 pl-12 last:pb-0"
-                style={{ "--d": `${i * STEP_BEAT}s` } as React.CSSProperties}
-              >
-                {/* station dot: number at rest, ✓ once done, one ping ring */}
-                <span
-                  data-qs-dot
-                  aria-hidden
-                  className="absolute left-0 top-0 flex h-8 w-8 items-center justify-center rounded-full border border-ok/25 bg-background-100"
-                >
-                  <span data-qs-num className="font-mono text-mono-13 text-gray-900">
-                    {i + 1}
-                  </span>
-                  <svg
-                    data-qs-check
-                    viewBox="0 0 16 16"
-                    width="13"
-                    height="13"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    className="absolute text-ok"
-                  >
-                    <path d="M2.5 8.5 6 12l7.5-8" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                  <span data-qs-ping className="absolute inset-0 rounded-full border border-ok" />
-                </span>
-
-                {/* One measure for the whole step, so commands and their
-                    receipts share a right edge instead of running ragged. */}
-                <div className="flex max-w-md flex-col gap-3">
-                  <div className="flex items-baseline gap-2.5">
-                    <h3 className="text-heading-20">{step.title}</h3>
-                    <span aria-hidden className="font-mono text-label-12 text-gray-600">
-                      0{i + 1}
-                    </span>
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    {step.commands.map((c) => (
-                      <CommandRow key={c.cmd} pre={c.pre} cmd={c.cmd} />
-                    ))}
-                    {/* indented to sit under its command's `$` — this line is
-                        that command's output, and should read as such */}
-                    <p
-                      data-qs-rcpt
-                      className="flex items-start gap-2 pl-4 pt-1 font-mono text-mono-13 text-gray-700"
-                      style={{ "--d": `${i * STEP_BEAT + 0.25}s` } as React.CSSProperties}
-                    >
-                      <span aria-hidden className="text-ok">
-                        ✓
-                      </span>
-                      {step.receipt}
-                    </p>
-                  </div>
-                </div>
-              </li>
-            ))}
-          </ol>
-        </div>
-
-        {/* ── the receipt ──────────────────────────────────────────── */}
-        <div className="flex min-w-0 flex-col gap-3">
-          <figure
-            ref={panelRef}
-            className="qsp overflow-hidden rounded-xl border border-border-default bg-background-200"
-            data-armed={armed || undefined}
-            data-live={panelLive || undefined}
-            aria-label="The output of npm run verify"
+          {/* ── run it yourself ────────────────────────────────────────── */}
+          <SpotlightCard
+            className="path-card rounded-2xl border border-border-default"
+            spotlight="color-mix(in srgb, var(--ds-ok) 9%, transparent)"
+            radius={300}
           >
-            <figcaption className="flex h-10 items-center justify-between gap-3 border-b border-border-subtle px-4">
-              <span className="font-mono text-mono-13">
-                <span aria-hidden className="select-none text-gray-600">
-                  ${" "}
-                </span>
-                <span className="text-gray-1000">npm run verify</span>
-              </span>
-              <a
-                href={verify.source.href}
-                target="_blank"
-                rel="noreferrer"
-                className="font-mono text-label-12 text-gray-700 transition-colors hover:text-gray-1000"
-              >
-                {verify.source.label} ↗
-              </a>
-            </figcaption>
+            <span
+              aria-hidden
+              className="path-card-rail absolute inset-x-0 top-0 h-px"
+              style={{ "--rail": "var(--ds-ok)" } as React.CSSProperties}
+            />
+            <div className="flex h-full flex-col p-6 sm:p-7">
+              <h3 className="text-heading-20">{quickstart.commands.title}</h3>
+              <p className="mt-1.5 text-copy-14 text-gray-700">{quickstart.commands.hint}</p>
 
-            <div className="overflow-x-auto p-5 font-mono text-mono-13">
-              <p data-qs-row className="font-medium text-gray-1000" style={{ "--d": "0.1s" } as React.CSSProperties}>
-                {verify.header}
-              </p>
-
-              {/* gap-2 between checks: a real terminal has air between its
-                  lines, and it brings this column to the rail's height */}
-              <div className="mt-4 flex flex-col gap-2">
-                {verify.checks.map((c, i) => (
-                  <p
-                    key={c.name}
-                    data-qs-row
-                    data-qs-flash
-                    className="whitespace-pre"
-                    style={{ "--d": `${checkDelay(i)}s` } as React.CSSProperties}
-                  >
-                    <span data-qs-ok className="text-ok">
-                      ✓{" "}
-                    </span>
-                    <span className="text-gray-1000">{c.name.padEnd(10)}</span>
-                    <span className="text-gray-900"> {c.detail}</span>
-                  </p>
+              <div className="mt-6 flex flex-col gap-1.5">
+                {quickstart.commands.rows.map((row, i) => (
+                  <CommandRow key={row.cmd} pre={row.pre} cmd={row.cmd} step={i + 1} />
                 ))}
               </div>
 
-              <p
-                data-qs-row
-                data-qs-flash
-                className="mt-5 font-medium text-ok"
-                style={{ "--d": `${doneAt}s` } as React.CSSProperties}
-              >
-                {verify.done}
-              </p>
-
-              <div className="mt-5 flex flex-col gap-1.5 whitespace-pre">
-                <p data-qs-row data-qs-payoff style={{ "--d": `${doneAt + 0.3}s` } as React.CSSProperties}>
-                  <span className="font-medium text-gray-1000">{verify.dashboard.label}</span>
-                  <span className="text-gray-1000">  {verify.dashboard.value}</span>
-                </p>
-                <p data-qs-row style={{ "--d": `${doneAt + 0.4}s` } as React.CSSProperties}>
-                  <span className="font-medium text-gray-1000">{verify.signin.label}</span>
-                  <span className="text-gray-1000">
-                    {"         "}
-                    {verify.signin.user}
-                  </span>
-                  <span className="text-gray-600"> / </span>
-                  <span className="text-gray-600">{verify.signin.mask}</span>
-                </p>
-              </div>
-
-              <p
-                data-qs-row
-                className="mt-5 text-gray-700"
-                style={{ "--d": `${doneAt + 0.65}s` } as React.CSSProperties}
-              >
-                <span className="font-medium text-gray-1000">? </span>
-                {verify.prompt}
+              {/* The one line kept from the deleted receipt panel: the last
+                  thing verify.mjs prints, and the whole payoff that panel
+                  spent forty lines building toward. */}
+              <p className="mt-auto flex items-center gap-2 pt-6 font-mono text-mono-13 text-gray-700">
+                <span
+                  aria-hidden
+                  className="flex h-4 w-4 items-center justify-center rounded-full bg-ok/15 text-[10px] text-ok"
+                >
+                  ✓
+                </span>
+                {quickstart.commands.receipt}
               </p>
             </div>
-          </figure>
+          </SpotlightCard>
+
+          {/* ── hand it to your agent ──────────────────────────────────── */}
+          <SpotlightCard
+            className="path-card rounded-2xl border border-border-default"
+            spotlight="color-mix(in srgb, var(--ds-blue-700) 12%, transparent)"
+            radius={300}
+          >
+            <span
+              aria-hidden
+              className="path-card-rail absolute inset-x-0 top-0 h-px"
+              style={{ "--rail": "var(--ds-blue-700)" } as React.CSSProperties}
+            />
+            <div className="flex h-full flex-col p-6 sm:p-7">
+              <h3 className="text-heading-20">{quickstart.agent.title}</h3>
+              <p className="mt-1.5 text-copy-14 text-gray-700">{quickstart.agent.hint}</p>
+
+              {/* A single-hue wash under the primary action — the hero's move
+                  at a fraction of its strength, and the reason this column
+                  reads as the livelier of the two without any motion. */}
+              <div className="relative mt-6">
+                <span
+                  aria-hidden
+                  className="pointer-events-none absolute -inset-x-6 -inset-y-8 z-0 [background:radial-gradient(ellipse_70%_60%_at_50%_50%,color-mix(in_srgb,var(--ds-blue-700)_18%,transparent),transparent_70%)]"
+                />
+                <div className="relative z-10">
+                  <AgentPackButton size="lg" variant="panel" />
+                </div>
+              </div>
+
+              {/* What is actually on the clipboard, stated in the tool's own
+                  units. A copy button that does not say what it copied is a
+                  button people press once and never trust. */}
+              <p className="mt-3 text-center font-mono text-label-12 text-gray-600">
+                {quickstart.agent.packFormat(referenceCount, kilobytes)}
+              </p>
+
+              <ul className="mt-7 flex flex-col gap-3">
+                {quickstart.agent.gets.map((line) => (
+                  <li key={line} className="flex items-start gap-2.5 text-copy-14 text-gray-900">
+                    <span
+                      aria-hidden
+                      className="mt-[3px] flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-blue-700/12 text-blue-700"
+                    >
+                      <svg viewBox="0 0 16 16" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="2.4">
+                        <path d="M2.5 8.5 6 12l7.5-8" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </span>
+                    {line}
+                  </li>
+                ))}
+              </ul>
+
+              {/* mt-auto pins this to the bottom so both cards' last lines sit
+                  on the same baseline whichever column is taller */}
+              <p className="mt-auto pt-6 text-label-12 text-gray-700">
+                {quickstart.agent.foot}{" "}
+                <a
+                  href={agentPack.href}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="whitespace-nowrap text-gray-900 underline decoration-border-strong underline-offset-4 transition-colors hover:decoration-current"
+                >
+                  {quickstart.agent.read}
+                </a>
+              </p>
+            </div>
+          </SpotlightCard>
         </div>
       </div>
-
-      {/* the alternative path, as one quiet line under both columns */}
-      <AgentPath />
     </Section>
   );
 }
