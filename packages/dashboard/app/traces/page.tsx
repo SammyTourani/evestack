@@ -1,8 +1,11 @@
+import { headers } from "next/headers";
+
 import { getTraceOverview, listTracedSessions } from "@/lib/traces";
 import { fmt } from "./format";
 import { ago, duration } from "@/lib/time";
 import styles from "./traces.module.css";
 import { DatabaseError } from "@/app/db-error";
+import { NoSpans, ingestOriginForHumans } from "./empty-state";
 
 export const dynamic = "force-dynamic";
 
@@ -26,6 +29,18 @@ export default async function TracesPage() {
     );
   }
 
+  // The address this dashboard is actually reachable at, taken from the request
+  // that is being served. Read here rather than inside <NoSpans> so the empty
+  // state stays a pure component, and read unconditionally rather than inside
+  // the `overview.spans === 0` branch so that a page which stops being empty
+  // does not change its dynamic-rendering shape. `dynamic = "force-dynamic"`
+  // above is what makes headers() legal at all.
+  const requestHeaders = await headers();
+  const origin = ingestOriginForHumans(
+    requestHeaders.get("host"),
+    requestHeaders.get("x-forwarded-proto"),
+  );
+
   return (
     <>
       <h1>Traces</h1>
@@ -35,7 +50,7 @@ export default async function TracesPage() {
       </p>
 
       {overview.spans === 0 ? (
-        <NoSpans />
+        <NoSpans origin={origin} />
       ) : (
         <>
           <div className="stat-row">
@@ -177,54 +192,3 @@ function NoSessionIds({ overview }: { overview: { spans: number; traces: number 
   );
 }
 
-/**
- * The default state. Everything asserted here is checked against
- * docs/observability.mdx and app/api/ingest/v1/traces/route.ts, because a setup
- * page that is subtly wrong costs more than no setup page at all.
- */
-function NoSpans() {
-  return (
-    <div className="empty">
-      <h2>No spans yet</h2>
-      <div className={styles.setup}>
-        <p>
-          Trace export is opt-in, and off by default. Sessions, turns, tokens and cost all work
-          without it — they come from <code>workflow.workflow_runs</code>, not from spans. What you
-          get by turning it on is the content: system prompts, message history, and the arguments
-          and results of every tool the agent ran.
-        </p>
-        <p>Set both variables for the agent, and restart it:</p>
-        <pre>
-          {"EVESTACK_DASHBOARD_URL=http://localhost:4000/api/ingest/v1/traces\n"}
-          {"EVESTACK_INGEST_TOKEN=<the same value this dashboard has>"}
-        </pre>
-        <ul>
-          <li>
-            The URL is the <strong>full path</strong>. <code>@vercel/otel</code> uses it verbatim
-            and appends nothing, so a bare origin or the conventional{" "}
-            <code>:4318/v1/traces</code> never arrives.
-          </li>
-          <li>
-            Both sides need the <em>same</em> <code>EVESTACK_INGEST_TOKEN</code>. Leaving it unset
-            on both does not open the endpoint — it makes the route fall back to browser session
-            auth, and an exporter has no cookie, so every span is refused with 401.
-          </li>
-          <li>
-            That 401 is silent. An HTTP error resolves a <code>fetch</code>, so the exporter
-            reports the rejected batch as a success and never retries. The template probes the
-            endpoint once at boot for exactly this reason.
-          </li>
-          <li>
-            Use <code>OTLPHttpJsonTraceExporter</code>. This endpoint parses JSON only and rejects
-            protobuf with a 415 rather than half-decoding a span.
-          </li>
-        </ul>
-        <p className="faint">
-          <code>create-evestack</code> writes both into <code>.env.local</code>, which the
-          dashboard container also reads, so a scaffolded project needs no extra step. Full detail
-          is in <code>docs/observability.mdx</code>.
-        </p>
-      </div>
-    </div>
-  );
-}

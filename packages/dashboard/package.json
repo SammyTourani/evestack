@@ -19,7 +19,7 @@
     "build": "next build",
     "start": "next start --port 4000",
     "typecheck": "next typegen && tsc --noEmit",
-    "test": "node --import ./test/register-ts-resolve.mjs --test test/*.test.mjs",
+    "test": "node --import ./test/register-ts-resolve.mjs --test test/*.test.mjs \"app/**/*.test.mjs\"",
     "seed": "node scripts/seed.mjs",
     "seed:purge": "node scripts/seed.mjs --purge"
   },
