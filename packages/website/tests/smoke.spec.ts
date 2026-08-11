@@ -108,17 +108,51 @@ test.describe("evestack landing page", () => {
        mid-type has an inline pixel width, and exactly one caret is lit while
        that is happening. */
     await page.goto("/");
+
+    /* Watch for the typing marker with a MutationObserver installed BEFORE any
+       scrolling, rather than polling for it afterwards. Polling raced the
+       animation and lost on CI: a slower machine spends longer in the scroll
+       loop, the terminal passes its trigger unobserved, and by the first
+       assertion it has either finished or never started (the choreography
+       skips the replay when it initialises with the terminal already on
+       screen). Recording every state change removes the race entirely. */
+    await page.addInitScript(() => {
+      const w = window as unknown as { __typed?: boolean; __maxLit?: number };
+      w.__typed = false;
+      w.__maxLit = 0;
+      /* Sampled every frame, and installed by addInitScript so it is running
+         before any of the page's own script is.
+
+         A MutationObserver was the first attempt and it lost the same race it
+         was meant to fix: `data-typing` is stamped when the lazy choreography
+         chunk sets up, which can land before a post-goto page.evaluate has
+         installed anything, and an observer cannot see a mutation that already
+         happened. A frame sampler has no such ordering requirement. */
+      const tick = () => {
+        if (document.querySelector("[data-term][data-typing]")) w.__typed = true;
+        w.__maxLit = Math.max(
+          w.__maxLit ?? 0,
+          document.querySelectorAll(".terminal-cursor[data-on]").length,
+        );
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+    await page.reload();
+
     await page.mouse.move(700, 450);
     const top = await page.evaluate(() => (document.querySelector("#one-command") as HTMLElement).offsetTop);
     while ((await page.evaluate(() => window.scrollY)) < top - 260) {
-      await page.mouse.wheel(0, 700);
+      await page.mouse.wheel(0, 400);
       await page.waitForTimeout(30);
     }
 
-    // Caught mid-run: the container is marked, and one caret is riding a line.
-    await expect(page.locator("[data-term][data-typing]")).toHaveCount(1, { timeout: 4000 });
-    const lit = await page.locator(".terminal-cursor[data-on]").count();
-    expect(lit, "exactly one caret is lit while typing").toBeLessThanOrEqual(1);
+    const observed = await page.evaluate(() => {
+      const w = window as unknown as { __typed?: boolean; __maxLit?: number };
+      return { typed: w.__typed, maxLit: w.__maxLit };
+    });
+    expect(observed.typed, "the terminal entered its typing state").toBe(true);
+    expect(observed.maxLit, "never more than one caret lit at a time").toBeLessThanOrEqual(1);
 
     // Settled: marker gone, every width handed back to CSS, caret on the last
     // line. The widths matter: a leftover inline width is not responsive.
@@ -152,6 +186,21 @@ test.describe("evestack landing page", () => {
     /* Sessions is a table and was the first thing a visitor met. Chat is a
        conversation with an agent, which is the product in one glance. */
     await page.goto("/");
+    /* Scroll to it first, which is both what a visitor does and what makes
+       this deterministic. The demo lives inside [data-terminal-result], which
+       the choreography hides with autoAlpha (visibility: hidden) until it is
+       reached, and a role query does not match hidden elements. Asserting
+       straight after goto raced the lazy chunk: before it loaded the tabs were
+       queryable, after it they were not. */
+    await page.mouse.move(700, 450);
+    const top = await page.evaluate(
+      () => (document.querySelector("#one-command") as HTMLElement).offsetTop,
+    );
+    while ((await page.evaluate(() => window.scrollY)) < top) {
+      await page.mouse.wheel(0, 500);
+      await page.waitForTimeout(30);
+    }
+
     const tabs = page.getByRole("tab");
     await expect(tabs.first()).toHaveText("Chat");
     await expect(tabs.first()).toHaveAttribute("aria-selected", "true");

@@ -150,10 +150,10 @@ export function AgentPackButton({
   useEffect(() => {
     if (!open) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key === "Escape") dismiss();
     };
     const onPointer = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+      if (!rootRef.current?.contains(event.target as Node)) dismiss();
     };
     document.addEventListener("keydown", onKey);
     document.addEventListener("pointerdown", onPointer);
@@ -193,17 +193,37 @@ export function AgentPackButton({
     return () => mq.removeEventListener("change", sync);
   }, []);
 
+  /* Set when the user explicitly dismisses (Escape, or a click outside), and
+     cleared only when the pointer actually leaves the control.
+
+     Without it, dismissing is not dismissing. Escape fires while the pointer
+     is still sitting on the button, the hover-open timer scheduled by the
+     pointerenter that got you there is still pending, and ~90ms later the menu
+     you just closed comes back. CI caught it as a flake on the Escape test and
+     it is a real one: press Escape with the cursor on the button and the menu
+     reappears by itself. */
+  const suppressRef = useRef(false);
+
   const clearHoverTimer = () => {
     if (hoverTimer.current) clearTimeout(hoverTimer.current);
     hoverTimer.current = null;
   };
+  const dismiss = () => {
+    clearHoverTimer();
+    suppressRef.current = true;
+    setOpen(false);
+  };
   const hoverOpen = () => {
-    if (!canHover) return;
+    if (!canHover || suppressRef.current) return;
     clearHoverTimer();
     void prefetch()?.catch(() => {});
     hoverTimer.current = setTimeout(() => setOpen(true), 90);
   };
   const hoverClose = () => {
+    /* The pointer has left, so a previous dismissal is spent: hovering back on
+       should open again. Cleared even when !canHover, so a device that gains a
+       mouse mid-session is not left permanently suppressed. */
+    suppressRef.current = false;
     if (!canHover) return;
     clearHoverTimer();
     hoverTimer.current = setTimeout(() => setOpen(false), 220);
@@ -301,7 +321,7 @@ export function AgentPackButton({
 
         <button
           type="button"
-          onClick={() => setOpen((v) => (canHover ? true : !v))}
+          onClick={() => (open ? dismiss() : setOpen(true))}
           aria-haspopup="menu"
           aria-expanded={open}
           aria-label={agentPack.menuLabel}
