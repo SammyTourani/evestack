@@ -312,10 +312,20 @@ export default {
       for (const component of new Set(stamped)) {
         // As an object key, not as a substring. `spans:` cannot be satisfied by
         // an import path or a comment the way a bare word can.
-        t.contains(
-          facts,
-          `${component}:`,
+        // A KEY, anchored. `t.contains` is a substring search, so asserting
+        // `spans:` was satisfied by `notspans:` — measured. The component has to
+        // start the key, which means the character before it must not be one a
+        // JavaScript identifier can contain.
+        const declaresKey = new RegExp(String.raw`(?<![A-Za-z0-9_$])${component}\s*:`).test(facts);
+        t.ok(
+          declaresKey,
           `lib/facts.ts declares a target for '${component}', the component ${file} stamps`,
+          {
+            expected: `a \`${component}:\` key in schemaVersionsAhead`,
+            actual: facts.includes(`${component}:`)
+              ? `the string "${component}:" appears, but only inside a longer identifier`
+              : "no such key",
+          },
         );
       }
     }
