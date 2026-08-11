@@ -240,7 +240,15 @@ export interface ToolCallRow {
   readonly name: string;
   readonly startedAt: string;
   readonly durationMs: number | null;
-  readonly ok: boolean;
+  /**
+   * Three states, matching `fact_tool_call.ok` from facts v3.
+   *
+   * `null` means the span carried OTel status UNSET — the tracer never said
+   * either way, which is what a tracer that only sets a status on failure emits
+   * for every successful call. It is not a synonym for false, and rendering it
+   * as one puts a red "failed" badge on a call that most likely worked.
+   */
+  readonly ok: boolean | null;
   readonly errorMessage: string | null;
   /** Byte length of the recorded arguments, or null when none were recorded. */
   readonly argumentsBytes: number | null;
@@ -280,7 +288,9 @@ export async function listToolCallFacts(
       name: String(row.tool_name),
       startedAt: new Date(row.started_at as string).toISOString(),
       durationMs: num(row.duration_ms),
-      ok: Boolean(row.ok),
+      // Null-preserving. `Boolean(null)` is `false`, which is the collapse this
+      // column was made nullable to prevent.
+      ok: row.ok === null || row.ok === undefined ? null : Boolean(row.ok),
       errorMessage: text(row.error_message),
       argumentsBytes: num(row.arguments_bytes),
       resultBytes: num(row.result_bytes),

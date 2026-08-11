@@ -690,3 +690,58 @@ test("every page the degraded payload calls available is one this build serves",
     }
   }
 });
+
+/**
+ * The same rule, one view over — which is where it was missing.
+ *
+ * `fact_tool_call.ok` was `status_code <> 2` and NOT NULL, so OTel UNSET (0) —
+ * what every tracer that only sets a status on failure emits for a call that
+ * WORKED — recorded as a success, and the "Tool failure rate" averaged it in
+ * while claiming 100% coverage. Facts v3 made the column nullable, which fixes
+ * the write but moves the danger to the readers: `CASE WHEN ok THEN 0 ELSE 1 END`
+ * sends NULL to the ELSE arm, so the very upgrade that stopped over-counting
+ * successes would have started counting every unjudged call as a FAILURE. An
+ * exporting install's tool failure rate would have gone from 0% to 100% on the
+ * first boot after the upgrade.
+ *
+ * The turns measure has been guarded above since the fleet work. Nothing guarded
+ * the tools measure, which is exactly why the same defect was still living in it.
+ */
+function armFor(sql, value) {
+  const body = /^\s*CASE\s+([\s\S]*?)\s*END\s*$/i.exec(sql);
+  assert.ok(body, `not a CASE expression: ${sql}`);
+  const arms = body[1];
+  if (value === null) {
+    const isNull = /WHEN\s+ok\s+IS\s+NULL\s+THEN\s+(NULL|'[^']*'|-?\d+)/i.exec(arms);
+    return isNull ? isNull[1] : null;
+  }
+  const m = new RegExp(`WHEN\\s+ok\\s+THEN\\s+(NULL|'[^']*'|-?\\d+)`, "i").exec(arms);
+  return m ? m[1] : null;
+}
+
+test("a tool call nobody judged is not scored as one that failed", () => {
+  const sql = CATALOG.tool_calls.measures.failure_rate.sql;
+  assert.deepEqual(
+    CATALOG.tool_calls.measures.failure_rate.aggregations,
+    ["avg"],
+    "the tool failure rate is an avg() of a 0/1/NULL column; another aggregation changes what NULL means",
+  );
+  assert.equal(
+    armFor(sql, null),
+    "NULL",
+    "an unjudged tool call (OTel UNSET, stored as NULL) must leave the rate entirely. " +
+      "Without an `ok IS NULL` arm it falls to ELSE and every call a tracer never " +
+      "judged is counted as a failure",
+  );
+  assert.equal(armFor(sql, true), "0", "a judged-successful call scores 0");
+});
+
+test("the tool status dimension has a bucket for calls nobody judged", () => {
+  const sql = CATALOG.tool_calls.dimensions.status.sql;
+  const unknown = armFor(sql, null);
+  assert.ok(
+    unknown && unknown !== "'failed'",
+    `an unjudged tool call groups as ${unknown ?? "the ELSE arm"}. A chart whose job is ` +
+      "telling ok from failed must not put 'never reported' in the failed bucket",
+  );
+});

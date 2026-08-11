@@ -427,11 +427,20 @@ function Transcript({
             <h4 className="m-0 flex items-baseline gap-2 text-small text-text-dim">
               <span className="font-mono text-text">{call.name}</span>
               <span>{duration(call.durationMs)}</span>
-              {call.ok ? null : (
+              {/*
+                Three states, and the middle one is the point. `call.ok === null`
+                is OTel UNSET: the tracer never judged this call. `call.ok ?` on
+                its own put a red "failed" badge on every such call, which on an
+                install whose tracer only sets a status on failure is every call
+                that worked. Silent for null, because a call nobody judged is not
+                a call that failed — and the tool failure rate beside it excludes
+                them for the same reason.
+              */}
+              {call.ok === false ? (
                 <Badge tone="err" title={call.errorMessage ?? undefined}>
                   failed
                 </Badge>
-              )}
+              ) : null}
             </h4>
             <PayloadBlock
               label="Arguments"

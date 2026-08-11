@@ -424,7 +424,18 @@ const TOOL_CALLS: ViewDef = {
     failure_rate: {
       label: "Tool failure rate",
       unit: "percent",
-      sql: "CASE WHEN ok THEN 0 ELSE 1 END",
+      // The same three-state shape as TURN_FAILED_SQL above, and for the same
+      // reason. `fact_tool_call.ok` is nullable from facts v3: OTel UNSET — what
+      // every tracer that only sets a status on failure emits — records as
+      // "nobody judged this", not as a success.
+      //
+      // The NULL arm has to come FIRST and has to yield NULL. Without it, NULL
+      // falls through to ELSE and an unjudged tool call is counted as a FAILURE,
+      // which would flip an exporting install's tool failure rate from 0% to
+      // 100% on the first boot after the upgrade. `avg` ignores NULLs, so the
+      // rate is over calls that were actually judged, and the measure's coverage
+      // column reports how many that was.
+      sql: "CASE WHEN ok IS NULL THEN NULL WHEN ok THEN 0 ELSE 1 END",
       aggregations: ["avg"],
     },
     // count_distinct only. `count(session_id)` is how many ROWS carry a
@@ -439,7 +450,14 @@ const TOOL_CALLS: ViewDef = {
   },
   dimensions: {
     tool: { label: "Tool", sql: "tool_name", groupable: true },
-    status: { label: "Status", sql: "CASE WHEN ok THEN 'ok' ELSE 'failed' END", groupable: true },
+    // Three states, because the column has three. Grouping NULL as 'failed'
+    // would put every unjudged tool call in the failed bucket on a chart whose
+    // whole job is telling those apart.
+    status: {
+      label: "Status",
+      sql: "CASE WHEN ok IS NULL THEN 'unknown' WHEN ok THEN 'ok' ELSE 'failed' END",
+      groupable: true,
+    },
     session_id: { label: "Session", sql: "session_id", groupable: false },
     run_id: { label: "Run", sql: "run_id", groupable: false },
   },
