@@ -227,21 +227,36 @@ export default {
 
       // Not a demand for a field name. The requirement is that the numbers add
       // up to the population, by whatever route: checked + unchecked + a
-      // stated skipped/settled count, or a stated total. Today the payload
-      // carries only findings, so `checked + unchecked` is 0 out of N and
-      // nothing says N.
-      const numbers = Object.entries(blind).filter(([, v]) => typeof v === "number");
-      const accounted = numbers.reduce((sum, [, v]) => sum + v, 0);
+      // stated skipped/settled count, or a stated total.
+      //
+      // COUNTS ONLY. This summed every numeric field, and the payload carries
+      // `idleThresholdMs` and `wedgeAfterMs` — 2,592,000,000 and 3,600,000 for
+      // the blind sweep. Any session total is smaller than either, so the sum
+      // cleared the bar no matter what the counts said and the assertion passed
+      // for arithmetic reasons rather than for the reason it was written. A
+      // duration is not a tally of sessions; excluding `*Ms` is what makes this
+      // a statement about coverage.
+      const counts = Object.entries(blind).filter(
+        ([k, v]) => typeof v === "number" && !/Ms$/.test(k),
+      );
+      const accounted = counts.reduce((sum, [, v]) => sum + v, 0);
+      const { rows: totalRows } = await client.query(
+        "select count(*)::int as n from workflow.workflow_runs where attributes->>$1 = 'session'",
+        ["$eve.type"],
+      );
+      const total = totalRows[0].n;
+      t.note(`${total} session(s) in the database at the time of the sweep`);
+
       t.ok(
-        numbers.some(([, v]) => v >= sessions) || accounted >= sessions,
+        counts.some(([, v]) => v >= total) || accounted >= total,
         "the payload accounts for the sessions it did not examine, so 0 findings is readable",
         {
-          expected: `some number reaching the ${sessions} session(s) in the database`,
+          expected: `some count reaching the ${total} session(s) in the database`,
           actual:
-            `${JSON.stringify(Object.fromEntries(numbers))} sums to ${accounted}. ` +
-            "A reader cannot tell 0-of-0 from 0-of-" +
-            `${sessions}. /api/health/detail already reports the session total, so this is a ` +
-            "number the product has rather than one it would have to invent.",
+            `${JSON.stringify(Object.fromEntries(counts))} sums to ${accounted}. ` +
+            `A reader cannot tell 0-of-0 from 0-of-${total}. /api/health/detail already ` +
+            "reports the session total, so this is a number the product has rather than one " +
+            "it would have to invent.",
         },
       );
 

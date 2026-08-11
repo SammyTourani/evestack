@@ -171,6 +171,27 @@ export interface FleetReport {
    * what makes "looked, said nothing" readable as "not yet, and here is when".
    */
   readonly wedgeAfterMs: number;
+
+  /**
+   * Every session in the database, candidate or not. The denominator.
+   *
+   * `checked`, `unchecked` and `tooRecent` all count sessions the sweep
+   * CONSIDERED — ones carrying an open turn. Sessions whose turns have all
+   * closed are never candidates at any threshold, so they appear in none of
+   * those three, and until this field existed they appeared nowhere at all.
+   *
+   * That is the last place the endpoint could still say nothing and sound like
+   * it had said something. `{"checked":0,"unchecked":0,"tooRecent":0}` is the
+   * honest answer both for a database with no sessions in it and for one with
+   * four thousand, all finished — and a monitor cannot tell those apart from
+   * findings alone, because findings are what a sweep produces, never what it
+   * was given. `sessions - (checked + unchecked + tooRecent)` is the count that
+   * needed no round trip, which is the whole reason it is cheap to report.
+   *
+   * /api/health/detail already publishes this number, so it is one the product
+   * has rather than one it had to invent.
+   */
+  readonly sessions: number;
 }
 
 /**
@@ -548,11 +569,22 @@ export async function inspectFleet(
     }),
   );
 
+  // The denominator, and deliberately a separate statement rather than a column
+  // on the candidate query: that query's WHERE already excludes every settled
+  // session, so it cannot count what it filtered out. One index-only count over
+  // a column already indexed for the session list.
+  const [population] = await query<{ n: string | number }>(
+    `select count(*)::int as n
+       from workflow.workflow_runs
+      where attributes->>'$eve.type' = 'session'`,
+  );
+
   return {
     entries,
     checked: entries.length,
     unchecked,
     tooRecent,
+    sessions: Number(population?.n ?? 0),
     // What Postgres was handed, not what the caller asked for: intervalMilliseconds
     // rounds and clamps, and a report that quotes the request rather than the cut
     // would describe a sweep that did not happen.
