@@ -54,9 +54,23 @@ const VERSION_SQL = "SELECT component, version FROM evestack.schema_version";
  * tables and then wrote its own lower number over the marker.
  *
  * The behaviour is proved against a real server by
- * contract/runtime/probes/06-span-attribution.probe.mjs and 07-fact-tables,
- * which apply these files for real. What is asserted here is the STRUCTURE the
- * guard depends on and that a reviewer cannot check by reading one hunk: that
+ * contract/runtime/probes/23-schema-downgrade-guard.probe.mjs, which stands up
+ * a database of its own, applies each guarded file to it for real, moves the
+ * marker one version ahead and applies it again — so the raise, its SQLSTATE,
+ * the fact that nothing was applied, and /api/health's 503 are all observed
+ * rather than inferred.
+ *
+ * THAT SENTENCE USED TO NAME PROBES 06 AND 07, AND IT WAS FALSE. Both of those
+ * move the marker BACKWARD — 06 deletes the spans row, 07 sets facts to 0 — to
+ * check that the migration re-runs. Neither ever sets a version ABOVE target,
+ * so neither could reach `installed > target`, and the claim was load-bearing:
+ * it is what licensed this file to assert structure only. With nothing
+ * executing the raise, a guard reading `component = 'spanz'` was a permanent
+ * no-op that passed every test here.
+ *
+ * What is asserted here is the STRUCTURE the guard depends on, which runs on
+ * every commit rather than only where there is a database, and which a reviewer
+ * cannot check by reading one hunk: that
  * it comes first, with nothing but no-ops ahead of it; that it reads the
  * component the file stamps; that its version constant still matches the
  * migration it guards; that the target it enforces is one some step in the file
