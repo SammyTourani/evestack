@@ -129,19 +129,36 @@ Ranked by how much damage a mistake would do.
    > academic: it makes the failure a **race** rather than a certainty, which is the only story
    > that fits the measurement. 40 overlapping traces left 31 stale, not 40.
    >
-   > It also told reviewers "a per-trace advisory lock was tested and does *not* work". **It
-   > was never tested, and it does work.** That sentence was a corollary of the false mechanism
-   > above, and it was the most damaging thing in this document — a standing instruction not to
-   > try the textbook fix, resting on an experiment nobody ran. Measured now: with
-   > `pg_advisory_xact_lock` the second writer waits for the first to commit and its walk sees
-   > the first writer's rows — 0 stale spans, against 3 under forced overlap without it.
+   > It also told reviewers "a per-trace advisory lock was tested and does *not* work". The
+   > REASON given was a corollary of the false mechanism above, and nobody had run the
+   > experiment — a standing instruction not to try the textbook fix, resting on nothing.
    >
-   > The lock is still not used, on grounds that are now honest rather than invented: it
-   > serializes every writer of a trace on the hottest insert path; its correctness depends on
-   > READ COMMITTED (at REPEATABLE READ the trigger really does hold one snapshot for the whole
-   > transaction, and waiting really would buy nothing); and a multi-trace batch would have to
-   > order its locks or accept a deadlock surface. The long version is above the trigger in
-   > `sql/traces.sql`.
+   > **CORRECTED AGAIN, and this is the third draft of this paragraph.** The second draft said
+   > "it was never tested, and it does work — 0 stale spans, against 3 under forced overlap
+   > without it." That is also wrong, and it is wrong in the direction that matters: it would
+   > send the next person to implement a lock that loses batches.
+   >
+   > The two claims differ because the FORCING differs, and only one forcing is the one this
+   > code produces. Await the first writer's commit before issuing the second writer's insert
+   > and the lock behaves as it looks — the second waits, its walk sees the first's rows,
+   > nothing stale. **Issue both statements before awaiting either** — the shape `insertSpans`
+   > actually produces, and the shape the phrase "overlapping batches" means here — and it
+   > blocks and stays blocked. Measured on PostgreSQL 17.10: `pg_locks` reports one advisory
+   > lock granted and one not, still, six seconds in, against a `deadlock_timeout` of 1s.
+   > Postgres never breaks it, and is right not to: a client holding both transactions while
+   > awaiting the blocked one is not a lock *cycle*, so there is nothing for deadlock detection
+   > to find. The batch is lost.
+   >
+   > So the lock is rejected, and on stronger grounds than either earlier draft claimed: it is
+   > an **availability failure under the exact concurrency it was proposed to fix**, not a
+   > throughput tax. It also serializes every writer of a trace on the hottest insert path, and
+   > its correctness depends on READ COMMITTED — at REPEATABLE READ the trigger really does hold
+   > one snapshot for the whole transaction and waiting really would buy nothing.
+   >
+   > Three drafts, three claims, one of them arrived at by running both sequencings instead of
+   > one. That is the lesson worth carrying out of this document: the first draft inferred, the
+   > second measured one case and generalised, and only the third measured the case that
+   > matters. The long version is above the trigger in `sql/traces.sql`.
 2. **`packages/dashboard/sql/traces.sql` and `facts.sql` — the version guard.** Two literals in
    `traces.sql` must agree; `test/schema-guard.test.mjs` is the arbiter and must never be edited
    to pass. Note the guard cannot protect against a rollback to today's published image, because

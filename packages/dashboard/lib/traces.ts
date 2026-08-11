@@ -669,15 +669,32 @@ export async function insertSpans(spans: readonly IngestedSpan[]): Promise<numbe
    * `SELECT evestack.resolve_span_ancestry()` changed exactly those 93 rows.
    *
    * A per-trace advisory lock inside the trigger was written down here as tried
-   * and useless, "the lock is taken after the snapshot is". That was a corollary
-   * of the false mechanism and nothing had ever tried it. Measured now, it
-   * works: the second writer waits for the first to commit and its walk sees the
-   * first writer's rows. It is not used because it serializes every writer of a
-   * trace on the hottest insert path, because its correctness depends on READ
-   * COMMITTED (at REPEATABLE READ the trigger really does hold one snapshot for
-   * the whole transaction, and waiting really would buy nothing), and because a
-   * multi-trace batch has to order its locks or add a deadlock surface. See the
-   * long version above the trigger in sql/traces.sql.
+   * and useless, "the lock is taken after the snapshot is". That REASON was a
+   * corollary of the false mechanism above and nothing had ever run the
+   * experiment. The conclusion is right anyway, and the true reason is worse
+   * than the one that was invented for it.
+   *
+   * A second draft of this comment said the lock "works". It does not, and the
+   * two claims differ because the FORCING differs. Await the first writer's
+   * commit before issuing the second writer's insert and the lock behaves as it
+   * looks: the second waits, its walk sees the first's rows, nothing stale.
+   * ISSUE both statements before AWAITING either — which is the shape this
+   * comment means by overlapping batches, and the shape insertSpans actually
+   * produces — and it blocks and stays blocked. Measured: `pg_locks` shows one
+   * advisory lock granted and one not, still, six seconds in, against a
+   * `deadlock_timeout` of 1s. Postgres never breaks it and is right not to. A
+   * client holding both transactions and awaiting the blocked one is not a lock
+   * CYCLE, so deadlock detection has nothing to find. The batch is lost.
+   *
+   * So the lock is an availability failure under the exact concurrency it was
+   * proposed to fix, not a throughput tax. It also serializes every writer of a
+   * trace on the hottest insert path, and its correctness depends on READ
+   * COMMITTED — at REPEATABLE READ the trigger really does hold one snapshot for
+   * the whole transaction, and waiting really would buy nothing.
+   *
+   * Three drafts of this paragraph, three different claims, and only this one
+   * was arrived at by running both sequencings rather than one. See the long
+   * version above the trigger in sql/traces.sql.
    *
    * This statement is its own transaction, so its snapshot is taken after every
    * chunk above committed and it sees whatever else committed while they ran.
