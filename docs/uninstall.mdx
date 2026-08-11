@@ -36,9 +36,9 @@ none of the rest.
 The last two are not evestack's to delete and are named here only because nothing else names them
 as a consequence of having run evestack.
 
-<Warning>
-  ## Two list commands that lie, and the rule that follows
+## Two list commands that lie, and the rule that follows
 
+<Warning>
   `docker ps --filter name=X` and `docker volume ls --filter name=X` are **substring** matches, not
   equality. `--filter name=agent` matches `my-agent`, `agent-2`, and a container called
   `payments-agent-prod` that belongs to something else entirely.
