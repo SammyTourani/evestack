@@ -217,73 +217,91 @@ function Choreography() {
           );
         });
 
-        /* ── Terminal typing (§3) ──────────────────────────────────── */
+        /* ── Terminal typing (§1) ──────────────────────────────────────
+           The WHOLE terminal types out now, line after line, with one caret
+           riding the edge of whatever is currently being written. It used to
+           type only the first line and then fade the other eight in as a
+           cascade, which is a different thing pretending to be typing: the
+           output arrived as whole blocks and the caret sat marooned at the end
+           of line one while it happened.
+
+           Mechanism, and why it is not SplitText: each line is an
+           overflow-hidden wrapper whose width animates from 0 to its measured
+           natural width, with the caret immediately after it. Splitting nine
+           lines into ~450 character spans is nine chances to break
+           `whitespace-pre` and one guaranteed fight with the screen-reader
+           reading order; growing a box does the same job, and the caret rides
+           the growing edge for free because it is simply the next inline
+           element.
+
+           Two speeds, because a terminal has two speakers. A `cmd` line is a
+           person at a keyboard (~38ms/char, with a beat afterwards while the
+           machine thinks). Everything else is the machine answering, which is
+           far too fast to read as typing and is meant to be (~6ms/char). */
         const terminal = document.querySelector<HTMLElement>("[data-terminal]");
-        if (terminal) {
-          const prompt = terminal.querySelector<HTMLElement>("[data-terminal-prompt]");
-          const cursor = terminal.querySelector<HTMLElement>(".terminal-cursor");
-          const lines = gsap.utils.toArray<HTMLElement>("[data-terminal-line]", terminal);
+        const termBody = terminal?.querySelector<HTMLElement>("[data-term]");
+        if (terminal && termBody) {
+          const lines = gsap.utils.toArray<HTMLElement>("[data-terminal-line]", termBody);
           /* Same policy as the hero entrance: if this chunk initializes with
              the terminal already at/past its trigger line (mid-page reload,
              anchor link below it), the settled SSR content has been visible —
              skip the hide-and-replay entirely rather than blank it. */
           const alreadyRevealed =
             terminal.getBoundingClientRect().top < window.innerHeight * 0.7;
-          if (!alreadyRevealed) {
-            /* The hidden state applies NOW, at setup — not inside the
-               timeline. A timeline-internal .set() only runs when the
-               trigger fires at "top 70%", so the settled SSR content would
-               flash fully-formed while the card scrolls from the viewport
-               bottom up to the trigger line, then blank and replay. Eager
-               sets live inside the reduced-motion matchMedia scope, so
-               no-JS and reduced-motion users never get content hidden. */
-            const chars = prompt
-              ? SplitText.create(prompt, { type: "chars", aria: "none" })
-              : null;
-            if (chars) gsap.set(chars.chars, { visibility: "hidden" });
-            /* the cursor only lands AFTER the command finishes typing — hide
-               it too. Its CSS blink keyframes animate opacity and would
-               override an inline opacity:0, so also inline-disable the
-               animation while hidden (cleared again on reveal). */
-            if (chars && cursor) gsap.set(cursor, { autoAlpha: 0, animation: "none" });
-            gsap.set(lines, { autoAlpha: 0 });
 
-            /* the timeline only ANIMATES the reveal — no hides inside it */
+          if (!alreadyRevealed && lines.length > 0) {
+            /* Measure BEFORE anything is hidden. Widths are read once, in one
+               pass, so this cannot interleave reads and writes into a layout
+               thrash across nine elements. */
+            const parts = lines.map((line) => {
+              const text = line.querySelector<HTMLElement>("[data-term-text]");
+              const caret = line.querySelector<HTMLElement>(".terminal-cursor");
+              const chars = (text?.textContent ?? "").length;
+              return { text, caret, chars, isCmd: line.dataset.kind === "cmd" };
+            });
+            const widths = parts.map(({ text }) => text?.offsetWidth ?? 0);
+
+            /* Hidden state applies NOW, at setup, not inside the timeline. A
+               timeline-internal .set() only runs when the trigger fires at
+               "top 70%", so settled SSR content would flash fully formed while
+               the card scrolls up to the trigger, then blank and replay. These
+               eager sets live inside the no-preference matchMedia scope, so
+               no-JS and reduced-motion users never get content hidden. */
+            termBody.setAttribute("data-typing", "");
+            parts.forEach(({ text }) => text && gsap.set(text, { width: 0 }));
+
             const termTl = gsap.timeline({
               scrollTrigger: { trigger: terminal, start: "top 70%", once: true },
             });
-            if (chars) {
-              /* human keystroke cadence: 30–65ms with jitter, never metronomic */
-              let typed = 0;
-              const keystrokes = chars.chars.map(() => (typed += 0.03 + Math.random() * 0.035));
-              termTl.to(chars.chars, {
-                visibility: "visible",
-                duration: 0.001,
-                stagger: (i: number) => keystrokes[i],
-              });
-              if (cursor) {
-                /* the cursor pops in at the end of the finished line the
-                   instant the last keystroke lands, then blinks through the
-                   450ms think beat — clearProps restores the CSS blink
-                   (which restarts at its opacity-1 phase) */
-                termTl.set(cursor, { clearProps: "all" }, ">");
-              }
-            }
-            /* the machine thinks before it speaks — a hard 450ms beat after
-               the last keystroke, then output cascades at widening,
-               non-uniform intervals */
-            const cascade = [0, 0.18, 0.38, 0.6, 0.86, 1.16, 1.48, 1.82, 2.18];
-            termTl.to(
-              lines,
-              {
-                autoAlpha: 1,
-                y: 0,
-                duration: 0.3,
-                ease: "power1.out",
-                stagger: (i: number) => cascade[Math.min(i, cascade.length - 1)],
-              },
-              ">+0.45",
-            );
+
+            parts.forEach((part, i) => {
+              const { text, caret, chars, isCmd } = part;
+              if (!text) return;
+              /* Capped so a long machine line cannot stall the sequence, and
+                 floored so a two-word line still reads as typed rather than
+                 as a flash. */
+              const duration = isCmd
+                ? Math.min(1.15, Math.max(0.3, chars * 0.038))
+                : Math.min(0.5, Math.max(0.16, chars * 0.006));
+
+              /* .call() rather than gsap.set({attr}) because GSAP's attr plugin
+                 has no way to REMOVE an attribute, and `data-on=""` removed by
+                 setting it to "false" would still match [data-on] in CSS. */
+              if (caret) termTl.call(() => caret.setAttribute("data-on", ""));
+              termTl.to(text, { width: widths[i], duration, ease: "none" });
+              if (caret) termTl.call(() => caret.removeAttribute("data-on"));
+              /* The beat. After a command the machine pauses before it
+                 answers; between two output lines it barely pauses at all. */
+              termTl.to({}, { duration: isCmd ? 0.32 : 0.09 });
+            });
+
+            /* Hand control back to CSS: widths return to natural (so the
+               terminal stays responsive) and the settled rule puts the caret
+               on the last line, where a finished terminal leaves it. */
+            termTl.add(() => {
+              parts.forEach(({ text }) => text && gsap.set(text, { clearProps: "width" }));
+              termBody.removeAttribute("data-typing");
+            });
           }
         }
 

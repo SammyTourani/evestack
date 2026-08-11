@@ -28,7 +28,14 @@ import {
 const ROW_GRID =
   "grid grid-cols-[minmax(0,1fr)_88px_44px_136px_60px_64px_72px_64px] items-center gap-x-3 px-4";
 const NUM_CELL = "text-right font-mono text-mono-13 tabular-nums";
-const TABS = ["Sessions", "Chat", "Integrations"] as const;
+/* CHAT FIRST (2026-08-11, Sammy's call). The panel opened on Sessions, which
+   is a table: correct, dense, and the least legible way to answer "what is
+   this thing?" for someone meeting it for the first time. Chat is a
+   conversation with an agent, which is the product in one glance, so it opens
+   the section and the scripted exchange is the first motion a visitor sees.
+
+   Order is the tab order AND the rotation order, since both read from TABS. */
+const TABS = ["Chat", "Sessions", "Integrations"] as const;
 type Tab = (typeof TABS)[number];
 
 const INTEGRATIONS = [
@@ -249,8 +256,19 @@ export function DashboardDemo() {
   const tabRef = useRef<Tab>("Sessions");
   const autoOffRef = useRef(false); // user clicked a tab → the tour stops driving
   const inViewRef = useRef(false);
+  /* Distinct from inViewRef, and needed because that one is a ref: React does
+     not re-run an effect when a ref flips. This is the "has this panel ever
+     been on screen" latch that the Chat script waits on.
+
+     It exists because Chat became the DEFAULT tab. Its script used to run only
+     when you clicked or rotated onto Chat, by which point you were certainly
+     looking at it. As the opening tab it would instead start at page load,
+     play through while the section sat several screens below the fold, and be
+     sitting on its settled final state by the time anyone scrolled down. The
+     first thing a visitor sees would be the end of a conversation. */
+  const [everSeen, setEverSeen] = useState(false);
   const [reduced, setReduced] = useState(false);
-  const [tab, setTab] = useState<Tab>("Sessions");
+  const [tab, setTab] = useState<Tab>("Chat");
   const [indicator, setIndicator] = useState<{ x: number; w: number } | null>(null);
   const [panelH, setPanelH] = useState<number | null>(null);
   const [rows, setRows] = useState<LiveRow[]>(settledRows);
@@ -391,6 +409,7 @@ export function DashboardDemo() {
     const io = new IntersectionObserver(
       ([entry]) => {
         inViewRef.current = entry.isIntersecting;
+        if (entry.isIntersecting) setEverSeen(true);
       },
       /* Small on purpose: a fraction of the ELEMENT, which is often taller
          than the viewport. At 0.3 the demo's clocks stayed frozen while it
@@ -402,7 +421,10 @@ export function DashboardDemo() {
     const rafBox = { id: 0 };
     const timer = makeTimer(stopped, rafBox);
     const wait = (ms: number) => new Promise<void>((res) => timer(ms, null, res));
-    const DWELL: Record<Tab, number> = { Sessions: 15000, Chat: 11000, Integrations: 9000 };
+    /* Chat leads, so it also needs the longest dwell: its script has to finish
+       playing before the rotation moves on, or the first thing a visitor sees
+       is a conversation cut off mid-sentence. */
+    const DWELL: Record<Tab, number> = { Chat: 15000, Sessions: 12000, Integrations: 9000 };
 
     (async () => {
       await wait(2500); // let the sessions stream get going first
@@ -430,7 +452,7 @@ export function DashboardDemo() {
      the reset must land BEFORE paint, or the settled conversation flashes
      for one frame when the tab opens (user-reported on Integrations). ── */
   useLayoutEffect(() => {
-    if (reduced || tab !== "Chat") return;
+    if (reduced || tab !== "Chat" || !everSeen) return;
     const stopped = { v: false };
     const rafBox = { id: 0 };
     const timer = makeTimer(stopped, rafBox, false); // never hover-frozen
@@ -468,7 +490,7 @@ export function DashboardDemo() {
       cancelAnimationFrame(rafBox.id);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, reduced]);
+  }, [tab, reduced, everSeen]);
 
   /* ── Integrations: connect live on every activation. useLayoutEffect —
      pre-paint reset, so the settled "connected" rows never flash. ── */

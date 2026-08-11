@@ -86,15 +86,126 @@ test.describe("evestack landing page", () => {
   });
 
   test("the hero says what it is, and that it is open source", async ({ page }) => {
-    /* The two things Sammy asked the hero to make obvious. Both were failing:
-       the headline required knowing what eve is, and `site.eyebrow` existed in
-       copy.ts with no element rendering it, so "open source" appeared nowhere
-       above the fold. */
+    /* Both facts still have to be above the fold; only where they live moved.
+       The eyebrow strip and the separate why line were cut on 2026-08-11 for
+       stacking four text blocks above the buttons, so "open source" is now
+       carried by the subhead itself. This asserts the FACTS rather than the
+       elements, so the next layout change does not have to come through here
+       unless it actually drops one. */
     await page.goto("/");
     const hero = page.locator("#hero");
     await expect(hero.getByRole("heading", { level: 1 })).toContainText("Run AI agents");
-    await expect(hero.locator('[data-hero="eyebrow"]')).toContainText(/open source/i);
-    await expect(hero.locator('[data-hero="sub"]')).toBeVisible();
+    await expect(hero.locator('[data-hero="sub"]')).toContainText(/open source/i);
+    // …and the two cut elements stay cut.
+    await expect(hero.locator('[data-hero="eyebrow"]')).toHaveCount(0);
+    await expect(hero.locator('[data-hero="why"]')).toHaveCount(0);
+  });
+
+  test("the whole terminal types, and settles with one caret on the last line", async ({ page }) => {
+    /* Was: line one typed, the other eight faded in as a cascade. The failure
+       this guards is that regressing to a fade still LOOKS animated in a
+       screenshot, so the assertions are about the mechanism: a line caught
+       mid-type has an inline pixel width, and exactly one caret is lit while
+       that is happening. */
+    await page.goto("/");
+
+    /* Watch for the typing marker with a MutationObserver installed BEFORE any
+       scrolling, rather than polling for it afterwards. Polling raced the
+       animation and lost on CI: a slower machine spends longer in the scroll
+       loop, the terminal passes its trigger unobserved, and by the first
+       assertion it has either finished or never started (the choreography
+       skips the replay when it initialises with the terminal already on
+       screen). Recording every state change removes the race entirely. */
+    await page.addInitScript(() => {
+      const w = window as unknown as { __typed?: boolean; __maxLit?: number };
+      w.__typed = false;
+      w.__maxLit = 0;
+      /* Sampled every frame, and installed by addInitScript so it is running
+         before any of the page's own script is.
+
+         A MutationObserver was the first attempt and it lost the same race it
+         was meant to fix: `data-typing` is stamped when the lazy choreography
+         chunk sets up, which can land before a post-goto page.evaluate has
+         installed anything, and an observer cannot see a mutation that already
+         happened. A frame sampler has no such ordering requirement. */
+      const tick = () => {
+        if (document.querySelector("[data-term][data-typing]")) w.__typed = true;
+        w.__maxLit = Math.max(
+          w.__maxLit ?? 0,
+          document.querySelectorAll(".terminal-cursor[data-on]").length,
+        );
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+    await page.reload();
+
+    await page.mouse.move(700, 450);
+    const top = await page.evaluate(() => (document.querySelector("#one-command") as HTMLElement).offsetTop);
+    while ((await page.evaluate(() => window.scrollY)) < top - 260) {
+      await page.mouse.wheel(0, 400);
+      await page.waitForTimeout(30);
+    }
+
+    const observed = await page.evaluate(() => {
+      const w = window as unknown as { __typed?: boolean; __maxLit?: number };
+      return { typed: w.__typed, maxLit: w.__maxLit };
+    });
+    expect(observed.typed, "the terminal entered its typing state").toBe(true);
+    expect(observed.maxLit, "never more than one caret lit at a time").toBeLessThanOrEqual(1);
+
+    // Settled: marker gone, every width handed back to CSS, caret on the last
+    // line. The widths matter: a leftover inline width is not responsive.
+    await expect(page.locator("[data-term][data-typing]")).toHaveCount(0, { timeout: 20_000 });
+    const settled = await page.evaluate(() => {
+      const shown = [...document.querySelectorAll<HTMLElement>(".terminal-cursor")].map(
+        (c) => getComputedStyle(c).display !== "none",
+      );
+      return {
+        inlineWidths: [...document.querySelectorAll<HTMLElement>("[data-term-text]")].filter(
+          (e) => e.style.width,
+        ).length,
+        shownCount: shown.filter(Boolean).length,
+        lastIsShown: shown[shown.length - 1] === true,
+      };
+    });
+    expect(settled.inlineWidths, "no inline widths left behind").toBe(0);
+    expect(settled.shownCount, "one caret at rest").toBe(1);
+    expect(settled.lastIsShown, "and it is on the last line").toBe(true);
+  });
+
+  test("the terminal wears real macOS traffic lights", async ({ page }) => {
+    await page.goto("/");
+    const dots = await page.locator("[data-terminal] figcaption span span").evaluateAll((els) =>
+      els.map((e) => getComputedStyle(e).backgroundColor),
+    );
+    expect(dots).toEqual(["rgb(255, 95, 87)", "rgb(254, 188, 46)", "rgb(40, 200, 64)"]);
+  });
+
+  test("the dashboard demo opens on Chat", async ({ page }) => {
+    /* Sessions is a table and was the first thing a visitor met. Chat is a
+       conversation with an agent, which is the product in one glance. */
+    await page.goto("/");
+    /* Scroll to it first, which is both what a visitor does and what makes
+       this deterministic. The demo lives inside [data-terminal-result], which
+       the choreography hides with autoAlpha (visibility: hidden) until it is
+       reached, and a role query does not match hidden elements. Asserting
+       straight after goto raced the lazy chunk: before it loaded the tabs were
+       queryable, after it they were not. */
+    await page.mouse.move(700, 450);
+    const top = await page.evaluate(
+      () => (document.querySelector("#one-command") as HTMLElement).offsetTop,
+    );
+    while ((await page.evaluate(() => window.scrollY)) < top) {
+      await page.mouse.wheel(0, 500);
+      await page.waitForTimeout(30);
+    }
+
+    const tabs = page.getByRole("tab");
+    await expect(tabs.first()).toHaveText("Chat");
+    await expect(tabs.first()).toHaveAttribute("aria-selected", "true");
+    await expect(tabs.nth(1)).toHaveText("Sessions");
+    await expect(tabs.nth(2)).toHaveText("Integrations");
   });
 
   test("command pill copies to clipboard", async ({ page, context }) => {

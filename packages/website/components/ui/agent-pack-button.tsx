@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { agentPack } from "@/lib/copy";
+import { ClaudeMark, OpenAIMark, TerminalMark } from "@/components/ui/agent-marks";
 import { cn } from "@/lib/utils";
 
 /* "Set up your agent" — a split button.
@@ -49,6 +50,15 @@ function SparkIcon() {
   return (
     <svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor" aria-hidden>
       <path d="M8 0.5c.28 2.6.9 4.2 1.85 5.15C10.8 6.6 12.4 7.22 15 7.5c-2.6.28-4.2.9-5.15 1.85C8.9 10.3 8.28 11.9 8 14.5c-.28-2.6-.9-4.2-1.85-5.15C5.2 8.4 3.6 7.78 1 7.5c2.6-.28 4.2-.9 5.15-1.85C7.1 4.7 7.72 3.1 8 .5Z" />
+    </svg>
+  );
+}
+
+/** Slides in on row hover. Says "this leaves the page" without a label. */
+function ArrowIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden>
+      <path d="M3.5 8h9M9 4.5 12.5 8 9 11.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -140,10 +150,10 @@ export function AgentPackButton({
   useEffect(() => {
     if (!open) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key === "Escape") dismiss();
     };
     const onPointer = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+      if (!rootRef.current?.contains(event.target as Node)) dismiss();
     };
     document.addEventListener("keydown", onKey);
     document.addEventListener("pointerdown", onPointer);
@@ -152,6 +162,73 @@ export function AgentPackButton({
       document.removeEventListener("pointerdown", onPointer);
     };
   }, [open]);
+
+  /* ── Hover intent ──────────────────────────────────────────────────────
+     The menu opens on hover now rather than only on a click of the caret.
+
+     Both delays exist for a reason and neither is decoration. The OPEN delay
+     stops the menu flashing at anyone whose pointer merely crosses the button
+     on its way somewhere else, which at this button's position in the hero is
+     most passes over it. The CLOSE delay is what makes the menu reachable at
+     all: there is an 8px gap between the button and the panel, and without a
+     grace period the pointer leaves the button, the menu closes, and the item
+     the user was travelling toward is gone before they arrive.
+
+     Click still toggles, and focus still opens, because hover does not exist
+     on touch and does not exist for keyboard users. */
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /* Hover behaviour is gated on the device ACTUALLY having a hover pointer,
+     and this is not belt-and-braces: without it the control is broken on
+     touch. A tap emits pointerenter, then pointerup, then pointerleave, because
+     the pointer stops existing when the finger lifts. So the tap opened the
+     menu and the same tap closed it 220ms later, every time. Caught on an
+     iPhone 13 profile, where the menu simply never opened. */
+  const [canHover, setCanHover] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(hover: hover) and (pointer: fine)");
+    const sync = () => setCanHover(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+
+  /* Set when the user explicitly dismisses (Escape, or a click outside), and
+     cleared only when the pointer actually leaves the control.
+
+     Without it, dismissing is not dismissing. Escape fires while the pointer
+     is still sitting on the button, the hover-open timer scheduled by the
+     pointerenter that got you there is still pending, and ~90ms later the menu
+     you just closed comes back. CI caught it as a flake on the Escape test and
+     it is a real one: press Escape with the cursor on the button and the menu
+     reappears by itself. */
+  const suppressRef = useRef(false);
+
+  const clearHoverTimer = () => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    hoverTimer.current = null;
+  };
+  const dismiss = () => {
+    clearHoverTimer();
+    suppressRef.current = true;
+    setOpen(false);
+  };
+  const hoverOpen = () => {
+    if (!canHover || suppressRef.current) return;
+    clearHoverTimer();
+    void prefetch()?.catch(() => {});
+    hoverTimer.current = setTimeout(() => setOpen(true), 90);
+  };
+  const hoverClose = () => {
+    /* The pointer has left, so a previous dismissal is spent: hovering back on
+       should open again. Cleared even when !canHover, so a device that gains a
+       mouse mid-session is not left permanently suppressed. */
+    suppressRef.current = false;
+    if (!canHover) return;
+    clearHoverTimer();
+    hoverTimer.current = setTimeout(() => setOpen(false), 220);
+  };
+  useEffect(() => clearHoverTimer, []);
 
   const onCopy = async () => {
     setFailed(false);
@@ -196,18 +273,38 @@ export function AgentPackButton({
      when it copies ("Set up your agent" → "Copied — paste it in"), so a
      by-name locator silently re-resolves to the other instance of this
      component mid-assertion. A structural hook does not move. */
+  const MARKS = { claude: ClaudeMark, openai: OpenAIMark, terminal: TerminalMark };
+
+  /* data-agent-pack is a QA handle, in the same spirit as data-hero / data-mon
+     elsewhere. It exists because the primary button's accessible NAME changes
+     when it copies ("Set up your agent" -> "Copied, paste it in"), so a
+     by-name locator silently re-resolves to the other instance of this
+     component mid-assertion. A structural hook does not move. */
   return (
     <div
       ref={rootRef}
       data-agent-pack={variant}
       className={cn("relative inline-flex", full && "w-full")}
+      onPointerEnter={hoverOpen}
+      onPointerLeave={hoverClose}
+      onFocus={(event) => {
+        /* Keyboard focus only. A tap focuses the button too, and if focus
+           opened the menu the tap's own click would immediately toggle it
+           shut. :focus-visible is exactly the "arrived here by keyboard"
+           signal, so ask the platform rather than guessing from event order. */
+        if ((event.target as HTMLElement).matches?.(":focus-visible")) setOpen(true);
+      }}
+      onBlur={(event) => {
+        /* Only when focus has actually left the whole control. relatedTarget
+           is the element receiving focus, so tabbing from the caret into the
+           first menu item must not close the thing being tabbed into. */
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false);
+      }}
     >
       <div className={shell}>
         <button
           type="button"
           onClick={onCopy}
-          onPointerEnter={() => void prefetch()?.catch(() => {})}
-          onFocus={() => void prefetch()?.catch(() => {})}
           className={cn(
             "inline-flex items-center gap-2 rounded-l-full pl-5 pr-4 font-medium transition-opacity",
             filled ? "hover:opacity-90" : "hover:text-gray-1000",
@@ -224,14 +321,14 @@ export function AgentPackButton({
 
         <button
           type="button"
-          onClick={() => setOpen((v) => !v)}
-          onPointerEnter={() => void prefetch()?.catch(() => {})}
+          onClick={() => (open ? dismiss() : setOpen(true))}
           aria-haspopup="menu"
           aria-expanded={open}
           aria-label={agentPack.menuLabel}
           className={cn(
-            "inline-flex items-center rounded-r-full px-3 transition-opacity",
+            "inline-flex items-center rounded-r-full px-3 transition-[opacity,transform] duration-200",
             filled ? "hover:opacity-90" : "hover:text-gray-1000",
+            open && "rotate-180",
           )}
         >
           <CaretIcon />
@@ -242,31 +339,68 @@ export function AgentPackButton({
         {copied ? agentPack.announce : failed ? agentPack.failed : ""}
       </span>
 
-      {open ? (
-        <div
-          ref={menuRef}
-          role="menu"
-          data-drop={dropUp ? "up" : "down"}
+      {/* The menu stays MOUNTED and is shown by attribute, which is what lets
+          it animate out as well as in. Rendered conditionally it could only
+          ever animate in, because the element is gone before a leave
+          transition can run.
+
+          `inert` while closed is doing the accessibility work that `hidden`
+          would have done: the links leave the tab order and the accessibility
+          tree without any of them needing display:none, which would kill the
+          transition again. */}
+      <div
+        ref={menuRef}
+        role="menu"
+        data-agent-menu
+        data-open={open || undefined}
+        data-drop={dropUp ? "up" : "down"}
+        inert={!open}
+        className={cn(
+          "absolute left-1/2 z-50 w-[20rem] -translate-x-1/2 rounded-xl border border-border-default bg-background-100 p-1.5 text-left",
+          dropUp ? "bottom-[calc(100%+8px)]" : "top-[calc(100%+8px)]",
+        )}
+      >
+        {/* The bridge. An 8px gap sits between the button and this panel, and
+            a pointer crossing it is briefly over neither. The close delay
+            covers that, and this covers the rest: an invisible strip so the
+            pointer never actually leaves the control. */}
+        <span
+          aria-hidden
           className={cn(
-            "absolute left-1/2 z-50 w-[19rem] -translate-x-1/2 overflow-hidden rounded-xl border border-border-default bg-background-100 p-1.5 text-left shadow-2xl",
-            dropUp ? "bottom-[calc(100%+8px)]" : "top-[calc(100%+8px)]",
+            "absolute inset-x-0 h-3",
+            dropUp ? "top-full" : "bottom-full",
           )}
-        >
-          {agentPack.menu.map((item) => (
+        />
+        {agentPack.menu.map((item, i) => {
+          const Mark = MARKS[item.mark];
+          return (
             <a
               key={item.label}
               role="menuitem"
               href={item.href}
               {...(item.external ? { target: "_blank", rel: "noreferrer" } : {})}
               onClick={() => setOpen(false)}
-              className="flex flex-col gap-0.5 rounded-lg px-3 py-2 transition-colors hover:bg-gray-100"
+              data-agent-menu-item
+              style={{ "--i": i } as React.CSSProperties}
+              className="group/item relative flex items-center gap-3 rounded-lg px-3 py-2.5"
             >
-              <span className="text-copy-14 text-gray-1000">{item.label}</span>
-              <span className="text-label-12 text-gray-700">{item.hint}</span>
+              <span className="relative z-10 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border-subtle bg-background-200 text-gray-900 transition-colors group-hover/item:border-blue-700/40 group-hover/item:text-blue-700">
+                <Mark className="h-4 w-4" />
+              </span>
+              <span className="relative z-10 flex min-w-0 flex-col gap-0.5">
+                <span className="text-copy-14 text-gray-1000">{item.label}</span>
+                <span className="truncate text-label-12 text-gray-700">{item.hint}</span>
+              </span>
+              <span
+                aria-hidden
+                className="relative z-10 ml-auto text-gray-600 opacity-0 transition-[opacity,transform] duration-200 group-hover/item:translate-x-0.5 group-hover/item:opacity-100"
+              >
+                <ArrowIcon />
+              </span>
             </a>
-          ))}
-        </div>
-      ) : null}
+          );
+        })}
+      </div>
     </div>
   );
 }

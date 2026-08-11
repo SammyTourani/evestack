@@ -12,14 +12,14 @@ import { site, architecture } from "@/lib/copy";
    is RSC — the h1 is the LCP element. */
 export function Hero() {
   return (
-    /* 220vh → 150vh (2026-08-10). The scrub is normalised across the section's
-       own height, so the disassembly still plays in full; it simply needs less
-       wheel to get through. At 220vh a first-time visitor spent two and a bit
-       screens on one headline before the page said anything else, which is the
-       most expensive real estate on the site. The dwell after the last bar
-       lands is now ~15vh rather than ~22vh, which is still long enough to read
-       the four labels. */
-    <section id="hero" aria-labelledby="hero-heading" className="relative h-[150vh]">
+    /* BACK TO 220vh (2026-08-11). I had cut this to 150vh to buy back scroll,
+       and Sammy caught what that actually did: the scrub is normalised across
+       the section's own height, so a shorter section does not shorten the
+       animation, it makes the SAME animation happen in less wheel. The four
+       slabs disassembled almost instantly, which reads as a glitch rather than
+       as a reveal. Scroll length here is the animation's playback speed. If
+       this section ever needs to be shorter, retime slab-choreo.ts instead. */
+    <section id="hero" aria-labelledby="hero-heading" className="relative h-[220vh]">
       {/* Layer labels for the scroll disassembly — real DOM, screen-reader
           visible list in every mode */}
       <p className="sr-only">{architecture.srSummary}</p>
@@ -37,20 +37,6 @@ export function Hero() {
         />
 
         <HeroClient>
-          {/* Sammy asked for "how it's open source" to be obvious in the hero,
-              and it genuinely was not: the eyebrow existed in copy.ts and no
-              element rendered it, so the only place the word open source
-              appeared above the fold was nowhere.
-
-              A quiet mono line, not the badge that used to sit here and was
-              cut for clutter. It reads as a label on the product rather than
-              as a decoration competing with the headline. */}
-          <p
-            data-hero="eyebrow"
-            className="font-mono text-label-12 uppercase tracking-wide text-gray-700"
-          >
-            {site.eyebrow}
-          </p>
           <h1
             id="hero-heading"
             className="max-w-4xl text-balance text-heading-40 sm:text-heading-48 lg:text-heading-56"
@@ -63,25 +49,6 @@ export function Hero() {
           >
             {site.subhead}
           </p>
-          {/* The why, quieter than the subhead and directly under it, so the
-              order a reader takes it in is: what it is, what you get, why you
-              would want it. Any louder and it competes with the promise it is
-              justifying. */}
-          <p data-hero="why" className="max-w-xl text-balance text-copy-14 text-gray-700">
-            {site.why}
-          </p>
-          {/* Two front doors, side by side: the command for a human, the pack
-              for the agent a growing share of visitors will hand this to
-              instead of reading it themselves.
-
-              This slot used to hold a "Get started" button that scrolled to
-              §quickstart. It was the most redundant control on the page — the
-              site header carries the same button, and the command pill six
-              pixels to its left already IS getting started. Swapping it costs
-              nothing and buys the one path the site had no entry point for.
-
-              No data-magnetic here, deliberately: the pointer-follow transform
-              would drag the button's popover around with it. */}
           <div data-hero="ctas" className="mt-2 flex flex-col items-center gap-4 sm:flex-row">
             <CommandPill command={site.command} />
             <AgentPackButton size="lg" />
