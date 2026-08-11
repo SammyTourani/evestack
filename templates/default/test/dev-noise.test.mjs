@@ -63,6 +63,34 @@ test("an indented line that follows something kept is still kept", () => {
   assert.equal(out, stack);
 });
 
+/**
+ * A suppressed block ENDS. Nothing above this line proves it.
+ *
+ * `keep()` clears `state.swallowing` when a line arrives in column zero, and
+ * that one statement is the whole of "up to the next line starting in column
+ * zero". Remove it and every test above stays green — each of them ends with a
+ * line in column zero and asserts on that line, which survives either way —
+ * while the filter has quietly become "swallow all indentation forever after
+ * the first match".
+ *
+ * The bytes below are what that costs, and they are the reason this is worth a
+ * test of its own rather than a comment: the block eve prints on every boot is
+ * followed, eventually, by a stack trace. With the reset gone the Error line is
+ * relayed and both frames are eaten, so the one output that matters — the one
+ * printed when something has already gone wrong — arrives with nothing under
+ * it. Failures that only appear on the failure path are the ones a dev-server
+ * filter is most likely to ship with.
+ */
+test("a suppressed block ends at column zero, and the next stack trace is whole", () => {
+  const trace =
+    "Error: connect ECONNREFUSED 127.0.0.1:5433\n" +
+    "    at TCPConnectWrap.afterConnect\n" +
+    "    at Protocol._enqueue\n";
+  const { out, suppressed } = run(`${EVAL_BLOCK}\n${trace}`);
+  assert.equal(suppressed, 1, "the eval block, and nothing else");
+  assert.equal(out, trace, "heading, both frames, byte for byte");
+});
+
 test("a chunk that splits a heading mid-line still suppresses it", () => {
   const filter = createDevNoiseFilter();
   const text = `${EVAL_BLOCK}\n${KEEP_TRACES}\n`;
