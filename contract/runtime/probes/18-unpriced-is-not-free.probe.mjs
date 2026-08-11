@@ -180,9 +180,16 @@ export default {
       // A session row as well, so the OTHER cost path can be exercised. The
       // fact table is not the only place a dollar figure is computed:
       // lib/queries.ts sums costUsd() per turn for the session list and for
-      // /api/health/detail, and app/sessions/rollup.ts says of that path, in
-      // its own words, that it has no way to tell an unpriced model from a
-      // free one. A rule that holds in one of two cost paths is not a rule.
+      // /api/health/detail. A rule that holds in one of two cost paths is not
+      // a rule.
+      //
+      // Careful with app/sessions/rollup.ts:31-33 here — an earlier draft of
+      // this probe cited it as the code admitting it "has no way to tell an
+      // unpriced model from a free one". It says the opposite. That sentence
+      // describes the REJECTED alternative — summing `$eve.*` tags on the page,
+      // as the old one did — and is the stated reason the page reads
+      // `fact_turn` instead. The `/sessions` page has been right about this all
+      // along; it was this path that was wrong.
       await client.query(
         `insert into workflow.workflow_runs
            (id, deployment_id, status, name, attributes, created_at, updated_at, started_at)
@@ -317,18 +324,39 @@ export default {
         // The rule from /costs, applied to the surface a monitor polls. Either
         // the number must not be a confident zero, or something beside it must
         // say the total is incomplete. Both would be fine; neither is not.
+        //
+        // Asserted on the VALUE, never on the shape. An earlier form of this
+        // check read `Object.keys(...).some(k => /priced/i.test(k))` — the
+        // presence of a plausibly-named field. That would have been satisfied by
+        // adding `unpricedModels: []` and never filling it, which is the failure
+        // this whole probe exists to catch, one level up. A field that is always
+        // empty is a confident zero wearing a different name.
         const cost = listed.includingSubagents.costUsd;
-        const flags = Object.keys(listed).concat(Object.keys(listed.includingSubagents));
-        const saysSo = flags.some((k) => /priced|unknown|incomplete|partial/i.test(k));
+        const named = listed.includingSubagents.unpricedModels ?? [];
+        const saysSo = named.includes(UNPRICED_MODEL);
         t.ok(
           cost !== 0 || saysSo,
           "a session whose only model is unpriced does not report a confident $0.00",
           {
-            expected: "a null/absent cost, or a flag saying the total is incomplete",
+            expected: `a non-zero cost, or unpricedModels naming ${UNPRICED_MODEL}`,
             actual:
-              `costUsd ${cost} with no such field: ${flags.join(", ")}. ` +
-              "sumCostParts() in lib/queries.ts calls costUsd() and never reads `priced`, " +
-              "so /api/health/detail reports unpriced spend as zero spend.",
+              `costUsd ${cost}, unpricedModels ${JSON.stringify(named)}. ` +
+              "If unpricedModels is absent or empty, sumCostParts() in lib/queries.ts " +
+              "priced this session without asking whether a price existed, and " +
+              "/api/health/detail is reporting unpriced spend as zero spend.",
+          },
+        );
+        // The other half, and the one that decays quietly: a model the catalog
+        // DOES price at zero must not be dragged in here. `ollama/*` is a real
+        // $0.00. If it ever appears, every local install grows a permanent
+        // warning about spend it can see perfectly well, and the flag stops
+        // meaning anything.
+        t.ok(
+          !named.includes(FREE_MODEL),
+          "a catalogued zero-price model is not reported as unpriced",
+          {
+            expected: `${FREE_MODEL} absent from unpricedModels`,
+            actual: JSON.stringify(named),
           },
         );
       }
