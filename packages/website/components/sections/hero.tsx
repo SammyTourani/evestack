@@ -6,20 +6,36 @@ import { HeroClient } from "@/components/sections/hero-client";
 import { HeroGlyphField } from "@/components/sections/hero-glyph-field";
 import { site, architecture } from "@/lib/copy";
 
-/* §1+§2. 220vh scroll range + sticky viewport: native scroll, scrub-ready
+/* §1+§2. 340vh scroll range + sticky viewport: native scroll, scrub-ready
    (the disassembly timeline runs against #hero; a short dwell after the
    last bar lands lets the labeled diagram read before handoff). The copy
    is RSC — the h1 is the LCP element. */
 export function Hero() {
   return (
-    /* BACK TO 220vh (2026-08-11). I had cut this to 150vh to buy back scroll,
-       and Sammy caught what that actually did: the scrub is normalised across
-       the section's own height, so a shorter section does not shorten the
-       animation, it makes the SAME animation happen in less wheel. The four
-       slabs disassembled almost instantly, which reads as a glitch rather than
-       as a reveal. Scroll length here is the animation's playback speed. If
-       this section ever needs to be shorter, retime slab-choreo.ts instead. */
-    <section id="hero" aria-labelledby="hero-heading" className="relative h-[220vh]">
+    /* 340vh (2026-08-11). This number is the disassembly's PLAYBACK SPEED, not
+       the page's length, and the arithmetic is worth stating because it is not
+       what it looks like.
+
+       ScrollTrigger runs `top top` → `bottom bottom`, so the wheel distance
+       that covers progress 0→1 is:
+
+           usable scroll = section height − viewport height = (N − 100)vh
+
+       That subtraction is why the knob is so much more sensitive than it
+       appears. 220vh gave 120vh of scroll; 340vh gives 240vh, exactly double.
+       And it is why cutting this to 150vh earlier was so bad: 50vh of scroll,
+       a twelfth of what it is now, so the slabs snapped apart in a flick and
+       read as a glitch rather than a reveal.
+
+       The beat map is unchanged and unaffected: it is expressed in fractions
+       of the scrub (slab-choreo.ts), so every beat stretches with this. The
+       last real tween ends at 0.895, leaving ~34vh of dwell on the finished
+       diagram before the section hands off.
+
+       To make the animation FASTER without shortening the page, or the page
+       shorter without speeding it up, retime slab-choreo.ts. Do not reach for
+       this number for either. */
+    <section id="hero" aria-labelledby="hero-heading" className="relative h-[340vh]">
       {/* Layer labels for the scroll disassembly — real DOM, screen-reader
           visible list in every mode */}
       <p className="sr-only">{architecture.srSummary}</p>

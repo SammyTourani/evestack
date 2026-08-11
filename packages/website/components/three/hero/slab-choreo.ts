@@ -6,7 +6,7 @@ import type { SlabSpec } from "./slab-data";
    here, re-run the harness: it SAT-tests every slab pair across the whole
    scrub and fails on any interpenetration.
 
-   Beat map (fractions of the 220vh hero scrub):
+   Beat map (fractions of the hero scrub, whatever height it is set to):
      0.10–0.38  un-glyph: quadrants meet at z, face-on, material parity
      0.34–0.895 explode, stagger 0.045/slab. Two-phase per slab: TRAVEL
                 first (y eases to its row while the card stays narrow),
