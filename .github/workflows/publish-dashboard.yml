@@ -130,32 +130,59 @@ jobs:
           # repository has been bitten by that shape twice already — see the note
           # on the hardcoded package list in ci.yml. `git grep` asks the question
           # directly instead: find every literal, and require them all to agree.
-          # CHANGELOG.md is excluded, and it is the one exclusion that is about
-          # meaning rather than noise. Every other literal in the tree is an
-          # instruction — "pull this" — and must therefore track the release. A
-          # changelog line is a HISTORICAL statement: the 0.2.0 entry records the
-          # image tag the scaffolder pinned at the time, and it will still record
-          # it after the next release ships. Without the exclusion, the first
-          # release cut after the changelog landed would fail on a sentence that is
-          # permanently correct, and the only way to make it pass would be to
-          # falsify history.
+          # CHANGELOG.md and review/ are excluded, and they are the exclusions
+          # that are about meaning rather than noise. Every other literal in the
+          # tree is an instruction — "pull this" — and must therefore track the
+          # release. A changelog line is a HISTORICAL statement: the 0.2.0 entry
+          # records the image tag the scaffolder pinned at the time, and it will
+          # still record it after the next release ships. Without the exclusion,
+          # the first release cut after the changelog landed would fail on a
+          # sentence that is permanently correct, and the only way to make it
+          # pass would be to falsify history.
+          #
+          # review/ is the same shape and it deadlocked a release to prove it. A
+          # review packet quotes the pin that was live while the review ran; that
+          # quotation is evidence, and it stays true afterwards. The cape-town-v1
+          # packet landed carrying eight quotations of the previous pin, which
+          # made this gate exit 1 on the very release the review existed to
+          # produce — so the fix could never ship, and the tree's pins stayed
+          # 404s. Rewriting those eight lines to name a tag the review never saw
+          # is the "falsify history" failure the paragraph above rules out. Note
+          # the asymmetry that makes this safe: review/ lives at the repository
+          # root and every publishable package carries an explicit `files`
+          # allowlist, so nothing under review/ can reach an npm tarball or a
+          # built image. A reader who follows a review document is reading a
+          # record, never an install instruction.
           #
           # Note the shape of this comment: no version literal appears in it. An
           # earlier draft spelled the pin out as an example and the scan promptly
           # found its own explanation, adding a fifth "mismatched" hit inside this
           # very file. Do not name a concrete tag here.
+          # The pattern matches any tag that STARTS with a digit, and the whole
+          # matched tag is compared. Both halves of that sentence are load-bearing.
+          #
+          # Starting with a digit is what makes a tag a version claim. It leaves
+          # the deliberately non-version tags alone — the PR-build tag in
+          # dashboard-image.yml, the `local` example in the self-hosting runbook —
+          # which are not release pins and must not be dragged into this gate.
+          #
+          # Comparing the WHOLE tag closes a hole the old pattern had. It matched
+          # `[0-9][0-9.]*` and the extraction then truncated at the first
+          # non-numeric character, so a pin reading <version>-rc1 produced a tag
+          # string equal to <version>, compared equal, and passed — while pointing
+          # at an image that does not exist. A suffixed pin is a different image
+          # and must fail here.
           mismatched=0
           found=0
           while IFS= read -r hit; do
             found=$((found + 1))
             tag="${hit##*evestack-dashboard:}"
-            tag="${tag%%[!0-9.]*}"
             [ -n "$tag" ] || continue
             if [ "$tag" != "$version" ]; then
               echo "::error::$hit pins $tag, but packages/dashboard/package.json is $version"
               mismatched=1
             fi
-          done <<< "$(git grep -n -o 'evestack-dashboard:[0-9][0-9.]*' -- . ':!*.lock' ':!pnpm-lock.yaml' ':!CHANGELOG.md' || true)"
+          done <<< "$(git grep -n -o -E 'evestack-dashboard:[0-9][A-Za-z0-9._-]*' -- . ':!*.lock' ':!pnpm-lock.yaml' ':!CHANGELOG.md' ':!review/' || true)"
 
           [ "$mismatched" = "0" ] || exit 1
 
