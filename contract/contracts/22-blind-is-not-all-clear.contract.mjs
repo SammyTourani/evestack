@@ -42,6 +42,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { REPO_ROOT } from "../lib/repo.mjs";
+import { callSites, declaredParameters, exportedBinding } from "../lib/source.mjs";
 
 const read = (rel) => readFileSync(join(REPO_ROOT, rel), "utf8");
 
@@ -157,10 +158,56 @@ export default {
 
     t.contains(findings, "export function blindSpots", "findings.mjs names the could-not-run set");
 
-    const marked = findings.split("\n").filter((line) => line.trim() === "true,").length;
-    t.ok(marked >= 4, "every check that can fail to run is marked as one", {
-      expected: "at least 4 findings constructed with the blind flag",
-      actual: `${marked}. An unmarked one is invisible to the verdict.`,
+    /*
+     * This was `findings.split("\n").filter(line => line.trim() === "true,").length >= 4`,
+     * which counts BARE `true,` LINES rather than blind flags — the same kind of
+     * wrong as the defect the contract is about. Two ways it did not check what
+     * its sentence claimed:
+     *
+     *   · six findings carry the flag today and the floor was four, so two could
+     *     be quietly unmarked and it stayed green — a guard positioned below the
+     *     thing it guards;
+     *   · nothing tied the `true` to the argument position that means "blind",
+     *     so `const UNRELATED = [\n true,\n true,\n true,\n true,\n];` satisfies
+     *     it with zero flags marked at all.
+     *
+     * So: parse the call sites, and read the position of `blind` out of the
+     * factory's own parameter list instead of remembering that it is the
+     * seventh. Reordering that signature now fails loudly rather than counting
+     * the wrong column.
+     */
+    const factoryParameters = declaredParameters(findings, "finding");
+    const blindAt = (factoryParameters ?? []).findIndex((parameter) => /^blind\b/.test(parameter));
+    t.ok(blindAt !== -1, "findings.mjs still builds findings through a finding() factory taking a blind flag", {
+      expected: "a finding(…) declaration with a `blind` parameter",
+      actual:
+        factoryParameters === null
+          ? "no finding() declaration found; the count below cannot know which argument it is reading"
+          : `parameters are (${factoryParameters.join(", ")})`,
+    });
+
+    const constructed = callSites(findings, "finding");
+    t.ok(constructed.length > 0, "this contract can still read findings.mjs's finding() call sites", {
+      expected: "at least one finding(…) call",
+      actual: "none parsed — every count below would be a claim about nothing",
+    });
+
+    const marked = constructed.filter((call) => call.args[blindAt] === "true");
+    /*
+     * A ratchet, exactly like contract/floor.json, and for the same reason: six
+     * findings carry the flag today, and the number goes UP in a deliberate
+     * diff. It cannot be derived from the source — "a check that can fail to
+     * run" is a property of what the check does, not of how it is spelled — so
+     * the only honest guard is a floor at the measured truth rather than one
+     * comfortably below it.
+     */
+    const BLIND_FLOOR = 6;
+    t.ok(marked.length >= BLIND_FLOOR, "every check that can fail to run is marked as one", {
+      expected: `at least ${BLIND_FLOOR} finding(…) calls passing blind=true`,
+      actual:
+        `${marked.length} of ${constructed.length} call sites are marked ` +
+        `(${marked.map((call) => call.args[0]).join(", ") || "none"}). ` +
+        "An unmarked one is invisible to the verdict.",
     });
 
     const closing = body(render, "function verdict(");
@@ -222,15 +269,46 @@ export default {
       } catch {
         continue; // a route that moved is contract 16's problem
       }
-      // The exported handler only. A module-level helper may legitimately
-      // swallow and return a neutral value; what must never happen is the
-      // RESPONSE being built inside an error path.
-      const handler = source.slice(source.indexOf("export async function GET"));
-      const afterCatch = handler.slice(handler.indexOf("} catch"));
-      t.ok(!/ok:\s*true/.test(afterCatch), rel + " does not answer ok from inside a catch", {
-        expected: "no ok: true after the first catch",
-        actual: afterCatch.replace(/\s+/g, " ").slice(0, 160),
+      /*
+       * The exported handler only, and only as far as its own closing brace. A
+       * module-level helper may legitimately swallow and return a neutral value;
+       * what must never happen is the RESPONSE being built inside an error path.
+       *
+       * Failing to LOCATE the handler is a red result here, not a quiet pass.
+       * This block used to be
+       *
+       *   const handler = source.slice(source.indexOf("export async function GET"));
+       *   const afterCatch = handler.slice(handler.indexOf("} catch"));
+       *
+       * and `indexOf` answers -1 while `slice(-1)` answers the last character of
+       * the string rather than throwing. A route written `export const GET =
+       * async () => …` — a form this repo already uses, with no ESLint config
+       * anywhere to forbid it — therefore reduced both slices to a single
+       * newline, the regex passed on it, and the run printed an affirmative
+       * safety claim about a file it had never read. Measured: with `{ ok: true,
+       * database: "unreachable" }` inside the catch and the export in arrow
+       * form, the suite said "does not answer ok from inside a catch" and
+       * exited 0.
+       */
+      const handler = exportedBinding(source, "GET");
+      const located = t.ok(handler !== null, `${rel}'s exported GET handler can be found and read`, {
+        expected: "export function GET, or export const GET = …",
+        actual: "neither form is present; the check below would have read nothing and reported all-clear",
       });
+      if (!located) continue;
+
+      const catchAt = handler.text.search(/\}\s*catch\b/);
+      const afterCatch = catchAt === -1 ? "" : handler.text.slice(catchAt);
+      t.ok(
+        !/\bok:\s*true/.test(afterCatch),
+        catchAt === -1
+          ? `${rel}'s GET contains no catch, so it cannot answer ok from inside one`
+          : `${rel} does not answer ok from inside a catch`,
+        {
+          expected: "no ok: true after the first catch",
+          actual: afterCatch.replace(/\s+/g, " ").slice(0, 160),
+        },
+      );
     }
   },
 };

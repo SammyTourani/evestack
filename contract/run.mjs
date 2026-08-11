@@ -17,15 +17,19 @@
  *   node contract/run.mjs --verbose           show passing assertions too
  *   node contract/run.mjs --write-floor       re-record contract/floor.json
  *
+ *   node contract/run.mjs --contracts=DIR --floor=FILE
+ *       read the contracts and the floor from somewhere else. For this runner's
+ *       own regression suite only — see contract/lib/run.test.mjs.
+ *
  *   EVESTACK_CONTRACT_EVE_DIR=path/to/eve node contract/run.mjs
  *       run the same contracts against a different eve install
  *
- * Exit codes: 0 green · 1 a contract failed · 2 the runner could not start, or
- * --only matched no contract · 3 the suite shrank below contract/floor.json
- * (see contract/lib/floor.mjs).
+ * Exit codes: 0 green · 1 a contract failed, or asserted nothing · 2 the runner
+ * could not start, --only matched no contract, or there are no contracts at all
+ * · 3 the suite shrank below contract/floor.json (see contract/lib/floor.mjs).
  */
 import { readdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { FLOOR_EXIT_CODE, checkFloor, readFloor, writeFloor } from "./lib/floor.mjs";
 
@@ -46,6 +50,26 @@ if (!["human", "json", "markdown"].includes(format)) {
   process.exit(2);
 }
 
+/**
+ * Where the contract modules and the floor are read from.
+ *
+ * `--contracts` and `--floor` exist for one caller: contract/lib/run.test.mjs,
+ * which has to run this file against fixture contracts — one that asserts
+ * nothing, one that records a failure a macrotask late, one that shrinks below
+ * its floor — and cannot do that by putting those fixtures in
+ * contract/contracts/, because that directory is the real suite. A runner whose
+ * own failure modes can only be exercised by breaking the production suite is a
+ * runner nobody tests, which is how the three defects those fixtures reproduce
+ * survived in here.
+ *
+ * Flags rather than environment variables on purpose: a stray EVESTACK_* left
+ * in a shell or a CI job silently redirects every later run, and this file's
+ * whole subject is checks that quietly stop checking. A flag is in the command
+ * that ran. An empty contracts directory is refused in `main` besides.
+ */
+const CONTRACT_DIR = resolve(args.find((a) => a.startsWith("--contracts="))?.slice(12) ?? join(HERE, "contracts"));
+const FLOOR_PATH = args.find((a) => a.startsWith("--floor="))?.slice(8);
+
 /* -------------------------------------------------------------------------- */
 /* assertion recorder                                                          */
 /* -------------------------------------------------------------------------- */
@@ -55,16 +79,45 @@ if (!["human", "json", "markdown"].includes(format)) {
  * contract reports every violation it finds in a single run — when eve renames
  * a family of things, seeing all six failures at once is the difference between
  * one upgrade and six.
+ *
+ * Recording rather than throwing has one hole, and it is the classic
+ * forgotten-await: an assertion written from a helper the contract did not
+ * await lands in the array AFTER the runner has read it, and the runner had
+ * already decided the contract passed. Nothing threw, nothing counted, nothing
+ * warned. So the recorder can be SEALED, and a write to a sealed recorder is a
+ * loud error rather than a silent no-op. See `settle` and the seal in `main`.
  */
-function createRecorder() {
+function createRecorder(contractId) {
   const assertions = [];
+  let sealed = false;
+
+  const record = (assertion) => {
+    if (sealed) {
+      // Thrown, not recorded: the report this assertion belongs to has already
+      // been rendered, so there is nowhere honest left to put it. It surfaces
+      // as an uncaught exception or an unhandled rejection — either way a stack
+      // trace and a non-zero exit, which is the correct outcome for a contract
+      // that is still writing after it finished.
+      throw new Error(
+        `${contractId} recorded an assertion after its check had finished: "${assertion.detail}".\n` +
+          "The runner had already counted this contract, so this assertion could not be reported and\n" +
+          "a failing one would have vanished. Something in the check is not awaited.",
+      );
+    }
+    assertions.push(assertion);
+  };
+
   return {
     assertions,
+    /** No more writes. Called by the runner once a contract's check is done. */
+    seal() {
+      sealed = true;
+    },
     ok(condition, detail, extra = {}) {
       const passed = Boolean(condition);
       // expected/actual is failure diagnostics; carrying it on a pass just
       // makes --verbose noisier without telling anyone anything.
-      assertions.push({ detail, passed, ...(passed ? {} : extra) });
+      record({ detail, passed, ...(passed ? {} : extra) });
       return passed;
     },
     equal(actual, expected, detail) {
@@ -72,7 +125,7 @@ function createRecorder() {
       // Rendered eagerly so a missing value reads as the string "undefined"
       // rather than vanishing from the report — "expected local-dev" with no
       // actual beside it looks like a rendering bug, not a finding.
-      assertions.push({ detail, passed, ...(passed ? {} : { expected: describe(expected), actual: describe(actual) }) });
+      record({ detail, passed, ...(passed ? {} : { expected: describe(expected), actual: describe(actual) }) });
       return passed;
     },
     /** `haystack` may be an array, a Set or a string. */
@@ -83,7 +136,7 @@ function createRecorder() {
           : Array.isArray(haystack)
             ? haystack.includes(needle)
             : String(haystack).includes(needle);
-      assertions.push({
+      record({
         detail,
         passed,
         ...(passed ? {} : { expected: `contains ${JSON.stringify(needle)}`, actual: describe(haystack) }),
@@ -91,6 +144,30 @@ function createRecorder() {
       return passed;
     },
   };
+}
+
+/**
+ * One full turn of the event loop, so an assertion recorded a macrotask late is
+ * recorded before the runner reads the array rather than after.
+ *
+ * Measured, with a contract that did `setTimeout(() => t.ok(false, …), 0)`
+ * without awaiting it: one MICROtask late was still caught, because `await
+ * contract.check(…)` drains the microtask queue. One MACROtask late vanished —
+ * no failure, no change in the assertion count, no warning, exit 0.
+ *
+ * `setTimeout(…, 0)` then `setImmediate` covers both phases in order: a timer
+ * armed during the check expires before this one (same phase, earlier
+ * insertion), and a `setImmediate` armed during the check has already run by the
+ * time the check phase comes round again.
+ *
+ * It is not a guarantee, and is not written as one. An assertion arriving from
+ * an unawaited file read or socket callback can still be later than this, which
+ * is why the recorder is also sealed: this turns the LIKELY case into a properly
+ * counted failure, and the seal turns everything after it into a crash instead
+ * of a silence.
+ */
+function settle() {
+  return new Promise((resolve) => setTimeout(() => setImmediate(resolve), 0));
 }
 
 function describe(value) {
@@ -147,17 +224,17 @@ function writeFlushed(stream, text) {
 }
 
 async function loadContracts() {
-  const dir = join(HERE, "contracts");
-  const files = readdirSync(dir)
+  const files = readdirSync(CONTRACT_DIR)
     .filter((f) => f.endsWith(".contract.mjs"))
     .sort();
 
   const contracts = [];
   for (const file of files) {
-    const module = await import(pathToFileURL(join(dir, file)).href);
+    const module = await import(pathToFileURL(join(CONTRACT_DIR, file)).href);
     const exported = module.default;
     for (const contract of Array.isArray(exported) ? exported : [exported]) {
-      contracts.push({ ...contract, file: `contract/contracts/${file}` });
+      // Repo-relative, because this string is rendered into pull-request bodies.
+      contracts.push({ ...contract, file: relative(join(HERE, ".."), join(CONTRACT_DIR, file)) });
     }
   }
   return contracts;
@@ -173,6 +250,19 @@ async function main() {
   }
 
   const all = await loadContracts();
+
+  // Zero contracts is the same sentence as a green run with the numbers filed
+  // off, so it gets the same treatment as `--only` matching nothing: exit 2, the
+  // runner could not start. Reachable two ways — a wrong EVESTACK_CONTRACT_DIR,
+  // and a checkout in which contract/contracts/ never arrived.
+  if (all.length === 0) {
+    process.stderr.write(
+      `No *.contract.mjs files in ${CONTRACT_DIR}.\n` +
+        "A suite with nothing in it is a usage error, not a pass.\n",
+    );
+    process.exit(2);
+  }
+
   const selected = only === null ? all : all.filter((c) => c.id.includes(only));
 
   // `--only=auth` when nothing is called auth used to print "0 contracts, 0
@@ -214,16 +304,44 @@ async function main() {
       continue;
     }
 
-    const recorder = createRecorder();
+    const recorder = createRecorder(contract.id);
     let crash = null;
     try {
       await contract.check(eve, recorder);
     } catch (error) {
       crash = error instanceof Error ? (error.stack ?? error.message) : String(error);
-      recorder.assertions.push({
-        detail: `the contract check itself threw — eve probably moved something this contract reads`,
-        passed: false,
+      recorder.ok(false, "the contract check itself threw — eve probably moved something this contract reads", {
         actual: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    // Both lines are about the same hole: an assertion that arrives after the
+    // count is taken is an assertion nobody sees. `settle` waits a turn for the
+    // late ones; `seal` makes anything later than that an error instead of a
+    // no-op.
+    await settle();
+    recorder.seal();
+
+    // A contract that asserted NOTHING is a failure, not a pass.
+    //
+    // `failed.length === 0` is true of an empty array, so a check that recorded
+    // no assertion at all — an early `return`, a population that came back
+    // empty, a stub someone meant to fill in — was reported PASS, counted in the
+    // "N contracts" headline, and rendered as "0 ok" in the table this runner
+    // pastes into eve-upgrade pull requests. contract/lib/floor.mjs cannot catch
+    // it either: the floor only iterates ids already recorded in floor.json, so
+    // a brand-new contract is unprotected until someone runs --write-floor, at
+    // which point the vacuity is frozen in as a legitimate floor of zero.
+    //
+    // Reported as an assertion rather than as a crash so it appears in the JSON
+    // and Markdown reports beside every other failure, and so the id of the
+    // empty contract is in the output.
+    if (recorder.assertions.length === 0) {
+      recorder.assertions.push({
+        detail: "this contract recorded no assertions at all — a check that cannot fail is not a check",
+        passed: false,
+        expected: "at least one assertion",
+        actual: `zero, from ${contract.file}. Either the check returns early, or the population it asserts over is empty.`,
       });
     }
 
@@ -264,10 +382,10 @@ async function main() {
       process.stderr.write("--write-floor cannot be combined with --only: it would erase the other floors.\n");
       process.exit(2);
     }
-    const written = writeFloor(report);
+    const written = writeFloor(report, FLOOR_PATH);
     const total = Object.values(written.contracts).reduce((n, v) => n + v, 0);
     process.stdout.write(
-      `contract/floor.json written: ${Object.keys(written.contracts).length} contracts, ${total} assertions.\n`,
+      `${FLOOR_PATH ?? "contract/floor.json"} written: ${Object.keys(written.contracts).length} contracts, ${total} assertions.\n`,
     );
     process.exit(0);
   }
@@ -277,7 +395,7 @@ async function main() {
   // turns a routine `--only=auth` into an alarm about erosion that did not
   // happen — and an alarm that fires when nothing is wrong is how a real one
   // gets ignored.
-  const violations = only === null ? checkFloor(report, readFloor()) : [];
+  const violations = only === null ? checkFloor(report, readFloor(FLOOR_PATH)) : [];
 
   // Awaited, not fire-and-forget: see writeFlushed. Every branch below ends in
   // process.exit, and an unflushed pipe write does not survive it.
