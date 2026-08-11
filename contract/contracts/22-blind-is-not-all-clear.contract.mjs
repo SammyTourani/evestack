@@ -288,14 +288,36 @@ export default {
       actual: "none found; the rest of this block would assert nothing",
     });
 
+    // The component a file stamps is READ OUT OF THE FILE, not guessed from its
+    // name. `traces.sql` stamps `spans`, and deriving "traces" from the filename
+    // made this pass for a reason that has nothing to do with the check:
+    // lib/facts.ts contains the substring "traces" unconditionally, because line
+    // 3 imports "./traces". Measured — deleting `spans: traceSchemaTarget()`
+    // from schemaVersionsAhead left this green. Both halves of that were wrong
+    // at once: the wrong needle, found in the wrong place.
     const facts = read("packages/dashboard/lib/facts.ts");
     for (const file of guarded) {
-      const component = file.replace(/\.sql$/, "");
-      t.contains(
-        facts,
-        component,
-        `lib/facts.ts can detect that ${file}'s component is ahead of this build`,
+      const sql = read(`${sqlDir}/${file}`);
+      const stamped = [...sql.matchAll(/INSERT INTO evestack\.schema_version[\s\S]{0,200}?VALUES\s*\(\s*'([a-z_]+)'/g)].map(
+        (m) => m[1],
       );
+      t.ok(
+        stamped.length > 0,
+        `${file} stamps a schema_version component this contract can name`,
+        {
+          expected: "an INSERT INTO evestack.schema_version ... VALUES ('<component>'",
+          actual: "none found — the assertion below would have nothing to look for",
+        },
+      );
+      for (const component of new Set(stamped)) {
+        // As an object key, not as a substring. `spans:` cannot be satisfied by
+        // an import path or a comment the way a bare word can.
+        t.contains(
+          facts,
+          `${component}:`,
+          `lib/facts.ts declares a target for '${component}', the component ${file} stamps`,
+        );
+      }
     }
 
     const health = read("packages/dashboard/app/api/health/route.ts");

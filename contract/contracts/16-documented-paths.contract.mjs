@@ -43,6 +43,24 @@ const LINK_SOURCES = ["llms.txt", "README.md", "RELEASING.md", "contract/README.
 const PATH_PATTERN =
   /(?<![A-Za-z0-9._/-])((?:docs|packages|contract|templates|registry|scripts|\.github)\/[A-Za-z0-9._/-]*\.[a-z]{2,4})\b/g;
 
+/**
+ * Root-level files, which the pattern above cannot see.
+ *
+ * It requires a known directory to start the path, so every file at the
+ * repository root — CHANGELOG.md, SECURITY.md, RELEASING.md, llms.txt — was
+ * invisible to this contract. Measured: pointing README.md's own
+ * `[CHANGELOG.md](./CHANGELOG.md)` at a file that does not exist left the suite
+ * green. The contract's opening sentence promises every documented path exists,
+ * and it was checking a subset without saying so.
+ *
+ * Anchored on the markdown LINK form rather than on bare words, because a bare
+ * `CHANGELOG.md` in prose is a mention and `](./CHANGELOG.md)` is a promise the
+ * reader can click. The absence of a slash is what makes it root-level; anything
+ * with one is either already covered above or an external URL, and a URL cannot
+ * match `[A-Za-z][A-Za-z0-9._-]*` past its scheme colon.
+ */
+const ROOT_LINK_PATTERN = /\]\((?:\.\/)?([A-Za-z][A-Za-z0-9._-]*\.[a-z]{2,4})\)/g;
+
 /** Paths that legitimately do not resolve on disk. */
 const EXEMPT = new Set([
   // Written by `pnpm install`, never committed.
@@ -72,7 +90,9 @@ function linksIn(file) {
   const text = readFileSync(full, "utf8")
     .replace(RAW_PREFIX, "")
     .replace(/\bnode_modules\/\S*/g, "");
-  return [...new Set(text.match(PATH_PATTERN) ?? [])].filter(
+  const prefixed = text.match(PATH_PATTERN) ?? [];
+  const rootLevel = [...text.matchAll(ROOT_LINK_PATTERN)].map((m) => m[1]);
+  return [...new Set([...prefixed, ...rootLevel])].filter(
     (path) => !isTemplate(path) && !EXEMPT.has(path),
   );
 }
