@@ -65,7 +65,7 @@ again and opens the dashboard. Every route is behind that credential — the das
 and approves shell commands, so it fails closed.
 
 The dashboard step is a **pull**, not a build: `ghcr.io/sammytourani/evestack-dashboard` is
-published for `linux/amd64` and `linux/arm64`, ~230 MB compressed.
+published for `linux/amd64` and `linux/arm64`, ~230 MB compressed per platform. The newest **published** tag is `0.3.1`, which is what `npx evestack create` pins today; this tree pins `0.4.0`, which is not on GHCR yet, so `docker compose pull` from a checkout 404s until that release is cut — see [CHANGELOG.md](./CHANGELOG.md) under *Unreleased*.
 
 Already have an eve project? `npx evestack attach .` adds evestack to it without overwriting
 anything, and prints an undo line for everything it writes.

@@ -728,7 +728,8 @@ percentiles, error rates and a bucketed time series. It shipped in `cfbff14`, "B
 monitors the site has been showing a picture of," and `git cat-file -e` confirms it was
 present at this session's starting commit. I did not miss a new commit; I missed a file.
 
-Why: `packages/website/lib/copy.ts:181-187` states that
+Why: `packages/website/lib/copy.ts:199-205` (was `:181-187`; round 3 added a comment block
+above it) states that
 `grep -rniE "p95|percentile|Monitors" packages/dashboard/{app,lib,components}` returns
 nothing. That comment was accurate when written and stale by the next commit. I quoted it
 instead of running it. The grep returns **33 matches across 2 files**, and `/monitors` is

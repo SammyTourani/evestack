@@ -2,7 +2,113 @@
 
 ⭐ Part A. Every row gets `TRUE` / `FALSE` / `CAN'T TELL` with evidence.
 
+---
+
+## CORRECTION (round 3) — claim 5's verdict is right; two of its three legs are not
+
+`HANDOFF.md:168-171` says six of this test's own claims were wrong, and asks a second reviewer for
+a seventh. This is the seventh. It does **not** overturn a verdict — it removes two citations
+that point the opposite way from the sentence they were quoted in.
+
+The POST-FIX row below moves claim 5 from CAN'T TELL to **FALSE** and calls it "Proven, not
+merely untested". **The verdict stands.** Two of the three pieces of evidence under it do not.
+
+**Leg (a) — withdrawn.** The row reads: "`app/sessions/rollup.ts:33` already admits this path
+'has no way to tell an unpriced model from a free one'." That clause is real, and it is at
+`packages/dashboard/app/sessions/rollup.ts:29-33` — but read the whole sentence:
+
+> The alternative — summing `$eve.*` tags here as the old page did — is a second cost model that
+> can disagree with the fact table, and it has **no way to tell an unpriced model from a free one**.
+
+The subject of "it" is the `$eve.*` sum, which is the alternative the page **rejected**. The
+sentence is the stated *reason* the page reads `evestack.fact_turn` instead. It is the code
+explaining why it is right, quoted as the code confessing it is wrong. Taking a comment's
+subject off the end of the sentence is the same class of mistake this ledger elsewhere calls
+an inference presented as a measurement.
+
+**Leg (b) — withdrawn.** The row names "the session list" as one of two defective surfaces.
+`app/sessions/page.tsx:119` selects `count(*) FILTER (WHERE NOT priced) AS unpriced_turns`;
+`rollup.ts:88` carries it as `SessionListRow.unpricedTurns`; and `page.tsx:408-414` renders
+"Some of these sessions ran a model with no configured rate, so their cost reads **Unpriced**
+rather than a dollar amount." That page is the **one surface that already got this right**, and
+it was cited as evidence against itself.
+
+**Leg (c) — stands, and it was the load-bearing one.** `lib/queries.ts#sumCostParts` called
+`costUsd()` and never read `priced`, so an uncatalogued model reported a confident `$0.00` on
+`/api/health/detail` — the JSON surface a monitor polls and nobody watches with their eyes. One
+defective surface, not two, and not the one named.
+
+**Now closed on this branch.** `ac156cd` adds `priceOf()`, which returns `costUsd` and
+`unpricedModels` as a single spreadable object so a caller cannot take the number and drop the
+caveat, puts `unpricedModels` on `SessionRollup`, and ships five unit tests; `2ada44c` then
+strengthens probe 18 to assert the value rather than a field name that merely looks reassuring.
+
+Claim 5 is therefore **FALSE as reviewed, closed as of `2ada44c`**. It stays FALSE in the
+tallies below, which score what shipped at review time, not what the branch fixed afterwards.
+
+---
+
+## CORRECTION (round 3) — the POST-FIX tally re-commits the error it corrects eighteen lines later
+
+Both tallies partition {1..20} exactly and both sum to 20. The arithmetic is clean; that is not
+the problem. The problem is that **the same standard is not applied twice.**
+
+At :34-38 this ledger corrects an earlier draft that was "wrong three ways", and one of the
+three is: *"it counted claim 14 as TRUE when no failed session was ever promoted."* Eighteen
+lines **above** that paragraph, the POST-FIX table counts **14 TRUE again** — on a row whose own
+last sentence is *"Still unverified: promoting a session that genuinely went wrong."* The
+demotion and the re-promotion rest on the identical unclosed gap.
+
+Claim 17 is where the document shows the standard it actually believes in. 17 was demoted for
+precisely this shape — *"it counted claim 17 as TRUE when the 'prints the SQL' half was never
+exercised"* — and restored to TRUE only once that half **was** exercised ("53 lines of SQL on
+stdout, piped into `psql`"). Stated once, so it can be applied rather than re-derived:
+
+> **The 17 standard — a compound claim is TRUE only when every conjunct has been exercised. An
+> unexercised conjunct makes the row CAN'T TELL, and the row names the conjunct.**
+
+**That is the standard applied here.** Under it, three rows in the POST-FIX table are scored
+above their evidence, and in all three the disqualifying evidence is inside the row itself:
+
+| # | The conjunct at issue | Scored | What its own evidence says |
+|---|---|---|---|
+| 9 | start / stream / follow-up / cancel — **from the browser** | TRUE | The probe that closed it opens by disclaiming exactly this. `contract/runtime/probes/21-browser-control-cancel.probe.mjs:1-2`: *"driven from **outside the browser** over the exact routes the browser uses."* The first-session row says the same: *"I drove sessions over HTTP instead and did not exercise the four browser actions."* Same routes is a strong proxy; it is not the browser |
+| 10 | approvals name **who** | TRUE, "with a caveat that matters" | *"`approver` is the single `EVESTACK_AUTH_USER`, so 'who' is **the installation plus a network address, never an individual**."* A caveat that negates the claim's operative word is not a caveat |
+| 14 | promote **any** real session, **especially one that went wrong** | TRUE | *"Still unverified: promoting a session that genuinely went wrong"* — verbatim the gap that demoted it at :34-38 |
+
+**Reconciled tally — the 17 standard applied uniformly:**
+
+> **Of Part A's 20 claims: 11 TRUE · 2 FALSE · 6 CAN'T TELL · 1 not reached.**
+>
+> TRUE: 1, 2, 3, 7, 8, 11, 12, 16, 17, 19, 20 ·
+> FALSE: 4, 5 · CAN'T TELL: 6, 9, 10, 14, 15, 18 · not reached: 13
+
+11 + 2 + 6 + 1 = 20, and the four sets partition {1..20}. The only movement from the POST-FIX
+table is 9, 10 and 14 from TRUE to CAN'T TELL. **No row's evidence changed and no finding is
+re-litigated** — only the scoring rule, which is now one rule.
+
+What would close each of the three, so these read as gaps rather than verdicts:
+
+- **9** — drive send, follow-up, approve and cancel from a real browser on `/chat`, which is
+  what the claim says and what the probe explicitly declines to do.
+- **10** — either record a second distinct `EVESTACK_AUTH_USER` and show the audit row
+  distinguishing them, or accept that the product's own wording ("eve's protocol carries no
+  identity, so this is the only place that records who") is the honest claim and correct the
+  plan row to match it. The product does not oversell this; the ledger row did.
+- **14** — produce a session that genuinely failed, promote it, and run the generated eval.
+
+**The reading I did not take, stated so it can be chosen instead.** A looser standard — a claim
+is TRUE when the mechanism is proven and only the delivery vehicle is untested — is defensible,
+and under it 9 and 14 return to TRUE and the POST-FIX tally stands as written. What is not
+defensible is applying the strict reading to 14 and 17 in one paragraph and the loose reading to
+9, 10 and 14 in the table directly above it. Either rule produces a coherent ledger; using both
+produced a document that demotes a claim and re-promotes it on one page.
+
+---
+
 > # POST-FIX TALLY — after eight fix agents exercised what the test could not
+>
+> **Superseded by the reconciled tally above — the standard, not the evidence, changed.**
 >
 > **Of Part A's 20 claims: 14 TRUE · 2 FALSE · 3 CAN'T TELL · 1 not reached.**
 >
@@ -13,10 +119,10 @@
 >
 > | # | Was | Now | Why |
 > |---|---|---|---|
-> | 5 | CAN'T TELL | **FALSE** | Proven, not merely untested. `lib/queries.ts#sumCostParts` calls `costUsd()` and never reads `priced`, so a session whose only model is uncatalogued reports `costUsd: 0` with no flag — on `/api/health/detail` and the session list, the JSON surface a monitor polls. `app/sessions/rollup.ts:33` already admits this path "has no way to tell an unpriced model from a free one". That is the silent `$0.00` the claim promises never happens |
-> | 9 | not reached | **TRUE** | A probe now drives start, stream, follow-up and cancel: cancel acked in **40 ms**, the body never claims "cancelled", and the stream was still emitting `step.started` 3 s later — encoding the README's cooperative-cancellation reality rather than a stop button that assumes silence. The session survives, and the follow-up honestly refuses with `409 session_busy` |
-> | 10 | CAN'T TELL | **TRUE, with a caveat that matters** | `npm run demo:approval` parks reliably (6/6) and the audit row reads `forget \| approve \| evestack \| basic \| 172.23.0.1`. The schema is better than the claim needed — `approver`, `approver_via`, `remote_addr`, `user_agent`, `request_id`, `turn_id`. But `approver` is the single `EVESTACK_AUTH_USER`, so "who" is **the installation plus a network address**, never an individual. The product says so itself and does not oversell it |
-> | 14 | CAN'T TELL | **TRUE** | I had this backwards. The shipped suite runs green on a clean scaffold — 4 evals, 13 gates, ~40s on Ollama — and a promoted eval runs. My "broken" verdict came from running evals against the agent I had `kill -9`'d in Part 8A. Still unverified: promoting a session that genuinely *went wrong*, because nothing on the $0 path fails on its own |
+> | 5 | CAN'T TELL | **FALSE** | Proven, not merely untested. `lib/queries.ts#sumCostParts` calls `costUsd()` and never reads `priced`, so a session whose only model is uncatalogued reports `costUsd: 0` with no flag — on `/api/health/detail` and the session list, the JSON surface a monitor polls. `app/sessions/rollup.ts:33` already admits this path "has no way to tell an unpriced model from a free one". That is the silent `$0.00` the claim promises never happens. — **Corrected on review (round 3): the verdict holds, but "and the session list" and the `rollup.ts:33` quotation are both withdrawn — that page and that comment are the code getting it right. See the CORRECTION at the top of this file. Closed on this branch by `ac156cd` + `2ada44c`** |
+> | 9 | not reached | **TRUE** | A probe now drives start, stream, follow-up and cancel: cancel acked in **40 ms**, the body never claims "cancelled", and the stream was still emitting `step.started` 3 s later — encoding the README's cooperative-cancellation reality rather than a stop button that assumes silence. The session survives, and the follow-up honestly refuses with `409 session_busy`. — **Corrected on review (round 3) → CAN'T TELL. The probe's own first line is "driven from outside the browser"; the claim says from the browser** |
+> | 10 | CAN'T TELL | **TRUE, with a caveat that matters** | `npm run demo:approval` parks reliably (6/6) and the audit row reads `forget \| approve \| evestack \| basic \| 172.23.0.1`. The schema is better than the claim needed — `approver`, `approver_via`, `remote_addr`, `user_agent`, `request_id`, `turn_id`. But `approver` is the single `EVESTACK_AUTH_USER`, so "who" is **the installation plus a network address**, never an individual. The product says so itself and does not oversell it. — **Corrected on review (round 3) → CAN'T TELL. A caveat that negates the claim's operative word cannot leave the row TRUE** |
+> | 14 | CAN'T TELL | **TRUE** | I had this backwards. The shipped suite runs green on a clean scaffold — 4 evals, 13 gates, ~40s on Ollama — and a promoted eval runs. My "broken" verdict came from running evals against the agent I had `kill -9`'d in Part 8A. Still unverified: promoting a session that genuinely *went wrong*, because nothing on the $0 path fails on its own. — **Corrected on review (round 3) → CAN'T TELL. This is verbatim the gap that demoted the row at :34-38; it cannot demote there and promote here** |
 > | 17 | CAN'T TELL | **TRUE** | Both halves now proven. "Never writes" was already verified (`default_transaction_read_only=on`, identical row counts across every invocation). "Prints the SQL" is now exercised against a purpose-built dead-and-blocking job: 53 lines of SQL on stdout, piped into `psql`, the job became claimable again, and a re-run said "Nothing to remediate" |
 >
 > Unchanged and honest about it: **6** needs a paid provider bill, **15** needs a Composio

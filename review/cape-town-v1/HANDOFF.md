@@ -2,8 +2,33 @@
 
 **For a reviewer picking this up cold, human or agent. Nothing here is pushed to `main`.**
 
-24 commits ahead of `main` (`464a85f`). Everything was produced by an acceptance test run as a
-stranger, then seventeen fix agents across two rounds, then two integration passes.
+> **CORRECTION (round 3).** Four numbers in this file were wrong. They are corrected in place
+> below and each one is annotated where it appears; the mechanism behind two of them is worth
+> more than the numbers. Summary, so nobody acts on the old ones: the branch has **diverged**
+> from `main` rather than merely being ahead of it, and the count is not 24; **16 commits are
+> signed**, not "all unsigned"; the leaked-`.npmrc` count is **ten**, not 23; and "all fixed"
+> was written sixteen lines above an admission that one was not.
+
+~~24 commits ahead of `main` (`464a85f`)~~ **The branch has diverged from `main`; `464a85f` is
+the merge-base, not `main`'s tip. Run
+`git rev-list --left-right --count main...HEAD` — it was `1 29` at `2d4e86d`.** Everything was
+produced by an acceptance test run as a stranger, then seventeen fix agents across two rounds,
+then two integration passes.
+
+> *Corrected on review (round 3).* Two errors in one line.
+>
+> **The count.** "24" was not a miscount so much as a number that cannot hold still: this file
+> was added by `412c761`, and at that commit `git rev-list --count 464a85f..HEAD` was exactly
+> **25**. The sentence was written before the commit that contained it existed, and counted the
+> branch without itself. **A count of your own branch includes the commit you are writing** —
+> which is why no bare figure is restored here. It was 28 at `2ada44c` and 29 at `2d4e86d`, the
+> commit that made this correction; whatever it is when you read it, the command above is the
+> only answer that stays true.
+>
+> **"ahead of `main`" is only half the topology.** `main` has moved to `fe4adb3` and holds one
+> commit this branch does not. The branch has **diverged**, and a reviewer planning the merge
+> needs the other side of that. `fe4adb3` is the topology-table fix, which also exists here as
+> `3fdaadc` — see the cherry-pick note under the signing correction below.
 
 ## Read in this order
 
@@ -26,10 +51,62 @@ stranger, then seventeen fix agents across two rounds, then two integration pass
   `:3000`, held by an unrelated process on the test machine. Proven pre-existing.
 - Dashboard bumped **0.3.1 → 0.4.0**, because the tree now installs spans v4 / facts v2 while
   the published `0.3.1` installs v3 / v1.
-- **Commits are unsigned** (`git log --format=%G?` → `N`). 1Password was locked. Re-sign if the
-  repo requires it.
+- ~~**Commits are unsigned** (`git log --format=%G?` → `N`). 1Password was locked.~~
+  **Corrected on review (round 3): 16 commits carry a signature.** (Sixteen is stable — they are
+  the original fix-agent commits. The unsigned count is not: it grows with every commit added
+  after, which is why it is stated as a set below rather than as a fraction.) They carry real
+  `BEGIN SSH SIGNATURE` blocks (ed25519) in the commit object itself.
+
+  **`%G?` was the wrong instrument, and it fails in the direction that reassures.** It reports
+  `N` for a signature it cannot *verify* as readily as for one that is *absent*, and this
+  checkout has no `gpg.ssh.allowedSignersFile` — `git config --get gpg.ssh.allowedSignersFile`
+  exits 1. Run the original command and git says so out loud on stderr while printing `N`
+  anyway:
+
+  ```
+  $ git log --format='%G?' 464a85f..HEAD
+  error: gpg.ssh.allowedSignersFile needs to be configured and exist for ssh signature verification
+  N
+  ```
+
+  The instrument that does not depend on verifier config is the commit object:
+
+  ```bash
+  for c in $(git rev-list 464a85f..HEAD); do
+    git cat-file commit "$c" | sed -n '1,20p' | grep -q '^gpgsig' \
+      && echo "SIGNED   $(git log -1 --format='%h %s' "$c")" \
+      || echo "unsigned $(git log -1 --format='%h %s' "$c")"
+  done
+  ```
+
+  → **16 SIGNED, and the rest unsigned** (12 of them at `2ada44c`). Configure
+  `gpg.ssh.allowedSignersFile` before making any claim about signature *validity*; presence is all that is asserted here, and it is all `%G?` was
+  being used to assert. GitHub's own Verified badge was **not** checked from this worktree —
+  these commits are not pushed — so do not carry that claim forward without looking.
+
+  **The unsigned ones are not a lapse, they are the cherry-picks.** Four subjects appear
+  twice in this range, and in every pair the original is signed and the copy is not:
+
+  | subject | signed original | unsigned copy |
+  |---|---|---|
+  | `traces: resolve a batch after it commits, not inside it` | `cc95ee6` | `42c2ef7` |
+  | `health: the fifth through eleventh places a check that could not run…` | `34af1c7` | `a6d22a5` |
+  | `create: the documented way to see your sandboxes needed three lines…` | `65915a9` | `0d4e1eb` |
+  | `docs+ci: publish the disk numbers, put macOS in CI…` | `f3f1aa0` | `3187006` |
+
+  (`991d4af` *Three tests that could not fail…* and `d97ad8e` *contract: three tests that could
+  not fail…* are a fifth pair with a reworded subject.) A signature covers the commit object,
+  parent included, so replaying a commit onto a new parent cannot carry it. **De-duplicating
+  these pairs and re-signing are the same job, not two** — resolve the duplicates first and the
+  signature gap mostly closes itself.
 - `ghcr.io/sammytourani/evestack-dashboard:0.4.0` **does not exist on GHCR yet**. The tree pins
   it, so `docker compose pull` 404s until the release is cut.
+
+  *Re-verified 2026-08-11 against the live registry, anonymous pull:* the tags list is still
+  exactly `["0.1.0","latest","0.2.0","0.3.0","0.3.1"]`, and a manifest request for `0.4.0`
+  returns **HTTP 404**. `docker-compose.yml:136` pins
+  `${EVESTACK_DASHBOARD_IMAGE:-ghcr.io/sammytourani/evestack-dashboard:0.4.0}`. Still true, and
+  `README.md:67-68` was corrected in round 3 to stop implying otherwise.
 
 ## Where I would look hardest if I were reviewing this
 
@@ -57,13 +134,34 @@ Ranked by how much damage a mistake would do.
 
 - **The credential leak was real and is closed.** With no `.git`, eve resolves its dev source
   root to `$HOME`, finds the user's dotfiles repo, and copies `~/.npmrc` — auth token included —
-  into `.eve/dev-runtime/snapshots/`. 23 byte-identical copies accumulated on the test machine
-  and were deleted. Proven closed by A/B: with `.git`, zero copies; delete it, one reappears.
+  into `.eve/dev-runtime/snapshots/`. ~~23~~ **ten** byte-identical copies accumulated on the
+  test machine and were deleted. Proven closed by A/B: with `.git`, zero copies; delete it, one
+  reappears.
+
+  *Corrected on review (round 3):* **ten** is the number, stated twice and independently —
+  `findings.md:258-260` ("there were **ten** by then, not the three I first found, because the
+  other agents' test runs each produced more") and `decisions.md:118-121` ("I found ten such
+  copies on this machine and deleted them"). **23 appears nowhere else in this packet**, and
+  nothing derives it. Since the count is evidence for a *security* claim — how far a credential
+  spread before it was contained — the inflated one is the worse direction to be wrong in, and
+  it is the one a reader quotes.
 - **The dominant defect pattern: health signals that degrade to good news when their input is
-  missing.** Eleven instances found, all fixed. The failure rate scored crashed turns as
-  *successes* (6% and no alert where the truth was 30% and firing). `/api/health` answered
-  healthy for two hours against an unreadable database. A container Docker could not describe
-  was counted inside "All 6 running sandboxes are network-isolated".
+  missing.** Eleven instances found, ~~all fixed~~ **eleven fixed and a twelfth left open —
+  see `fact_tool_call.ok` under "Still open, deliberately" below.** The failure rate scored
+  crashed turns as *successes* (6% and no alert where the truth was 30% and firing).
+  `/api/health` answered healthy for two hours against an unreadable database. A container
+  Docker could not describe was counted inside "All 6 running sandboxes are network-isolated".
+
+  *Corrected on review (round 3):* "all fixed" was written **sixteen lines above** its own
+  counter-example. "Still open, deliberately" says `fact_tool_call.ok` is `status_code <> 2`,
+  so OTel UNSET records as a tool success — and names it "**Same bug as the turn failure rate,
+  one view over. Not fixed.**" That is a twelfth instance of the pattern this bullet is
+  counting, on the same page, and the summary line reports the set as closed.
+
+  This is the pattern eating itself: a summary that degrades to good news when one of its
+  inputs is an open item. The count is right — eleven were found and eleven were fixed — but
+  "all" quantifies over the *pattern*, and the pattern has twelve known instances. Say
+  "eleven fixed, one open" so the number and the quantifier cannot drift apart again.
 - **`:ro` on a Docker socket is theatre.** Measured: through a read-only socket mount, as a
   non-root container user, `POST /containers/create` with `Binds: ["/:/host"]` returned
   **201 Created**. That is why the shipped comment does not use `:ro`.
@@ -71,6 +169,29 @@ Ranked by how much damage a mistake would do.
   edited. Five were inferences stated as measurements. The sixth was worse: I reported the eval
   tier broken when the failure came from an agent I had deliberately `kill -9`'d earlier in the
   test. If you find a seventh, that is the most useful thing you could hand back.
+
+  *Round 3 — asked for and delivered. There were four more, and this file held three of them.*
+
+  | # | Where | What was wrong |
+  |---|---|---|
+  | 7 | `claims-ledger.md`, claim 5 | Verdict right, two of three legs backwards: `rollup.ts:29-33` was quoted as the code admitting a defect when it is the code explaining why it avoided one, and `/sessions` — the one surface that handles unpriced models correctly — was named as defective. Closed in code by `ac156cd` + `2ada44c` |
+  | 8 | `app/api/health/route.ts:145-148` | "Each entry was checked against the code, not assumed — `/charts` is a static demo and stays up", over a list containing `/charts`, which `findings-round2.md:439` measured as a 404 and which `app/charts/page.tsx:103` makes a 404 on purpose. A fix commit's comment, not the test's prose |
+  | 9 | `claims-ledger.md`, POST-FIX tally | Claims 9, 10 and 14 scored TRUE on evidence the rows themselves disqualify, eighteen lines from the paragraph demoting 14 for exactly that. Reconciled to 11 TRUE · 2 FALSE · 6 CAN'T TELL · 1 not reached |
+  | 10 | `findings-round2.md:293` | 8.0 GB for two Ollama models — an unattributed total, larger than the whole 7.4 GB directory it is a subset of. Measured figure is 5.5 GB. Same root cause as the round-1 disk CORRECTION, one round later |
+  | 11 | `investigations.md:774-775` | Cited `README.md:115-118` and quoted *"qwen3 is 5.2 GB … budget both model sizes + 4 GB"*. The RAM section is at `:128-131`, and `rg -n '5\.2 GB' README.md` returns **nothing** — README never states qwen3's size. A paraphrase in quotation marks, attributed to a file that does not contain it |
+
+  Plus the four numbers in this file, corrected above. **The recurring shape is not carelessness
+  — it is a citation pointing at something adjacent to what the sentence claims.** Five of these
+  eleven quote a real line that says something other than what it was quoted for, and #11 quotes
+  a line that does not exist. Check the *subject* of a sentence you cite, not just that the words
+  appear near it.
+
+  **Every line-number citation added or touched in round 3 was mechanically re-verified** — each
+  one was opened and checked to contain the string it was cited for. That pass caught four of
+  the eleven above, including #11 and the `rollup.ts` field offset, and it is the cheapest
+  reviewing step in this packet: extract `path:line`, open the span, assert the quoted substring
+  is in it. Line numbers are claims and they decay silently; nothing else here decays without
+  changing how it reads.
 
 ## Still open, deliberately
 
@@ -86,10 +207,63 @@ Ranked by how much damage a mistake would do.
   and is not exported.
 - **`.github/upstream/eve-dev-watcher-source-root.md`** is a drafted upstream issue, deliberately
   not filed. Searched — not a duplicate.
-- **The release gate has a blind spot:** `packages/website/lib/copy.ts:506` states the image tag
-  without the `evestack-dashboard:` prefix, so the gate's grep misses it.
+- **The release gate has a blind spot:** `packages/website/lib/copy.ts:524` states the image tag
+  without the `evestack-dashboard:` prefix, so the gate's grep misses it — the line is
+  `{ name: "dashboard image", detail: "0.4.0, matching the pin" }`. Find it with
+  `rg -n 'dashboard image' packages/website/lib/copy.ts` rather than by line number.
+  *(Was `:506`; round 3 added a comment block above it and moved it to `:524`. Re-cited rather
+  than left to rot — a line number is a citation, and this packet has been bitten four times by
+  citations that still resolve to a line but no longer to the right one.)*
 - `docs/` never mentions `EVESTACK_DOCKER_SOCKET`; the repo's own `docker-compose.yml` has no
   socket mount either.
+
+### Opened in round 3 — found while correcting the record, owned by nobody yet
+
+- **The landing page's "Running in four steps" never starts the dashboard.**
+  `packages/website/lib/copy.ts` `quickstart.steps` runs scaffold → `docker compose up -d
+  postgres` + `npm run db:bootstrap` → `npm run dev` → `npm run verify`. The step that brings up
+  the dashboard — `docker compose --profile dashboard up -d` — is on **neither** website
+  surface: `rg -n 'profile dashboard' packages/website/` returns nothing, and the `terminal`
+  artwork above it omits it too. Every other surface lists it: `README.md:36-42`,
+  `create.mjs:1078-1085`, `docs/quickstart.mdx:124`. `copy.ts:106` is a comment in that same file
+  reading **"THESE MUST BE THE COMMANDS THE SCAFFOLDER PRINTS"**, with a note about two commands
+  that were wrong for a long time — the rule was written, and this is a third violation of it.
+  A visitor following the manual path lands with no dashboard and no error, on the page whose
+  own copy calls the dashboard the reason to self-host. **Not fixed here: this is structure, not
+  copy, and the landing page's design is out of scope for this lane.**
+- **`create-evestack@0.9.2` means two different things.** `packages/create-evestack/package.json`
+  says `0.9.2` and `shared.mjs:40` pins `DASHBOARD_IMAGE_TAG = "0.4.0"`. The **published** 0.9.2
+  on npm pins `"0.3.1"` — verified by unpacking the real tarball:
+  `npm pack create-evestack@0.9.2 && rg -n 'DASHBOARD_IMAGE_TAG' package/shared.mjs` → `0.3.1`.
+  Same version number, different code, and the difference is which image a user pulls. This is
+  the exact condition `CHANGELOG.md:64-70` names as the one "every check in RELEASING.md reports
+  as green". Bump the scaffolder alongside the dashboard release, or the pin and the version
+  stay decoupled.
+- **Contract 16 cannot see a broken link to any root-level file.** Found by mutation, not by
+  reading. `contract/contracts/16-documented-paths.contract.mjs` opens *"Every path this repo
+  points a reader at must exist"*, but its `PATH_PATTERN` only matches paths beginning
+  `docs|packages|contract|templates|registry|scripts|.github`. Every root-level target is
+  therefore unchecked — `CHANGELOG.md`, `LICENSE`, `SECURITY.md`, `CONTRIBUTING.md`, `NOTICE`,
+  `FINDINGS.md`, `RELEASING.md`, `CODE_OF_CONDUCT.md` — and README's own header links two of
+  them (`[Changelog →](./CHANGELOG.md)`, `[License](./LICENSE)`).
+
+  Proven both ways on the same file:
+
+  | mutation in `README.md` | contract 16 |
+  |---|---|
+  | `./CHANGELOG.md` → `./CHANGELOG-NOPE.md` | **PASS, 72 assertions** — survived |
+  | `docs/composio-auth.mdx` → `docs/composio-auth-NOPE.mdx` | **FAIL**, *"README.md points at `docs/composio-auth-NOPE.mdx`, and it exists"* |
+
+  So the contract is live, not vacuous — it is *scoped*, and its own first sentence claims a
+  universality it does not deliver. Either widen the pattern to root-level `*.md` (the paths are
+  a `readdirSync` away, which is this contract's own stated argument for existing) or narrow the
+  docstring. Do not leave them disagreeing. **Not mine to fix — `contract/` is another lane's.**
+- **`docs/support.mdx:124` cites the wrong line for the win32 browser branch.** It points at
+  `templates/default/scripts/verify.mjs:571`; `:571` is the `function pinnedDashboardTag() {`
+  signature (its `evestack-dashboard:` regex is `:574`). The `cmd /c start` branch is in
+  `openBrowser()` at
+  **`:584-586`**. The other two citations in that bullet were not re-checked. `docs/` was out of
+  scope for this lane.
 
 ## A note on method
 

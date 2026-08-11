@@ -520,7 +520,8 @@ real page once W3 has restyled it. Check the two other rows `copy.ts` records as
 but which appear still deployed: the `Tool approvals | Vercel Passport` comparison row,
 and the "Full-depth tracing … The span tree is the product" feature cell.
 
-**And fix the comment.** `copy.ts:181-187` still asserts that
+**And fix the comment.** `copy.ts:199-205` (was `:181-187`; round 3 added a comment block above
+it) still asserts that
 `grep -rniE "p95|percentile|Monitors" packages/dashboard/{app,lib,components}` returns
 nothing and that there is no Monitors route. That grep now returns 33 matches across two
 files, and the route is in the nav at `app/layout.tsx:22`. A stale honesty note in the

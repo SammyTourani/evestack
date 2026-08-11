@@ -259,9 +259,29 @@ invisible to everyone but the maintainer, which is the worst of the three states
 looks finished from the inside and does not exist from the outside. Publish it or delete it; do
 not leave it. `gh release list` labels drafts, so this is one column to read, not an audit.
 
-Seven releases against ten tags and thirty-five published versions is still a gap, and it is the
-same gap: `--verify-tag` means a release can only be cut where a tag already is. The three tags
-with no release are `create-evestack@0.4.0`, `dashboard-v0.1.0` and `dashboard-v0.2.0`.
+Seven releases against **eleven** tags and **thirty-seven** published versions is still a gap,
+and it is the same gap: `--verify-tag` means a release can only be cut where a tag already is.
+**Four** tags have no release: `create-evestack@0.4.0`, `dashboard-v0.1.0`, `dashboard-v0.2.0`
+and `@evestack/dashboard@0.3.1`.
+
+> **Corrected 2026-08-11.** This paragraph said "ten tags and thirty-five published versions"
+> and named three tags. Those are the numbers the counts fifty lines above replaced — `:210`
+> reads *"Thirty-seven versions have been published — 33 on npm, 4 images on GHCR — and eleven
+> tags exist"*, and `git tag | wc -l` is **11**, listed in full at `:173`. One paragraph was
+> updated and this one was not.
+>
+> **The stale count took a sentence with it, which is the part worth noticing.** "The three tags
+> with no release" was not a separate error: it is *derived* from the wrong total. Ten tags minus
+> seven releases is three; eleven minus seven is four. Correcting a count without re-deriving the
+> sentences that read from it leaves prose that is internally consistent with a number nobody
+> holds any more — harder to catch than a bare wrong figure, because it audits clean against
+> itself.
+>
+> The fourth tag is `@evestack/dashboard@0.3.1` (on `464a85f`), the newest of the eleven and the
+> one added after this paragraph was written. **Confirm with `gh release list` before acting on
+> it** — the arithmetic proves a fourth tag exists without a release, but which tag is inference
+> from the tag dates, not a reading of the release list, and this file's own instruction two
+> paragraphs down is to recount rather than trust.
 
 `CHANGELOG.md` is the source. Every version heading there is exactly the tag name for that release,
 which is what lets the notes be lifted rather than rewritten — the release page and the changelog

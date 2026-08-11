@@ -486,7 +486,7 @@ The only place any idle threshold is documented is **`docs/cli.mdx:232`**:
 reasonably assume the dashboard behaves the same and is tunable the same way. It is not.
 
 The only trace of the banner outside source is **alt text on a screenshot** (`README.md:21` and
-`packages/website/lib/copy.ts:298`), which is what the tester found. The feature is advertised in
+`packages/website/lib/copy.ts:316`, was `:298`), which is what the tester found. The feature is advertised in
 an image caption and described in no prose anywhere.
 
 ## Design recommendations (W3's call, offered as input)
@@ -772,7 +772,16 @@ is self-limiting.
 
 **Present and genuinely useful:**
 - RAM budgeting, with a real number and a real failure story — `docs/local-setup.mdx:69-71`,
-  `README.md:115-118` (*"qwen3 is 5.2 GB … budget both model sizes + 4 GB"*)
+  `README.md:128-131` (*"Budget **both model sizes + 4 GB** free … the 274 MB embedding model"*)
+
+  > *Corrected on review (round 3).* This read `README.md:115-118` and quoted *"qwen3 is 5.2 GB
+  > … budget both model sizes + 4 GB"*. Both halves were wrong: the RAM section is at
+  > **`:128-131`**, and **`rg -n '5\.2 GB' README.md` returns nothing** — README never states
+  > qwen3's size. The 5.2 GB figure is real but comes from `diary.md:15` and this file's own
+  > `:717`, not from README. A paraphrase set in quotation marks and attributed to a file that
+  > does not contain it is the same defect as a wrong line number, and harder to catch, because
+  > the sentence reads like evidence. The substance stands: README does budget RAM, with a real
+  > failure story.
 - log bounding with the reasoning — `docs/operations.mdx:150-171`
 - span retention and `db:prune` — `docs/operations.mdx:194-279`
 - the `VACUUM FULL` caveat — `docs/operations.mdx:374`

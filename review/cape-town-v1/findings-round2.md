@@ -19,6 +19,83 @@ I nearly filed as defects and did not, because the measurement disproved them, a
 
 ---
 
+## CORRECTION (round 3) — the eighth wrong claim, and it is a code comment this branch added
+
+`HANDOFF.md:168-171` counts six wrong claims and asks for a seventh. The seventh is in
+`claims-ledger.md` (claim 5's reasoning). This is the eighth, and it is a different author: not
+the stranger test's own prose but a comment a **fix commit** added, which makes it the more
+dangerous of the two, because it is the kind of comment that stops the next maintainer from
+looking.
+
+`packages/dashboard/app/api/health/route.ts:143-149` reads:
+
+> The rule, so these lists can be maintained rather than guessed at: anything that applies
+> `sql/traces.sql` or `sql/facts.sql` is refused, and everything reading only the `workflow`
+> tables is untouched. **Each entry was checked against the code, not assumed — `/charts` is a
+> static demo and stays up**; …
+
+`:159` then lists `/charts` under `available`. It is not available. `app/charts/page.tsx:103` is
+`if (process.env.NODE_ENV === "production") notFound();`, and that page's own header comment at
+`:19` says why: *"`notFound()` in production: this is a development surface, not a feature."*
+This document already measured it — see the `[CONFUSING]` finding at :439 below, 404 on the
+published image, on the merged image, and on a container built by hand.
+
+**The mechanism is worth more than the defect.** The comment's *rule* is sound and `/charts`
+obeys it: the rule is about **schema dependence**, `/charts` reads no database at all, so a
+schema mismatch genuinely does not affect it. But the payload field is called `available`, and
+an operator reading a degraded health response takes `available` to mean *this page will serve
+me*. In production it does not, for a reason that has nothing to do with the schema. The entry
+is right about the rule and wrong about the field, and "each entry was checked against the code"
+is what conceals the gap between the two — the one entry the comment singles out **by name** as
+having been verified is the one entry that is wrong.
+
+False comment, false code, same severity: had the comment said "derived from the schema rule"
+rather than "checked against the code", the next reader would have known to check availability
+separately. **Lane B owns the code fix**; this entry exists so the claim is on the record
+whether or not the list changes.
+
+---
+
+## CORRECTION (round 3) — this round repeated round 1's disk error, on the row a user would act on
+
+`findings.md:297-320` is a published CORRECTION headed *"my disk figures were wrong by 20×"*,
+and its stated root cause is: *"I read `docker system df` totals without attributing them."*
+The Part 9E table below repeats exactly that, for Ollama, in the one table in this document a
+user removing evestack would act on.
+
+`:293` quotes **8.0 GB** for "Ollama `qwen3` + `nomic-embed-text`". The measured, attributed
+figure for those two models is **5.5 GB**, and it is stated three times elsewhere in this packet:
+
+| Source | Figure | Attribution |
+|---|---|---|
+| `investigations.md:717` | `~/.ollama` total **7.4 GB** | `qwen3` 5.2 GB + `qwen3:4b` 2.5 GB + `nomic-embed-text` 274 MB |
+| `investigations.md:718`, `:740` | the documented $0 path only, **≈ 5.5 GB** | `qwen3` + `nomic-embed-text` |
+| `findings.md:310` | one project on the $0 path ≈ 7.9 GB | **+5.5 GB** for those two models |
+| `README.md:128-131` | — | *"Budget **both model sizes + 4 GB** free … the 274 MB embedding model"*. (Cited elsewhere in this packet as `:115-118` quoting *"qwen3 is 5.2 GB"* — both wrong; see below) |
+
+**8.0 GB is larger than the whole directory it is a subset of.** `~/.ollama` held 7.4 GB across
+*three* models; the row names two of them and quotes a bigger number than all three together.
+The third, `qwen3:4b` at 2.5 GB, is not on the documented $0 path at all, so even the 7.4 GB
+total overstates what evestack costs a user.
+
+**Re-measured on the same machine while writing this**, without starting Ollama — the blob store
+is readable on disk:
+
+```
+du -sh ~/.ollama/models                       6.9G   (GiB) = 7.4 GB decimal
+sha256-a3de86cd1c13…  5,225,374,496 bytes  =  5.2 GB   <- qwen3:latest
+```
+
+which reproduces `investigations.md:717` exactly and leaves 5.5 GB as the only figure the
+evidence supports.
+
+Where 8.0 came from is **inferred, not measured**: three lines below it, `:296-297` reports
+"`docker system df` on this machine reports **8.52 GB reclaimable images**". That is the same
+instrument, and the same unattributed reading, that the round-1 CORRECTION was written about.
+The row is annotated in place below rather than rewritten.
+
+---
+
 ## PART 9D — the upgrade path
 
 **How the test was built.** A brand-new project, `upgrade-agent`, scaffolded from the **published**
@@ -213,7 +290,7 @@ project leaves it. Three survive here from projects that are gone.
 | `ghcr.io/vercel/eve` base (pulled by the sandbox) | 665 MB |
 | `eve-sandbox-template:*`, one per project | 157 MB unique each |
 | `~/.npm/_npx` | 99 MB |
-| Ollama `qwen3` + `nomic-embed-text` | 8.0 GB, never named anywhere as evestack's doing |
+| Ollama `qwen3` + `nomic-embed-text` | ~~8.0 GB~~ → **5.5 GB**, never named anywhere as evestack's doing. *Corrected on review (round 3): 8.0 GB was an unattributed total — larger than the entire 7.4 GB `~/.ollama` directory it is a subset of. `investigations.md:718` measures these two models at 5.5 GB and `findings.md:310` agrees. See the CORRECTION at the top of this file* |
 | `deploy/` launchd plist | **not** installed by anything — `~/Library/LaunchAgents` is clean |
 
 `docker system df` on this machine reports **8.52 GB reclaimable images** and 203 MB reclaimable
@@ -367,6 +444,11 @@ in production on purpose — it is a development gallery. So the 404 is correct 
 payload advertising it is not. Also for the plan's owner: the test plan lists `/charts` as
 dashboard page 6 and Part A claim 7 asks "do they match `/charts`?" — like claim 18, that row
 describes something the product does not offer.
+
+*Round 3:* this finding still stands, and the code that carries it now also carries a comment
+claiming the list was audited — `app/api/health/route.ts:145-148`, "Each entry was checked
+against the code, not assumed — `/charts` is a static demo and stays up". Recorded as the eighth
+wrong claim in the CORRECTION at the top of this file. Lane B owns the code fix.
 
 ---
 
