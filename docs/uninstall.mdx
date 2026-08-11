@@ -251,8 +251,16 @@ docker images ghcr.io/sammytourani/evestack-dashboard
 docker images pgvector/pgvector
 
 # then remove the exact tags you saw — substitute the tags from YOUR output,
-# these two are only the shape of the command
-docker rmi ghcr.io/sammytourani/evestack-dashboard:0.3.1
+# these two are only the shape of the command.
+#
+# THE-TAG-YOU-SAW is deliberately not a version number. Do not "fix" it to one:
+# the publish gate scans the tree for evestack-dashboard:<digit>… and requires
+# every hit to equal packages/dashboard/package.json, so a real version here is
+# either a duplicate of the pin or a release blocker. It was 0.3.1 once and
+# would have failed the 0.4.0 release at tag-push time. A placeholder also fails
+# loudly if pasted verbatim — docker answers "No such image" instead of removing
+# whichever version you happened to have.
+docker rmi ghcr.io/sammytourani/evestack-dashboard:THE-TAG-YOU-SAW
 docker rmi pgvector/pgvector:pg17
 ```
 
