@@ -1,5 +1,5 @@
 import { test, expect, devices } from "@playwright/test";
-import { agentPack, quickstart } from "@/lib/copy";
+import { agentPack, site } from "@/lib/copy";
 
 /* The agent pack — the routes that serve it and the two controls that hand it
    over.
@@ -109,7 +109,7 @@ test.describe("the copy control", () => {
     // Closed means genuinely out of reach, not merely transparent.
     await expect(menu).toHaveAttribute("inert", /.*/);
 
-    await page.locator('[data-agent-pack="primary"]').hover();
+    await page.locator("#hero").locator('[data-agent-pack="primary"]').hover();
     await expect(menu).toHaveAttribute("data-open", /.*/, { timeout: 2000 });
     await expect(menu).not.toHaveAttribute("inert", /.*/);
 
@@ -149,7 +149,7 @@ test.describe("the copy control", () => {
 
   test("every destination carries its own mark", async ({ page }) => {
     await page.goto("/");
-    await page.locator('[data-agent-pack="primary"]').hover();
+    await page.locator("#hero").locator('[data-agent-pack="primary"]').hover();
     const items = page.locator("[data-agent-menu]").first().locator("[data-agent-menu-item]");
     await expect(items).toHaveCount(3);
     for (let i = 0; i < 3; i++) {
@@ -180,7 +180,7 @@ test.describe("the copy control", () => {
   });
 
   test("the hero menu stays inside the viewport", async ({ page }) => {
-    /* The hero menu opens inside a position:sticky viewport on a 220vh
+    /* The hero menu opens inside a position:sticky viewport on a very tall
        section, so anything below the fold there cannot be scrolled to —
        scrolling scrubs the disassembly instead of moving the page. Clipped
        means unreachable, which is why the flip exists. */
@@ -195,85 +195,92 @@ test.describe("the copy control", () => {
   });
 });
 
-test.describe("§09 — the fork", () => {
-  test("offers both paths, with every command copyable", async ({ page, context }) => {
-    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+test.describe("the closing CTA carries all three ways to start", () => {
+  test("command, agent pack and GitHub sit on one row", async ({ page }) => {
+    /* Replaces the §Two ways in tests. That section drew the same fork one
+       screen above this CTA, which already offered the command, so the fork
+       moved here rather than being dropped. What has to hold is that all three
+       routes are present and reachable at the point a reader decides. */
     await page.goto("/");
+    const closing = page.locator("#get-started");
 
-    const section = page.locator("#quickstart");
-    await expect(section.getByRole("heading", { name: quickstart.heading })).toBeAttached();
-    await expect(section.getByText(quickstart.commands.title)).toBeAttached();
-    await expect(section.getByText(quickstart.agent.title)).toBeAttached();
+    await expect(closing.getByRole("button", { name: `Copy "${site.command}"` })).toBeVisible();
+    await expect(closing.locator('[data-agent-pack="primary"]')).toBeVisible();
+    await expect(closing.getByRole("link", { name: /Star on GitHub/ })).toBeVisible();
 
-    // All five commands, and each row copies its own line without the `$`.
-    const rows = section.getByRole("button", { name: /^Copy "/ });
-    await expect(rows).toHaveCount(quickstart.commands.rows.length);
-
-    const first = quickstart.commands.rows[0];
-    await rows.first().click();
-    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(first.pre + first.cmd);
+    // The pack button here is a real one, not a decorative copy: it opens.
+    await closing.locator('[data-agent-pack="primary"]').hover();
+    await expect(closing.locator("[data-agent-menu]")).toHaveAttribute("data-open", /.*/, {
+      timeout: 2000,
+    });
   });
 
-  test("the pack label states the real pack, not a typed-in number", async ({ page, request }) => {
-    /* The size and reference count on the card are read off the artifact at
-       build time. A hardcoded pair would be wrong the first time anyone edits
-       a reference file, and this page's contract is that its numbers are
-       reproducible — so the test reproduces them from the served routes. */
-    const served = await (await request.get("/agent.md")).text();
-    const pack = (await (await request.get("/agent-pack.json")).json()) as {
-      files: { path: string }[];
-    };
-    const references = pack.files.filter((f) => f.path.startsWith("references/")).length;
-    const kilobytes = Math.round(Buffer.byteLength(served, "utf8") / 1024);
-
+  test("its menu opens upward, since it sits at the foot of the page", async ({ page }) => {
+    /* The flip matters more here than in the hero: there is footer below, and
+       a menu dropping down at the bottom of the document would hang off the
+       viewport with nothing to scroll to. */
     await page.goto("/");
-    await expect(page.locator("#quickstart")).toContainText(
-      `SKILL.md + ${references} references · ${kilobytes} KB`,
+    await page.mouse.move(700, 450);
+    const top = await page.evaluate(
+      () => (document.querySelector("#get-started") as HTMLElement).offsetTop,
     );
+    while ((await page.evaluate(() => window.scrollY)) < top - 200) {
+      await page.mouse.wheel(0, 800);
+      await page.waitForTimeout(30);
+    }
+    const closing = page.locator("#get-started");
+    await closing.locator('[data-agent-pack="primary"]').hover();
+    const menu = closing.locator("[data-agent-menu]");
+    await expect(menu).toHaveAttribute("data-open", /.*/, { timeout: 2000 });
+
+    const box = await menu.boundingBox();
+    const viewport = page.viewportSize()!;
+    expect(box).not.toBeNull();
+    expect(box!.y).toBeGreaterThanOrEqual(0);
+    expect(box!.y + box!.height).toBeLessThanOrEqual(viewport.height);
   });
 
-  test("both cards carry their accent rail and raised surface", async ({ page }) => {
+  test("the deleted section left nothing behind", async ({ page }) => {
+    /* Both rounds of deletion in one assertion. The first took the pipeline
+       rail and the verify receipt (data-qs-*); the second took the two path
+       cards and their CSS. A stray attribute or class here would be a selector
+       with no rule left to match: silently unstyled rather than loudly
+       broken. */
     await page.goto("/");
-    const cards = page.locator("#quickstart .path-card");
-    await expect(cards).toHaveCount(2);
-
-    // The rails are what give the section its colour; they are set per card
-    // through --rail, so a missing custom property renders a grey hairline
-    // that looks deliberate and is not.
-    const rails = await page.locator("#quickstart .path-card-rail").evaluateAll((els) =>
-      els.map((el) => getComputedStyle(el).getPropertyValue("--rail").trim()),
-    );
-    expect(rails).toHaveLength(2);
-    expect(rails.every((value) => value !== "")).toBe(true);
-
-    // Raised, not drawn: the inset highlight + drop shadow pair.
-    const shadow = await cards.first().evaluate((el) => getComputedStyle(el).boxShadow);
-    expect(shadow).toContain("inset");
-  });
-
-  test("the deleted choreography left nothing behind", async ({ page }) => {
-    /* The pipeline rail, its spine and the verify receipt panel are gone. Their
-       CSS went with them, so a stray data attribute here would be a selector
-       with no rule — silently unstyled rather than loudly broken. */
-    await page.goto("/");
-    for (const attr of ["data-qs-dot", "data-qs-seg", "data-qs-rcpt", "data-qs-row"]) {
-      await expect(page.locator(`[${attr}]`), `${attr} should be gone`).toHaveCount(0);
+    await expect(page.locator("#quickstart")).toHaveCount(0);
+    for (const sel of [
+      "[data-qs-dot]",
+      "[data-qs-seg]",
+      "[data-qs-rcpt]",
+      "[data-qs-row]",
+      ".path-card",
+      ".path-card-rail",
+      ".cmd-plate",
+    ]) {
+      await expect(page.locator(sel), `${sel} should be gone`).toHaveCount(0);
     }
   });
 
-  test("no-JS still shows both paths in full", async ({ browser }) => {
+  test("no-JS still offers the command, and a route to the pack", async ({ browser }) => {
+    /* The menu ships INERT and stays inert without JS, which is correct and is
+       not a bug to route around: a control that cannot open should not be
+       advertising tabbable links. My first version of this test asserted the
+       menu's links were reachable and failed for exactly that reason.
+
+       So the assertion is the one that actually matters to a no-JS visitor:
+       the command is readable, and there is a real anchor somewhere on the
+       page that reaches the agent pack. The footer's "Set up with your agent"
+       is that anchor, and this is what keeps it from being deleted as
+       redundant later. */
     const ctx = await browser.newContext({ javaScriptEnabled: false });
     const page = await ctx.newPage();
     await page.goto("/");
 
-    const section = page.locator("#quickstart");
-    await expect(section.getByText(quickstart.commands.title)).toBeVisible();
-    await expect(section.getByText(quickstart.agent.title)).toBeVisible();
-    for (const row of quickstart.commands.rows) {
-      await expect(section.getByText(row.cmd, { exact: false }).first()).toBeVisible();
-    }
-    // The pack is still reachable without the clipboard.
-    await expect(section.getByRole("link", { name: /Read it first/ })).toBeVisible();
+    await expect(page.locator("#get-started").getByText(site.command)).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: /Set up with your agent/ }),
+      "a no-JS visitor still has a way to the pack",
+    ).toHaveCount(1);
     await ctx.close();
   });
 });

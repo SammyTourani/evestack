@@ -38,13 +38,12 @@ test.describe("evestack landing page", () => {
       "integrations",
       "architecture",
       "compare",
-      "quickstart",
       "get-started",
     ]) {
       await expect(page.locator(`#${id}`)).toBeAttached();
     }
     // …and the merged-away ones are genuinely gone, not just unlinked.
-    for (const id of ["stats", "control", "code"]) {
+    for (const id of ["stats", "control", "code", "quickstart"]) {
       await expect(page.locator(`#${id}`), `#${id} should be merged away`).toHaveCount(0);
     }
     // Asserted against lib/copy.ts, not a copy of the words. The headline is

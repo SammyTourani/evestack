@@ -5,7 +5,6 @@ import { Observability } from "@/components/sections/observability";
 import { Integrations } from "@/components/sections/integrations";
 import { Architecture } from "@/components/sections/architecture";
 import { Comparison } from "@/components/sections/comparison";
-import { Quickstart } from "@/components/sections/quickstart";
 import { ClosingCta } from "@/components/sections/closing-cta";
 
 /* NINE SECTIONS, down from twelve (2026-08-10).
@@ -23,6 +22,11 @@ import { ClosingCta } from "@/components/sections/closing-cta";
  *   - CodeWalkthrough MERGED into Architecture. The diagram and the files that
  *     implement it belong together, and "The code is the pitch" only ever
  *     spoke to readers who were already sold.
+ *   - "Two ways in" DELETED (2026-08-11). It spent a screen and two large
+ *     cards drawing a fork between running the commands and handing the pack
+ *     to an agent, one screen above a closing CTA already offering the
+ *     command. Both routes are buttons on that CTA's row now, at the moment a
+ *     reader is actually deciding.
  *   - Comparison MOVED from second to seventh. It answers "why not just pay
  *     someone?", which is a question a reader has only after they know what
  *     the thing is. In second position it was the earliest point at which the
@@ -42,7 +46,6 @@ export default function Page() {
       <Integrations />
       <Architecture />
       <Comparison />
-      <Quickstart />
       <ClosingCta />
     </>
   );

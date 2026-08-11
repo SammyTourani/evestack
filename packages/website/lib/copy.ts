@@ -533,65 +533,21 @@ export const integrations = {
   ],
 } as const;
 
-/* §12 quickstart — the fork in the road.
+/* THE `quickstart` BLOCK IS GONE (2026-08-11), and with it §Two ways in.
 
-   This section used to be a self-completing pipeline beside a verbatim
-   `npm run verify` receipt: four stations, a spine drawing downward, ten check
-   lines flipping from ghost to ink. It was accurate, it was well made, and it
-   was too much. A visitor who has reached the bottom of this page does not need
-   more PROOF — they have had eleven sections of it. They need to be told what
-   to do next, and as of the agent pack there are two honest answers to that
-   rather than one.
+   It held the five commands as copyable rows beside the agent-pack card, under
+   the heading "Two ways in." Deleted at Sammy's call: the same choice was being
+   offered twice within one screen, here at full size and again on the closing
+   CTA, which already carried the command.
 
-   So it is a fork, not a pipeline: run five commands yourself, or hand the
-   whole thing to the agent you already have open. Each column is one glance.
-   The receipt panel, the four stations and the spine are gone, along with the
-   .qs/.qsp choreography in globals.css that drove them.
+   Where each piece went. The three routes are now buttons on the closing CTA
+   (`closing` below). The five commands live in the §01 terminal, which types
+   them out, and in /docs/quickstart. `agentPack` below is untouched, because
+   the button that reads it moved rather than went.
 
-   The commands themselves are unchanged, still split pre/payload so dim
-   boilerplate carries a bright payload — five rows, the same "five commands"
-   the closing section claims. `npm run db:bootstrap`, never the upstream
-   bootstrap bin; the note on the terminal artwork above says why. */
-export const quickstart = {
-  heading: "Two ways in.",
-  /* The chip on the fork divider. One word, and it has to be the word that
-     says these are alternatives rather than steps — which is the entire
-     argument the section is making. */
-  divider: "or",
-  commands: {
-    title: "Run it yourself",
-    hint: "Node 24+, Docker, and a model key.",
-    rows: [
-      { pre: "npx ", cmd: "evestack create" },
-      { pre: "docker ", cmd: "compose up -d postgres" },
-      { pre: "npm run ", cmd: "db:bootstrap" },
-      { pre: "npm run ", cmd: "dev" },
-      { pre: "npm run ", cmd: "verify" },
-    ],
-    /* verify.mjs's real closing line, and the only receipt kept from the
-       deleted panel — it is the payoff that panel existed to deliver. */
-    receipt: "Everything works.",
-  },
-  agent: {
-    title: "Hand it to your agent",
-    hint: "Claude Code, Cursor, or a local model.",
-    /* What is actually in the pack, so the button is not a mystery box. Each
-       line is a file in /skills/evestack, not a promise made here. */
-    gets: [
-      "The five commands, and what each one is for",
-      "The CLI, the dashboard API, tools, skills and memory",
-      "The failure modes that present as something else",
-    ],
-    foot: "Nothing to install, and nothing to fetch once it is pasted.",
-    read: "Read it first ↗",
-    /* Composed from the REAL pack at build time (quickstart.tsx reads
-       lib/agent-pack.ts), never typed in. A hardcoded size is wrong the first
-       time anyone edits a reference file, and this is a number on a page whose
-       whole contract is that its numbers are reproducible. */
-    packFormat: (references: number, kb: number) =>
-      `SKILL.md + ${references} references · ${kb} KB`,
-  },
-} as const;
+   Deleted with it: components/sections/quickstart.tsx,
+   components/ui/command-row.tsx, and the .path-card / .path-card-rail /
+   .cmd-plate rules in globals.css, none of which had another caller. */
 
 /* The agent pack. ONE artifact — written once in /skills/evestack, served three
    ways (copy, `npx evestack skills`, fetch) — so nothing below restates its
@@ -681,7 +637,7 @@ export const footerColumns = [
   {
     title: "Get started",
     links: [
-      { label: "Two ways in", href: "#quickstart" },
+      { label: "Get started", href: "#get-started" },
       { label: "Set up with your agent", href: "/docs/agent-setup" },
       { label: "Troubleshooting", href: "/docs/troubleshooting" },
     ],

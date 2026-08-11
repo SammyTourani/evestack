@@ -732,61 +732,11 @@
    left to match. Recover from git if that section ever grows motion again. */
 
 
-/* ── §09 path cards ──────────────────────────────────────────────────────
-   Two surfaces that have to read as RAISED, not drawn. A border alone is
-   flat at any radius; what sells depth is the pair — a lit hairline along
-   the top inside edge (the light source is above, as it is for the hero rig)
-   and a wide, very soft drop shadow underneath. The vertical wash on top of
-   that keeps the surface from reading as one uniform fill.
-
-   Both halves are theme-split rather than shared with alpha: on porcelain an
-   inset white highlight is invisible and a black-alpha shadow at dark-mode
-   strength turns into a grey smudge, so light mode leans on the shadow and
-   drops the highlight to near nothing. */
-.path-card {
-  background-image: linear-gradient(
-    to bottom,
-    color-mix(in srgb, var(--ds-gray-100) 60%, transparent),
-    transparent 45%
-  );
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--ds-gray-1000) 6%, transparent),
-    0 18px 40px -28px rgb(0 0 0 / 0.28);
-}
-.dark .path-card {
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--ds-gray-1000) 10%, transparent),
-    0 28px 64px -32px rgb(0 0 0 / 0.9);
-}
-
-/* The accent rail. One hairline across the top of each card, fading out at
-   both ends so it reads as light catching an edge rather than as a coloured
-   border. `--rail` is set per card; this is where §09 gets its colour. */
-.path-card-rail {
-  background-image: linear-gradient(
-    to right,
-    transparent,
-    color-mix(in srgb, var(--rail) 70%, transparent) 28%,
-    color-mix(in srgb, var(--rail) 70%, transparent) 72%,
-    transparent
-  );
-}
-
-/* Command plates lift toward the reader on hover. translateZ is not available
-   without a perspective ancestor and a 1px translate would jitter the mono
-   text, so the movement is carried by the shadow and the border alone. */
-.cmd-plate {
-  transition:
-    background-color 0.18s ease,
-    border-color 0.18s ease,
-    box-shadow 0.18s ease;
-}
-@media (hover: hover) {
-  .cmd-plate:hover {
-    border-color: color-mix(in srgb, var(--ds-ok) 38%, transparent);
-    box-shadow: 0 6px 18px -10px color-mix(in srgb, var(--ds-ok) 55%, transparent);
-  }
-}
+/* The §09 path-card styling lived here (.path-card, .path-card-rail,
+   .cmd-plate): a raised surface, an accent rail per column, and a lift on the
+   command plates. §Two ways in was deleted on 2026-08-11 and nothing else used
+   any of it, so it would have been three rules with no selector left to match.
+   Recover from git if a two-column choice ever returns. */
 
 /* ── Hero glow: the site's ONE gradient moment. Light mode runs softer —
    the same alphas that glow on black read oversaturated on porcelain. */

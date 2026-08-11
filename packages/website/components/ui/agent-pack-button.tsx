@@ -130,7 +130,7 @@ export function AgentPackButton({
   /* Flip above the button when there is not room below it.
 
      This is not a nicety. In the hero the menu opens inside a `position:
-     sticky` viewport on a 220vh section, so a menu that overflows the bottom
+     sticky` viewport on a very tall section, so a menu that overflows the bottom
      edge cannot be scrolled to — scrolling there scrubs the disassembly
      timeline instead of moving the page. Clipped would mean unreachable.
 
