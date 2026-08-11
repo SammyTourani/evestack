@@ -7,6 +7,7 @@
  * half: the whole command exists for the machine where nothing is running.
  */
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
 import { mkdtempSync, writeFileSync } from "node:fs";
@@ -221,49 +222,130 @@ test("an explicit port still wins over the scheme default", async () => {
  * `--json` must be machine-readable, and it was not: probeModel appends
  * `c.dim("(local)")` on the ollama path, probePostgres joins with the `g.skip`
  * glyph, and both went into the payload verbatim under FORCE_COLOR.
+ *
+ * ─ Why this runs in a child process, and what it looks for ──────────────────
+ *
+ * The version of this test that shipped could not fail, twice over.
+ *
+ * ONE, colour was off. `create-evestack/ui` decides `color` once, at import,
+ * from FORCE_COLOR / NO_COLOR / `stdout.isTTY`. Under `node --test` stdout is a
+ * pipe, so `c.dim` is the identity function and no escape exists to leak. The
+ * decision is a module-level constant, so setting FORCE_COLOR inside the test
+ * body is too late — ui.mjs is already evaluated by the time any test runs.
+ * Hence a child, started with FORCE_COLOR=1, which prints the decision it
+ * actually made before it prints the payload. If that line ever says false, this
+ * test says so instead of passing.
+ *
+ * TWO, it regexed for the wrong bytes. It asserted `!/\x1b\[/.test(out.text)`
+ * against the output of `JSON.stringify`, which never emits a raw ESC: U+001B is
+ * a control character, so it comes out as the six ASCII characters `\u001b`.
+ * The payload from an unstripped run reads
+ *
+ *     "detail": "qwen3 \u001b[2m(local)\u001b[0m"
+ *
+ * and contains no 0x1B byte at all. Both forms are checked now — the escaped one
+ * in the serialised text, which is where it can appear, and the raw one in every
+ * parsed string, which is what a consumer ends up holding.
  */
-test("--json carries no escape sequences, whatever colour is on", async () => {
+test("--json carries no escape sequences, with colour forced on", async () => {
   const dir = mkdtempSync(join(tmpdir(), "evestack-status-json-"));
-  writeFileSync(join(dir, ".env.local"), "EVESTACK_PROVIDER=ollama\n");
-  const cwd = process.cwd();
-  process.chdir(dir);
-  try {
-    const out = new Sink();
-    await status(["--json"], { stdout: out, stderr: new Sink() });
+  // Dead ports for the two probes that would otherwise reach for whatever this
+  // machine happens to be running — the trap the comment forty lines up is about
+  // — and ollama for the model row, which is the one that appends `c.dim`.
+  writeFileSync(
+    join(dir, ".env.local"),
+    "EVESTACK_PROVIDER=ollama\nEVESTACK_AGENT_PORT=1\nEVESTACK_DASHBOARD_URL=http://127.0.0.1:1/api/ingest/v1/traces\n",
+  );
+
+  // Absolute specifiers, because the child runs in `dir`, which has no
+  // node_modules. Both resolve from this package, so the `color` the child
+  // reports is the same module instance status.mjs is colouring with.
+  const ui = import.meta.resolve("create-evestack/ui");
+  const src = import.meta.resolve("../src/status.mjs");
+  const child = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `import { color } from ${JSON.stringify(ui)};\n` +
+        `import { status } from ${JSON.stringify(src)};\n` +
+        "process.stdout.write(`colour=${color}\\n`);\n" +
+        "await status([\"--json\"], { stdout: process.stdout, stderr: process.stderr });\n",
+    ],
+    { cwd: dir, encoding: "utf8", env: { ...process.env, FORCE_COLOR: "1" } },
+  );
+
+  assert.equal(child.error, undefined, `the child did not start: ${child.error?.message}`);
+  const [first, ...rest] = child.stdout.split("\n");
+  assert.equal(
+    first,
+    "colour=true",
+    `escapes have to be possible for this test to mean anything (stderr: ${child.stderr})`,
+  );
+
+  const text = rest.join("\n");
+  assert.doesNotMatch(text, /\\u001[bB]/, "an escape survived into the serialised payload");
+  // And the raw byte too, for a future where the detail is not built by
+  // JSON.stringify — belt to the braces above rather than instead of them.
+  // eslint-disable-next-line no-control-regex
+  assert.doesNotMatch(text, /\x1b/, "a raw ESC survived into the serialised payload");
+
+  const parsed = JSON.parse(text);
+  for (const [where, value] of strings(parsed)) {
     // eslint-disable-next-line no-control-regex
-    assert.ok(!/\x1b\[/.test(out.text), "escapes leaked into the JSON payload");
-    const parsed = JSON.parse(out.text);
-    const model = parsed.results.find((r) => r.part === "model");
-    assert.match(model.detail, /\(local\)/, "the text survives, only the escapes go");
-  } finally {
-    process.chdir(cwd);
+    assert.ok(!/\x1b/.test(value), `${where} carries an escape a consumer cannot compare or print`);
+    assert.notEqual(value, "undefined", `${where} is the string "undefined", which is not a value`);
   }
+
+  const model = parsed.results.find((r) => r.part === "model");
+  assert.match(model.detail, /\(local\)/, "the text survives, only the escapes go");
 });
+
+/** Every string in the payload, with the path that reached it. */
+function* strings(value, path = "payload") {
+  if (typeof value === "string") yield [path, value];
+  else if (Array.isArray(value)) for (const [i, item] of value.entries()) yield* strings(item, `${path}[${i}]`);
+  else if (value && typeof value === "object")
+    for (const [key, item] of Object.entries(value)) yield* strings(item, `${path}.${key}`);
+}
 
 /* -------------------------------------------------------------------------- */
 /* a part that answered is never reported as absent                            */
 /* -------------------------------------------------------------------------- */
+
+/** A backend message: one tag byte, a length that counts itself, then the body. */
+function backendMessage(tag, body = Buffer.alloc(0)) {
+  const frame = Buffer.alloc(5 + body.length);
+  frame.write(tag, 0, "ascii");
+  frame.writeInt32BE(body.length + 4, 1);
+  body.copy(frame, 5);
+  return frame;
+}
+
+/**
+ * An ErrorResponse: 'E', a length, then null-terminated fields — 'S' severity,
+ * 'C' the SQLSTATE, 'M' the message — closed by a zero byte. That is all pg
+ * needs to raise an error carrying `.code`, and nothing here needs a real
+ * database. FATAL ends a session; ERROR is what a live one answers a bad query
+ * with, which is the difference between the two fixtures below.
+ */
+function errorResponse(code, message, severity = "FATAL") {
+  let body = Buffer.alloc(0);
+  for (const [tag, value] of [["S", severity], ["V", severity], ["C", code], ["M", message]]) {
+    body = Buffer.concat([body, Buffer.from(tag, "ascii"), Buffer.from(value, "utf8"), Buffer.from([0])]);
+  }
+  return backendMessage("E", Buffer.concat([body, Buffer.from([0])]));
+}
 
 /**
  * A socket that speaks just enough Postgres to reject.
  *
  * The failure worth testing is not reachable with a dead port: the server has
  * to answer the startup packet and THEN refuse, which is the whole distinction
- * the row is now making. An ErrorResponse is 'E', a length, then
- * null-terminated fields — 'S' severity, 'C' the SQLSTATE, 'M' the message —
- * closed by a zero byte. That is all pg needs to raise an error carrying
- * `.code`, and nothing here needs a real database.
+ * the row is now making.
  */
 async function rejectingPostgres(code, message, run) {
-  let body = Buffer.alloc(0);
-  for (const [tag, value] of [["S", "FATAL"], ["V", "FATAL"], ["C", code], ["M", message]]) {
-    body = Buffer.concat([body, Buffer.from(tag, "ascii"), Buffer.from(value, "utf8"), Buffer.from([0])]);
-  }
-  body = Buffer.concat([body, Buffer.from([0])]);
-  const frame = Buffer.alloc(5 + body.length);
-  frame.write("E", 0, "ascii");
-  frame.writeInt32BE(body.length + 4, 1);
-  body.copy(frame, 5);
+  const frame = errorResponse(code, message);
 
   const server = createNetServer((socket) => {
     socket.on("data", (chunk) => {
@@ -286,9 +368,156 @@ async function rejectingPostgres(code, message, run) {
   }
 }
 
+/** AuthenticationOk, the three parameters pg reads, a backend key, ReadyForQuery. */
+const HANDSHAKE = Buffer.concat([
+  backendMessage("R", (() => { const b = Buffer.alloc(4); b.writeInt32BE(0, 0); return b; })()),
+  backendMessage("S", Buffer.from("server_version\0" + "16.0\0", "utf8")),
+  backendMessage("S", Buffer.from("client_encoding\0" + "UTF8\0", "utf8")),
+  backendMessage("S", Buffer.from("standard_conforming_strings\0" + "on\0", "utf8")),
+  backendMessage("K", (() => { const b = Buffer.alloc(8); b.writeInt32BE(1, 0); b.writeInt32BE(2, 4); return b; })()),
+  backendMessage("Z", Buffer.from("I", "ascii")),
+]);
+
+/**
+ * A Postgres that lets you IN and then refuses every query.
+ *
+ * The `warn` state has no other source. `rejectingPostgres` above dies during
+ * the handshake, which is a connect failure and comes out as `fail`; this one
+ * completes the handshake — AuthenticationOk, parameters, ReadyForQuery — and
+ * then answers each simple query with an ErrorResponse followed by another
+ * ReadyForQuery, which is a live session that cannot answer the question. That
+ * is exactly "connected, but <error>", the row `probePostgres` returns as
+ * `warn`, and it is reachable no other way without a real database.
+ *
+ * Framed properly rather than switched on chunk length, because this one has to
+ * survive a whole conversation: TCP is free to deliver the startup packet and
+ * the first query in one segment, or either of them in two.
+ */
+async function connectedPostgres(code, message, run) {
+  const refusal = Buffer.concat([errorResponse(code, message, "ERROR"), backendMessage("Z", Buffer.from("I", "ascii"))]);
+  const server = createNetServer((socket) => {
+    let buffer = Buffer.alloc(0);
+    let phase = "ssl";
+    socket.on("data", (chunk) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      for (;;) {
+        if (phase === "ssl") {
+          if (buffer.length < 8) return;
+          // An SSLRequest is eight bytes ending in 80877103; anything else is
+          // already the startup packet, which keeps this correct whichever way
+          // pg's ssl default goes.
+          if (buffer.readInt32BE(4) === 80877103) {
+            buffer = buffer.subarray(8);
+            socket.write(Buffer.from("N", "ascii"));
+          }
+          phase = "startup";
+          continue;
+        }
+        if (phase === "startup") {
+          if (buffer.length < 4) return;
+          const length = buffer.readInt32BE(0);
+          if (buffer.length < length) return;
+          buffer = buffer.subarray(length);
+          socket.write(HANDSHAKE);
+          phase = "messages";
+          continue;
+        }
+        if (buffer.length < 5) return;
+        const length = buffer.readInt32BE(1);
+        if (buffer.length < length + 1) return;
+        const tag = String.fromCharCode(buffer[0]);
+        buffer = buffer.subarray(length + 1);
+        if (tag === "Q") socket.write(refusal);
+        else if (tag === "X") return void socket.end();
+      }
+    });
+    socket.on("error", () => {});
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    return await run(server.address().port);
+  } finally {
+    server.close();
+  }
+}
+
 /** The other two rows pointed somewhere that refuses instantly, so a Postgres
  *  test is not also a five-second wait on the agent and the dashboard. */
 const DEAD = { EVESTACK_AGENT_PORT: "1", EVESTACK_DASHBOARD_URL: "http://127.0.0.1:1/api/ingest/v1/traces" };
+
+/** Runs `status` from inside a project directory and gives back code and text. */
+async function statusIn(dir, argv) {
+  const stdout = new Sink();
+  const stderr = new Sink();
+  const cwd = process.cwd();
+  process.chdir(dir);
+  try {
+    return { code: await status(argv, { stdout, stderr }), text: stdout.text };
+  } finally {
+    process.chdir(cwd);
+  }
+}
+
+/*
+ * ─ `warn` IS NOT `ok`, and the verdict is where that has to hold ─────────────
+ *
+ * probePostgres has three outcomes and the two summaries used to tally two of
+ * them: `down` filtered on `fail`, so a `warn` — "connected, but <error>",
+ * a probe that reached the thing and could not finish checking it — printed one
+ * yellow dot and was then folded into the bold green "Everything is up.", into
+ * `"ok": true`, and into exit 0.
+ *
+ * Every test above this line calls `probeAll` and reads a row. None of them run
+ * `status` itself, so all of them stayed green with `settled` back at
+ * `down.length === 0` — the whole fix was one clause guarded by nothing. These
+ * two drive the real command, both surfaces, all the way to the exit code.
+ */
+test("a part that answered and could not be checked is not an all-clear", async () => {
+  await listening("/eve/v1/health", (agent) =>
+    listening("/api/health", (dashboard) =>
+      connectedPostgres("42501", "permission denied for schema information_schema", async (postgres) => {
+        const dir = project({
+          EVESTACK_AGENT_PORT: String(agent),
+          EVESTACK_DASHBOARD_URL: `http://127.0.0.1:${dashboard}/api/ingest/v1/traces`,
+          WORKFLOW_POSTGRES_URL: `postgres://u:p@127.0.0.1:${postgres}/db`,
+          // No key needed, so the fourth row is `ok` and Postgres is the only
+          // part that is not — which is what makes this a one-clause test.
+          EVESTACK_PROVIDER: "ollama",
+        });
+
+        const { code, text } = await statusIn(dir, []);
+        assert.equal(code, 1, "a stack with an unchecked part is not exit 0");
+        assert.doesNotMatch(text, /Everything is up/, "nothing here verified Postgres");
+        assert.match(text, /1 part could not be checked/);
+        assert.match(text, /Nothing is down/, "and it does not claim the opposite either");
+        assert.match(text, /connected, but .*permission denied/, "the row says what stopped it");
+      }),
+    ),
+  );
+});
+
+test("--json names the unchecked part and says ok is false", async () => {
+  await listening("/eve/v1/health", (agent) =>
+    listening("/api/health", (dashboard) =>
+      connectedPostgres("42501", "permission denied for schema information_schema", async (postgres) => {
+        const dir = project({
+          EVESTACK_AGENT_PORT: String(agent),
+          EVESTACK_DASHBOARD_URL: `http://127.0.0.1:${dashboard}/api/ingest/v1/traces`,
+          WORKFLOW_POSTGRES_URL: `postgres://u:p@127.0.0.1:${postgres}/db`,
+          EVESTACK_PROVIDER: "ollama",
+        });
+
+        const { code, text } = await statusIn(dir, ["--json"]);
+        assert.equal(code, 1);
+        const report = JSON.parse(text);
+        assert.equal(report.ok, false, "a script cannot tell a verified stack from this one otherwise");
+        assert.deepEqual(report.down, [], "nothing is known to be broken");
+        assert.deepEqual(report.unknown, ["postgres"], "and the unchecked part is named, not folded into down");
+        assert.equal(report.results.find((r) => r.part === "postgres").state, "warn");
+      }),
+    ),
+  );
+});
 
 test("a rejected password is not answered with `docker compose up -d postgres`", async () => {
   // The finding, verbatim: status turned every connect failure into "not

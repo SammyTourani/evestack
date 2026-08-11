@@ -400,13 +400,23 @@ export async function status(argv, { stdout = process.stdout, stderr = process.s
      * `c.dim("(local)")` on the ollama path, and probePostgres joins its parts
      * with the `g.skip` separator glyph. Both went into the payload verbatim, so
      * with colour on — a real terminal, or FORCE_COLOR in CI — the JSON carried
-     * `"detail": "qwen3 \\u001b[2m(local)\\u001b[22m"`. Valid JSON, and a value
+     * `"detail": "qwen3 \\u001b[2m(local)\\u001b[0m"`. Valid JSON, and a value
      * no consumer can compare, match or print.
      *
      * Stripped here rather than at the source because the human report wants
      * those escapes; this is the boundary where they stop being wanted.
+     *
+     * `where` is null rather than plain(undefined) when a row has none — the two
+     * probePostgres rows that fail before a URL is parsed carry no port to
+     * report. `plain` is `String(s).replace(…)`, so it turned that into the
+     * literal string "undefined": still valid JSON, and still a value a consumer
+     * will happily compare against a port or print at somebody.
      */
-    const clean = results.map((r) => ({ ...r, detail: plain(r.detail), where: plain(r.where) }));
+    const clean = results.map((r) => ({
+      ...r,
+      detail: plain(r.detail),
+      where: r.where === undefined ? null : plain(r.where),
+    }));
     stdout.write(
       `${JSON.stringify(
         {
