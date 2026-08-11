@@ -306,8 +306,9 @@ DECLARE
 BEGIN
   SELECT p.prosrc INTO body
     FROM pg_proc p
-    JOIN pg_namespace n ON n.oid = p.pronamespace
-   WHERE n.nspname = 'evestack' AND p.proname = 'resolve_span_ancestry';
+   WHERE p.pronamespace = (SELECT relnamespace FROM pg_class
+                            WHERE oid = to_regclass('evestack.schema_fingerprint'))
+     AND p.proname = 'resolve_span_ancestry';
 
   -- Unconditional, and that is the whole mechanism: this row records what IS
   -- in the database, so an image that replaced the function without updating a
@@ -694,8 +695,9 @@ BEGIN
     FROM evestack.schema_fingerprint WHERE object = 'resolve_span_ancestry';
   SELECT md5(p.prosrc) INTO runs_now
     FROM pg_proc p
-    JOIN pg_namespace n ON n.oid = p.pronamespace
-   WHERE n.nspname = 'evestack' AND p.proname = 'resolve_span_ancestry';
+   WHERE p.pronamespace = (SELECT relnamespace FROM pg_class
+                            WHERE oid = to_regclass('evestack.schema_fingerprint'))
+     AND p.proname = 'resolve_span_ancestry';
   resolver_changed := ran_before IS DISTINCT FROM runs_now;
 
   -- 1: teach the id columns the AI SDK vocabulary.

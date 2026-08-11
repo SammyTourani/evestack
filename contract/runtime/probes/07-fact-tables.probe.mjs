@@ -450,6 +450,22 @@ export default {
         statusCode: 2,
         attributes: { "gen_ai.tool.name": "grep" },
       });
+      // Status 0, UNSET, and it is the common case rather than an edge one: a
+      // tracer that only sets a status when something goes wrong emits UNSET for
+      // every call that worked. Until facts v3 this fixture had no such span, so
+      // `ok = status_code <> 2` recorded UNSET as a SUCCESS and nothing here
+      // could see it — the assertion below said 0 and 1 were both "not a
+      // failure" while only ever exercising 1. The column is nullable now and
+      // the third state needs a row that reaches it. `zz` so the ORDER BY
+      // tool_name below puts it last and the other two keep their indices.
+      await addSpan(client, schema, {
+        traceId: "a".repeat(32),
+        spanId: "a6".padEnd(16, "0"),
+        parent: "a2".padEnd(16, "0"),
+        name: "execute_tool zz-unjudged",
+        statusCode: 0,
+        attributes: { "gen_ai.tool.name": "zz-unjudged" },
+      });
 
       // The same trace with its tail gone: the run row proves a model call
       // happened and no span for it survived. This is what retention pruning or
@@ -557,10 +573,14 @@ export default {
         "and its tools_called is NULL, not 0 — no telemetry is not the same fact as no tool calls",
         { actual: `${facts.get("t_ok")?.tools_called}` },
       );
+      // Three now, not two: bash (status 1), grep (status 2) and zz-unjudged
+      // (status 0). The count is of execute_tool SPANS regardless of how they
+      // ended — a call nobody judged still happened, and leaving it out here
+      // would make `tools_called` disagree with the rows in fact_tool_call.
       t.ok(
-        facts.get("t_full")?.tools_called === 2,
+        facts.get("t_full")?.tools_called === 3,
         "tools_called counts execute_tool spans, which is not $eve.tool_count — that is tools OFFERED",
-        { expected: 2, actual: facts.get("t_full")?.tools_called },
+        { expected: 3, actual: facts.get("t_full")?.tools_called },
       );
       t.ok(
         Math.round(facts.get("t_full")?.ttft_ms) === 420 &&
@@ -589,14 +609,29 @@ export default {
         { actual: JSON.stringify(localTool) },
       );
       t.ok(
-        toolRows.length === 2 && toolRows[0].tool_name === "bash" && toolRows[1].tool_name === "grep",
+        toolRows.length === 3 &&
+          toolRows[0].tool_name === "bash" &&
+          toolRows[1].tool_name === "grep" &&
+          toolRows[2].tool_name === "zz-unjudged",
         "each execute_tool span becomes one fact_tool_call row, resolved to its turn",
         { actual: JSON.stringify(toolRows.map((r) => r.tool_name)) },
       );
       t.ok(
         toolRows[0].ok === true && toolRows[1].ok === false && toolRows[1].error_message === "tool exploded",
-        "OTel status 2 is the only failure; 0 (UNSET) and 1 (OK) are not",
+        "OTel status 1 is a success and status 2 is a failure, with its message",
         { actual: `${toolRows[0].ok} / ${toolRows[1].ok} / ${toolRows[1].error_message}` },
+      );
+      t.ok(
+        toolRows[2].ok === null,
+        "OTel status 0 (UNSET) is recorded as unknown, not as a success",
+        {
+          expected: "ok === null",
+          actual: `ok is ${JSON.stringify(toolRows[2].ok)}. ` +
+            "`ok` was NOT NULL and computed as `status_code <> 2` until facts v3, so an " +
+            "UNSET span — what every tracer that only sets a status on failure emits for a " +
+            "call that WORKED — was stored as a success and averaged into a tool failure " +
+            "rate that claimed 100% coverage.",
+        },
       );
       t.ok(
         toolRows[0].arguments_bytes === 20 && toolRows[0].result_bytes === 7 && toolRows[1].arguments_bytes === null,
@@ -739,10 +774,13 @@ export default {
       const { rows: afterPrune } = await client.query(
         `SELECT count(*)::int AS n FROM ${schema}.fact_tool_call WHERE run_id = 't_full'`,
       );
+      // Two survive the prune of `a5`: bash and zz-unjudged. The number moves
+      // with the fixture; what the assertion is about is that it moves DOWN by
+      // exactly the one span that was deleted.
       t.ok(
-        afterPrune[0].n === 1,
+        afterPrune[0].n === 2,
         "a tool call whose span was pruned is removed rather than left behind as a phantom invocation",
-        { expected: 1, actual: afterPrune[0].n },
+        { expected: 2, actual: afterPrune[0].n },
       );
 
       /* ------------------------------------------------------------------ */
