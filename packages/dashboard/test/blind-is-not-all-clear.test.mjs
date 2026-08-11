@@ -739,9 +739,24 @@ test("a tool call nobody judged is not scored as one that failed", () => {
 test("the tool status dimension has a bucket for calls nobody judged", () => {
   const sql = CATALOG.tool_calls.dimensions.status.sql;
   const unknown = armFor(sql, null);
-  assert.ok(
-    unknown && unknown !== "'failed'",
-    `an unjudged tool call groups as ${unknown ?? "the ELSE arm"}. A chart whose job is ` +
-      "telling ok from failed must not put 'never reported' in the failed bucket",
+  const judgedOk = armFor(sql, true);
+
+  // DISTINCT FROM BOTH, not merely "not failed". Excluding only 'failed' let the
+  // defect this file's commit is named for pass: `WHEN ok IS NULL THEN 'ok'`
+  // buckets every unjudged tool call as a SUCCESS, which is the original
+  // `status_code <> 2` bug wearing a CASE expression. Measured — that mutation
+  // left this test green until this assertion was widened.
+  assert.ok(unknown, "there is an `ok IS NULL` arm at all");
+  assert.notEqual(
+    unknown,
+    "'failed'",
+    "a call nobody judged is not a call that failed",
+  );
+  assert.notEqual(
+    unknown,
+    judgedOk,
+    `an unjudged tool call groups as ${unknown}, the same bucket as one that succeeded. ` +
+      "That is the defect this file exists to prevent, one view over: a signal that could " +
+      "not look reading as good news.",
   );
 });

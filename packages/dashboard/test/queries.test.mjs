@@ -266,3 +266,55 @@ test("unpricedModels is ordered, because lib/facts.ts orders the same fact", () 
   const { unpricedModels } = priceOf([part("zzz/unknown"), part("aaa/unknown")]);
   assert.deepEqual(unpricedModels, ["aaa/unknown", "zzz/unknown"]);
 });
+
+/**
+ * The arithmetic, not just the labelling.
+ *
+ * The five tests above pin the unpriced-vs-free SEMANTICS and kill every
+ * mutation of it. They killed ZERO mutations of the arithmetic the same function
+ * performs, because their fixture is `input = output = 1e6` with both cache
+ * counts at 0 — positionally symmetric, so swapping fields changes nothing — and
+ * their only cost assertions are `=== 0` and `> 0`.
+ *
+ * Measured against that gap: swapping input with output, swapping input with
+ * cacheRead, swapping the two cache fields, dropping output from the bill
+ * entirely, and multiplying every cost by 1000 ALL passed. A function that bills
+ * people had its billing guarded by nothing.
+ *
+ * These use four distinct values and one exact expected figure, so any transposition
+ * moves the number. `openai/gpt-5-mini` is $0.25/M input, $2/M output,
+ * $0.025/M cacheRead — asymmetric on every axis, which is what makes the
+ * positions observable.
+ */
+const PRICED = "openai/gpt-5-mini";
+const asym = (model) => `${model}|3000000|1000000|500000|200000`;
+
+test("the bill is exact, so any transposition of the four counts moves it", () => {
+  // billable input is max(0, 3e6 - 5e5) = 2.5e6 at $0.25/M = $0.625
+  // output 1e6 at $2/M = $2.00 ; cacheRead 5e5 at $0.025/M = $0.0125
+  assert.equal(priceOf([asym(PRICED)]).costUsd, 2.6375);
+});
+
+test("input and output are not interchangeable", () => {
+  const straight = priceOf([`${PRICED}|3000000|1000000|500000|200000`]).costUsd;
+  const swapped = priceOf([`${PRICED}|1000000|3000000|500000|200000`]).costUsd;
+  assert.notEqual(straight, swapped, "output is priced 8x input; swapping them must change the bill");
+  assert.equal(swapped, 6.1375);
+});
+
+test("cached reads come out of billable input rather than being ignored", () => {
+  const withCache = priceOf([`${PRICED}|3000000|1000000|500000|0`]).costUsd;
+  const withoutCache = priceOf([`${PRICED}|3000000|1000000|0|0`]).costUsd;
+  assert.ok(
+    withCache < withoutCache,
+    `a cached read must cost less than a fresh one: ${withCache} vs ${withoutCache}`,
+  );
+});
+
+test("every count reaches the bill — dropping any one of them changes it", () => {
+  const full = priceOf([asym(PRICED)]).costUsd;
+  for (const [i, name] of [["3000000", "input"], ["1000000", "output"], ["500000", "cacheRead"]]) {
+    const without = priceOf([asym(PRICED).replace(`|${i}`, "|0")]).costUsd;
+    assert.notEqual(without, full, `zeroing ${name} left the bill unchanged, so it is not being read`);
+  }
+});

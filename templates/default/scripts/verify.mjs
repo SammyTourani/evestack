@@ -445,27 +445,6 @@ if (!health.ok) {
 /* report                                                                      */
 /* -------------------------------------------------------------------------- */
 
-const failed = results.filter((r) => r.state === "fail");
-const warned = results.filter((r) => r.state === "warn");
-
-if (client) await client.end().catch(() => {});
-
-if (asJson) {
-  console.log(JSON.stringify({ ok: failed.length === 0, dashboardUrl, agentUrl: agent.url, results }, null, 2));
-  process.exit(failed.length === 0 ? 0 : 1);
-}
-
-/**
- * The eleven checks, in three named groups plus the "other" catch-all.
- *
- * A flat list of eleven lines made every check look equally important and equally
- * urgent, so a red `dashboard` and a red `postgres` read the same — when one of
- * them is why the other failed. Grouping them in dependency order says, without
- * a sentence, that the thing to fix is the highest red line.
- *
- * Any check not named here still prints, under "other": a group table that
- * silently drops a check would be the worst possible bug in a verifier.
- */
 /* -------------------------------------------------------------------------- */
 /* the source-root fence                                                       */
 /* -------------------------------------------------------------------------- */
@@ -531,6 +510,28 @@ if (asJson) {
     pass("fence", `eve's dev watcher resolves to ${found}, which holds no .npmrc to copy`);
   }
 }
+
+const failed = results.filter((r) => r.state === "fail");
+const warned = results.filter((r) => r.state === "warn");
+
+if (client) await client.end().catch(() => {});
+
+if (asJson) {
+  console.log(JSON.stringify({ ok: failed.length === 0, dashboardUrl, agentUrl: agent.url, results }, null, 2));
+  process.exit(failed.length === 0 ? 0 : 1);
+}
+
+/**
+ * The eleven checks, in three named groups plus the "other" catch-all.
+ *
+ * A flat list of eleven lines made every check look equally important and equally
+ * urgent, so a red `dashboard` and a red `postgres` read the same — when one of
+ * them is why the other failed. Grouping them in dependency order says, without
+ * a sentence, that the thing to fix is the highest red line.
+ *
+ * Any check not named here still prints, under "other": a group table that
+ * silently drops a check would be the worst possible bug in a verifier.
+ */
 
 const GROUPS = [
   ["foundation", ["config", "docker", "postgres", "schema", "pgvector"]],
