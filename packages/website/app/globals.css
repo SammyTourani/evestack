@@ -280,10 +280,152 @@
   }
 }
 
-/* Terminal block cursor — hard step-end blink (a real caret never fades) */
+/* ── The agent menu ───────────────────────────────────────────────────────
+   Opens on hover. All of the motion is here rather than in the component, so
+   the component only toggles one attribute and this file decides what that
+   looks like, the same division the rest of the site uses.
+
+   The panel scales up from just under its trigger with an overshoot-free
+   decelerating curve, and the three rows arrive one after another behind it.
+   Rows stagger by --i, set per row in the JSX. */
+[data-agent-menu] {
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-6px) scale(0.96);
+  transform-origin: top center;
+  /* The blue: a soft cast under the panel rather than a border or a fill, so
+     the colour reads as light coming off the control instead of as a box that
+     has been painted. */
+  box-shadow:
+    0 18px 50px -12px rgb(0 0 0 / 0.55),
+    0 0 0 1px color-mix(in srgb, var(--ds-blue-700) 14%, transparent),
+    0 12px 40px -16px color-mix(in srgb, var(--ds-blue-700) 45%, transparent);
+  transition:
+    opacity 0.16s ease,
+    transform 0.24s cubic-bezier(0.16, 1, 0.3, 1),
+    visibility 0s linear 0.24s;
+}
+[data-agent-menu][data-drop="up"] {
+  transform-origin: bottom center;
+  transform: translateY(6px) scale(0.96);
+}
+[data-agent-menu][data-open] {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition:
+    opacity 0.16s ease,
+    transform 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+    visibility 0s;
+}
+
+[data-agent-menu-item] {
+  opacity: 0;
+  transform: translateY(-4px);
+  transition:
+    opacity 0.18s ease,
+    transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+}
+[data-agent-menu][data-open] [data-agent-menu-item] {
+  opacity: 1;
+  transform: none;
+  /* Behind the panel, then 45ms apart. Fast enough that it reads as one
+     gesture rather than as three things being listed at you. */
+  transition-delay: calc(0.06s + var(--i) * 0.045s);
+}
+
+/* Row hover: a blue wash that wipes in from the left. `::before` rather than a
+   background so the wipe can animate independently of the row's own colour. */
+[data-agent-menu-item]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--ds-blue-700) 16%, transparent),
+    color-mix(in srgb, var(--ds-blue-700) 5%, transparent) 60%,
+    transparent
+  );
+  opacity: 0;
+  transform: translateX(-6px);
+  transition:
+    opacity 0.2s ease,
+    transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@media (hover: hover) {
+  [data-agent-menu-item]:hover::before {
+    opacity: 1;
+    transform: none;
+  }
+}
+[data-agent-menu-item]:focus-visible::before {
+  opacity: 1;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-agent-menu],
+  [data-agent-menu-item],
+  [data-agent-menu-item]::before {
+    transition-duration: 0.01ms;
+    transition-delay: 0s;
+    transform: none;
+  }
+}
+
+/* ── Terminal typing ──────────────────────────────────────────────────────
+   The whole terminal types out, one line at a time, by growing each line's
+   text wrapper from zero width with its caret sitting after it. All of the
+   STATE lives here so the choreography chunk only has to stamp two
+   attributes: `data-typing` on the container and `data-on` on one caret.
+
+   Settled truth, which is also the no-JS and reduced-motion truth: every line
+   at natural width, one caret blinking on the last line. That is what a
+   terminal that has finished looks like, and it is what SSR renders. */
+
+/* The clipping wrapper. Only ever inline-block so a width can apply to it;
+   `bottom` alignment keeps the baseline from shifting as it grows. */
+[data-term-text] {
+  display: inline-block;
+  overflow: hidden;
+  vertical-align: bottom;
+  max-width: 100%;
+}
+
+/* Block caret. `1.05em` tall and offset to sit on the text baseline, the same
+   geometry the old single cursor used. */
 .terminal-cursor {
+  display: none;
+  height: 1.05em;
+  width: 0.55em;
+  margin-left: 0.15em;
+  transform: translateY(0.18em);
+  background: var(--ds-gray-1000);
   animation: cursor-blink 1s step-end infinite;
 }
+
+/* Settled: the caret waits at the end of the last line. */
+[data-term] > p:last-child .terminal-cursor {
+  display: inline-block;
+}
+
+/* Typing: exactly one caret is lit, and it is the one the driver stamped. */
+[data-term][data-typing] > p:last-child .terminal-cursor {
+  display: none;
+}
+[data-term][data-typing] .terminal-cursor[data-on] {
+  display: inline-block;
+}
+
+/* While a line is being typed its caret must not blink, or it strobes against
+   the text arriving beside it. It blinks only where it rests. */
+[data-term][data-typing] .terminal-cursor[data-on] {
+  animation: none;
+  opacity: 1;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .terminal-cursor {
     animation: none;

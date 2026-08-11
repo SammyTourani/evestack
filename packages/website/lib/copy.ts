@@ -46,19 +46,14 @@ export const site = {
      of it buys them. Same four promises, said as a person would say them, and
      each one is a thing you can picture. */
   subhead:
-    "One command gives you the whole stack. Your conversations are saved in a database you own, code runs in a safe sandbox, and a dashboard lets you watch every agent and approve anything risky before it happens.",
-  /* THE WHY, which the page did not have (added 2026-08-11).
-     A visitor read "Run AI agents on your own machine" and the next thought is
-     "why would I want that instead of a hosted one?". The answer was on the
-     page, but scattered across a features cell, another features cell, and a
-     comparison table five sections down, so the reader had to assemble it. One
-     line, at the moment the question forms.
-
-     It names the reader rather than the feature. "Your prompts stay private"
-     is a capability; "you do not want your prompts going through someone
-     else's servers" is a person. */
-  why: "For anyone who does not want their prompts, their data, or their agents running on someone else's servers.",
-  eyebrow: "Free and open source · Apache-2.0",
+    "One command gives you the whole stack. Free and open source, with your conversations in a database you own, code running in a safe sandbox, and a dashboard that lets you watch every agent and approve anything risky before it happens.",
+  /* `eyebrow` and `why` were both removed 2026-08-11, one day after being
+     added, at Sammy's call. The eyebrow was a mono all-caps strip above the
+     headline and the why was a grey line under the subhead; together they put
+     four stacked text blocks above the buttons and the hero stopped feeling
+     like a hero. The open source fact did not get dropped, it moved into the
+     subhead where it reads as part of the offer rather than as a label stuck
+     on top of it. Do not re-add either as a separate line. */
   command: "npx evestack create",
   github: "https://github.com/SammyTourani/evestack",
   /* Was "… tested against every eve release since 0.29.5". Every package here
@@ -357,7 +352,13 @@ export const observability = {
      plain sentence at the end rather than a cell of its own: a beginner can
      skip it, and the person who has been burned by a flaky agent will stop
      dead on it. */
-  sub: "Every conversation your agents have is right there, read out of your own database. See what they did, what it cost, and how long it took. When one wants to do something you have flagged as risky, it waits for you to say yes. And when a run goes wrong, you can turn that exact run into a test so it does not go wrong the same way twice.",
+  /* Cut from four sentences to two (2026-08-11). It had grown by accretion:
+     the original claim, then the approvals clause, then the evals clause, each
+     added for a good reason and never weighed against the whole. Four
+     sentences under a heading is a paragraph, and nobody reads a paragraph
+     here. The approvals idea has its own block further down this section, so
+     saying it twice was the easiest cut. */
+  sub: "Every conversation your agents have, read straight out of your own database. What they did, what it cost, how long it took, and when a run goes wrong you can turn that exact run into a test.",
   /* RESTORED AND NOW RENDERED, 2026-08-11.
 
      I deleted this on the grounds that no component read it, which was true
@@ -616,36 +617,35 @@ export const agentPack = {
   menuLabel: "More ways to give this to an agent",
   /* Relative: this one IS fetched by the page, from whatever origin serves it. */
   href: "/agent.md",
+  /* THREE destinations, down from five (2026-08-11). "View the raw pack" and
+     "Every doc, one file" were both cut: they are inspection links, and this
+     menu is a place someone lands mid-decision about where to SEND the pack.
+     Two of five entries pointing at plain text files made the list read like a
+     file browser. Both URLs still live in the docs and in llms.txt, which is
+     where someone looking for them will actually look.
+
+     `mark` picks the brand glyph in components/ui/agent-marks.tsx. */
   menu: [
     {
       label: "Open in Claude",
       hint: "Starts a chat with the pack linked",
       href: `https://claude.ai/new?q=${DEEPLINK}`,
+      mark: "claude" as const,
       external: true,
     },
     {
       label: "Open in ChatGPT",
       hint: "Starts a chat with the pack linked",
       href: `https://chatgpt.com/?q=${DEEPLINK}`,
+      mark: "openai" as const,
       external: true,
     },
     {
       label: "Install it as a skill",
       hint: "npx evestack skills",
       href: "/docs/agent-setup",
+      mark: "terminal" as const,
       external: false,
-    },
-    {
-      label: "View the raw pack",
-      hint: "/agent.md",
-      href: "/agent.md",
-      external: true,
-    },
-    {
-      label: "Every doc, one file",
-      hint: "/llms-full.txt",
-      href: "/llms-full.txt",
-      external: true,
     },
   ],
 } as const;

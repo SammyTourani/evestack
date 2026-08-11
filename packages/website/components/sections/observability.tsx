@@ -1,7 +1,7 @@
 import { Section, SectionHeading } from "@/components/ui/section";
 import { MonitorsPanel } from "@/components/sections/monitors-panel";
 import { ApprovalDemo } from "@/components/sections/approval-demo";
-import { observability, control } from "@/lib/copy";
+import { observability, control, site } from "@/lib/copy";
 
 /* §04 Dashboard: the live monitors panel IS the artwork — percentiles, the real
    41.0s spike, span waterfall, token bars, log tail, all computed from the same
@@ -38,24 +38,30 @@ export function Observability() {
           </figcaption>
         </figure>
 
-        {/* The four claims this section makes, each naming the file that backs
-            it. This list lived unrendered in copy.ts for a long time and I
-            deleted it as dead weight, which contract 16 caught: it requires at
-            least four `source:` paths and then asserts each exists, so the
-            list is the carrier of a repo invariant rather than decoration.
-            Rendering it is the fix that keeps both the page and the invariant
-            honest, and the paths cost one quiet mono line each. */}
-        <ul className="mx-auto mt-14 grid max-w-5xl gap-x-8 gap-y-10 sm:grid-cols-2 lg:grid-cols-4">
+        {/* The four capability paragraphs that were here are gone (2026-08-11,
+            Sammy: "way too much text"). He was right; they restated in prose
+            what the panel above already shows, directly under the panel.
+
+            What survives is the checkable half. Contract 16 requires copy.ts to
+            name at least four dashboard source files and asserts each exists,
+            because a claim about the dashboard should point at the file behind
+            it. That is worth keeping and costs one quiet line here instead of
+            four paragraphs: the same four paths, linked, for the reader who
+            wants to go and look. */}
+        <p className="mx-auto mt-8 flex max-w-5xl flex-wrap items-center justify-center gap-x-4 gap-y-2 font-mono text-label-12 text-gray-600">
+          <span className="text-gray-700">built by</span>
           {observability.capabilities.map((capability) => (
-            <li key={capability.title} className="flex flex-col gap-2">
-              <h3 className="text-copy-16 font-medium text-gray-1000">{capability.title}</h3>
-              <p className="text-copy-14 text-gray-900">{capability.body}</p>
-              <code className="mt-1 break-all font-mono text-label-12 text-gray-600">
-                {capability.source}
-              </code>
-            </li>
+            <a
+              key={capability.source}
+              href={`${site.github}/blob/main/${capability.source}`}
+              target="_blank"
+              rel="noreferrer"
+              className="underline decoration-border-subtle underline-offset-4 transition-colors hover:text-gray-1000 hover:decoration-current"
+            >
+              {capability.source.replace("packages/dashboard/", "")}
+            </a>
           ))}
-        </ul>
+        </p>
 
         {/* The second half of the same idea. Kept visually subordinate to the
             panel above: a hairline rule, then a two-column block at the width

@@ -53,50 +53,66 @@ export function OneCommand() {
             data-terminal
             className="overflow-hidden rounded-xl border border-border-default bg-background-200"
           >
+            {/* Real macOS traffic lights. They were three identical grey dots,
+                which reads as a wireframe of a terminal rather than as one. */}
             <figcaption className="flex h-12 items-center gap-2 border-b border-border-subtle px-4">
               <span aria-hidden className="flex gap-1.5">
-                <span className="h-2.5 w-2.5 rounded-full bg-gray-300" />
-                <span className="h-2.5 w-2.5 rounded-full bg-gray-300" />
-                <span className="h-2.5 w-2.5 rounded-full bg-gray-300" />
+                <span className="h-2.5 w-2.5 rounded-full bg-[#FF5F57]" />
+                <span className="h-2.5 w-2.5 rounded-full bg-[#FEBC2E]" />
+                <span className="h-2.5 w-2.5 rounded-full bg-[#28C840]" />
               </span>
               <span className="ml-2 font-mono text-mono-13 text-gray-700">evestack</span>
             </figcaption>
+            {/* Every line is a clipping wrapper plus a caret, so the whole
+                terminal can be typed out rather than faded in line by line.
+
+                The reveal animates the WRAPPER'S WIDTH, not split characters.
+                SplitText would mean ~450 spans across nine lines, each one a
+                chance to break `whitespace-pre` or the screen-reader reading
+                order. Growing an overflow-hidden inline-block does the same
+                thing visually, needs no DOM surgery, and the caret sitting
+                after it rides the growing edge for free, which is the detail
+                that makes it read as typing instead of as a wipe.
+
+                Settled truth (no-JS, reduced motion, pre-animation SSR): every
+                line at natural width with the caret on the LAST line, which is
+                what a finished terminal looks like. globals.css owns that. */}
             <div
+              data-term
               tabIndex={0}
               role="region"
-              aria-label="Terminal: scaffolding and starting evestack"
+              aria-label="Terminal: creating and starting evestack"
               className="flex flex-col gap-1.5 overflow-x-auto p-5 font-mono text-mono-13"
             >
-              <p>
-                <span aria-hidden className="text-gray-600">
-                  $&nbsp;
+              <p data-terminal-line data-kind="cmd">
+                <span data-term-text className="whitespace-pre">
+                  <span aria-hidden className="text-gray-600">
+                    $&nbsp;
+                  </span>
+                  <span className="text-gray-1000">{terminal.prompt}</span>
                 </span>
-                <span className="sr-only">{terminal.prompt}</span>
-                <span data-terminal-prompt aria-hidden className="text-gray-1000">
-                  {terminal.prompt}
-                </span>
-                <span
-                  aria-hidden
-                  className="terminal-cursor ml-1 inline-block h-[1.05em] w-[0.55em] translate-y-[0.18em] bg-gray-1000"
-                />
+                <span data-term-caret aria-hidden className="terminal-cursor" />
               </p>
               {terminal.lines.map((line) => (
-                <p key={line.text} data-terminal-line className="whitespace-pre text-gray-900">
-                  {line.kind === "cmd" ? (
-                    <>
-                      <span aria-hidden className="text-gray-600">
-                        $&nbsp;
-                      </span>
-                      <span className="text-gray-1000">{line.text}</span>
-                    </>
-                  ) : line.kind === "dim" ? (
-                    <span className="text-gray-700">{line.text}</span>
-                  ) : (
-                    <>
-                      <span className="text-ok">✓ </span>
-                      {line.text}
-                    </>
-                  )}
+                <p key={line.text} data-terminal-line data-kind={line.kind} className="text-gray-900">
+                  <span data-term-text className="whitespace-pre">
+                    {line.kind === "cmd" ? (
+                      <>
+                        <span aria-hidden className="text-gray-600">
+                          $&nbsp;
+                        </span>
+                        <span className="text-gray-1000">{line.text}</span>
+                      </>
+                    ) : line.kind === "dim" ? (
+                      <span className="text-gray-700">{line.text}</span>
+                    ) : (
+                      <>
+                        <span className="text-ok">✓ </span>
+                        {line.text}
+                      </>
+                    )}
+                  </span>
+                  <span data-term-caret aria-hidden className="terminal-cursor" />
                 </p>
               ))}
             </div>

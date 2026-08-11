@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, devices } from "@playwright/test";
 import { agentPack, quickstart } from "@/lib/copy";
 
 /* The agent pack — the routes that serve it and the two controls that hand it
@@ -94,6 +94,69 @@ test.describe("the copy control", () => {
     await expect(button).toContainText(agentPack.label, { timeout: 5000 });
   });
 
+  test("hovering the button opens the menu, and crossing the gap keeps it open", async ({ page }) => {
+    /* Hover-open, added 2026-08-11. Two failure modes worth pinning, because
+       both look fine in a screenshot and are infuriating in use:
+
+       1. It does not open without a click.
+       2. It opens, and then closes the instant the pointer crosses the 8px gap
+          between the button and the panel, so the item being travelled toward
+          disappears before you reach it. The close delay and the invisible
+          bridge both exist for that, and neither is visible to review. */
+    await page.goto("/");
+    const menu = page.locator("[data-agent-menu]").first();
+    await expect(menu).not.toHaveAttribute("data-open", /.*/);
+    // Closed means genuinely out of reach, not merely transparent.
+    await expect(menu).toHaveAttribute("inert", /.*/);
+
+    await page.locator('[data-agent-pack="primary"]').hover();
+    await expect(menu).toHaveAttribute("data-open", /.*/, { timeout: 2000 });
+    await expect(menu).not.toHaveAttribute("inert", /.*/);
+
+    // Travel from the button down to the LAST row, crossing the gap.
+    await menu.locator("[data-agent-menu-item]").last().hover();
+    await page.waitForTimeout(400);
+    await expect(menu, "crossing the gap must not close it").toHaveAttribute("data-open", /.*/);
+
+    // Leaving closes it, and it goes inert again.
+    await page.mouse.move(60, 60);
+    await expect(menu).not.toHaveAttribute("data-open", /.*/, { timeout: 2000 });
+    await expect(menu).toHaveAttribute("inert", /.*/);
+  });
+
+  test("on touch, where there is no hover, tapping still works", async ({ browser }) => {
+    /* This is the bug hover-open shipped with, found on an iPhone 13 profile:
+       a tap emits pointerenter, pointerup, THEN pointerleave, because the
+       pointer stops existing when the finger lifts. So the tap opened the menu
+       and the same tap closed it again, and the control was simply dead on
+       every phone. The hover handlers are gated on (hover: hover) now, and
+       focus only opens for :focus-visible so the tap's own focus cannot
+       re-introduce it. */
+    const ctx = await browser.newContext({ ...devices["iPhone 13"], colorScheme: "dark" });
+    const page = await ctx.newPage();
+    await page.goto("/");
+    const menu = page.locator("[data-agent-menu]").first();
+    await expect(menu).not.toHaveAttribute("data-open", /.*/);
+
+    await page.getByLabel(agentPack.menuLabel).first().tap();
+    await expect(menu).toHaveAttribute("data-open", /.*/, { timeout: 2000 });
+
+    // …and it is a toggle there, since there is no pointer-leave to close it.
+    await page.getByLabel(agentPack.menuLabel).first().tap();
+    await expect(menu).not.toHaveAttribute("data-open", /.*/, { timeout: 2000 });
+    await ctx.close();
+  });
+
+  test("every destination carries its own mark", async ({ page }) => {
+    await page.goto("/");
+    await page.locator('[data-agent-pack="primary"]').hover();
+    const items = page.locator("[data-agent-menu]").first().locator("[data-agent-menu-item]");
+    await expect(items).toHaveCount(3);
+    for (let i = 0; i < 3; i++) {
+      await expect(items.nth(i).locator("svg").first()).toBeVisible();
+    }
+  });
+
   test("the menu opens, lists every destination, and closes on Escape", async ({ page }) => {
     await page.goto("/");
     const caret = page.getByRole("button", { name: agentPack.menuLabel }).first();
@@ -107,7 +170,12 @@ test.describe("the copy control", () => {
     }
 
     await page.keyboard.press("Escape");
-    await expect(menu).toHaveCount(0);
+    /* Not toHaveCount(0): the panel is MOUNTED whether open or closed, so it
+       can animate out as well as in. "Closed" is the data-open attribute being
+       gone and the panel going inert, which is also what makes the links leave
+       the tab order. */
+    await expect(menu.first()).not.toHaveAttribute("data-open", /.*/);
+    await expect(menu.first()).toHaveAttribute("inert", /.*/);
     await expect(caret).toHaveAttribute("aria-expanded", "false");
   });
 
