@@ -61,7 +61,22 @@ test("an absent export is null, not the tail of the file", () => {
   assert.equal(exportedBinding(source, "GET"), null);
 });
 
-test("the sentence 'export async function GET' inside a comment is not an export", () => {
+test("a commented-out handler is not an export", () => {
+  // Written at the start of its line inside a block comment, so the line anchor
+  // in the pattern does not save us here — only knowing that the position is
+  // inside a comment does. A route whose GET has been commented out HAS no GET,
+  // and the caller must be told that rather than handed a paragraph to grep.
+  const source =
+    `/*\n` +
+    `export async function GET() {\n` +
+    `  return Response.json({ ok: true });\n` +
+    `}\n` +
+    `*/\n` +
+    `export async function POST() {\n  return 1;\n}\n`;
+  assert.equal(exportedBinding(source, "GET"), null);
+});
+
+test("a mention of the export in prose is not an export", () => {
   const source = `/**\n * Superseded by POST; there is no export async function GET here any more.\n */\nexport async function POST() { return 1; }\n`;
   assert.equal(exportedBinding(source, "GET"), null);
 });

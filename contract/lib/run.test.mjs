@@ -129,11 +129,19 @@ test("the zero-assertion failure reaches the Markdown pasted into pull requests"
   assert.match(out, /1 of 1 contracts broken/);
 });
 
-test("an empty contracts directory is a usage error, not a green run", () => {
+test("an empty contracts directory is a usage error, and says the true reason", () => {
   const dir = fixtures();
   const { code, out, err } = run([`--contracts=${dir}`]);
   assert.equal(code, 2, `an empty suite must not certify anything\n${out}${err}`);
   assert.doesNotMatch(out + err, /all green/);
+  assert.match(err, /No \*\.contract\.mjs files/);
+  // Exit 2 alone is not enough to assert on, and asserting only on it is how
+  // this test first passed against a runner that had no such guard: the
+  // `--only` branch caught the empty suite by accident and reported
+  // "--only=null matched none of the 0 contracts" — a usage error blamed on a
+  // flag nobody passed. A message that names the wrong cause sends the reader
+  // to the wrong file, so the message is part of the fix and part of the test.
+  assert.doesNotMatch(err, /--only=null/);
 });
 
 /* -------------------------------------------------------------------------- */
