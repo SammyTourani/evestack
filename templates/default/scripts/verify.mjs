@@ -474,8 +474,22 @@ if (!health.ok) {
  */
 {
   const projectRoot = process.cwd();
-  const MARKERS = [".git", "pnpm-workspace.yaml"];
-  const hasMarker = (dir) => MARKERS.some((m) => existsSync(join(dir, m)));
+  // THREE markers, not two, and the third is the one that is easy to miss.
+  // `attach.mjs#isWorkspaceRoot` walks all three and docs/troubleshooting.mdx
+  // says so in as many words; this check shipped walking two, so an npm or yarn
+  // workspace root above the project was invisible to it. It then reported "no
+  // marker anywhere" — sending the reader to `git init` for a fence that already
+  // existed, and telling them eve would reach their home directory when it would
+  // stop one level up.
+  const hasMarker = (dir) => {
+    if (existsSync(join(dir, ".git"))) return true;
+    if (existsSync(join(dir, "pnpm-workspace.yaml"))) return true;
+    try {
+      return JSON.parse(readFileSync(join(dir, "package.json"), "utf8"))?.workspaces !== undefined;
+    } catch {
+      return false;
+    }
+  };
 
   // The first marker at or above the project — eve stops at the first one it
   // finds, so the first is the only one that matters.
