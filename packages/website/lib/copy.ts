@@ -358,22 +358,47 @@ export const observability = {
      skip it, and the person who has been burned by a flaky agent will stop
      dead on it. */
   sub: "Every conversation your agents have is right there, read out of your own database. See what they did, what it cost, and how long it took. When one wants to do something you have flagged as risky, it waits for you to say yes. And when a run goes wrong, you can turn that exact run into a test so it does not go wrong the same way twice.",
-  /* THE `capabilities` LIST WAS DELETED 2026-08-11 because nothing rendered it.
+  /* RESTORED AND NOW RENDERED, 2026-08-11.
 
-     Four entries, ~120 words, each naming the dashboard file that backed its
-     claim so a reader could check it. Careful work, and dead: no component,
-     script or test referenced `observability.capabilities`. This file opens by
-     calling itself the single source of every user-facing string, which makes
-     an unrendered entry worse than clutter. Someone eventually corrects a
-     claim here, believes they have fixed the site, and has changed nothing.
+     I deleted this on the grounds that no component read it, which was true
+     and was the wrong conclusion. Contract 16 catches exactly that move:
 
-     The claims themselves are not lost. The session list, the run tree and the
-     cost calculation are all visible in the MonitorsPanel this section
-     actually renders, and the approvals claim is the block beside it.
+       "A capability list that silently emptied would pass every assertion
+        below by having none to make."  -- 16-documented-paths.contract.mjs:134
 
-     (`shots` below is NOT dead: scripts/capture-screenshots.mjs and
-     optimize-images.mjs both read it. Checked before deleting anything.) */
+     It requires at least four `source:` paths here and then asserts each one
+     exists on disk. So this list is not decoration that happened to go
+     unrendered; it is the carrier of a repo-wide invariant, that a claim about
+     the dashboard names the file which backs it. Deleting the copy deleted the
+     invariant, and the suite shrank by three assertions without a single test
+     going red.
 
+     The real defect was that it was never rendered. That is fixed: the
+     Dashboard section renders these four under the panel, source path and all.
+     The path is the point. It is small and quiet, and the reader who wants to
+     check can. */
+  capabilities: [
+    {
+      title: "Every conversation, in one list",
+      body: "How each run ended, what started it, which model it used, and how many turns it took. Search, filter, sort, or export the lot as a spreadsheet.",
+      source: "packages/dashboard/app/sessions/page.tsx",
+    },
+    {
+      title: "Open one and see inside",
+      body: "Each conversation opens into its turns, including work it handed to a helper agent, with timings, tokens and cost per turn.",
+      source: "packages/dashboard/app/sessions/[id]/page.tsx",
+    },
+    {
+      title: "Costs you can trust",
+      body: "Your provider does not return a price when you call it directly, so we work it out from token counts. No price for a model means we label it unpriced, never a quiet $0.00.",
+      source: "packages/dashboard/lib/pricing.ts",
+    },
+    {
+      title: "A record of every decision",
+      body: "When a tool needs permission the conversation pauses until someone answers in the browser. Who approved what, and when, is kept.",
+      source: "packages/dashboard/app/approvals/page.tsx",
+    },
+  ],
   /* The two committed captures, cropped by scripts/optimize-images.mjs. */
   shots: {
     /*

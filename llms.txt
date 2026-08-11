@@ -115,6 +115,7 @@ on advertising them.
 
 - [Introduction](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/index.mdx)
 - [Quickstart](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/quickstart.mdx)
+- [Set up with an agent](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/agent-setup.mdx)
 - [Local setup](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/local-setup.mdx)
 - [Architecture](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/architecture.mdx)
 - [Dashboard](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/dashboard.mdx)

@@ -38,6 +38,25 @@ export function Observability() {
           </figcaption>
         </figure>
 
+        {/* The four claims this section makes, each naming the file that backs
+            it. This list lived unrendered in copy.ts for a long time and I
+            deleted it as dead weight, which contract 16 caught: it requires at
+            least four `source:` paths and then asserts each exists, so the
+            list is the carrier of a repo invariant rather than decoration.
+            Rendering it is the fix that keeps both the page and the invariant
+            honest, and the paths cost one quiet mono line each. */}
+        <ul className="mx-auto mt-14 grid max-w-5xl gap-x-8 gap-y-10 sm:grid-cols-2 lg:grid-cols-4">
+          {observability.capabilities.map((capability) => (
+            <li key={capability.title} className="flex flex-col gap-2">
+              <h3 className="text-copy-16 font-medium text-gray-1000">{capability.title}</h3>
+              <p className="text-copy-14 text-gray-900">{capability.body}</p>
+              <code className="mt-1 break-all font-mono text-label-12 text-gray-600">
+                {capability.source}
+              </code>
+            </li>
+          ))}
+        </ul>
+
         {/* The second half of the same idea. Kept visually subordinate to the
             panel above: a hairline rule, then a two-column block at the width
             of the panel, so it reads as part of this section rather than as a

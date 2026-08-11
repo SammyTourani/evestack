@@ -36,6 +36,16 @@ there is loadable by the agent you are *building*, not only readable by the agen
 build it. Everywhere else it lands in `.claude/skills`, which is created if you have never made
 one.
 
+### Pointing it somewhere else
+
+`EVESTACK_PACK_URL` overrides where the pack is fetched from. It defaults to
+`https://evestack.vercel.app/agent-pack.json`, and you will only need it if you are testing a
+fork, running against a local build of this site, or serving the pack from your own mirror:
+
+```bash
+EVESTACK_PACK_URL=http://localhost:3000/agent-pack.json npx evestack skills
+```
+
 <Note>
   The pack is fetched from the site rather than bundled into the CLI. That is deliberate: a copy
   vendored into a published package drifts from the source, and a stale pack means your agent
