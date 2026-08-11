@@ -1,6 +1,6 @@
 {
   "name": "create-evestack",
-  "version": "0.9.2",
+  "version": "0.10.0",
   "type": "module",
   "description": "Run AI agents on your own machine. One command gives you the whole stack: durable Postgres sessions, a Docker sandbox, memory, approvals, schedules, 1,000+ tool integrations, and a dashboard that drives the agent.",
   "license": "Apache-2.0",

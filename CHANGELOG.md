@@ -69,6 +69,26 @@ users even though the code never did — the state this section exists to make v
 since a package whose version matches the registry while its code does not is the one
 condition every check in RELEASING.md reports as green.
 
+### Bumped and waiting to publish
+
+Four packages changed shipped files on this branch while their versions still matched
+npm — the exact condition the "Bumping versions" section of RELEASING.md calls the
+dangerous one, because every check it lists reports green while the registry and the
+repository disagree about what the number means. `create-evestack@0.9.2` was the clearest
+case: unpacking the real tarball shows the published `0.9.2` pinning the `0.3.1` dashboard
+image, while `0.9.2` in this tree pins `0.4.0` and runs `git init`. Same number, different
+scaffold. All four are bumped here, in the commit that made them differ.
+
+- **`create-evestack` 0.9.2 → 0.10.0.** Minor rather than patch: the scaffolder now
+  creates a `.git` (closing the `~/.npmrc` credential copy), pins the `0.4.0` image, and
+  explains a refused registry pull instead of pointing at logs that cannot exist.
+- **`evestack` 0.4.0 → 0.4.1.** `doctor` reads the project's own `.env.local`, `status`
+  tells a socket that answered from one that is not there, and a part that could not be
+  checked no longer folds into "Everything is up."
+- **`@evestack/composio` 0.2.0 → 0.2.1.** Description copy only, but it ships in the
+  package metadata, so the number has to move with it.
+- **`@evestack/schedules` 0.2.0 → 0.2.1.** README only, and the README is in `files`.
+
 ### Changed but not yet versioned
 
 - **`contract/`** — 1b63559 and 06274c4 repaired a probe that was writing rows eve's
