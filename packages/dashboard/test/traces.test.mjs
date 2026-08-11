@@ -627,6 +627,11 @@ function row(spanId, parentSpanId, extra = {}) {
     sessionId: extra.sessionId ?? null,
     rootSessionId: extra.rootSessionId ?? null,
     turnId: extra.turnId ?? null,
+    // The column the ancestry walk fills in. `turnId` is what the exporter
+    // DECLARED and is routinely the `turn_0` alias; this is the workflow run it
+    // resolved to. They are different fields on purpose and a test that omits
+    // this one cannot see the difference.
+    resolvedTurnId: extra.resolvedTurnId ?? null,
   };
 }
 
@@ -847,4 +852,49 @@ test("a call caught in a cyclic parent chain is still listed", () => {
 test("no rows means no calls, not a thrown page", () => {
   assert.deepEqual(selectCallSpans(TOOL_CALL_SPANS, []).calls, []);
   assert.deepEqual(selectCallSpans(MODEL_CALL_SPANS, [row("a", null)]).calls, []);
+});
+
+test("a child inherits the RESOLVED turn id, not just the alias its parent declared", () => {
+  // The whole span→session fix is that `turn_0` is an ordinal the exporter
+  // emits, not a key: every turn of every session declares it, so joining on it
+  // matches everything or nothing. `resolved_turn_id` carries the workflow run
+  // the span actually executed inside, and the session page joins on that.
+  //
+  // buildSpanTree inherits sessionId, rootSessionId and turnId down the tree.
+  // When resolvedTurnId was added to SpanRow it was NOT added to that list, so a
+  // child with no resolved id of its own fell back to the INHERITED turnId —
+  // `turn_0` — and sat next to siblings keyed on the run. That is the exact
+  // split the fix exists to remove, reintroduced one layer above it.
+  const roots = buildSpanTree([
+    row("turn", null, { sessionId: "wrun_s", turnId: "turn_0", resolvedTurnId: "wrun_abc" }),
+    row("streamText", "turn"),
+    row("toolCall", "streamText"),
+  ]);
+  const streamText = roots[0].children[0];
+  const toolCall = streamText.children[0];
+
+  assert.equal(streamText.resolvedTurnId, "wrun_abc");
+  assert.equal(toolCall.resolvedTurnId, "wrun_abc", "a grandchild inherits it too");
+
+  // And the fallback every reader uses — `resolvedTurnId ?? turnId` — must land
+  // on the run for every span in the turn. If inheritance is dropped this reads
+  // "turn_0" for the children while the parent reads "wrun_abc", which is the
+  // defect rather than a cosmetic difference.
+  for (const node of [roots[0], streamText, toolCall]) {
+    assert.equal(
+      node.resolvedTurnId ?? node.turnId,
+      "wrun_abc",
+      `${node.spanId} resolved to ${node.resolvedTurnId ?? node.turnId}, splitting one turn across two keys`,
+    );
+  }
+});
+
+test("a child's own resolved turn id still wins over the one it would inherit", () => {
+  // Same rule as sessionId above: a subagent span that resolved to its own run
+  // must not be relabelled with its caller's.
+  const roots = buildSpanTree([
+    row("turn", null, { turnId: "turn_0", resolvedTurnId: "wrun_parent" }),
+    row("subagent", "turn", { resolvedTurnId: "wrun_child" }),
+  ]);
+  assert.equal(roots[0].children[0].resolvedTurnId, "wrun_child");
 });
