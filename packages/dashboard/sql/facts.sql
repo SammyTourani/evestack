@@ -136,7 +136,7 @@ DECLARE
   -- Must equal the `target` in the migration immediately below and the version
   -- stamped further down; test/schema-guard.test.mjs reads all three out of the
   -- file and fails if they part.
-  target    constant integer := 2;
+  target    constant integer := 3;
   installed integer;
 BEGIN
   SELECT version INTO installed FROM evestack.schema_version WHERE component = 'facts';
@@ -158,19 +158,29 @@ END $guard$;
 -- every database that already had the change and the migration was silently
 -- inert exactly where it was needed.
 --
--- Version 2 changes no column. It changes how `environment` is DERIVED — the
+-- Version 2 changed no column. It changed how `environment` is DERIVED — the
 -- old expression read a key that is on none of the spans an exporting install
 -- sends — and a derivation change is exactly what this mechanism is for: the
 -- watermark would otherwise leave every already-materialized row holding the
 -- old answer forever, which is the same "silently inert on the databases that
 -- need it" failure the comment above describes.
 --
+-- Version 3 changes both. `fact_tool_call.ok` goes from `boolean NOT NULL` to
+-- nullable, because `status_code <> 2` recorded OTel UNSET — the status every
+-- tracer that only reports failures emits — as a tool SUCCESS, and a NOT NULL
+-- column made the coverage count 100% while it did it. Every row already
+-- materialized holds that wrong answer, and no watermark would ever revisit it,
+-- so the table has to be rebuilt rather than left to catch up. The DROP below
+-- does that for all three tables, and dropping fact_watermark with them is what
+-- turns the next refresh into a full rebuild rather than an incremental pass
+-- over a table that no longer exists.
+--
 -- `IS DISTINCT FROM` and not `<`, because NULL — never refreshed — has to drop
 -- too. The downgrade half of it is unreachable: the guard above has already
 -- refused anything ahead of `target`.
 DO $$
 DECLARE
-  target    constant integer := 2;
+  target    constant integer := 3;
   installed integer;
 BEGIN
   SELECT version INTO installed FROM evestack.schema_version WHERE component = 'facts';
@@ -296,8 +306,27 @@ CREATE TABLE IF NOT EXISTS evestack.fact_tool_call (
   tool_name   text NOT NULL,
   started_at  timestamptz NOT NULL,
   duration_ms double precision,
-  -- OTel status: 2 is ERROR, everything else (0 UNSET, 1 OK) is not a failure.
-  ok            boolean NOT NULL,
+  /*
+   * OTel status: 2 is ERROR, 1 is OK, and 0 is UNSET — WHICH IS NOT A VERDICT.
+   *
+   * NULLABLE, and that is the whole column. This was `boolean NOT NULL` written
+   * as `status_code <> 2`, so UNSET recorded as a SUCCESS — and UNSET is what
+   * every tracer that only sets a status on failure emits, which is most of
+   * them and all of eve's exported tool spans. The failure rate over such an
+   * install was therefore 0% by construction, and because the column could not
+   * be NULL the coverage count said 100%: a confident answer, complete,
+   * unanimous and derived from nothing. That is the same defect as the turn
+   * failure rate one view over, which lib/metrics.ts fixed by making its first
+   * arm NULL so `avg()` drops the unjudged rows from the numerator AND the
+   * denominator instead of scoring them as wins.
+   *
+   * A reader has to handle three states, and every one of them is real:
+   * true (the tracer said OK), false (the tracer said ERROR), NULL (the tracer
+   * said nothing, so this dashboard does not know). Aggregations must exclude
+   * NULL rather than bucket it — `avg(CASE WHEN ok IS NULL THEN NULL ...)` —
+   * and anything rendering a badge must have an "unknown" that is not "failed".
+   */
+  ok            boolean,
   error_message text,
   -- Byte length of the recorded call arguments and result. NULL when the
   -- exporter did not record them, which is the common case: eve's own tracer
@@ -338,7 +367,7 @@ CREATE TABLE IF NOT EXISTS evestack.fact_watermark (
 -- "already applied". The guard at the top of the file is what stops the
 -- downgrade; this is what stops the marker lying about it if one ever gets past.
 INSERT INTO evestack.schema_version (component, version)
-VALUES ('facts', 2)
+VALUES ('facts', 3)
 ON CONFLICT (component) DO UPDATE
   SET version = EXCLUDED.version, applied_at = now()
   WHERE evestack.schema_version.version < EXCLUDED.version;
@@ -799,7 +828,12 @@ BEGIN
   SELECT
     trace_id, span_id, resolved_turn_id, resolved_session_id, tool_name,
     start_time, duration_ms,
-    status_code <> 2,
+    -- Three states, not two. See `ok` on the table: anything that is not an
+    -- explicit ERROR or an explicit OK is UNSET, and UNSET is the absence of a
+    -- verdict rather than a good one. `status_code <> 2` was here, and it
+    -- recorded every span from every tracer that reports only failures as a
+    -- success.
+    CASE WHEN status_code = 2 THEN false WHEN status_code = 1 THEN true END,
     CASE WHEN status_code = 2 THEN status_message END,
     arguments_bytes,
     result_bytes
