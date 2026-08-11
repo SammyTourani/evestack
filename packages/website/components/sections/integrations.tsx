@@ -12,7 +12,7 @@ export function Integrations() {
       <div className="site-container">
         <SectionHeading
           id="integrations-heading"
-          eyebrow="03 · integrations"
+          eyebrow="04 · your tools"
           title={integrations.heading}
           sub={integrations.sub}
         />

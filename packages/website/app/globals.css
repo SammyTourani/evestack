@@ -583,158 +583,66 @@
   }
 }
 
-/* ── Quickstart pipeline + receipt ───────────────────────────────────────
-   Default (no attributes) = settled: every station ✓, spine drawn, receipt
-   at full ink — the SSR / no-JS / reduced-motion truth. The component arms
-   itself client-side only with motion allowed (hiding the played pieces),
-   then stamps data-live per column and everything below plays on its own
-   --d transition/animation delay. One stamp, zero timers. */
+/* The quickstart pipeline + receipt choreography lived here (~150 lines:
+   station glyphs, the drawing spine, receipt cascades, two flash keyframes and
+   their reduced-motion overrides). §09 is two static cards now — see the note
+   in components/sections/quickstart.tsx for why — so none of it has a selector
+   left to match. Recover from git if that section ever grows motion again. */
 
-/* station glyphs: number at rest ↔ check once done */
-.qs [data-qs-num],
-.qs [data-qs-check] {
+
+/* ── §09 path cards ──────────────────────────────────────────────────────
+   Two surfaces that have to read as RAISED, not drawn. A border alone is
+   flat at any radius; what sells depth is the pair — a lit hairline along
+   the top inside edge (the light source is above, as it is for the hero rig)
+   and a wide, very soft drop shadow underneath. The vertical wash on top of
+   that keeps the surface from reading as one uniform fill.
+
+   Both halves are theme-split rather than shared with alpha: on porcelain an
+   inset white highlight is invisible and a black-alpha shadow at dark-mode
+   strength turns into a grey smudge, so light mode leans on the shadow and
+   drops the highlight to near nothing. */
+.path-card {
+  background-image: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--ds-gray-100) 60%, transparent),
+    transparent 45%
+  );
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--ds-gray-1000) 6%, transparent),
+    0 18px 40px -28px rgb(0 0 0 / 0.28);
+}
+.dark .path-card {
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--ds-gray-1000) 10%, transparent),
+    0 28px 64px -32px rgb(0 0 0 / 0.9);
+}
+
+/* The accent rail. One hairline across the top of each card, fading out at
+   both ends so it reads as light catching an edge rather than as a coloured
+   border. `--rail` is set per card; this is where §09 gets its colour. */
+.path-card-rail {
+  background-image: linear-gradient(
+    to right,
+    transparent,
+    color-mix(in srgb, var(--rail) 70%, transparent) 28%,
+    color-mix(in srgb, var(--rail) 70%, transparent) 72%,
+    transparent
+  );
+}
+
+/* Command plates lift toward the reader on hover. translateZ is not available
+   without a perspective ancestor and a 1px translate would jitter the mono
+   text, so the movement is carried by the shadow and the border alone. */
+.cmd-plate {
   transition:
-    opacity 0.3s ease,
-    transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-  transition-delay: var(--d, 0s);
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
 }
-.qs [data-qs-num] {
-  opacity: 0;
-  transform: scale(0.6);
-}
-.qs [data-qs-check] {
-  opacity: 1;
-  transform: scale(1);
-}
-.qs[data-armed]:not([data-live]) [data-qs-num] {
-  opacity: 1;
-  transform: scale(1);
-}
-.qs[data-armed]:not([data-live]) [data-qs-check] {
-  opacity: 0;
-  transform: scale(0.5);
-}
-
-.qs [data-qs-dot] {
-  transition: border-color 0.3s ease;
-  transition-delay: var(--d, 0s);
-}
-.qs[data-armed]:not([data-live]) [data-qs-dot] {
-  border-color: var(--ds-border-default);
-}
-
-/* one ping ring as each station lands (Railway's station grammar) */
-.qs [data-qs-ping] {
-  opacity: 0;
-}
-.qs[data-live] [data-qs-ping] {
-  animation: qs-ping 0.9s cubic-bezier(0.25, 0.1, 0.25, 0.8) both;
-  animation-delay: var(--d, 0s);
-}
-@keyframes qs-ping {
-  0% {
-    opacity: 0.7;
-    transform: scale(0.45);
-  }
-  100% {
-    opacity: 0;
-    transform: scale(1.9);
-  }
-}
-
-/* One spine, drawing top→bottom through every station over the whole
-   cascade (Clerk's scaleY). Linear, because it is tracking the run's
-   progress past four evenly-timed stations — an eased draw would arrive at
-   each one early or late. */
-.qs [data-qs-seg] {
-  transform-origin: top;
-  transition: transform 1.5s linear;
-  transition-delay: 0.15s;
-}
-.qs[data-armed]:not([data-live]) [data-qs-seg] {
-  transform: scaleY(0);
-}
-
-/* each step's receipt line rises in with its station */
-.qs [data-qs-rcpt] {
-  transition:
-    opacity 0.4s ease,
-    transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-  transition-delay: var(--d, 0s);
-}
-.qs[data-armed]:not([data-live]) [data-qs-rcpt] {
-  opacity: 0;
-  transform: translateY(4px);
-}
-
-/* receipt rows: ghost-dim at rest — the full layout is painted from frame
-   one, so the panel never reflows and the promise is visible before it
-   "runs" (Astral's ghost-target). Rows flip to full ink on their beat; the
-   ✓ turns ok-green in the same beat. Stripe's discipline: animate the row,
-   never the glyph. */
-.qsp [data-qs-row] {
-  transition: opacity 0.45s ease;
-  transition-delay: var(--d, 0s);
-}
-.qsp[data-armed]:not([data-live]) [data-qs-row] {
-  opacity: 0.3;
-}
-.qsp [data-qs-ok] {
-  transition: color 0.45s ease;
-  transition-delay: var(--d, 0s);
-}
-.qsp[data-armed]:not([data-live]) [data-qs-ok] {
-  color: var(--ds-gray-600);
-}
-
-/* landing flash per check row; the dashboard line gets the stronger beat */
-.qsp[data-live] [data-qs-flash] {
-  animation: qs-flash 0.9s ease-out both;
-  animation-delay: var(--d, 0s);
-}
-.qsp[data-live] [data-qs-payoff] {
-  animation: qs-flash-payoff 1.2s ease-out both;
-  animation-delay: var(--d, 0s);
-}
-@keyframes qs-flash {
-  0% {
-    background-color: transparent;
-  }
-  18% {
-    background-color: color-mix(in srgb, var(--ds-ok) 13%, transparent);
-  }
-  100% {
-    background-color: transparent;
-  }
-}
-@keyframes qs-flash-payoff {
-  0% {
-    background-color: transparent;
-  }
-  22% {
-    background-color: color-mix(in srgb, var(--ds-ok) 22%, transparent);
-  }
-  100% {
-    background-color: transparent;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  /* the component never arms under reduced motion; killing the machinery
-     here besides means nothing can ever play the hide-and-reveal */
-  .qs [data-qs-num],
-  .qs [data-qs-check],
-  .qs [data-qs-dot],
-  .qs [data-qs-seg],
-  .qs [data-qs-rcpt],
-  .qsp [data-qs-row],
-  .qsp [data-qs-ok] {
-    transition: none;
-  }
-  .qs[data-live] [data-qs-ping],
-  .qsp[data-live] [data-qs-flash],
-  .qsp[data-live] [data-qs-payoff] {
-    animation: none;
+@media (hover: hover) {
+  .cmd-plate:hover {
+    border-color: color-mix(in srgb, var(--ds-ok) 38%, transparent);
+    box-shadow: 0 6px 18px -10px color-mix(in srgb, var(--ds-ok) 55%, transparent);
   }
 }
 

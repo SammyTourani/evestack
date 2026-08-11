@@ -13,10 +13,25 @@ export function OneCommand() {
           <SectionHeading
             id="one-command-heading"
             align="left"
-            eyebrow="01 · one command"
+            eyebrow="01 · setup"
             title={terminal.caption}
-            sub="npx evestack create writes your env, generates credentials, and prints the three commands that finish the job: Postgres up, bootstrap, dev. Kill the stack, restart it — sessions pick up where they left off."
+            /* Was: "npx evestack create writes your env, generates
+               credentials, and prints the three commands that finish the job:
+               Postgres up, bootstrap, dev. Kill the stack, restart it, sessions
+               pick up where they left off."
+
+               Sammy read this one out loud as the example of copy nobody can
+               parse, and he was right: "writes your env", "bootstrap", "kill
+               the stack" are four bits of in-house shorthand in two sentences.
+               Same three facts, said the way you would say them to someone
+               sitting next to you. */
+            sub="It asks you a few questions, then builds the project and sets up a password for your dashboard. When it finishes it prints the last three commands to run. Turn everything off and back on whenever you like, because your agents carry on from where they stopped."
           />
+          {/* The three jobs in this line are the three rows in the panel to
+              the right, so the abstract claim and the concrete evidence are
+              on screen together. Sits above the ports because "what would I
+              use this for" is a bigger question than "which ports". */}
+          <p className="mb-8 text-copy-14 text-gray-700">{terminal.examples}</p>
           <dl className="grid grid-cols-3 gap-6 font-mono text-mono-13">
             <div className="flex flex-col gap-1">
               <dt className="text-gray-700">agent</dt>

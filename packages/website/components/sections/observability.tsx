@@ -1,12 +1,21 @@
 import { Section, SectionHeading } from "@/components/ui/section";
 import { MonitorsPanel } from "@/components/sections/monitors-panel";
-import { observability } from "@/lib/copy";
+import { ApprovalDemo } from "@/components/sections/approval-demo";
+import { observability, control } from "@/lib/copy";
 
-/* §06: the live monitors panel IS the artwork — percentiles, the real 41.0s
-   spike, span waterfall, token bars, log tail, all computed from the same
-   demo dataset as the dashboard demo. Backdrop is the site's quiet
-   graph-paper motif (established in the integrations hub) — the WebGL
-   trace constellation is gone. */
+/* §04 Dashboard: the live monitors panel IS the artwork — percentiles, the real
+   41.0s spike, span waterfall, token bars, log tail, all computed from the same
+   demo dataset as the dashboard demo. Backdrop is the site's quiet graph-paper
+   motif (established in the integrations hub).
+
+   THE APPROVAL DEMO MOVED IN HERE (2026-08-10). It had its own section, §07
+   "Observability you can act on", 62 words and a full screen of scroll for one
+   idea. Watching your agents and being able to stop them are not two features,
+   they are one feature seen from both ends, and separating them meant the page
+   made its single most reassuring promise ("it asks before it acts") a screen
+   and a half after the section where a reader was already thinking about
+   control. It reads as the payoff of this section now instead of as a footnote
+   to the next one. */
 export function Observability() {
   return (
     <Section id="observability" className="relative overflow-hidden">
@@ -18,16 +27,30 @@ export function Observability() {
       <div className="relative">
         <SectionHeading
           id="observability-heading"
-          eyebrow="06 · observability"
+          eyebrow="03 · dashboard"
           title={observability.heading}
           sub={observability.sub}
         />
         <figure data-screenshot-tilt className="mx-auto max-w-5xl min-w-0">
           <MonitorsPanel />
           <figcaption className="mt-4 text-center font-mono text-label-12 uppercase text-gray-700">
-            read straight from your own postgres — <span data-scramble>100% yours</span>
+            read from your own database, <span data-scramble>100% yours</span>
           </figcaption>
         </figure>
+
+        {/* The second half of the same idea. Kept visually subordinate to the
+            panel above: a hairline rule, then a two-column block at the width
+            of the panel, so it reads as part of this section rather than as a
+            new one that forgot its heading. */}
+        <div className="mx-auto mt-16 max-w-5xl border-t border-border-subtle pt-12">
+          <div className="grid items-center gap-12 lg:grid-cols-2">
+            <div className="flex flex-col gap-4">
+              <h3 className="text-heading-32">{control.heading}</h3>
+              <p className="max-w-md text-copy-16 text-gray-900">{control.sub}</p>
+            </div>
+            <ApprovalDemo />
+          </div>
+        </div>
       </div>
     </Section>
   );

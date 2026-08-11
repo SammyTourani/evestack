@@ -25,21 +25,27 @@ test.describe("evestack landing page", () => {
     });
 
     await page.goto("/");
+    /* NINE sections, in the order a visitor meets them. Was twelve: `stats`
+       was deleted, `control` merged into `observability`, and `code` merged
+       into `architecture` (see app/page.tsx for why each one moved). The list
+       is asserted in order so a future re-shuffle has to come through here
+       rather than happening by accident. */
     for (const id of [
       "hero",
       "one-command",
-      "compare",
-      "code",
       "features",
-      "architecture",
       "observability",
-      "stats",
-      "control",
       "integrations",
+      "architecture",
+      "compare",
       "quickstart",
       "get-started",
     ]) {
       await expect(page.locator(`#${id}`)).toBeAttached();
+    }
+    // …and the merged-away ones are genuinely gone, not just unlinked.
+    for (const id of ["stats", "control", "code"]) {
+      await expect(page.locator(`#${id}`), `#${id} should be merged away`).toHaveCount(0);
     }
     // Asserted against lib/copy.ts, not a copy of the words. The headline is
     // re-tuned often, and a duplicated string here fails the build every time
@@ -47,6 +53,48 @@ test.describe("evestack landing page", () => {
     // worth holding is structural: the h1 renders the canonical tagline.
     await expect(page.getByRole("heading", { level: 1 })).toContainText(site.tagline);
     expect(errors).toEqual([]);
+  });
+
+  test("no em dashes anywhere a visitor can read", async ({ page }) => {
+    /* Sammy's rule, and it is a readability rule rather than a style one: an
+       em dash is where a sentence gets a subordinate clause bolted on, and
+       this page's copy problem was almost entirely bolted-on clauses. Pinning
+       it in a test is the only way it stays true, because the character is
+       invisible in review and every one of us types it by reflex.
+
+       Scoped to rendered text, so code samples and the hero's ASCII glyph
+       field are out of scope by construction. */
+    await page.goto("/");
+    const offenders = await page.evaluate(() => {
+      const skip = new Set(["SCRIPT", "STYLE", "CODE", "PRE", "CANVAS"]);
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+      const found: string[] = [];
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        const text = n.textContent ?? "";
+        if (!text.includes("—")) continue;
+        let el = n.parentElement;
+        let inSkipped = false;
+        while (el) {
+          if (skip.has(el.tagName)) { inSkipped = true; break; }
+          el = el.parentElement;
+        }
+        if (!inSkipped) found.push(text.trim().slice(0, 90));
+      }
+      return found;
+    });
+    expect(offenders, `em dash in rendered copy: ${offenders.join(" | ")}`).toEqual([]);
+  });
+
+  test("the hero says what it is, and that it is open source", async ({ page }) => {
+    /* The two things Sammy asked the hero to make obvious. Both were failing:
+       the headline required knowing what eve is, and `site.eyebrow` existed in
+       copy.ts with no element rendering it, so "open source" appeared nowhere
+       above the fold. */
+    await page.goto("/");
+    const hero = page.locator("#hero");
+    await expect(hero.getByRole("heading", { level: 1 })).toContainText("Run AI agents");
+    await expect(hero.locator('[data-hero="eyebrow"]')).toContainText(/open source/i);
+    await expect(hero.locator('[data-hero="sub"]')).toBeVisible();
   });
 
   test("command pill copies to clipboard", async ({ page, context }) => {

@@ -1,9 +1,9 @@
 ---
 title: CLI
-description: The seven `evestack` commands, and the scaffolder under both of its published names.
+description: The eight `evestack` commands, and the scaffolder under both of its published names.
 ---
 
-`evestack` is the whole command. Seven things:
+`evestack` is the whole command. Eight things:
 
 ```bash
 evestack create [name]        scaffold an agent, a database and a dashboard
@@ -11,6 +11,7 @@ evestack status               is it up? what do I run?
 evestack tour                 a guided first run, on a stack that is already up
 evestack open                 the dashboard URL and its password, in a browser
 evestack verify               check every part and name the fix for anything broken
+evestack skills               teach your coding agent this project
 evestack attach [dir]         add evestack to an eve project you already have
 evestack doctor               a run stopped moving — read-only forensics
 ```
@@ -196,6 +197,32 @@ the password.
 The port comes from `EVESTACK_DASHBOARD_URL`, which is where the chosen dashboard port is
 recorded — the scaffolder does not assume 4000. `--no-open` prints and stops. Exit `1` means
 nothing is answering yet.
+
+## `evestack skills`
+
+```bash
+evestack skills [--dir=PATH] [--print] [--force] [--json]
+```
+
+Writes the evestack skill pack — `SKILL.md` plus four reference files — where your coding agent
+will find it, so it knows this project without being told. The same pack the landing page's
+**Set up your agent** button copies. Full detail in [Set up with an agent](/docs/agent-setup).
+
+| Flag | Effect |
+| --- | --- |
+| `--dir=PATH` | Where to write it. Default: `agent/skills/evestack` inside an eve project, otherwise `.claude/skills/evestack`. |
+| `--print` | Write the pack to stdout and touch no files. |
+| `--force` | Overwrite files that already exist. Without it, one existing file stops the run and nothing is written. |
+| `--json` | Report what was written, as JSON. |
+
+The pack is fetched from the site rather than bundled into this package, so it cannot ship stale —
+which is the trade: it needs a network connection, and says so plainly when it does not have one.
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Installed, or printed. |
+| `1` | Could not fetch the pack, or refused to overwrite. |
+| `2` | Bad arguments. |
 
 ## `evestack attach`
 

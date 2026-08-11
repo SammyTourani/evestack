@@ -28,8 +28,8 @@ The only thing that costs money is model tokens.
 ## Two names, one scaffolder
 
 `npx evestack create my-agent` runs this exact code. [`evestack`](https://www.npmjs.com/package/evestack)
-is the single command, and it answers to seven verbs — `create`, `status`, `tour`, `open`,
-`verify`, `attach`, `doctor` — of which `create` and `attach` are routed straight into this
+is the single command, and it answers to eight verbs — `create`, `status`, `tour`, `open`,
+`verify`, `skills`, `attach`, `doctor` — of which `create` and `attach` are routed straight into this
 package's own modules. `create-evestack` is the name npm's `create-*` convention leads people
 to, and it keeps working. Same prompts, same flags, one place a bug gets fixed.
 

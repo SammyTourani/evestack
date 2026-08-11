@@ -2,11 +2,11 @@
 
 # evestack
 
-### The whole eve stack. On your own machine.
+### Run AI agents on your own machine.
 
-A self-hosted distribution of [eve](https://github.com/vercel/eve), Vercel's agent framework.
-Durable Postgres sessions, a Docker sandbox, long-term memory, and a dashboard that watches the
-agent **and drives it**.
+One command gives you the whole stack. Your conversations are saved in a database you own, code
+runs in a safe sandbox, and a dashboard lets you watch every agent and approve anything risky
+before it happens. Free, open source, and nothing phones home.
 
 [![CI](https://github.com/SammyTourani/evestack/actions/workflows/ci.yml/badge.svg)](https://github.com/SammyTourani/evestack/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/evestack?color=2563eb&label=evestack)](https://www.npmjs.com/package/evestack)
@@ -73,6 +73,18 @@ anything, and prints an undo line for everything it writes.
 | **Integrations** | One-click OAuth into 1,070 toolkits via Composio | [docs](docs/composio-auth.mdx) |
 | **Skills** | Inspect what the agent has loaded, and scan skills before it does | [docs](docs/dashboard.mdx) |
 | **`evestack doctor`** | Read-only forensics for a durable job that is stuck. Prints the SQL; never writes | [docs](docs/cli.mdx) |
+
+## Built on eve
+
+Under the hood, evestack runs on [eve](https://github.com/vercel/eve), Vercel's open-source agent
+framework. evestack is **not a fork** — it ships as an eve registry, so it adds to eve rather than
+diverging from it, and it is pinned to upstream by a contract suite of **22 checks / 508
+assertions** that runs on every commit and against every new eve release. When eve ships, evestack
+tracks it in days.
+
+That suite is not decorative. It is how we caught eve 0.31 removing `continuationToken` from the
+HTTP session bodies — which broke every new chat and every fork — while both `tsc` and the static
+contracts stayed green. Only the live seam probes saw it. `docs/upgrading.mdx` has the story.
 
 ## Why self-host
 

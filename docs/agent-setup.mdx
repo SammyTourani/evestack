@@ -1,0 +1,105 @@
+---
+title: Set up with an agent
+description: Hand evestack to Claude Code, Cursor or a local model and let it do the setup.
+---
+
+You do not have to read these docs to use evestack. There is a skill pack written for whatever
+coding agent you already work in, and handing it over takes one paste.
+
+## The fastest path
+
+Press **Set up your agent** on [the landing page](/), then paste into your agent. That is the
+whole flow. Your agent gets the mental model, the five-command bring-up, the CLI, the dashboard's
+HTTP API, how to add tools and skills, and the failure modes that present as something else.
+
+The pack opens with an instruction to save itself, so an agent that can write files turns that one
+paste into a skill on disk and never needs the paste again.
+
+## Install it instead
+
+```bash
+npx evestack skills
+```
+
+Writes `SKILL.md` and four reference files where your agent will look for them:
+
+| Flag | Effect |
+| --- | --- |
+| `--dir=PATH` | Where to write it. Default: `agent/skills/evestack` inside an eve project, otherwise `.claude/skills/evestack`. |
+| `--print` | Write the pack to stdout and touch no files. |
+| `--force` | Overwrite files that already exist. Without it, an existing file stops the run and nothing is written. |
+| `--json` | Report what was written, as JSON. |
+
+The default target is chosen rather than guessed. Inside a scaffolded project `agent/skills` is a
+real runtime location — eve scans it and hands your agent a `load_skill` tool — so a pack written
+there is loadable by the agent you are *building*, not only readable by the agent helping you
+build it. Everywhere else it lands in `.claude/skills`, which is created if you have never made
+one.
+
+<Note>
+  The pack is fetched from the site rather than bundled into the CLI. That is deliberate: a copy
+  vendored into a published package drifts from the source, and a stale pack means your agent
+  confidently repeats something that stopped being true a release ago. The cost is that
+  `evestack skills` needs a network connection — which `npx` already needed to run it at all.
+</Note>
+
+## Every URL, and what each is for
+
+| URL | What it is | Reach for it when |
+| --- | --- | --- |
+| [`/agent.md`](https://evestack.vercel.app/agent.md) | The pack, as one self-contained document (~34 KB) | You want to paste, or your model has no fetch tool |
+| [`/agent-pack.json`](https://evestack.vercel.app/agent-pack.json) | The pack as a file tree | You are installing it programmatically |
+| [`/llms.txt`](https://evestack.vercel.app/llms.txt) | The linked index | You want to know where something lives |
+| [`/llms-full.txt`](https://evestack.vercel.app/llms-full.txt) | Every documentation page, concatenated (~240 KB) | You want the whole corpus in one request |
+
+`/agent.md` is the one to reach for when the task is *doing something with evestack*.
+`/llms-full.txt` is the firehose — correct for a large-context model, wasteful for a chat window.
+
+## What is in the pack
+
+One skill and four references, so the references stay out of your agent's context until it asks
+for one:
+
+- `SKILL.md` — what evestack is, the four moving parts, the five commands, and the five things
+  that most often go wrong
+- `references/cli.md` — the eight `evestack` commands, and which of the three diagnostics answers
+  which question
+- `references/build-an-agent.md` — tools, skills, memory, schedules, evals, channels, registry
+- `references/dashboard.md` — pages, the HTTP API, auth, and `@evestack/mcp`
+- `references/troubleshooting.md` — the failure modes, in the order you hit them
+
+The source is [`/skills/evestack`](https://github.com/SammyTourani/evestack/tree/main/skills/evestack)
+in the repository. It is written once and served three ways — copied, installed, fetched — so
+there is no second copy to go stale.
+
+## Give your agent live access too
+
+The pack teaches your agent about evestack. [`@evestack/mcp`](/docs/mcp) lets it read your running
+stack — sessions, costs, the approval audit log:
+
+```jsonc
+{
+  "mcpServers": {
+    "evestack": {
+      "command": "npx",
+      "args": ["-y", "@evestack/mcp"],
+      "env": { "EVESTACK_MCP_DASHBOARD_URL": "http://localhost:4000" }
+    }
+  }
+}
+```
+
+<Warning>
+  Read-only by default, and the four tools that can act on a live agent are withheld from
+  `tools/list` entirely until you set `EVESTACK_MCP_ALLOW_CONTROL=1`. Turning that on lets a model
+  approve a gated tool call a human was asked to stand at — which is the entire reason eve pauses
+  the turn. See [MCP](/docs/mcp) before you do.
+</Warning>
+
+## A note on trusting it
+
+The pack is instruction text that reaches a model's context and gets quoted back at you as fact,
+so it holds itself to the rules the rest of this project does: every claim reproducible, no
+first-or-only claims, no price comparisons, and "I don't know, here are the docs" preferred over a
+confident guess. If you find something in it that is wrong, that is a bug worth
+[filing](https://github.com/SammyTourani/evestack/issues).

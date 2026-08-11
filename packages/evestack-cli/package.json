@@ -2,7 +2,7 @@
   "name": "evestack",
   "version": "0.4.0",
   "type": "module",
-  "description": "One command for the whole self-hosted eve stack: `evestack create` scaffolds an agent and a dashboard, `evestack attach` wraps an eve project you already have, and `evestack doctor` explains why a durable job is dead.",
+  "description": "Run AI agents on your own machine. `evestack create` sets up an agent and a dashboard, `evestack attach` adds them to a project you already have, and `evestack doctor` explains why a job stopped moving.",
   "license": "Apache-2.0",
   "bin": {
     "evestack": "./bin/evestack.mjs"

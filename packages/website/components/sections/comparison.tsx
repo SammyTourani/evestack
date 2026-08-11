@@ -4,7 +4,7 @@ import { comparison } from "@/lib/copy";
 export function Comparison() {
   return (
     <Section id="compare">
-      <SectionHeading id="compare-heading" eyebrow="02 · compare" title={comparison.heading} sub={comparison.sub} />
+      <SectionHeading id="compare-heading" eyebrow="06 · compare" title={comparison.heading} sub={comparison.sub} />
       <div
         tabIndex={0}
         role="region"

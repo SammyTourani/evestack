@@ -47,7 +47,7 @@ export function wordmarkDims(slug: string): LogoDims {
   if (w > 0 && h > 0) return { width: w, height: h };
 
   throw new Error(
-    `wordmark ${slug}.svg has no usable viewBox or width/height — the marquee ` +
+    `wordmark ${slug}.svg has no usable viewBox or width/height. The marquee ` +
       `cannot reserve its width, which reopens the Safari seam gap.`,
   );
 }

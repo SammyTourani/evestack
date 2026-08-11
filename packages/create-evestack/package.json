@@ -2,7 +2,7 @@
   "name": "create-evestack",
   "version": "0.9.2",
   "type": "module",
-  "description": "The whole eve stack. On your own machine. Durable Postgres sessions, a Docker sandbox, memory, approvals, schedules, 1,070 tool integrations, and a dashboard that drives the agent.",
+  "description": "Run AI agents on your own machine. One command gives you the whole stack: durable Postgres sessions, a Docker sandbox, memory, approvals, schedules, 1,070 tool integrations, and a dashboard that drives the agent.",
   "license": "Apache-2.0",
   "keywords": [
     "eve",
