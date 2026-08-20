@@ -7,8 +7,8 @@
     "auth/local-dev-must-not-trust-the-request": 9,
     "dashboard/redirects-never-name-the-bind-address": 21,
     "deps/workflow-packages-are-exact-versions": 7,
-    "docs/every-documented-path-exists": 79,
-    "env/every-name-the-code-reads-is-findable": 135,
+    "docs/every-documented-path-exists": 82,
+    "env/every-name-the-code-reads-is-findable": 137,
     "fleet/the-cli-port-asks-the-dashboard-s-question": 14,
     "health/a-signal-that-could-not-look-never-reads-as-all-clear": 26,
     "hooks/observe-only-and-event-names": 11,
@@ -18,12 +18,13 @@
     "protocol/http-surface-the-dashboard-drives": 13,
     "sandbox/backend-interface-is-structurally-stable": 33,
     "sandbox/deny-all-still-means-no-network": 6,
-    "telemetry/agent-spans-reachable-only-from-local-runtime": 11,
-    "telemetry/dashboard-span-vocabulary": 51,
+    "telemetry/agent-spans-reachable-only-from-local-runtime": 16,
+    "telemetry/dashboard-span-vocabulary": 52,
     "time/naive-timestamps-are-never-compared-to-a-bare-now": 12,
     "tools/approval-is-the-gating-field": 12,
     "tools/approval-survives-defineTool": 2,
     "tools/dynamic-sentinel-and-events": 10,
+    "tools/the-prompt-only-promises-tools-the-agent-has": 8,
     "version/installed-satisfies-every-declared-range": 12
   }
 }
