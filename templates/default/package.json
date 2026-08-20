@@ -31,7 +31,7 @@
     "@workflow/world-postgres": "5.0.0-beta.32",
     "ai": "^7.0.38",
     "ai-sdk-ollama": "^4.1.0",
-    "eve": "^0.30.8",
+    "eve": "^0.31.3",
     "pg": "^8.20.3",
     "zod": "4.4.3"
   },
