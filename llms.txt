@@ -42,9 +42,13 @@ evestack*, and this file when you only need to know where something lives.
 
 ## Core facts an agent should know before answering questions about this repo
 
-- `@workflow/world-postgres` MUST be pinned to the `beta` npm tag, not `latest`. `latest` is
-  `4.3.3`; the `eve` line this repo pins requires the `5.0.0-beta` protocol line and rejects
-  mismatches.
+- `@workflow/world-postgres` MUST be pinned to an EXACT version — `templates/default` pins
+  `5.0.0-beta.32`. Not `latest` (the 4.x line, which `eve` rejects outright) and not the `beta`
+  dist-tag either: upstream changes the World **spec version** inside `5.0.0-beta.*` without a
+  semver bump, so `beta` resolving to `.34`/`.35` pulls `@workflow/world@5.0.0-beta.27`
+  (spec 6) against a runtime that requires spec 5, and a freshly scaffolded project dies at
+  startup. `^` and `~` are equally unsafe here. `contract/contracts/23-workflow-pin.contract.mjs`
+  enforces this.
 - The dashboard (`packages/dashboard`) reads `workflow.workflow_runs.attributes` (JSONB)
   directly via SQL — that column holds `eve`'s own `$eve.*` run tags, the same data behind
   Vercel's Agent Runs. It is NOT an OpenTelemetry ingest pipeline for its core view; OTLP

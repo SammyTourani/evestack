@@ -6,6 +6,7 @@
     "auth/http-basic-fails-closed": 5,
     "auth/local-dev-must-not-trust-the-request": 9,
     "dashboard/redirects-never-name-the-bind-address": 21,
+    "deps/workflow-packages-are-exact-versions": 7,
     "docs/every-documented-path-exists": 79,
     "env/every-name-the-code-reads-is-findable": 135,
     "fleet/the-cli-port-asks-the-dashboard-s-question": 14,

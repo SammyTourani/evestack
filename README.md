@@ -196,8 +196,14 @@ packages and the one container image above are versioned independently.
 
 Written down so they don't cost you any.
 
-- **Pin `@workflow/world-postgres` to `@beta`.** npm `latest` is 4.3.3; eve needs the 5.0.0-beta
-  line and the runtime rejects a protocol mismatch.
+- **Pin `@workflow/world-postgres` to an exact version — not `@latest`, and not `@beta`
+  either.** npm `latest` is the 4.x line and eve rejects it outright, which is the easy half.
+  `beta` is the trap: it looks right and it is a moving dist-tag, and upstream ships World
+  **spec** breaks inside `5.0.0-beta.*` with no semver signal. Measured against eve 0.30.8:
+  `world-postgres@5.0.0-beta.32` → `@workflow/world@5.0.0-beta.25` → spec 5 → boots, while
+  `@5.0.0-beta.34` → `world@5.0.0-beta.27` → spec 6 → dies at startup. The tag moved `.34` →
+  `.35` inside one afternoon. `templates/default` pins `5.0.0-beta.32` exactly; `^` and `~` both
+  still admit `.34`.
 - **Forward both `/eve/` and `/.well-known/workflow/`** through your proxy, unrewritten. Forward
   only the first and sessions start, then stall when callbacks can't get back.
 - **In production, loopback gets a 401 too — that's correct.** From eve 0.30 `localDev()` grants

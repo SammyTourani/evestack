@@ -236,11 +236,16 @@ Three things to know before you run that:
    npm will refuse the combination — but if you have `--force` in your muscle memory, know what
    it would be forcing. [SECURITY.md](https://github.com/SammyTourani/evestack/blob/main/SECURITY.md)
    has the detail.
-2. **`@workflow/world-postgres` is pinned to the `beta` dist-tag, not a range.** That is
-   deliberate: npm `latest` is on the 4.x line and eve needs the 5.0.0-beta line, and the runtime
-   rejects a protocol mismatch outright. A plain `npm install` re-resolves a dist-tag, so this
-   dependency can move under you without any version number in your `package.json` changing. If
-   sessions start failing right after an unrelated install, check this first.
+2. **`@workflow/world-postgres` is pinned to an exact version, not a range and not a dist-tag.**
+   That is deliberate, and it is the second pin this dependency has had. npm `latest` is on the
+   4.x line, which eve rejects outright, so the template used to say `"beta"`. A plain
+   `npm install` re-resolves a dist-tag, so that dependency moved under people without any
+   version number in their `package.json` changing — and when upstream raised the World spec
+   version from 5 to 6 inside `5.0.0-beta.*`, every fresh install died at boot with `This
+   Workflow runtime requires a World with matching spec version 5`. The template now declares
+   `"5.0.0-beta.32"` exactly. If you are upgrading a project scaffolded before that, change your
+   own `package.json` to the exact version too; `^` and `~` do not help, because both still admit
+   `5.0.0-beta.34`. If sessions start failing right after an unrelated install, check this first.
 3. **`npm run verify` is the real gate**, not `npm test`. Its own header names what it walks:
    "Postgres, Docker, the agent, the dashboard, an embedding probe" — plus the model key and the
    schema — against the stack as it is actually running, with the fixing command on every red
