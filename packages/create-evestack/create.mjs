@@ -761,7 +761,7 @@ export async function create(argv) {
   // ---- integrations ---------------------------------------------------------
   stepHeader(3, "Tools");
   const wantComposio = await confirm(
-    `Enable one-click sign-in to 1,000+ tools via Composio? ${C.dim}(Gmail, Slack, Notion, Linear…)${C.reset}`,
+    `Enable tool sign-in via Composio? 1,000+ toolkits, the managed ones one click ${C.dim}(Gmail, Slack, Notion, Linear…)${C.reset}`,
     true,
   );
   let composioLine = "# COMPOSIO_API_KEY=ak_...";

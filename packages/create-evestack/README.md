@@ -71,7 +71,7 @@ and, wired up for you:
 - **A local Docker sandbox** instead of hosted Vercel Sandbox.
 - **HTTP Basic route auth**, because eve's stock `vercelOidc()` / `placeholderAuth()` are both
   wrong off Vercel and fail closed.
-- **One-click sign-in to 1,000+ tools** through Composio, if you supply a key. Skipped cleanly
+- **Sign-in to 1,000+ tools** through Composio, the managed-OAuth ones in one click, if you supply a key. Skipped cleanly
   if you don't.
 - **Trace export** to the evestack dashboard, if `EVESTACK_DASHBOARD_URL` is set.
 

@@ -20,7 +20,7 @@ connects to arbitrary [MCP servers](https://eve.dev/docs).
 </Note>
 
 evestack wires in [Composio](https://composio.dev) instead: **1,000+ toolkits**, including
-Gmail (61 tools) and GitHub (871 tools), each one click to connect.
+Gmail (61 tools) and GitHub (871 tools) — both of which connect in a single click.
 
 <Note>
   **Why "1,000+" and not an exact figure.** We counted the live catalog against
@@ -29,6 +29,25 @@ Gmail (61 tools) and GitHub (871 tools), each one click to connect.
   in evestack — this page, the README, the site, the scaffolder's prompt, the dashboard's
   Integrations page — says **1,000+**, which stays true. The dashboard shows the live number:
   its *Apps available* tile reads whatever `countToolkits()` returns from your own key.
+</Note>
+
+<Note>
+  **The catalog and the one-click subset are two different numbers, and attaching the first
+  to the second is the mistake this page exists to prevent.** Measured against the live
+  catalog on 2026-08-19: **1,326** toolkits, of which **121** publish a Composio-managed
+  OAuth client. Those 121 connect with one click and nothing else. A further 96 support
+  OAuth but require you to register your own OAuth client — the exact registration burden
+  described at the top of this page — and 1,126 authenticate with an API key you go and
+  fetch yourself.
+
+  So a sentence of the form "one-click OAuth into 1,000+ toolkits" is false: it attaches the
+  catalog size to a capability 121 of them have. Say "1,000+ toolkits" about the catalog,
+  and "one click" only about the managed-OAuth subset.
+
+  The apps the scaffolder offers by name — Gmail, Slack, Notion, Linear, Google Calendar,
+  GitHub — are all inside the 121, so the path most people take really is one click.
+  Re-measure by counting `composio_managed_auth_schemes` containing `OAUTH2` over
+  `GET /api/v3/toolkits`.
 </Note>
 
 <Warning>

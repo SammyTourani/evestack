@@ -86,7 +86,7 @@ anything, and prints an undo line for everything it writes.
 | **Memory** | Semantic recall on the Postgres you already run, via pgvector. No vector service. Needs an embeddings provider — OpenAI, or Ollama locally; Anthropic has none | [docs](docs/memory.mdx) |
 | **Schedules** | Durable cron with a history of every fire, and a pause switch that needs no redeploy | [docs](docs/proactive.mdx) |
 | **Evals** | Promote any real session — especially one that went wrong — into an `evals/*.eval.ts` | [docs](docs/dashboard.mdx) |
-| **Integrations** | One-click OAuth into 1,000+ toolkits via Composio | [docs](docs/composio-auth.mdx) |
+| **Integrations** | 1,000+ toolkits via Composio; the managed-OAuth ones are one click | [docs](docs/composio-auth.mdx) |
 | **Skills** | Inspect what the agent has loaded, and scan skills before it does | [docs](docs/dashboard.mdx) |
 | **`evestack doctor`** | Read-only forensics for a durable job that is stuck. Prints the SQL; never writes | [docs](docs/cli.mdx) |
 
