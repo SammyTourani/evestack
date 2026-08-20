@@ -229,32 +229,28 @@ test.describe("the closing CTA carries all three ways to start", () => {
       await page.waitForTimeout(30);
     }
     const closing = page.locator("#get-started");
-    /* Park the pointer OFF the control before hovering it, or this test fails
-       about two runs in five.
+    /* Park the pointer off the control before hovering it.
 
-       The wheel loop above scrolls the page under a STATIONARY pointer at
-       (700, 450) — the centre of the 1440x900 viewport — and this section
-       centres its three-CTA row, so the agent-pack button itself can come to
-       rest under that exact point. Where it stops is not deterministic: the
-       loop exits the moment scrollY crosses `top - 200`, each tick is 800px,
-       and Chromium's smooth scroll is still animating when scrollY is read.
+       This is defensive hygiene, NOT a fix, and the distinction is recorded here
+       because an earlier version of this comment claimed to be the fix and was
+       wrong. The reasoning was: the wheel loop above scrolls the page under a
+       stationary pointer at (700, 450), the centre of the 1440x900 viewport, and
+       this section centres its CTA row — so the button can come to rest under
+       that exact point, and hover() would then move the pointer somewhere it
+       already is, dispatching no pointerenter, so the control (which opens only
+       from onPointerEnter) never opens.
 
-       When the button does land there, hover() moves the pointer somewhere it
-       already is. Chromium then dispatches pointermove but NOT pointerover or
-       pointerenter, because the hover target did not change — and the control
-       opens only from onPointerEnter, so nothing opens and data-open never
-       appears.
+       That story is plausible and it is not what is happening: the test still
+       failed twice in a row with this line in place. Ruled out by evidence, not
+       by argument: suppressRef is set only by Escape or click-outside and this
+       test does neither; canHover would break the sibling test above, which
+       never fails; the reported data-drop="down" is the untouched initial value
+       of `dropUp` (recomputed only in a layout effect gated on `open`), so it
+       means never-measured rather than measured-and-wrong, and the geometry
+       assertions below were never reached.
 
-       The failure reads like a product bug and is not one: the data-drop="down"
-       in the error is the initial value of `dropUp`, recomputed only in a layout
-       effect gated on `open`. "down" there means never measured, not
-       measured-and-chose-wrong. The sibling test above does this same hover and
-       has never failed; the only difference is the parked mouse.
-
-       x=20 is the left gutter, outside the centred row and clear of the sticky
-       header. Safe even if the scroll already opened the menu: hoverClose
-       schedules a 220ms close and hoverOpen clears that same timer, so the
-       hover() below wins either way. */
+       The real cause is still unknown. See playwright.config.ts, where the suite
+       is given retries in CI, for the honest accounting. */
     await page.mouse.move(20, 450);
     await closing.locator('[data-agent-pack="primary"]').hover();
     const menu = closing.locator("[data-agent-menu]");
