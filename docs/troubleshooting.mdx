@@ -5,9 +5,24 @@ description: Grouped by symptom — see local-setup for the setup-time issues.
 
 ## "eve rejects my workflow world at boot"
 
-`@workflow/world-postgres` is on `latest` (`4.3.3`) instead of `beta` (`5.0.0-beta.x`).
-The `eve` line this repo pins requires the `5.0.0-beta` protocol line and rejects anything else
-outright. Pin the dependency to the `beta` tag.
+Two different mistakes produce this, and the second one is the common one now.
+
+`@workflow/world-postgres` is on `latest` (the 4.x line) instead of the `5.0.0-beta` line. The
+`eve` line this repo pins requires `5.0.0-beta` and rejects anything else outright.
+
+Or it is on the `beta` dist-tag — or on `^5.0.0-beta.32` / `~5.0.0-beta.32`, which admit the
+same releases — and npm resolved it forward. The message names spec versions:
+
+```
+[env-runner] worker init failed: This Workflow runtime requires a World with matching spec
+version 5, but the configured World declares spec version 6.
+Development worker failed before readiness
+```
+
+`world-postgres@5.0.0-beta.34` and `.35` depend on `@workflow/world@5.0.0-beta.27`/`.28`, which
+declare spec **6**; eve 0.30.8's Workflow runtime requires spec **5**. Pin the exact version the
+template pins — `"@workflow/world-postgres": "5.0.0-beta.32"` — delete `node_modules` and the
+lockfile entry, and reinstall.
 
 ## "The agent will not start any more, with `Invalid input: expected undefined`"
 

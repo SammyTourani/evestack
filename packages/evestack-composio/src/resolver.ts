@@ -51,7 +51,8 @@ export function createSessionResolver(deps: SessionResolverDeps): () => EveSessi
         announcedMissingKey = true;
         deps.log(
           "[evestack:composio] COMPOSIO_API_KEY is not set, so the agent has no Composio tools. " +
-            "Everything else works. Set the key to give it one-click access to 1,000+ apps.",
+            "Everything else works. Set the key to reach 1,000+ toolkits; the " +
+            "Composio-managed OAuth ones connect in one click.",
         );
       }
       return DISABLED_SESSION;

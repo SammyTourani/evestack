@@ -82,8 +82,9 @@ reach it. See [Observability](/docs/observability).
   <Step title="Pin the three versions that have to agree">
     `eve`, the `@workflow/*` line, and the world package are one compatibility unit, and only one
     of the three is checked for you. The shipped `package.json` pins `eve` at `^0.30.8` and
-    `@workflow/world-postgres` at the `beta` tag. `>=0.30.0` is the floor for any deployment
-    reachable from a network — see [Auth off Vercel](#auth-off-vercel).
+    `@workflow/world-postgres` at exactly `5.0.0-beta.32` — an exact version, not a range and not
+    a dist-tag. `>=0.30.0` is the floor for any deployment reachable from a network — see
+    [Auth off Vercel](#auth-off-vercel).
   </Step>
 
   <Step title="Bring up Postgres">
@@ -156,13 +157,23 @@ reach it. See [Observability](/docs/observability).
 ## The Postgres world
 
 <Warning>
-  Pin `@workflow/world-postgres` to the **`beta`** dist-tag, never `latest`. Observed on
-  2026-08-09: `{ beta: '5.0.0-beta.32', latest: '4.3.3' }` — `latest` is a whole major behind the
-  protocol eve speaks, and that gap has held for as long as this file has existed. eve 0.30.8
-  builds against `@workflow/core@5.0.0-beta.39`, and the runtime rejects an incompatible protocol
-  version outright — the failure is at boot, which is the good case. The beta tag moves often
-  (it was `beta.31` four days ago), so check it yourself rather than trusting this line:
-  `npm view @workflow/world-postgres dist-tags`.
+  Pin `@workflow/world-postgres` to an **exact version** — `5.0.0-beta.32`, which is what
+  `templates/default` declares. Never `latest`, and no longer the `beta` dist-tag either.
+
+  `latest` is a whole major behind the protocol eve speaks and always has been. `beta` was the
+  documented workaround for that, and it stopped being safe: upstream ships World **spec**
+  changes inside the `5.0.0-beta.*` line with no semver signal, so the same tag hands out
+  incompatible worlds on different days. Measured against eve 0.30.8:
+
+  | `world-postgres` | pulls `@workflow/world` | World spec | eve 0.30.8 |
+  | --- | --- | --- | --- |
+  | `5.0.0-beta.32` | `5.0.0-beta.25` | 5 | boots |
+  | `5.0.0-beta.34` | `5.0.0-beta.27` | 6 | `worker init failed` at startup |
+
+  On 2026-08-19 the `beta` tag moved from `.34` to `.35` inside a single working session, so
+  "check the tag yourself" is not a defence — the answer expires. `^5.0.0-beta.32` and
+  `~5.0.0-beta.32` are not fixes either: both still resolve to `.34` and `.35`. Move the pin only
+  after installing a candidate and watching it boot.
 </Warning>
 
 Selecting the world is one field in `agent/agent.ts`, and it is conditional on the connection

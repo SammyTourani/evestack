@@ -81,10 +81,13 @@ why they are here rather than in a reference file.
    `postgres://world:world@localhost:5432/world` and dies on `ECONNREFUSED`. The npm script
    passes `--env-file-if-exists=.env.local` explicitly.
 
-2. **`@workflow/world-postgres` must be pinned to the `beta` tag.** npm's `latest` is `4.3.3`;
-   eve needs the `5.0.0-beta` protocol line and the runtime rejects a mismatch outright. The
-   scaffolded `package.json` already does this — it matters if anyone touches that dependency
-   by hand.
+2. **`@workflow/world-postgres` must be pinned to an exact version — `5.0.0-beta.32`.** npm's
+   `latest` is the 4.x line and eve rejects it outright, but the `beta` dist-tag is not the
+   answer either: upstream raises the World **spec version** inside `5.0.0-beta.*` without a
+   semver bump, so `beta` (`.34`/`.35`) pulls a spec-6 world into a runtime that requires spec 5
+   and the project dies at boot. `^` and `~` admit the same releases. The scaffolded
+   `package.json` pins the exact version — it matters if anyone touches that dependency by
+   hand.
 
 3. **Setting a model name without `EVESTACK_PROVIDER` leaves you on the previous provider.**
    `agent/agent.ts` branches on `EVESTACK_PROVIDER`; unset means `openai`. A *misspelled* value

@@ -28,7 +28,7 @@
     "@evestack/composio": "workspace:*",
     "@evestack/schedules": "workspace:*",
     "@vercel/otel": "^2.1.3",
-    "@workflow/world-postgres": "beta",
+    "@workflow/world-postgres": "5.0.0-beta.32",
     "ai": "^7.0.38",
     "ai-sdk-ollama": "^4.1.0",
     "eve": "^0.30.8",

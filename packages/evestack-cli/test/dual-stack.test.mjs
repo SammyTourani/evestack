@@ -49,15 +49,20 @@ test("a hostname that resolves to IPv6 first still reaches an IPv4-only listener
   }
   // The precondition that made this bite: ::1 is what a single attempt would use.
   //
-  // SKIPPED, not asserted, when the order is the other way round. A dual-stack
-  // host that sorts A before AAAA is an ordinary configuration — macOS with
-  // this resolver does it — and on such a host a single attempt would reach the
-  // IPv4 listener anyway, so there is no race left to lose and nothing here to
-  // prove. Asserting it turned "this machine cannot stage the bug" into "the
-  // fix is broken", which is the same false-red the skip above already avoids
-  // for the IPv4-only case; it simply did not cover this one.
+  // SKIP rather than fail when it does not hold. This asserted, and so failed on any
+  // machine whose resolver orders A before AAAA for localhost — common on macOS — which
+  // is a property of the host, not of the code under test. The line above already skips
+  // when there is no IPv6 at all; not skipping here too was an oversight of the same
+  // kind, and it cost a red suite on a developer machine while CI stayed green.
+  //
+  // This does not weaken the test. Where ::1 does sort first, which includes CI, every
+  // assertion below still runs. Where it does not, a single attempt would already have
+  // reached the IPv4 listener, so there is no race left to reproduce.
   if (addresses[0].family !== 6) {
-    t.skip("this host sorts IPv4 first, so a single attempt already reaches the v4 listener");
+    t.skip(
+      `localhost resolves ${addresses[0].family === 4 ? "IPv4" : "family " + addresses[0].family} ` +
+        "first on this host, so a single attempt would already succeed and the race cannot occur",
+    );
     return;
   }
 

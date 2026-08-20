@@ -79,11 +79,32 @@ function readCertifiedEve() {
 const MIN_EVE = "0.30.0";
 const OTEL_RANGE = "^2.1.3";
 /**
- * A dist-tag, not a version range, and deliberately so: npm's `latest` for
- * @workflow/world-postgres is the 4.x line, eve needs 5.0.0-beta, and the
- * runtime rejects a mismatched protocol version outright.
+ * An EXACT version, and every part of that is deliberate.
+ *
+ * npm's `latest` for @workflow/world-postgres is the 4.x line, eve needs
+ * 5.0.0-beta, and the runtime rejects a mismatched protocol version outright —
+ * so `latest` has never been an option and this constant used to read `"beta"`
+ * to say so. That was the bug. `beta` is a dist-tag: it names whatever upstream
+ * published most recently, and upstream ships World **spec** changes inside the
+ * `5.0.0-beta.*` line with no semver signal at all. Measured against eve 0.30.8:
+ *
+ *   world-postgres 5.0.0-beta.32 → @workflow/world 5.0.0-beta.25 → spec 5 → boots
+ *   world-postgres 5.0.0-beta.34 → @workflow/world 5.0.0-beta.27 → spec 6 → dies
+ *
+ *     [env-runner] worker init failed: This Workflow runtime requires a World
+ *     with matching spec version 5, but the configured World declares spec
+ *     version 6.
+ *
+ * The `beta` tag moved from .34 to .35 inside a single working session. So the
+ * pin has to be exact: `^5.0.0-beta.32` and `~5.0.0-beta.32` both still admit
+ * .34 and .35 — prerelease ranges compare by identifier, and `~` only fixes the
+ * patch — which means every floating form reintroduces this verbatim.
+ * contract/contracts/23-workflow-pin.contract.mjs holds the property.
+ *
+ * Moving it is a deliberate act: install the candidate, boot it, and only then
+ * change this string and templates/default/package.json together.
  */
-const WORLD_TAG = "beta";
+const WORLD_PIN = "5.0.0-beta.32";
 /**
  * The dashboard's ingest URL, on the port this attach actually picked.
  *
@@ -856,7 +877,7 @@ function buildPlan({
   const deps = { ...project.pkg.dependencies };
   const wantsPostgres = Boolean(plan.composeFile) || Boolean(plan.reusedCompose) || Boolean(existingUrl);
   const newDeps = [];
-  if (wantsPostgres && !deps["@workflow/world-postgres"]) newDeps.push(["@workflow/world-postgres", WORLD_TAG]);
+  if (wantsPostgres && !deps["@workflow/world-postgres"]) newDeps.push(["@workflow/world-postgres", WORLD_PIN]);
   if (wantTraces && !existingInstrumentation && !deps["@vercel/otel"]) newDeps.push(["@vercel/otel", OTEL_RANGE]);
   const wantsBootstrap = wantsPostgres && !project.pkg.scripts?.["db:bootstrap"];
   if (newDeps.length > 0 || wantsBootstrap) {

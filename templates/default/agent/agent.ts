@@ -13,9 +13,12 @@ import { wrapLanguageModel, type LanguageModelMiddleware } from "ai";
  * `.eve/.workflow-data` — fine for a quick `eve dev`, but mount that directory
  * if you care about the data.
  *
- * The @workflow/* line must match eve's. eve 0.29.x needs 5.0.0-beta, and the
- * runtime rejects mismatched protocol versions — which is why package.json
- * pins `@workflow/world-postgres` to the `beta` tag and not `latest`.
+ * The @workflow/* line must match eve's, and "match" is finer-grained than the
+ * version number suggests. eve needs the 5.0.0-beta line and rejects mismatched
+ * protocol versions, so npm's `latest` (4.x) is out — but upstream also raises
+ * the World *spec* version inside 5.0.0-beta.* with no semver bump, so the
+ * `beta` dist-tag is out too. That is why package.json pins
+ * `@workflow/world-postgres` to an EXACT version rather than a tag or a range.
  */
 const workflow = process.env.WORKFLOW_POSTGRES_URL
   ? { world: "@workflow/world-postgres" }

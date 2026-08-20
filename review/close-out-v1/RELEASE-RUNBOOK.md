@@ -266,6 +266,18 @@ have pulled it. What you can do:
 
 Both are template dependencies. Both must exist on npm before `create-evestack`.
 
+**Every `npm publish` below needs a 2FA one-time code, so a human has to run them in an
+interactive terminal.** npm prompts `This operation requires a one-time password:` and reads it
+from the TTY. An agent or a CI shell has no TTY, so the publish fails with *"You can provide a
+one-time password by passing --otp"* — which reads like a flag was forgotten rather than like the
+credential gate it is. Nothing is published when this happens; `npm view` still reports the old
+version, so it is safe to simply re-run. Confirm the session is authenticated first, because a
+`npm login` token can go invalid between login and publish:
+
+```bash
+npm whoami   # must print your username, not E401
+```
+
 ```bash
 npm publish ./packages/evestack-composio
 npm publish ./packages/evestack-schedules
@@ -311,8 +323,8 @@ git push origin 'create-evestack@0.10.0'
 ```
 
 `prepack` runs `scripts/sync-template.mjs`, which copies `templates/default` into `template/` and
-rewrites the three `workspace:*` ranges. Verified on this tree — the tarball ships 56 files /
-184.2 kB with:
+rewrites the three `workspace:*` ranges. Measured on the tree that actually shipped 0.10.0 — the
+tarball ships 57 files / 186.6 kB with:
 
 ```json
 "@evestack/budget": "^0.2.1",
@@ -324,6 +336,17 @@ and **no `workspace:` string anywhere** in `template/`. Those are the three that
 resolve. `template/` is gitignored and generated at pack time; if it is stale in your checkout,
 `npm pack --dry-run` regenerates it.
 
+That file count is one-to-one with `templates/default`, so it moves whenever the template does —
+0.10.0 shipped 57 rather than the 56 this section first recorded because `test/fence.test.mjs` was
+added. Do not treat a mismatch as a defect on its own; the property worth checking is that nothing
+*stray* is in the tarball. Derive that instead of comparing counts:
+
+```bash
+npm pack --dry-run ./packages/create-evestack 2>&1 | grep -cE 'node_modules|/\.env$|\.npmrc'   # 0
+```
+
+`template/.env.example` is expected and is not a credential — it is the file the scaffolder copies.
+
 **Rollback:** `npm unpublish create-evestack@0.10.0` inside 72h. Note that this is the version
 that pins the 0.4.0 image, so if step 3 failed and you got here anyway, unpublishing is the
 correct move.
@@ -333,10 +356,22 @@ correct move.
 ## 6. `evestack` 0.4.1 — **pnpm, not npm**
 
 ```bash
-pnpm --filter evestack publish --access public
+pnpm --filter evestack publish --access public --no-git-checks
 npm view evestack version               # 0.4.1
 git tag -a 'evestack@0.4.1' -m 'evestack 0.4.1' && git push origin 'evestack@0.4.1'
 ```
+
+`--no-git-checks` is required whenever you publish from a detached worktree, which is how §1 tells
+you to stage the release. pnpm's default guard refuses with `ERR_PNPM_GIT_UNKNOWN_BRANCH` because
+`publish-branch` is `master|main` and a detached HEAD is on neither. That guard is a proxy for "you
+are shipping what main says"; satisfy the real property directly before you pass the flag:
+
+```bash
+test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" && echo "same as main"
+```
+
+Do not fix this by checking out a branch in the release worktree — the point of detaching is that
+another session may be moving `main` under you, which happened during the 0.4.0 release.
 
 `evestack` declares `create-evestack: workspace:^`. npm has never implemented that protocol and
 would ship the range verbatim, so every install would end at `Unsupported URL Type "workspace:"`.

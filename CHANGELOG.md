@@ -99,7 +99,69 @@ the container image is published at the version the repository is on.
 The `npm create` entry point. Carries `templates/default` inside it, so a change to the
 template ships as a change to this package.
 
+### create-evestack@0.10.1 — 2026-08-19
+
+#### Fixed
+
+- **Every project scaffolded by `0.10.0` died at startup.** The template declared
+  `"@workflow/world-postgres": "beta"` — a dist-tag, not a version range — so the string in
+  the manifest never changed while the package underneath it did. Upstream ships World
+  **spec** changes inside the `5.0.0-beta.*` line with no semver signal, and when `beta`
+  advanced to `5.0.0-beta.34` it began pulling `@workflow/world@5.0.0-beta.27`, which
+  declares spec **6**. eve 0.30.8's Workflow runtime requires spec **5**:
+
+  ```
+  [env-runner] worker init failed: This Workflow runtime requires a World with matching
+  spec version 5, but the configured World declares spec version 6.
+  Development worker failed before readiness
+  ```
+
+  Measured by installing each and booting it: `world-postgres@5.0.0-beta.32` →
+  `world@5.0.0-beta.25` → spec 5 → `[DEV] server listening at http://127.0.0.1:2000/`.
+  `@5.0.0-beta.34` → `world@5.0.0-beta.27` → spec 6 → the failure above. The template now
+  declares `"5.0.0-beta.32"` exactly, and `pnpm-lock.yaml` moves with it.
+
+  Exact, not `^` or `~`. Both of those still resolve to `.34` and `.35` — prerelease
+  identifiers compare within one `5.0.0` triple, so caret and tilde constrain nothing that
+  matters here. A "tighter" range would have looked like a fix and shipped the same bug.
+
+- **`evestack attach` carried the same dist-tag in a second place.** `attach.mjs` wrote the
+  dependency into projects evestack did not scaffold from `const WORLD_TAG = "beta"`, so
+  fixing only the template would have left half the defect shipping. It is now
+  `const WORLD_PIN = "5.0.0-beta.32"`, and a contract asserts the two agree rather than
+  trusting that whoever moves one remembers the other.
+
+#### Added
+
+- `contract/contracts/23-workflow-pin.contract.mjs` — no `@workflow/*` version anywhere in
+  the repository may be a dist-tag or a floating range, in any dependency field or any
+  `overrides` / `resolutions` block, plus the scaffolder's constant. Proven by mutation:
+  restoring `"beta"` to the template fails it, and so do `^5.0.0-beta.32`,
+  `~5.0.0-beta.32`, a dist-tag hidden inside `overrides`, and a scan that stops finding
+  anything.
+
+> **Why this repository could not see it.** `pnpm-lock.yaml` had frozen the same
+> declaration at `5.0.0-beta.31` since early August, so every install here resolved to a
+> world that worked. A scaffolded project has no lockfile and resolves the tag at install
+> time — the one checkout immune to the bug is the checkout that ships it. Unpacking the
+> real `create-evestack@0.10.0` tarball shows `"@workflow/world-postgres": "beta"` in
+> `template/package.json` and `WORLD_TAG = "beta"` in `attach.mjs`, which is what makes
+> this a patch that has to go out rather than a tidy-up. The `beta` tag moved from `.34` to
+> `.35` during the session that found it; nothing in this repository changed, and the
+> failure arrived anyway.
+>
+> `0.10.0` itself is written up under **Unreleased → Bumped and waiting to publish**, above.
+> It has since gone to npm; that section is what needs correcting next, and this entry does
+> not do it.
+
 ### create-evestack@0.10.0 — 2026-08-13
+
+> **Superseded by `0.10.1`, and left here because npm still serves it.** Every project
+> scaffolded by this version died at startup — see the `0.10.1` entry above for the
+> `@workflow/world-postgres` dist-tag that caused it. This entry stays because the version
+> is published: a heading in this file is the release notes for a version someone may still
+> be running, and deleting one does not unpublish it.
+
 
 Tagged `create-evestack@0.10.0`.
 

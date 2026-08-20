@@ -1,7 +1,8 @@
 import { composioTools } from "@evestack/composio";
 
 /**
- * One browser flow signs this agent into 1,000+ apps.
+ * One browser flow signs this agent into an app, for any toolkit Composio holds an
+ * OAuth client for. The catalog is 1,000+; the one-click subset is smaller.
  *
  * The model does not get ten thousand tools. It gets a handful of meta-tools —
  * search the catalog, check a connection, execute — and Composio's router

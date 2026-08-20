@@ -82,10 +82,11 @@ a database with no tables.
 </Warning>
 
 <Warning>
-  Pin `@workflow/world-postgres` to the `beta` tag, not `latest`. npm's `latest` is `4.3.3`;
-  `eve` needs the `5.0.0-beta` line, and the runtime rejects a mismatched protocol
-  version outright. The scaffolded `package.json` already does this — worth knowing if you ever
-  touch that dependency by hand.
+  Pin `@workflow/world-postgres` to an **exact version**. npm's `latest` is the 4.x line and
+  `eve` rejects it outright, but the `beta` dist-tag is not the fix — upstream moves the World
+  spec version inside `5.0.0-beta.*` with no semver signal, so `beta` resolving one release
+  forward is enough to kill a boot. The scaffolded `package.json` pins `5.0.0-beta.32`; leave it
+  exact if you ever touch that dependency by hand.
 </Warning>
 
 ## Run it
