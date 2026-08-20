@@ -161,15 +161,42 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           # An issue rather than a failed job, because a nondeterministic result
-          # needs a human to say which kind of failure it was. The distinction
-          # that matters is in the body: a *vacuous* run never reached its
-          # subject, while a real regression fails on session.failed.
+          # must not gate a merge. But WHICH KIND of failure it was is a
+          # mechanical question, and this step used to leave it to the reader.
+          #
+          # That is how a nightly becomes noise. `deny-survives` is vacuous
+          # roughly one run in four on gpt-5-mini, so the issue was updated most
+          # mornings with prose that opened "check which kind of failure it is"
+          # — identical text whether the model had simply answered without
+          # calling the gated tool, or the deny path had genuinely regressed.
+          # After a week of that, the one morning it mattered would have read
+          # exactly like the six that did not. `provider-bisect.yml` already
+          # classifies its arms this way; this is the same rule, applied where
+          # it is read every day.
+          #
+          # VACUOUS is the narrow case and is recognised narrowly: the run
+          # parked on nothing, and NOTHING failed at the session or turn level.
+          # Anything with session.failed or turn.failed is REAL — that is the
+          # deny-path family. Anything else is UNCLEAR and says so rather than
+          # guessing, because a wrong confident label is worse than none.
+          if grep -qE 'session\.failed|turn\.failed' /tmp/evals.log; then
+            KIND="REAL"
+            LEDE="A gate failed at the session or turn level. That is the deny-path family, not the known vacuous flake — **this one is worth reading today.**"
+          elif grep -qE 'parked \(0%|no pending requests' /tmp/evals.log; then
+            KIND="vacuous"
+            LEDE="The run never reached its subject: the model answered in prose and never called the gated tool. This is the documented flake, roughly one run in four on gpt-5-mini. Re-run, or dispatch with \`model: gpt-5\`."
+          else
+            KIND="unclear"
+            LEDE="The failure matches neither the vacuous signature nor the deny-path family. Read the log below — this classifier has not seen this shape before, which is itself worth knowing."
+          fi
+
           {
-            echo "The nightly eval run was not clean. **The negative control passed**, so the deny"
-            echo "gate is still capable of detecting the bug — this is a real result, not a broken"
-            echo "harness."
+            echo "**Classified: ${KIND}.** ${LEDE}"
             echo
-            echo "Before treating it as a regression, check which kind of failure it is:"
+            echo "The negative control passed, so the deny gate is still capable of detecting the"
+            echo "bug — this is a real result, not a broken harness."
+            echo
+            echo "The two kinds, for reference:"
             echo
             echo "- **Vacuous** — \`parked (0%): it ended \"waiting\" with no pending requests\`."
             echo "  The model answered in prose and never called the gated tool, so the test never"
@@ -183,7 +210,7 @@ jobs:
             echo '```'
           } > /tmp/issue.md
 
-          TITLE="Nightly evals were not clean ($(date -u +%Y-%m-%d))"
+          TITLE="Nightly evals: ${KIND} failure ($(date -u +%Y-%m-%d))"
           # One open issue at a time, updated rather than duplicated: a nightly
           # that files a new issue every morning is a nightly people mute.
           EXISTING="$(gh issue list --state open --label eval-run --json number --jq '.[0].number // empty')"
