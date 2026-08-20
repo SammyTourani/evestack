@@ -169,3 +169,63 @@ test("--print writes every file to stdout and touches nothing", async () => {
     await pack.close();
   }
 });
+
+/**
+ * The success banner is the whole report, and all of it has to reach the stream
+ * the caller supplied.
+ *
+ * THE DEFECT THIS PINS: `skills()` accepts `{ stdout }` and honoured it on the
+ * --help, --print and --json paths, but built the install banner with
+ * create-evestack/ui's PRINTING forms — `heading()`, `row()`, `fix()`,
+ * `blank()` — and those write to the real `process.stdout` (ui.mjs:256-257).
+ * Only the two `c.dim` lines went through the parameter. So a test holding a
+ * sink saw two lines out of nine: no "Skill installed", no per-file rows, no
+ * `npx evestack create`. The rest went past it to the terminal, in a separate
+ * write sequence, which also means the two halves were not ordered relative to
+ * each other. ui.mjs:259-269 names this hazard; status.mjs:442-446 is the fix.
+ *
+ * Asserted on the sink alone, with no `process.stdout` interceptor: the point
+ * is that the sink is now sufficient. Against the old code the first assertion
+ * below fails on an empty-ish string — measured, not assumed, by reverting the
+ * banner and re-running this test.
+ */
+test("the whole install banner reaches the stream the caller supplied", async () => {
+  const pack = await servePack([
+    { path: "SKILL.md", content: "body\n" },
+    { path: "references/cli.md", content: "# cli\n" },
+  ]);
+  process.env.EVESTACK_PACK_URL = pack.url;
+  try {
+    const dir = join(tmp(), "evestack");
+    const stdout = sink();
+    assert.equal(await skills([`--dir=${dir}`], { stdout, stderr: sink() }), 0);
+    const text = stdout.text();
+
+    // Every part of the banner, not just the two lines that used to make it.
+    assert.match(text, /Skill installed/, "the heading went somewhere else");
+    assert.match(text, /your agent now knows evestack/, "and so did its subtitle");
+    assert.match(text, /SKILL\.md/, "the per-file rows went somewhere else");
+    assert.match(text, /references\/cli\.md/);
+    assert.ok(text.includes(dir), "the reader is never told where it was written");
+    assert.match(text, /npx evestack create/, "the one line meant to be typed went somewhere else");
+
+    // Ordering, which two interleaved write sequences cannot promise. A reader
+    // gets the heading, then what was written, then where, then what to type.
+    const at = (needle) => text.indexOf(needle);
+    assert.ok(
+      at("Skill installed") < at("SKILL.md") &&
+        at("SKILL.md") < at(dir) &&
+        at(dir) < at("npx evestack create"),
+      `the banner arrived out of order:\n${text}`,
+    );
+
+    // A sink is not a TTY, so nothing in it should be coloured — this is the
+    // `forStream` contract from ui.mjs:216-233, and the reason a captured
+    // report can be compared and matched rather than only looked at.
+    // eslint-disable-next-line no-control-regex
+    assert.doesNotMatch(text, /\x1b\[/, "escape sequences leaked into a non-TTY stream");
+  } finally {
+    delete process.env.EVESTACK_PACK_URL;
+    await pack.close();
+  }
+});

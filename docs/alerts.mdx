@@ -22,6 +22,27 @@ The payload shape is picked from the hostname — `hooks.slack.com` gets `{"text
 webhook path gets `{"content": …}`, anything else gets a structured JSON body. Override it with
 `EVESTACK_ALERT_WEBHOOK_FORMAT=slack|discord|webhook` if you post through a proxy.
 
+### Which file it goes in
+
+Worth one table, because the variable has to reach the **dashboard's** process and the three
+ways of running it read three different files:
+
+| How you run the dashboard | Put it in | How it arrives |
+| --- | --- | --- |
+| A project from `npm create evestack` | `.env.local` | The generated `docker-compose.yml` gives its dashboard service `env_file: .env.local`, so every name in that file is set inside the container. `.env.example` lists all six, commented out. |
+| This repository's own `docker-compose.yml` | `.env` beside it | That file has **no** `env_file:`, so a name reaches the container only by being named in the dashboard service's `environment:` block. All six are. |
+| `npm run dev` in `packages/dashboard` | `packages/dashboard/.env.local` | Next reads it directly. |
+
+<Warning>
+  Until 2026-08-19 the repository's own `docker-compose.yml` named none of the six, and that is
+  the failure mode this page is least able to help with. Setting `EVESTACK_ALERT_WEBHOOK_URL` in
+  the `.env` beside it did nothing at all: Compose read the file, matched the name against no
+  `${…}` anywhere, and dropped it — while `/monitors` went on saying no delivery target was
+  configured, to someone who had just configured one. Scaffolded projects were never affected,
+  because their compose has `env_file: .env.local` — but their `.env.example` did not mention
+  these variables either, so there was nowhere a user could have discovered them.
+</Warning>
+
 Restart the dashboard and it says which way it went, once, at boot:
 
 ```

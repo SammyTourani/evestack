@@ -69,7 +69,25 @@ export function SiteHeader() {
           >
             <GitHubIcon />
           </a>
-          <Button href={homeAnchor("#quickstart")} size="md">
+          {/* #get-started, not #quickstart. This button pointed at #quickstart
+              after the section carrying that id was deleted in the "Two ways
+              in" pass (see app/page.tsx and components/sections/closing-cta.tsx
+              for what replaced it), so the site's one primary call to action
+              scrolled nowhere: a fragment with no target leaves the browser
+              exactly where it was, silently.
+
+              Nothing caught it because both suites assert the OPPOSITE — that
+              #quickstart is gone (tests/smoke.spec.ts's merged-away loop, and
+              tests/agent-pack.spec.ts:250). The suite was green *because* the
+              destination did not exist. tests/smoke.spec.ts now also asserts
+              that every in-page link in this header resolves to an element on
+              the page, which is the assertion that would have failed here.
+
+              #get-started is the right target rather than /docs/quickstart:
+              closing-cta.tsx is the section that now carries all three ways to
+              start (the command, the agent pack, GitHub), it is the last thing
+              on the page, and its id matches this button's label. */}
+          <Button href={homeAnchor("#get-started")} size="md">
             Get started
           </Button>
         </div>

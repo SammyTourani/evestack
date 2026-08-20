@@ -39,12 +39,27 @@
  * INSERTs at this row count. It also matches how the rest of this package ships schema:
  * a .sql file an operator can pipe into psql.
  *
+ * THE PACKAGE SCRIPT IS `seed:sql`, NOT `seed`, AND THAT NAME IS THE FIX.
+ * It used to be `npm run seed`, which does not seed: this file writes SQL to stdout and
+ * connects to nothing, so the operator who ran the obvious command got several megabytes
+ * of COPY statements scrolling past their prompt and an untouched database — and no
+ * reason to think the two facts were related. CI never hit it because it invokes the file
+ * directly and redirects (.github/workflows/ci.yml:313), so the name lied only to humans,
+ * which is the audience it was for. `seed:purge` went with it: it was `node scripts/seed.mjs
+ * --purge` under a name nothing in the repo ever referenced, and a purge that is not piped
+ * into psql purges nothing either.
+ *
+ * The rename alone would still leave a wall of SQL on the terminal, so `main` refuses to
+ * write to a TTY and prints the pipeline instead. Pipes and redirects are not TTYs, so
+ * every real caller — psql, `> file`, docker exec — is unaffected.
+ *
  * Usage:
  *   node scripts/seed.mjs | psql "$WORKFLOW_POSTGRES_URL"
  *   node scripts/seed.mjs | docker exec -i <pg-container> psql -U evestack -d evestack
  *   node scripts/seed.mjs --purge | psql …              remove seeded rows only
  *   node scripts/seed.mjs --days 60 --sessions 1500
  *   node scripts/seed.mjs --seed 7                      a different but repeatable world
+ *   node scripts/seed.mjs --stdout | less               read it; overrides the TTY refusal
  *
  * The emitted script is one transaction and is idempotent: it deletes its own previous
  * output before writing, so re-running replaces rather than doubles.
@@ -896,6 +911,8 @@ export function parseArgs(argv) {
     purge: false,
     force: false,
     help: false,
+    // Opt back in to writing SQL at a terminal. See the TTY refusal in main().
+    stdout: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -907,6 +924,7 @@ export function parseArgs(argv) {
     else if (arg === "--now") (opts.now = new Date(value)), (i += 1);
     else if (arg === "--purge") opts.purge = true;
     else if (arg === "--force") opts.force = true;
+    else if (arg === "--stdout") opts.stdout = true;
     else if (arg === "--help" || arg === "-h") opts.help = true;
   }
   // A fixed default, so two runs an hour apart still produce the same relative shape.
@@ -914,7 +932,10 @@ export function parseArgs(argv) {
   return opts;
 }
 
-const USAGE = `Dev-only seeder for the evestack dashboard. Emits SQL on stdout.
+const USAGE = `Dev-only seeder for the evestack dashboard.
+
+It does NOT connect to a database. It writes SQL to stdout, and nothing is seeded until
+you pipe that into psql — which is why the package script is called seed:sql.
 
   node scripts/seed.mjs | psql "$WORKFLOW_POSTGRES_URL"
   node scripts/seed.mjs --purge | psql "$WORKFLOW_POSTGRES_URL"
@@ -926,14 +947,52 @@ const USAGE = `Dev-only seeder for the evestack dashboard. Emits SQL on stdout.
   --now ISO       anchor the window                   (default 2026-08-06T12:00:00Z)
   --force         seed even if unseeded runs exist
   --purge         emit only the cleanup statements
+  --stdout        write the SQL to a terminal anyway
 
 Every run it writes carries deployment_id = '${SEED_DEPLOYMENT}', which is how --purge
 finds them again. Spans are matched on resource->>'service.name'.`;
+
+/**
+ * What a person sees when they run this and forget the pipe.
+ *
+ * Deliberately not the full USAGE dump: the reader ran one command, got nothing, and
+ * needs one command back. The flag list is a --help away and says so.
+ */
+const NOT_A_DATABASE = `seed.mjs writes SQL to stdout and connects to nothing, so this would have
+scrolled a few megabytes of COPY statements past your prompt and seeded no database.
+
+Pipe it into psql instead:
+
+  node scripts/seed.mjs | psql "$WORKFLOW_POSTGRES_URL"
+
+  --purge   the same, but removes only the rows this script wrote
+  --stdout  print the SQL here anyway
+  --help    every flag`;
 
 function main() {
   const opts = parseArgs(process.argv.slice(2));
   if (opts.help) {
     process.stdout.write(`${USAGE}\n`);
+    return;
+  }
+
+  /*
+   * A terminal is not a database.
+   *
+   * This is the whole "npm run seed does not seed" defect, caught at the one moment it
+   * can be told apart from a legitimate run: stdout being a TTY means no psql, no file
+   * and no `docker exec -i` is on the other end, so the several megabytes about to be
+   * written have nowhere to go but the scrollback. Pipes and redirects are never TTYs,
+   * so CI's `> /tmp/probe-seed.sql` (.github/workflows/ci.yml:313) and every documented
+   * pipeline reach the code below exactly as before.
+   *
+   * Exit 1, not 0. The caller asked for a seeded database and does not have one, and
+   * this file's own house rule is that a thing which did not happen must not report
+   * success. `--stdout` is the escape hatch for actually wanting to read the SQL.
+   */
+  if (process.stdout.isTTY && !opts.stdout) {
+    process.stderr.write(`${NOT_A_DATABASE}\n`);
+    process.exitCode = 1;
     return;
   }
 

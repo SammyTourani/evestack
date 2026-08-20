@@ -45,9 +45,24 @@ interface Group {
  * schedule all require reaching the agent, and the agent is on your machine.
  * CONFIGURE is the state the agent carries between runs.
  *
- * Sandboxes sits under DRIVE rather than OBSERVE on purpose: the page lists
- * containers running on this host and can stop them, which is an action, not a
- * reading.
+ * Sandboxes sits under DRIVE rather than OBSERVE on purpose, and NOT because it
+ * acts. This comment used to say the page "can stop them, which is an action" —
+ * it cannot, and never could. `lib/sandboxes.ts` issues GET requests only (the
+ * one `request()` call in the file is `method: "GET"`, lib/sandboxes.ts:139, and
+ * the module header says so at :18), there is no route under `app/api` that
+ * touches a container, and the page's own disabled-state copy tells the reader
+ * the opposite of what this comment told the next maintainer:
+ * "Nothing here writes: this page lists containers and there is no way to stop
+ * or remove one from the dashboard" (app/sandboxes/page.tsx:221). A comment that
+ * promises a lifecycle verb is how someone comes to wire a Stop button to a
+ * socket that is root-equivalent on the host — the exact thing lib/sandboxes.ts
+ * fences behind a second, not-yet-existing flag.
+ *
+ * The real reason it is under DRIVE is this group's hint, "What a hosted
+ * dashboard cannot do", which is precisely what the page is: containers running
+ * on THIS host, knowable only from the machine. OBSERVE's hint is "What your
+ * agents did" — a record of the past — and a live container list is not that.
+ * The grouping is about where the knowledge comes from, not about writes.
  */
 const GROUPS: readonly Group[] = [
   {

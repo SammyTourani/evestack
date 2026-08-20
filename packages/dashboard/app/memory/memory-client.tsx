@@ -89,6 +89,24 @@ export function MemoryList({
 
               {confirming === row.id ? (
                 <span className={styles.confirm}>
+                  {/*
+                    Said BEFORE the irreversible click, not after.
+
+                    `evestack.memory_deletions` keeps the deleted text verbatim
+                    and always has — sql/memory-audit.sql:9 explains why: an
+                    audit row reading only "memory 41 was deleted" cannot answer
+                    the question anyone actually asks. What changed is that the
+                    trail is now RENDERED, in "Recently deleted" on this page.
+
+                    So the operation stopped meaning what the button implied.
+                    Someone deleting a memory precisely because it holds
+                    something sensitive would have removed it from the agent's
+                    recall and left it on screen, and found that out afterwards.
+                    Retention is the deliberate part; the surprise was not.
+                  */}
+                  <span className={styles.confirmNote}>
+                    kept in the audit log below, text and all
+                  </span>
                   <button
                     type="button"
                     className={styles.danger}

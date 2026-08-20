@@ -196,3 +196,52 @@ test("priced models are costed at their own rates, not one shared rate", () => {
   );
   assert.equal(rateOf("ollama/qwen3"), 0, "local inference is free");
 });
+
+/*
+ * ── The name has to mean the thing ──────────────────────────────────────────
+ *
+ * `npm run seed` did not seed. This file writes SQL to stdout and opens no
+ * connection, so the operator who ran the obvious command watched ~27 MB of
+ * COPY statements scroll past and ended up with the same empty database they
+ * started with. CI was never affected — it redirects into a file
+ * (.github/workflows/ci.yml:313) — which is exactly why the lie survived: the
+ * only audience it misled was the one nothing asserts against.
+ *
+ * These pin the two halves of the fix, because both are one careless edit from
+ * coming back: the script's NAME says what it emits, and `main` refuses to
+ * write megabytes of SQL at a terminal.
+ */
+
+test("the package script is named for what it emits, and nothing claims to seed", async () => {
+  const { readFileSync } = await import("node:fs");
+  const manifest = JSON.parse(
+    readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+  );
+  const scripts = manifest.scripts ?? {};
+
+  assert.equal(scripts["seed:sql"], "node scripts/seed.mjs");
+  assert.equal(scripts.seed, undefined, "`seed` promises a seeded database this script cannot give");
+  // Removed rather than renamed: `node scripts/seed.mjs --purge` under a name
+  // nothing in the repo referenced, and a purge that is not piped purges nothing.
+  assert.equal(scripts["seed:purge"], undefined);
+
+  // Any future script pointing at this file must not be called something that
+  // reads as "this seeds the database" — the defect, restated as a rule.
+  for (const [name, body] of Object.entries(scripts)) {
+    if (!String(body).includes("scripts/seed.mjs")) continue;
+    assert.match(name, /sql/, `\`${name}\` runs seed.mjs but its name does not say it emits SQL`);
+  }
+});
+
+test("a terminal is refused; a pipe is not", async () => {
+  const source = await import("node:fs").then(({ readFileSync }) =>
+    readFileSync(new URL("../scripts/seed.mjs", import.meta.url), "utf8"),
+  );
+  // The guard must key on isTTY specifically. Anything else — an env var, an
+  // argument — either fires in CI's redirect or fails to fire at a prompt.
+  assert.match(source, /process\.stdout\.isTTY/);
+  assert.match(source, /process\.exitCode = 1/, "a run that seeded nothing must not exit 0");
+  // And there has to be a way back to the SQL for someone who wants to read it.
+  assert.equal(parseArgs(["--stdout"]).stdout, true);
+  assert.equal(parseArgs([]).stdout, false);
+});

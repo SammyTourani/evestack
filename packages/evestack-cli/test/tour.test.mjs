@@ -299,11 +299,23 @@ async function withCountingAgent(run, { answerHealth = false } = {}) {
 
 
 /**
- * The tour prints its report through create-evestack/ui, which writes to the
- * real process.stdout rather than to the injected stream. The injected one
- * carries only the usage text and the refusal. Both are worth reading, so this
- * captures the real one too; a test that asserted on the sink alone would be
- * asserting on an empty string and passing for the wrong reason.
+ * A guard on the stream the tour was handed, and a record of why it was needed.
+ *
+ * WHAT THIS USED TO BE FOR: the tour printed its report through
+ * create-evestack/ui's PRINTING forms — `say`, `blank`, `heading`, `row`,
+ * `rule`, `fix` — and every one of those writes to the real `process.stdout`
+ * (ui.mjs:256-257). The injected stream carried only the usage text and the
+ * refusal. So the two tests below could not read the report from the sink at
+ * all, and this helper existed to intercept the half that escaped.
+ *
+ * src/tour.mjs now builds every line with the `xLine` string forms and writes
+ * them to the stream it was given, which is the shape ui.mjs:259-269 prescribes
+ * and status.mjs already had. That makes this helper the OPPOSITE assertion:
+ * both tests below now read the report out of the sink and use the captured
+ * text to prove `process.stdout` received nothing. Kept rather than deleted
+ * because "nothing escaped" is the property worth pinning — a future call site
+ * that reaches for `say()` again would put the split straight back, and only
+ * this can see that happen.
  *
  * ─ Why it separates the writes by async context instead of eating them ─
  *
@@ -397,12 +409,23 @@ test("--yes is consent to spend, but a stack that is down still stops first", as
     async (port, seen) => {
       await inProject(port, { stdinTty: false }, async () => {
         let code;
-        const printed = await captureStdout(async () => {
-          code = await tour(["--yes"], { stdout: sink(), stderr: sink() });
+        const out = sink();
+        // `captureStdout` is still here, but its role is inverted. It used to be
+        // the only way to read this report at all, because the tour printed it
+        // through ui.mjs's printing forms and those write to the real
+        // process.stdout. Now it is the negative half of the assertion: the
+        // report has to be in `out`, and process.stdout has to come back empty.
+        const escaped = await captureStdout(async () => {
+          code = await tour(["--yes"], { stdout: out, stderr: sink() });
         });
         assert.equal(code, 1, "a down stack is exit 1, not a refusal and not a success");
-        assert.match(printed, /agent/i, "and it says which part is not answering");
-        assert.match(printed, /not answering/i, "in words, not as a status code");
+        assert.match(out.text, /agent/i, "and it says which part is not answering");
+        assert.match(out.text, /not answering/i, "in words, not as a status code");
+        assert.equal(
+          escaped,
+          "",
+          `the tour wrote past the stream it was handed: ${JSON.stringify(escaped)}`,
+        );
       });
       assert.equal(
         seen.sessions,
@@ -460,13 +483,15 @@ test("the tour teaches the product it is a tour of", async () => {
 
   await withCountingAgent(async (port) => {
     await inProject(port, { stdinTty: false }, async () => {
-      const printed = await captureStdout(async () => {
-        await tour(["--yes"], { stdout: sink(), stderr: sink() });
+      const out = sink();
+      const escaped = await captureStdout(async () => {
+        await tour(["--yes"], { stdout: out, stderr: sink() });
       });
       // Printed before the stack check, so a down stack still shows the plan.
       for (const word of ["the stack", "a turn", "where it went", "what is next"]) {
-        assert.match(printed, new RegExp(word, "i"), `step "${word}" is missing`);
+        assert.match(out.text, new RegExp(word, "i"), `step "${word}" is missing`);
       }
+      assert.equal(escaped, "", "and the whole plan reached the caller's stream, not the terminal");
     });
   });
 });

@@ -46,7 +46,6 @@
     "@types/react-dom": "19.2.3",
     "@types/three": "^0.185.0",
     "postcss": "^8.5.0",
-    "r3f-perf": "^7.2.0",
     "sharp": "^0.34.0",
     "simple-icons": "^16.28.0",
     "tailwindcss": "^4.1.0",

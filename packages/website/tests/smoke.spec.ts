@@ -54,6 +54,60 @@ test.describe("evestack landing page", () => {
     expect(errors).toEqual([]);
   });
 
+  test("every in-page link in the header lands on a section that exists", async ({ page }) => {
+    /* THE HOLE THIS CLOSES. The header's primary button in
+       components/site-header.tsx rendered `href={homeAnchor("#quickstart")}`
+       long after the section carrying that id was deleted, so the site's one
+       primary call to action scrolled nowhere. A fragment with no target is
+       the quietest failure a link has: the browser stays put and reports
+       nothing, so it survives clicking the button by hand.
+
+       The suite did not merely miss it, it was green BECAUSE of it. The
+       merged-away loop in the first test of this file asserts `#quickstart`
+       has count 0, and tests/agent-pack.spec.ts:250 asserts the same. Every
+       existing assertion about that id was checking the section was gone;
+       none checked whether anything still pointed at it.
+
+       So this asserts the relationship rather than a destination. Pinning
+       `#get-started` here would only restate today's answer and would go stale
+       the same way the button did; asserting that EVERY fragment link in the
+       header resolves fails on the next rename or deletion too, whichever link
+       it is.
+
+       Both navs are covered because both live inside #site-header: the desktop
+       one runs its hrefs through homeAnchor() and emits "/#id" so they also
+       work from /docs, the mobile <details> menu emits a bare "#id". Both
+       reduce to the same fragment below. */
+    await page.goto("/");
+
+    const hrefs = await page.evaluate(() =>
+      [...document.querySelectorAll("#site-header a[href]")].map(
+        (a) => a.getAttribute("href") ?? "",
+      ),
+    );
+
+    // "/docs" and the GitHub URL carry no fragment and are not this test's
+    // business; "/#get-started" and "#hero" both reduce to the id after "#".
+    const ids = [
+      ...new Set(
+        hrefs.filter((h) => /^\/?#.+/.test(h)).map((h) => h.slice(h.indexOf("#") + 1)),
+      ),
+    ];
+
+    /* Without this the whole test passes vacuously the day someone rewrites
+       the header to use a router and no fragment links are left to check. */
+    expect(ids.length, "the header should still carry in-page links").toBeGreaterThan(0);
+
+    for (const id of ids) {
+      // [id="…"] rather than #… so an id with a CSS-significant character is a
+      // failing assertion instead of an invalid-selector crash.
+      await expect(
+        page.locator(`[id="${id}"]`),
+        `the header links to #${id}, which nothing on the page defines`,
+      ).toHaveCount(1);
+    }
+  });
+
   test("no em dashes anywhere a visitor can read", async ({ page }) => {
     /* Sammy's rule, and it is a readability rule rather than a style one: an
        em dash is where a sentence gets a subordinate clause bolted on, and

@@ -20,7 +20,7 @@ import { dirname, join, resolve } from "node:path";
 // This file declared its own copy of the colour table, as did shared.mjs and the
 // template's checks.mjs — three tables, none of which asked whether stdout was a
 // terminal before emitting an escape.
-import { c, forStream, g, heading } from "create-evestack/ui";
+import { c, forStream, g, headingLine } from "create-evestack/ui";
 
 /**
  * The env files eve itself loads, in the order it loads them — `.env.local` last,
@@ -303,7 +303,16 @@ export async function open(argv, { stdout = process.stdout, stderr = process.std
   }
 
   stdout.write("\n");
-  heading("dashboard", healthy ? "" : "not running yet");
+  // `headingLine`, not `heading`. The printing form calls ui.mjs's `say()`,
+  // which writes to the real `process.stdout` — so this ONE line of an
+  // otherwise stream-correct block jumped the `stdout` this function was
+  // handed. Every other write in `open()` already goes to the parameter, which
+  // is what made it easy to read past: a caller passing a stream got the URL,
+  // the credentials and the verdict, and the header above them landed
+  // somewhere else. ui.mjs:259-269 names this hazard and status.mjs:442-446 is
+  // the corrected pattern. Identical on a terminal, where the two are the same
+  // object.
+  stdout.write(`${headingLine("dashboard", healthy ? "" : "not running yet")}\n`);
   stdout.write("\n");
   stdout.write(`      ${c.brandBold(url)}\n`);
   if (password) {

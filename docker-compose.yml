@@ -190,6 +190,56 @@ services:
       COMPOSIO_API_KEY: ${COMPOSIO_API_KEY:-}
       EVESTACK_COMPOSIO_USER_ID: ${EVESTACK_COMPOSIO_USER_ID:-}
 
+      # ── Alert delivery ──────────────────────────────────────────────────────
+      #
+      # Six names, and not one of them was in this block until 2026-08-19 — which
+      # made every alert setting a no-op ON THE CONTRIBUTOR STACK SPECIFICALLY.
+      #
+      # The mechanism is the whole bug, so it is worth stating exactly. THIS FILE
+      # HAS NO `env_file:`. A scaffolded project's compose does — search
+      # packages/create-evestack/create.mjs for `env_file:` and the `- .env.local`
+      # under it — so there, a name written into .env.local arrives inside the
+      # container without anyone listing it anywhere. Here, a `.env` beside this
+      # file feeds Compose INTERPOLATION on the host (`${...}` in this file,
+      # resolved before the file is even parsed) and reaches the container by
+      # exactly one route: a line in this block. So `EVESTACK_ALERT_WEBHOOK_URL=…`
+      # in `.env` was read by Compose, matched no `${...}` anywhere in the file,
+      # and was dropped without a word.
+      #
+      # The symptom is the one docs/alerts.mdx exists to prevent, and it is the
+      # quiet kind: /monitors goes on printing "No delivery target is configured,
+      # so these nine monitors are computed and shown here and told to nobody"
+      # (packages/dashboard/lib/alert-delivery.ts:291) to an operator who
+      # configured one and has no way to see that the setting never arrived. Same
+      # failure class as the EVESTACK_DAILY_BUDGET_USD transposition that contract
+      # 19 was written for: a check that cannot fire, counted among the ones that
+      # passed.
+      #
+      # `:-` IS SAFE FOR ALL SIX, and that was checked against the readers rather
+      # than assumed — it turns "unset" into "empty string", and those are not the
+      # same value to every parser:
+      #
+      #   WEBHOOK_URL       `?.trim()` then `if (!raw)`         alert-delivery.ts:286
+      #   WEBHOOK_FORMAT    "" matches no branch; host detection wins        :350
+      #   WEBHOOK_SECRET    `?.trim() || null`                              :307
+      #   INTERVAL_SECONDS  `Number("")` is 0, `n <= 0` → fallback          :360
+      #   RENOTIFY_MINUTES  `Number("")` is 0, `> 0` false → off            :282
+      #   DAILY_SPEND_USD   guarded by `raw !== ""` BEFORE the false/off/none
+      #                     word test (lib/budget-env.ts:91), so an empty value
+      #                     cannot be misread as "spend alerting switched off"
+      #
+      # The last one is why this list is not decoration. `EVESTACK_ALERT_DAILY_SPEND_USD=false`
+      # is a real, documented setting that disables spend alerting; had that
+      # reader tested the word before testing for empty, adding the line below
+      # would have switched the spend monitor off for every contributor who set
+      # none of these.
+      EVESTACK_ALERT_WEBHOOK_URL: ${EVESTACK_ALERT_WEBHOOK_URL:-}
+      EVESTACK_ALERT_WEBHOOK_FORMAT: ${EVESTACK_ALERT_WEBHOOK_FORMAT:-}
+      EVESTACK_ALERT_WEBHOOK_SECRET: ${EVESTACK_ALERT_WEBHOOK_SECRET:-}
+      EVESTACK_ALERT_INTERVAL_SECONDS: ${EVESTACK_ALERT_INTERVAL_SECONDS:-}
+      EVESTACK_ALERT_RENOTIFY_MINUTES: ${EVESTACK_ALERT_RENOTIFY_MINUTES:-}
+      EVESTACK_ALERT_DAILY_SPEND_USD: ${EVESTACK_ALERT_DAILY_SPEND_USD:-}
+
       # Where the Skills page reads from. Points at the mount below; both halves
       # are needed or it silently falls back — see the volume's comment.
       EVESTACK_SKILLS_DIR: /agent-skills

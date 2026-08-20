@@ -24,7 +24,7 @@
  */
 import { spawn } from "node:child_process";
 
-import { blank, c, fix, forHumans, forStream, g, heading, row, rule, say } from "create-evestack/ui";
+import { blank, c, fixLine, forHumans, forStream, g, headingLine, rowLine, ruleLine } from "create-evestack/ui";
 
 import { findProjectEnv, notAProject, projectEnv, wantsHelp } from "./project.mjs";
 import { probeAll } from "./status.mjs";
@@ -73,6 +73,39 @@ const STEPS = [
 ];
 
 export async function tour(argv, { stdout = process.stdout, stderr = process.stderr } = {}) {
+  /*
+   * Every line this command prints goes through the `stdout` it was handed.
+   *
+   * THE BUG, and it was the worst instance of it in this package: `tour()` took
+   * a stream and used it for exactly two things — the usage text above, and the
+   * agent's streamed reply, which it forwards into `streamReply`. The other
+   * sixty-odd writes — the heading, the four step rules, the probe rows, the fix
+   * lines, every sentence of the narration — went through ui.mjs's `say()` /
+   * `blank()` / `heading()` / `row()` / `rule()` / `fix()`, all of which write
+   * to the real `process.stdout` (ui.mjs:256-257).
+   *
+   * So a caller that supplied a stream got the model's reply with none of the
+   * frame around it, and the frame appeared on the terminal instead — the two
+   * halves of one report split across two destinations, and not even in order,
+   * since they are separate write sequences. test/tour.test.mjs had to grow a
+   * whole `AsyncLocalStorage`-based `captureStdout` helper to read the half that
+   * escaped, and that helper's own docblock records what the workaround cost:
+   * an earlier version of it ate the test runner's result lines and this file
+   * silently reported 9 of its 14 tests.
+   *
+   * ui.mjs:259-269 states the rule — "`xLine(...)` returns the string and
+   * `x(...)` prints it" — and names this exact failure, which `status` had and
+   * had fixed (status.mjs:442-446). This is now the same shape.
+   *
+   * `forStream` is what stops a message bound for a different stream inheriting
+   * a colour decision made from `process.stdout` (ui.mjs:216-233). It changes
+   * nothing for a human: on a terminal it returns its input untouched, and when
+   * the real stdout is not a TTY ui.mjs's `color` is already false so there is
+   * no escape to strip. `out()` with no argument is `blank()` — `forStream`
+   * of "" is "", and the newline is added below either way.
+   */
+  const out = (text = "") => stdout.write(`${forStream(stdout, text)}\n`);
+
   if (wantsHelp(argv)) {
     stdout.write(TOUR_USAGE);
     return 0;
@@ -115,53 +148,53 @@ export async function tour(argv, { stdout = process.stdout, stderr = process.std
   const custom = argv.find((a) => a.startsWith("--message="))?.slice("--message=".length);
   const message = custom || DEFAULT_MESSAGE;
 
-  blank();
-  heading("tour", "a guided first run");
-  blank();
+  out();
+  out(headingLine("tour", "a guided first run"));
+  out();
   STEPS.forEach(([title, detail], i) => {
-    say(`    ${c.dim(`${i + 1}`)}  ${c.bold(title.padEnd(15))}${c.dim(detail)}`);
+    out(`    ${c.dim(`${i + 1}`)}  ${c.bold(title.padEnd(15))}${c.dim(detail)}`);
   });
-  blank();
+  out();
 
   /* -- 1. is it up ---------------------------------------------------------- */
 
-  rule("1 · the stack");
-  blank();
+  out(ruleLine("1 · the stack"));
+  out();
   const probes = await probeAll(env);
   const needed = [probes.agent, probes.postgres, probes.model];
   for (const p of [...needed, probes.dashboard]) {
     const glyph = p.state === "ok" ? g.OK : p.state === "warn" ? g.WARN : g.FAIL;
-    row(glyph, p.part, p.state === "fail" ? c.red(p.detail) : c.dim(p.detail), "", { indent: 4 });
-    if (p.fix) fix(p.fix, { indent: 6 });
+    out(rowLine(glyph, p.part, p.state === "fail" ? c.red(p.detail) : c.dim(p.detail), "", { indent: 4 }));
+    if (p.fix) out(fixLine(p.fix, { indent: 6 }));
   }
-  blank();
+  out();
 
   // The dashboard is step 3, not a prerequisite: a turn is a turn whether or not
   // anything is watching, and refusing to demonstrate the agent because the
   // container is down would be the tour failing at the thing it teaches.
   const blocked = needed.filter((p) => p.state === "fail");
   if (blocked.length > 0) {
-    say(`  ${c.redBold("The tour needs the agent, Postgres and a model key.")}`);
-    say(`  ${c.dim("Run the lines above, then `evestack tour` again.")}`);
-    blank();
+    out(`  ${c.redBold("The tour needs the agent, Postgres and a model key.")}`);
+    out(`  ${c.dim("Run the lines above, then `evestack tour` again.")}`);
+    out();
     return 1;
   }
   if (probes.dashboard.state === "fail") {
-    say(`  ${c.yellow("The dashboard is down, so step 3 will only print the link.")}`);
-    blank();
+    out(`  ${c.yellow("The dashboard is down, so step 3 will only print the link.")}`);
+    out();
   }
 
   /* -- 2. a turn ------------------------------------------------------------ */
 
-  rule("2 · a turn");
-  blank();
-  say(`  ${c.dim("Sending to your agent — one real model call:")}`);
-  say(`      ${c.bold(message)}`);
-  blank();
+  out(ruleLine("2 · a turn"));
+  out();
+  out(`  ${c.dim("Sending to your agent — one real model call:")}`);
+  out(`      ${c.bold(message)}`);
+  out();
 
   if (!yes && !(await confirm("Send it?"))) {
-    say(`  ${c.dim("Nothing sent.")}`);
-    blank();
+    out(`  ${c.dim("Nothing sent.")}`);
+    out();
     return 0;
   }
 
@@ -171,56 +204,56 @@ export async function tour(argv, { stdout = process.stdout, stderr = process.std
   try {
     session = await startSession(agentBase, message, env);
   } catch (error) {
-    say(`  ${c.redBold("The agent refused the message.")}  ${c.dim(error.message)}`);
-    blank();
-    fix("evestack verify", { indent: 4, note: "checks the model key and the schema" });
-    blank();
+    out(`  ${c.redBold("The agent refused the message.")}  ${c.dim(error.message)}`);
+    out();
+    out(fixLine("evestack verify", { indent: 4, note: "checks the model key and the schema" }));
+    out();
     return 1;
   }
 
-  say(`  ${c.dim("session")}  ${c.bold(session.sessionId)}`);
-  blank();
+  out(`  ${c.dim("session")}  ${c.bold(session.sessionId)}`);
+  out();
 
   const reply = await streamReply(agentBase, session.sessionId, env, stdout);
-  blank();
+  out();
 
   if (reply.failed) {
-    say(`  ${c.redBold("The turn failed.")} ${c.dim(reply.failed)}`);
-    blank();
-    say(`  ${c.dim("This is exactly what the dashboard and `evestack doctor` are for:")}`);
-    fix("evestack doctor", { indent: 4, note: "read-only — it never writes to your database" });
-    blank();
+    out(`  ${c.redBold("The turn failed.")} ${c.dim(reply.failed)}`);
+    out();
+    out(`  ${c.dim("This is exactly what the dashboard and `evestack doctor` are for:")}`);
+    out(fixLine("evestack doctor", { indent: 4, note: "read-only — it never writes to your database" }));
+    out();
     return 1;
   }
 
   const seconds = ((Date.now() - started) / 1000).toFixed(1);
-  say(`  ${c.dim(`${g.ok} that was a durable turn — ${seconds}s, and it is a row in your Postgres`)}`);
-  say(`  ${c.dim("   now, not a log line that scrolls away.")}`);
-  blank();
+  out(`  ${c.dim(`${g.ok} that was a durable turn — ${seconds}s, and it is a row in your Postgres`)}`);
+  out(`  ${c.dim("   now, not a log line that scrolls away.")}`);
+  out();
 
   /* -- 3. where it went ------------------------------------------------------ */
 
-  rule("3 · where it went");
-  blank();
+  out(ruleLine("3 · where it went"));
+  out();
   const dashboard = forHumans(probes.dashboard.url ?? "http://localhost:4000");
   const link = `${dashboard}/sessions/${encodeURIComponent(session.sessionId)}`;
-  say(`  ${c.dim("The same turn, from the other side:")}`);
-  say(`      ${c.brandBold(link)}`);
-  blank();
-  say(`  ${c.dim("Nothing shipped that turn anywhere. The dashboard is reading the")}`);
-  say(`  ${c.dim("Postgres on your machine — the tokens, the cost, the trace spans and")}`);
-  say(`  ${c.dim("the tool calls are all rows you can SELECT yourself.")}`);
-  blank();
+  out(`  ${c.dim("The same turn, from the other side:")}`);
+  out(`      ${c.brandBold(link)}`);
+  out();
+  out(`  ${c.dim("Nothing shipped that turn anywhere. The dashboard is reading the")}`);
+  out(`  ${c.dim("Postgres on your machine — the tokens, the cost, the trace spans and")}`);
+  out(`  ${c.dim("the tool calls are all rows you can SELECT yourself.")}`);
+  out();
   if (!noOpen && probes.dashboard.state === "ok" && (yes || (await confirm("Open it?")))) {
     openBrowser(link);
-    say(`  ${c.dim(`opened ${link}`)}`);
-    blank();
+    out(`  ${c.dim(`opened ${link}`)}`);
+    out();
   }
 
   /* -- 4. next --------------------------------------------------------------- */
 
-  rule("4 · what is next");
-  blank();
+  out(ruleLine("4 · what is next"));
+  out();
   const password = env("EVESTACK_AUTH_PASSWORD");
   const tips = [
     ["memory", `ask it to remember something, then ask again in a new session`],
@@ -228,13 +261,13 @@ export async function tour(argv, { stdout = process.stdout, stderr = process.std
     ["schedules", `durable cron, with a history of every fire and a pause switch`],
     ["cost", `priced per turn from token counts — never a silent $0.00`],
   ];
-  for (const [what, why] of tips) row(c.dim(g.skip), what, c.dim(why), "", { indent: 4, labelWidth: 12 });
-  blank();
-  say(`  ${c.bold("Dashboard")}  ${c.brand(dashboard)}`);
-  if (password) say(`  ${c.bold("Sign in")}    ${env("EVESTACK_AUTH_USER") ?? "evestack"} ${c.dim("/")} ${password}`);
-  blank();
-  say(`  ${c.dim("`evestack status` any time · `evestack doctor` if a run stops moving")}`);
-  blank();
+  for (const [what, why] of tips) out(rowLine(c.dim(g.skip), what, c.dim(why), "", { indent: 4, labelWidth: 12 }));
+  out();
+  out(`  ${c.bold("Dashboard")}  ${c.brand(dashboard)}`);
+  if (password) out(`  ${c.bold("Sign in")}    ${env("EVESTACK_AUTH_USER") ?? "evestack"} ${c.dim("/")} ${password}`);
+  out();
+  out(`  ${c.dim("`evestack status` any time · `evestack doctor` if a run stops moving")}`);
+  out();
   return 0;
 }
 
@@ -299,6 +332,17 @@ export async function startSession(base, message, env) {
  */
 export async function streamReply(base, sessionId, env, stdout) {
   const out = { text: "", failed: null };
+
+  /* The three degradation notices below used ui.mjs's `say()`, which writes to
+     the real `process.stdout` — inside the one function in this file that has
+     always taken a stream and used it. So the agent's reply went to the caller's
+     stream and "(could not attach to the stream…)" went to the terminal: the
+     text explaining why the reply is missing arrived somewhere other than the
+     place the reply was supposed to be. `note` is the string-form equivalent,
+     aimed at the stream this function was given. `write` below is deliberately
+     left alone — it was already correct, and running the model's own deltas
+     through `plain()` would strip escape-shaped bytes out of the reply text. */
+  const note = (text) => stdout.write(`${forStream(stdout, text)}\n`);
   let response;
   try {
     response = await fetch(new URL(`/eve/v1/session/${encodeURIComponent(sessionId)}/stream`, base), {
@@ -306,11 +350,11 @@ export async function streamReply(base, sessionId, env, stdout) {
       signal: AbortSignal.timeout(TURN_TIMEOUT_MS),
     });
   } catch {
-    say(`  ${c.dim("(could not attach to the stream — the reply is in the dashboard)")}`);
+    note(`  ${c.dim("(could not attach to the stream — the reply is in the dashboard)")}`);
     return out;
   }
   if (!response.ok || !response.body) {
-    say(`  ${c.dim("(no stream for this session — the reply is in the dashboard)")}`);
+    note(`  ${c.dim("(no stream for this session — the reply is in the dashboard)")}`);
     return out;
   }
 
@@ -355,9 +399,9 @@ export async function streamReply(base, sessionId, env, stdout) {
   } catch (error) {
     if (printedPrefix) stdout.write("\n");
     if (error?.name === "TimeoutError") {
-      say(`  ${c.yellow("The turn is still running after two minutes.")}`);
-      say(`  ${c.dim("A local model on a laptop can take this long. It is durable — it will")}`);
-      say(`  ${c.dim("finish, and the dashboard will have it.")}`);
+      note(`  ${c.yellow("The turn is still running after two minutes.")}`);
+      note(`  ${c.dim("A local model on a laptop can take this long. It is durable — it will")}`);
+      note(`  ${c.dim("finish, and the dashboard will have it.")}`);
     }
     return out;
   }
@@ -384,6 +428,13 @@ async function confirm(question) {
     new Promise((resolve) => rl.once("close", () => resolve(null))),
   ]);
   rl.close();
+  // The one place in this file that still prints to `process.stdout` on
+  // purpose, and it is not the same defect as the one fixed above. readline is
+  // wired to `process.stdout` two lines up because a prompt has to appear on
+  // the terminal the answer is typed at — routing this trailing newline to a
+  // caller's stream would tear one interactive exchange in half, which is the
+  // very thing being fixed everywhere else. Guarded by `process.stdin.isTTY`,
+  // so it is unreachable whenever there is no terminal to write to.
   blank();
   return answer === null || !answer.trim().toLowerCase().startsWith("n");
 }

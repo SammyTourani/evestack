@@ -48,7 +48,18 @@ test("a hostname that resolves to IPv6 first still reaches an IPv4-only listener
     return;
   }
   // The precondition that made this bite: ::1 is what a single attempt would use.
-  assert.equal(addresses[0].family, 6, "expected ::1 to sort first; the bug needs that ordering");
+  //
+  // SKIPPED, not asserted, when the order is the other way round. A dual-stack
+  // host that sorts A before AAAA is an ordinary configuration — macOS with
+  // this resolver does it — and on such a host a single attempt would reach the
+  // IPv4 listener anyway, so there is no race left to lose and nothing here to
+  // prove. Asserting it turned "this machine cannot stage the bug" into "the
+  // fix is broken", which is the same false-red the skip above already avoids
+  // for the IPv4-only case; it simply did not cover this one.
+  if (addresses[0].family !== 6) {
+    t.skip("this host sorts IPv4 first, so a single attempt already reaches the v4 listener");
+    return;
+  }
 
   const { server, port } = await ipv4OnlyServer();
   t.after(() => server.close());

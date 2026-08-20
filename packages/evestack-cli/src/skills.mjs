@@ -19,11 +19,11 @@
  * it genuinely constrains, an offline global install, gets a sentence naming
  * the URL rather than a stack trace.
  */
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
-import { c, forStream, g, heading, row, fix, blank } from "create-evestack/ui";
+import { c, fixLine, forStream, g, headingLine, rowLine } from "create-evestack/ui";
 
 const DEFAULT_PACK_URL = "https://evestack.vercel.app/agent-pack.json";
 
@@ -204,16 +204,45 @@ export async function skills(argv, { stdout = process.stdout, stderr = process.s
     return 0;
   }
 
-  const out = (text) => stdout.write(`${forStream(stdout, text)}\n`);
-  heading("Skill installed", "your agent now knows evestack");
-  for (const file of pack.files) {
-    row(g.ok, file.path, "", "", { labelWidth: 22 });
-  }
-  blank();
-  out(`  ${c.dim("in")} ${target.dir}`);
-  blank();
-  out(`  ${c.dim("Ask your agent to set evestack up, or run:")}`);
-  fix("npx evestack create");
-  blank();
+  /*
+   * Built as lines and written once, to the stdout this function was handed.
+   *
+   * THE BUG: this block used `heading()`, `row()`, `fix()` and `blank()` from
+   * create-evestack/ui, and every one of those is the PRINTING form — it calls
+   * `say()`, which writes to the real `process.stdout` (ui.mjs:256). Only the
+   * two `out(...)` lines ever reached the `stdout` this function accepts. So on
+   * the success path the parameter was a lie for most of the banner: a caller
+   * that passed a stream got the two dim lines and nothing else, while the
+   * heading, the per-file rows and the fix line went past it to the terminal.
+   * In test/skills.test.mjs every install case passes `sink()`, so the banner
+   * was unassertable — and worse, when the two streams differ the output is not
+   * even in order, because the interleaved writes land in two places.
+   *
+   * ui.mjs:259-269 documents this hazard by name and gives the shape out of it:
+   * "`xLine(...)` returns the string and `x(...)` prints it" — the string forms
+   * exist precisely so a command that takes a stream can honour it. status.mjs
+   * (see status.mjs:442-446, which carries the same note after the same fix) is
+   * the corrected version of this pattern; this is now the same shape.
+   *
+   * Byte-identical for a human at a terminal. `forStream` returns its input
+   * untouched when the stream is a TTY, and when the real stdout is not a TTY
+   * ui.mjs's module-level `color` is already false, so nothing was coloured in
+   * the first place. The only behaviour that changes is the one that was broken:
+   * output aimed at a non-TTY stream the caller supplied now arrives there,
+   * uncoloured, whole and in order.
+   */
+  const lines = [
+    headingLine("Skill installed", "your agent now knows evestack"),
+    // `g.ok` — the bare glyph, not the pre-coloured `g.OK`. Kept exactly as it
+    // was: this is a rendering change, not a restyle.
+    ...pack.files.map((file) => rowLine(g.ok, file.path, "", "", { labelWidth: 22 })),
+    "",
+    `  ${c.dim("in")} ${target.dir}`,
+    "",
+    `  ${c.dim("Ask your agent to set evestack up, or run:")}`,
+    fixLine("npx evestack create"),
+    "",
+  ];
+  stdout.write(`${forStream(stdout, lines.join("\n"))}\n`);
   return 0;
 }

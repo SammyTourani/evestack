@@ -21,23 +21,29 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-const { MEMORY_PAGE_LIMIT, truncationNote } = await import(
+const { MEMORY_DELETIONS_LIMIT, MEMORY_PAGE_LIMIT, deletionsNote, truncationNote } = await import(
   new URL("../app/memory/truncation.ts", import.meta.url).href
 );
+
+const { readFileSync } = await import("node:fs");
+/**
+ * page.tsx as text. It is an async server component that opens a database
+ * connection on import, so every claim about it here is made by reading it —
+ * the same technique the second test below already used, hoisted because the
+ * audit-trail tests need it too.
+ */
+const PAGE = readFileSync(new URL("../app/memory/page.tsx", import.meta.url), "utf8");
 
 test("a truncated list names how many are shown and how many exist", () => {
   const note = truncationNote(MEMORY_PAGE_LIMIT, 3412, false);
   assert.equal(note, "Showing the most recent 200 of 3,412 memories.");
 });
 
-test("the page's own limit is the number the sentence quotes", async () => {
+test("the page's own limit is the number the sentence quotes", () => {
   // The drift this exists to stop: the query is raised and the footnote keeps
-  // promising 200. Read as text rather than executed, because page.tsx is an
-  // async server component that opens a database connection on import.
-  const { readFileSync } = await import("node:fs");
-  const source = readFileSync(new URL("../app/memory/page.tsx", import.meta.url), "utf8");
-  assert.match(source, /limit:\s*MEMORY_PAGE_LIMIT/);
-  assert.doesNotMatch(source, /limit:\s*\d/, "the row cap must come from the shared constant");
+  // promising 200.
+  assert.match(PAGE, /limit:\s*MEMORY_PAGE_LIMIT/);
+  assert.doesNotMatch(PAGE, /limit:\s*\d/, "the row cap must come from the shared constant");
 });
 
 test("a complete list says nothing at all", () => {
@@ -62,4 +68,59 @@ test("nonsense in, silence out", () => {
   assert.equal(truncationNote(Number.NaN, 100, false), null);
   assert.equal(truncationNote(10, Number.NaN, false), null);
   assert.equal(truncationNote(-1, 100, false), null);
+});
+
+/*
+ * ── The deletion audit trail ────────────────────────────────────────────────
+ *
+ * `evestack.memory_deletions` was write-only. `deleteMemory` wrote a row on
+ * every permanent delete (lib/memories.ts:141) and `listMemoryDeletions` — the
+ * only function that reads one — had no caller anywhere in the repo, so the
+ * trail existed solely for someone holding a psql prompt. These pin the three
+ * properties that make it real: something reads it, the reader admits to its
+ * cap, and a failed read is never dressed up as an empty one.
+ */
+
+test("the page actually reads the deletion trail back", () => {
+  // The regression this exists to stop is the whole defect returning: an audit
+  // row written on every irreversible delete and nothing in the product that
+  // can show it. A caller is the entire fix, so a caller is what is asserted.
+  assert.match(PAGE, /listMemoryDeletions/, "nothing on /memory reads evestack.memory_deletions");
+  assert.match(
+    PAGE,
+    /await\s+listMemoryDeletions\(MEMORY_DELETIONS_LIMIT\)/,
+    "the trail must be read with the shared cap, not a literal",
+  );
+});
+
+test("a failed audit read is reported, never rendered as an empty trail", () => {
+  // "I could not look" and "nothing was deleted" are opposite answers to the
+  // one question this table exists to answer, and they render identically if
+  // the catch swallows. Same defect class as contract 22.
+  assert.match(PAGE, /deletionsError/, "the audit read has no error state");
+  assert.match(
+    PAGE,
+    /not evidence that nothing was\s*\n?\s*deleted/,
+    "the failure state must say it is not an all-clear",
+  );
+});
+
+test("a capped deletion list says so, and names the number it capped at", () => {
+  assert.equal(
+    deletionsNote(MEMORY_DELETIONS_LIMIT, MEMORY_DELETIONS_LIMIT),
+    "Showing the 20 most recent deletions.",
+  );
+  // The drift: someone raises MEMORY_DELETIONS_LIMIT and the sentence keeps
+  // promising the old number. It is derived, so it cannot.
+  assert.equal(deletionsNote(5, 5), "Showing the 5 most recent deletions.");
+});
+
+test("a complete deletion trail apologises for nothing", () => {
+  // A `LIMIT n` read that came back short is proof there is no n+1th row, so a
+  // footnote here would be an apology for a truncation that did not happen.
+  assert.equal(deletionsNote(0, MEMORY_DELETIONS_LIMIT), null);
+  assert.equal(deletionsNote(19, MEMORY_DELETIONS_LIMIT), null);
+  assert.equal(deletionsNote(Number.NaN, MEMORY_DELETIONS_LIMIT), null);
+  assert.equal(deletionsNote(5, Number.NaN), null);
+  assert.equal(deletionsNote(0, 0), null);
 });

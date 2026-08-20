@@ -177,13 +177,26 @@ export interface MemoryDeletionRow {
 }
 
 /**
- * Kept deliberately, despite having no caller.
+ * Read the deletion trail back.
  *
- * Every other zero-consumer export in this dashboard was deleted; this one is
- * the only way to read an audit trail for an irreversible action, and removing
- * it would leave `evestack.memory_deletions` write-only and reachable solely
- * through `psql`. The honest fix is a screen that calls this, not a smaller
- * surface — so it stays until that exists.
+ * THIS NOW HAS A CALLER, and that is the whole point of it. The comment here
+ * used to open "Kept deliberately, despite having no caller" and argue that
+ * deleting the function would leave `evestack.memory_deletions` write-only and
+ * reachable solely through `psql` — true, but it described the state the code
+ * was already in: `deleteMemory` above wrote an audit row on every permanent
+ * delete and nothing in the product ever read one. An audit trail with no
+ * reader is not a weaker compliance surface than one with a reader; it is not a
+ * compliance surface, because "why does the agent no longer know that?" still
+ * gets a shrug from everyone without a database shell. The screen the old
+ * comment was waiting for is `app/memory/page.tsx:87`, the "Recently deleted"
+ * section under the memory list.
+ *
+ * `ensureMemoryAuditSchema` runs first so a reader on a deployment that has
+ * never deleted anything gets an empty list rather than `relation
+ * "evestack.memory_deletions" does not exist`. It is DDL, and it is why the
+ * caller reads this in its own try/catch: a role without CREATE fails HERE and
+ * must not take the memory list down with it, nor be rendered as "nothing was
+ * deleted".
  */
 export async function listMemoryDeletions(limit = 100): Promise<MemoryDeletionRow[]> {
   await ensureMemoryAuditSchema();

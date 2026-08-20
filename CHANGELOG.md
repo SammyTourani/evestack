@@ -52,49 +52,45 @@ They are summarised rather than itemised, deliberately.
 
 ## Unreleased
 
-**`@evestack/dashboard@0.4.0` is waiting to be published.** Its entry is written up in full
-under its own section below; this is the pointer, because the pending state is the dangerous
-one. The tree installs **spans v4** and **facts v2**, and the newest image GHCR serves is
-`0.3.1`, which installs spans v3 and facts v1 — so until that image ships, the schema work
-is unreachable for every user, and anyone reading a version number alone cannot tell the two
-schemas apart. That is the condition the bump ends and the publish completes.
+Nothing is pending. Every package in this tree matches the version its registry serves, and
+the container image is published at the version the repository is on.
 
-The five packages that were queued here — the scaffolder, the CLI, `@evestack/mcp`,
-`@evestack/budget` and `@evestack/sandbox-opensandbox` — went to npm on 2026-08-09 and their
-entries have moved down into their own sections; the dashboard image followed at `0.3.0`,
-then `0.3.1`.
-
-What remains below ships in no artifact. It is recorded because the *symptom* reached
-users even though the code never did — the state this section exists to make visible,
-since a package whose version matches the registry while its code does not is the one
-condition every check in RELEASING.md reports as green.
-
-### Bumped and waiting to publish
-
-Four packages changed shipped files on this branch while their versions still matched
-npm — the exact condition the "Bumping versions" section of RELEASING.md calls the
-dangerous one, because every check it lists reports green while the registry and the
-repository disagree about what the number means. `create-evestack@0.9.2` was the clearest
-case: unpacking the real tarball shows the published `0.9.2` pinning the `0.3.1` dashboard
-image, while `0.9.2` in this tree pins `0.4.0` and runs `git init`. Same number, different
-scaffold. All four are bumped here, in the commit that made them differ.
-
-- **`create-evestack` 0.9.2 → 0.10.0.** Minor rather than patch: the scaffolder now
-  creates a `.git` (closing the `~/.npmrc` credential copy), pins the `0.4.0` image, and
-  explains a refused registry pull instead of pointing at logs that cannot exist.
-- **`evestack` 0.4.0 → 0.4.1.** `doctor` reads the project's own `.env.local`, `status`
-  tells a socket that answered from one that is not there, and a part that could not be
-  checked no longer folds into "Everything is up."
-- **`@evestack/composio` 0.2.0 → 0.2.1.** Description copy only, but it ships in the
-  package metadata, so the number has to move with it.
-- **`@evestack/schedules` 0.2.0 → 0.2.1.** README only, and the README is in `files`.
+> **This section claimed the opposite until 2026-08-19, and that is precisely the failure it
+> exists to prevent.** It opened with "**`@evestack/dashboard@0.4.0` is waiting to be
+> published** … the newest image GHCR serves is `0.3.1`, which installs spans v3 and facts
+> v1", and carried a `### Bumped and waiting to publish` list naming four more packages as
+> differing from npm. Every one of those claims had been false for days. Verified 2026-08-19:
+>
+> - `docker manifest inspect ghcr.io/sammytourani/evestack-dashboard:0.4.0` returns a
+>   two-platform (`linux/amd64`, `linux/arm64`) image index, and `git tag -l` carries
+>   `@evestack/dashboard@0.4.0`, tagged 2026-08-11. GHCR has served 0.4.0 since.
+> - `npm view` reports `create-evestack` **0.10.0**, `evestack` **0.4.1**,
+>   `@evestack/composio` **0.2.1** and `@evestack/schedules` **0.2.1** — the four "waiting"
+>   versions, all live, all published 2026-08-13 (`time` field, converted from UTC). Their
+>   entries have moved down into their own package sections, where the file's convention puts
+>   a shipped release.
+>
+> The staleness is not a harmless leftover. This section's entire job is to name the one
+> state RELEASING.md calls the dangerous one — a version number that means one thing in the
+> registry and another in the tree — so a reader who trusts it and is wrong has lost the only
+> signal this repository offers for that condition. Worse in the specific: a reader who
+> believed the "`0.3.1` is the newest image" sentence would go on pulling a tag that installs
+> spans v3 and facts v1, avoiding an image that had been correct and published for over a
+> week, on the authority of the changelog.
+>
+> **The lesson for whoever writes here next:** a pending-state paragraph is a claim with an
+> expiry date, and nothing in CI checks it. `publish-dashboard.yml` gates on the
+> `### @evestack/dashboard@<version>` heading existing (publish-dashboard.yml:234) and never
+> reads this section, so "Unreleased" can rot indefinitely while every release passes green.
+> When you publish, empty this section in the same commit.
 
 ### Changed but not yet versioned
 
 - **`contract/`** — 1b63559 and 06274c4 repaired a probe that was writing rows eve's
   `WorkflowRunSchema` rejects, which bricked a development database for four days.
-  Ships in no published artifact; recorded here because the *symptom* reached users as
-  "the database that would not boot", and docs/troubleshooting.mdx carries the repair.
+  Ships in no published artifact — `contract/` is in no package's `files` — and is recorded
+  here because the *symptom* reached users as "the database that would not boot", and
+  docs/troubleshooting.mdx carries the repair.
 
 ---
 
@@ -102,6 +98,33 @@ scaffold. All four are bumped here, in the commit that made them differ.
 
 The `npm create` entry point. Carries `templates/default` inside it, so a change to the
 template ships as a change to this package.
+
+### create-evestack@0.10.0 — 2026-08-13
+
+Tagged `create-evestack@0.10.0`.
+
+**A minor rather than a patch, because `0.9.2` had already shipped twice meaning two
+different things.** Unpacking the published tarball showed `0.9.2` pinning the `0.3.1`
+dashboard image, while `0.9.2` in this tree pinned `0.4.0` and ran `git init` — same number,
+different scaffold. That is the state the "Bumping versions" section of RELEASING.md calls
+the dangerous one: every check it lists reports green while the registry and the repository
+disagree about what the number means. Bumping is what ends it.
+
+#### Added
+
+- The scaffolder creates a `.git` in the generated project, which closes the `~/.npmrc`
+  credential copy.
+
+#### Changed
+
+- The scaffolded compose file pins `ghcr.io/sammytourani/evestack-dashboard:0.4.0`, up from
+  `:0.3.1`. That is the spans v4 / facts v2 image — read the `@evestack/dashboard@0.4.0`
+  entry below before rolling a project back past it.
+
+#### Fixed
+
+- A refused registry pull is explained, instead of pointing the reader at logs that cannot
+  exist.
 
 ### create-evestack@0.9.2 — 2026-08-09
 
@@ -353,6 +376,17 @@ not correspond to any commit in this repository. Do not install it.
 The CLI — `create`, `status`, `tour`, `open`, `verify`, `attach`, `doctor`. Depends on
 `create-evestack`, so it publishes last.
 
+### evestack@0.4.1 — 2026-08-13
+
+Tagged `evestack@0.4.1`.
+
+#### Fixed
+
+- `doctor` reads the project's own `.env.local`.
+- `status` distinguishes a socket that answered from one that is not there.
+- A part that could not be checked no longer folds into "Everything is up." Same rule the
+  dashboard's `/monitors` page follows: a check that could not look is not an all-clear.
+
 ### evestack@0.4.0 — 2026-08-09
 
 #### Changed
@@ -532,6 +566,15 @@ First release, with the eve contract suite (30c296d).
 
 Composio tool access. A **template dependency**.
 
+### @evestack/composio@0.2.1 — 2026-08-13
+
+Tagged `@evestack/composio@0.2.1`.
+
+#### Changed
+
+- Description copy only — but it ships inside the package metadata, so the number has to
+  move with it. A patch whose whole diff is prose is still a patch a registry serves.
+
 ### @evestack/composio@0.2.0 — 2026-08-06
 
 #### Added
@@ -567,6 +610,14 @@ dependency order this repository has followed since.
 ## `@evestack/schedules`
 
 Cron schedules and the heartbeat. A **template dependency**.
+
+### @evestack/schedules@0.2.1 — 2026-08-13
+
+Tagged `@evestack/schedules@0.2.1`.
+
+#### Changed
+
+- README only, and the README is listed in `files`, so it is part of the published tarball.
 
 ### @evestack/schedules@0.2.0 — 2026-08-06
 

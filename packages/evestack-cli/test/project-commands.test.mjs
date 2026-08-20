@@ -12,7 +12,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { findProject, findProjectEnv, OPEN_USAGE, VERIFY_USAGE } from "../src/project.mjs";
+import { findProject, findProjectEnv, open, OPEN_USAGE, VERIFY_USAGE } from "../src/project.mjs";
 import { nodeVersionProblem, projectCommand, scaffoldCommand, USAGE } from "../src/cli.mjs";
 
 function project() {
@@ -121,4 +121,53 @@ test("the command list names verify and open, so they are discoverable at all", 
   // missing from --help may as well not be implemented.
   assert.match(USAGE, /evestack verify/);
   assert.match(USAGE, /evestack open/);
+});
+
+/**
+ * `open` prints one block, and all of it has to reach the stream it was handed.
+ *
+ * THE DEFECT THIS PINS: every write in `open()` went to the `stdout` parameter
+ * except one — `heading("dashboard", …)`, which is create-evestack/ui's PRINTING
+ * form and writes to the real `process.stdout` (ui.mjs:256, 279-281). So a
+ * caller supplying a stream got the URL, the credentials and the verdict with
+ * the header missing, and the header appeared somewhere else entirely. One line
+ * out of six is exactly the kind of split that survives review: the output looks
+ * complete on a terminal, where the two streams are the same object.
+ *
+ * Driven against a dead port so the dashboard probe fails fast and `open`
+ * returns 1 on the branch that never launches a browser — no Docker, no network
+ * and nothing opens a window on the machine running the suite.
+ */
+test("open's whole report reaches the stream it was handed, header included", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evestack-open-"));
+  // Port 1 on loopback refuses immediately, so `healthy` is false without a wait.
+  writeFileSync(
+    join(root, ".env.local"),
+    "EVESTACK_DASHBOARD_URL=http://127.0.0.1:1\nEVESTACK_AUTH_USER=evestack\nEVESTACK_AUTH_PASSWORD=s3cret\n",
+  );
+  const chunks = [];
+  const stdout = { write: (s) => chunks.push(s) };
+  const cwd = process.cwd();
+  try {
+    process.chdir(root);
+    const code = await open(["--no-open"], { stdout, stderr: { write: () => {} } });
+    assert.equal(code, 1, "a dashboard that is not answering is exit 1");
+  } finally {
+    process.chdir(cwd);
+  }
+  const text = chunks.join("");
+
+  // Anchored to the start of a line and to the heading's mark glyph: a bare
+  // /dashboard/ also matches the `docker compose --profile dashboard` fix line
+  // below, so it passed against the very code this test exists to fail.
+  assert.match(text, /^ {2}\S+ dashboard/m, "the header went past the stream it was handed");
+  assert.match(text, /not running yet/, "and so did the subtitle that says why");
+  // The rest of the block, so this cannot pass on a header alone.
+  assert.match(text, /127\.0\.0\.1:1|localhost:1/, "the URL is the point of the command");
+  assert.match(text, /s3cret/, "and the password it exists to reprint");
+  // Header first: two interleaved write sequences could not promise even that.
+  assert.ok(
+    text.indexOf("dashboard") < text.indexOf("s3cret"),
+    `the report arrived out of order:\n${text}`,
+  );
 });

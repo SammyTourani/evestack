@@ -86,7 +86,10 @@
 }
 .forget:hover { border-color: var(--err, #d15b5b); color: var(--err, #d15b5b); }
 
-.confirm { margin-left: auto; display: inline-flex; gap: 6px; }
+.confirm { margin-left: auto; display: inline-flex; gap: 6px; align-items: center; }
+/* Quiet, but present. It sits between the reader and an irreversible click, so
+   it has to be readable without competing with the two buttons beside it. */
+.confirmNote { color: var(--text-faint); font-size: 12px; white-space: nowrap; }
 .confirm .danger, .confirm .cancel { margin-left: 0; }
 .danger { border-color: var(--err, #d15b5b); color: var(--err, #d15b5b); }
 .danger:disabled { opacity: 0.6; cursor: default; }
@@ -108,4 +111,68 @@
   padding: 9px 12px;
   font-size: 13px;
   margin: 0 0 12px;
+}
+
+/* ── The deletion audit trail ────────────────────────────────────────────────
+   Subordinate to the memories above it, deliberately. `evestack.memory_deletions`
+   answers "why does the agent no longer know that?", which is a question a reader
+   asks second — so this is a section under the list rather than a tab beside it,
+   separated by a rule so it cannot be mistaken for more memories. Same borrowed
+   pieces as the list (.meta, .dot, .tags, .tag, .note) so the two read as one
+   page. */
+.audit {
+  margin-top: 32px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
+.auditHead {
+  font-size: 15px;
+  margin: 0 0 4px;
+}
+
+.auditSub {
+  font-size: 12px;
+  margin: 0 0 14px;
+  max-width: 90ch;
+  line-height: 1.5;
+}
+
+.auditList { list-style: none; margin: 0; padding: 0; }
+
+/* Dimmer than .item on purpose: these rows describe something that is gone, and
+   giving them the same weight as a live memory would read as a second list of
+   things the agent believes. */
+.auditItem {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 6px;
+  opacity: 0.85;
+}
+
+.auditContent {
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-dim);
+}
+
+/* Never colour alone — the word "unidentified" is already in the text; this
+   only makes it findable when a reader is scanning for it. */
+.unattributed { color: var(--err, #d15b5b); }
+
+/* "I could not look" is an error state, not an empty one. It gets the same
+   treatment as .error above rather than the .faint grey of "nothing yet",
+   because the two must never be confused for each other. */
+.auditError {
+  border: 1px solid color-mix(in srgb, var(--err) 40%, transparent);
+  border-radius: 6px;
+  padding: 9px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--err);
+  margin: 0;
+  max-width: 90ch;
 }

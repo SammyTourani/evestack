@@ -227,8 +227,25 @@ export function plain(s) {
  * Deliberately not "turn colour off when either stream is redirected": that
  * would strip colour from a perfectly good terminal on every `2>/dev/null`.
  * The stream being written to is the only thing that can answer this.
+ *
+ * ── the environment comes first, in the SAME order `color` uses ──────────────
+ *
+ * This consulted `isTTY` alone, which made it disagree with `color` about the
+ * one case CI depends on. `docs/cli.mdx` promises FORCE_COLOR "turns colour on,
+ * even through a pipe — for CI logs that render it", and `color` implements
+ * that; a stream-routed line went through here instead and was stripped anyway.
+ * So `FORCE_COLOR=1 evestack tour | cat` produced no colour on exactly the
+ * surface the flag exists for, and the docs said otherwise.
+ *
+ * The precedence is copied from `color` rather than re-derived, because two
+ * functions answering "should this be coloured" in two different orders is the
+ * bug, not the fix. What stays per-stream is only the last question — which
+ * stream is a terminal — since that is the one `color` cannot answer.
  */
 export function forStream(stream, text) {
+  if (env.FORCE_COLOR !== undefined) return env.FORCE_COLOR !== "0" ? text : plain(text);
+  if (env.NO_COLOR !== undefined) return plain(text);
+  if (env.TERM === "dumb") return plain(text);
   return stream && stream.isTTY ? text : plain(text);
 }
 
