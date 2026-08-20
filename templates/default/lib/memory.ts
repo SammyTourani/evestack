@@ -581,9 +581,40 @@ export async function recent(limit = 5): Promise<Recalled[]> {
   });
 }
 
+/**
+ * Delete one memory by id.
+ *
+ * ── why this does NOT call ensureSchema() ────────────────────────────────────
+ *
+ * `ensureSchema` sizes the vector column with `embedSettings().dimensions`
+ * (:289), and `embedSettings()` throws when there is no embeddings provider to
+ * ask — `EVESTACK_PROVIDER=anthropic` with no `OPENAI_API_KEY` is the ordinary
+ * case, because Anthropic publishes no embeddings endpoint. So a DELETE by
+ * primary key, which embeds nothing and compares nothing, used to fail on a
+ * provider it never needed:
+ *
+ *   EVESTACK_PROVIDER=anthropic, OPENAI_API_KEY=
+ *     forget(1) THREW: EVESTACK_PROVIDER=anthropic has no embeddings endpoint...
+ *
+ * The width is only needed to CREATE the table. If the table is already there —
+ * seeded by whatever provider was configured when it was created — nothing here
+ * needs to know how wide it is.
+ *
+ * This is also the branch where a wrong error costs the most. `forget` is the
+ * one irreversible operation in this file, and it is gated on a human approval;
+ * whoever just approved a permanent delete should be told whether it happened,
+ * not lectured about embedding configuration.
+ *
+ * A missing table is reported as "nothing deleted" rather than as an error,
+ * because it is: no table, no memories, and creating one on the way to deleting
+ * from it would be a strange thing to do.
+ */
 export async function forget(id: number): Promise<boolean> {
   return readable(async () => {
-    await ensureSchema();
+    const { rows } = await getPool().query<{ exists: string | null }>(
+      "SELECT to_regclass('evestack.memories')::text AS exists",
+    );
+    if (rows[0]?.exists == null) return false;
     const { rowCount } = await getPool().query("DELETE FROM evestack.memories WHERE id = $1", [id]);
     return (rowCount ?? 0) > 0;
   });

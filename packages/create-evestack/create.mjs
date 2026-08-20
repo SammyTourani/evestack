@@ -572,9 +572,42 @@ export async function bringUp(target, pm, dashboardPort, { verbose = false, only
   return true;
 }
 
+/**
+ * Which of the three Docker failures this is — not merely whether it works.
+ *
+ * `docker info` collapses "no docker binary", "daemon not running" and "socket
+ * permission denied" into one exit code, so every one of them used to print
+ * "Start Docker Desktop", which is the wrong instruction two thirds of the time
+ * and on Linux or Colima three times out of three: it names an application the
+ * reader does not have.
+ *
+ * `docker version` separates them, because the CLIENT half answers even when
+ * the daemon does not. Measured on Docker 29.5.1: daemon up exits 0 with both
+ * halves populated; daemon down exits 1 with the client half still populated
+ * and the server half empty. A missing binary produces no output at all.
+ * `docker info` cannot express that difference — there is no field in it that
+ * survives a dead daemon.
+ *
+ * Returns a reason rather than a boolean so the caller can say the true thing.
+ */
+function dockerState() {
+  const r = spawnSync("docker", ["version", "--format", "{{.Client.Version}}|{{.Server.Version}}"], {
+    encoding: "utf8",
+  });
+  // ENOENT from spawn itself, or a shell that found nothing to run.
+  if (r.error?.code === "ENOENT" || r.status === null) return "absent";
+  const [client = "", server = ""] = (r.stdout ?? "").trim().split("|");
+  if (r.status === 0 && server.trim() !== "") return "running";
+  // The client answered and the server did not. That is a daemon that is down,
+  // or a socket this user cannot open; `docker version` reports both the same
+  // way, so the message names both rather than guessing between them.
+  if (client.trim() !== "") return "daemon-down";
+  return "absent";
+}
+
+/** Kept as the yes/no the call sites want, now derived from the reason. */
 function hasDocker() {
-  const r = spawnSync("docker", ["info"], { stdio: "ignore" });
-  return r.status === 0;
+  return dockerState() === "running";
 }
 
 function hasOllama() {
@@ -778,11 +811,19 @@ export async function create(argv) {
   // beats three questions, a two-minute install, and then a fourth question that
   // needs you back at the keyboard.
   stepHeader(4, "Bring it up");
-  const dockerUp = hasDocker();
+  const docker = dockerState();
+  const dockerUp = docker === "running";
   let wantStart = false;
   if (!dockerUp) {
-    warn("Docker is not running, so this step is skipped — Postgres and the sandbox need it.");
-    dim("Start Docker Desktop and run the commands printed at the end.");
+    // Two different sentences, because they are two different problems and the
+    // fix for one is not the fix for the other.
+    if (docker === "absent") {
+      warn("No `docker` command found, so this step is skipped — Postgres and the sandbox need it.");
+      dim("Install Docker Engine, Docker Desktop, Colima or OrbStack, then run the commands printed at the end.");
+    } else {
+      warn("Docker is installed but its daemon is not answering, so this step is skipped.");
+      dim("Start it (Docker Desktop, `colima start`, or `sudo systemctl start docker`) — or, if it IS running, check you can reach its socket: `docker version` says which half failed.");
+    }
   } else if (nonInteractive || !process.stdout.isTTY) {
     // In CI, in a heredoc, or under --yes, "shall I pull 230 MB" has nobody to
     // answer it, and a scaffolder that does it anyway is one people stop running
