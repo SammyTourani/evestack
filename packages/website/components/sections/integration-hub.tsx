@@ -351,7 +351,7 @@ export function IntegrationHub() {
         key={callKey}
         aria-hidden
         className={cn(
-          "pointer-events-none absolute left-1/2 top-5 flex -translate-x-1/2 items-center gap-2 whitespace-nowrap font-mono text-[10px] md:text-label-12",
+          "pointer-events-none absolute left-1/2 top-5 flex -translate-x-1/2 items-center gap-2 whitespace-nowrap font-mono text-[12px] md:text-label-12",
           callKey > 0 && "animate-[hub-label-in_0.35s_cubic-bezier(0.16,1,0.3,1)]",
         )}
       >

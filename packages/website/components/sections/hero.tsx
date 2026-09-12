@@ -35,7 +35,29 @@ export function Hero() {
        To make the animation FASTER without shortening the page, or the page
        shorter without speeding it up, retime slab-choreo.ts. Do not reach for
        this number for either. */
-    <section id="hero" aria-labelledby="hero-heading" className="relative h-[340vh]">
+    /* PHONE RUNWAY (< 40rem): 220svh, which is 1,874px instead of 2,897px at
+       393x852 — a full phone screen and a bit off the top of the page, and the
+       hero stops being 19% of the whole document on a device where it is also
+       the slowest thing to scroll past. 220 is not a new number: the comment
+       above records it as a shipped rung ("220vh gave 120vh of scroll"), so it
+       is a speed this disassembly has already run at, and still 2.4x the 50vh
+       that read as a glitch. The beat map in slab-choreo.ts is expressed in
+       fractions of the scrub, so every beat stretches with this and nothing
+       needs retiming.
+
+       svh rather than vh, and that part is not cosmetic: the pinned child is
+       already `h-svh`, and iOS Safari resolves `vh` against the LARGE viewport
+       (URL bar hidden) and `svh` against the small one. Mixing them makes the
+       section and its own sticky child disagree by the height of the toolbar,
+       so the (N - 100) arithmetic in the comment above stops being true on the
+       one platform this rule exists for. The breakpoint is sm to match the
+       stage geometry in hero-client.tsx, so the whole hero changes shape at
+       one width rather than two. */
+    <section
+      id="hero"
+      aria-labelledby="hero-heading"
+      className="relative h-[220svh] sm:h-[340vh]"
+    >
       {/* Layer labels for the scroll disassembly — real DOM, screen-reader
           visible list in every mode */}
       <p className="sr-only">{architecture.srSummary}</p>

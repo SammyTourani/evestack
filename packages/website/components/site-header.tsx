@@ -28,7 +28,17 @@ export function SiteHeader() {
         <div className="flex flex-1 items-center">
           {/* the link stays its own width — a flex-1 anchor would make half
               the header a click target for the logo */}
-          <a href="#hero" className="flex items-center gap-2 text-copy-16 font-medium">
+          {/* homeAnchor, not a bare "#hero": this header renders on /docs too
+              (it is mounted in the root layout), where a same-document
+              fragment points at a section that is not on the page and the
+              wordmark simply does nothing. Same bug the mobile panel below
+              had. py-2.5 is the phone tap target — 24px of text becomes 44px
+              of hit box — and md:py-0 is today's exact value, so the desktop
+              row does not move. */}
+          <a
+            href={homeAnchor("#hero")}
+            className="flex items-center gap-2 py-2.5 text-copy-16 font-medium md:py-0"
+          >
             <span aria-hidden className="text-blue-700">
               {site.mark}
             </span>
@@ -95,7 +105,7 @@ export function SiteHeader() {
         {/* Mobile nav — native details/summary, zero JS */}
         <details className="group relative md:hidden">
           <summary
-            className="flex h-10 w-10 cursor-pointer list-none items-center justify-center rounded-full border border-border-default [&::-webkit-details-marker]:hidden"
+            className="flex h-11 w-11 cursor-pointer list-none items-center justify-center rounded-full border border-border-default [&::-webkit-details-marker]:hidden"
             aria-label="Menu"
           >
             <span aria-hidden className="flex flex-col gap-1">
@@ -105,14 +115,14 @@ export function SiteHeader() {
           </summary>
           <nav
             aria-label="Site"
-            className="absolute right-0 top-12 w-56 rounded-xl border border-border-default bg-background-100 p-2 shadow-2xl"
+            className="absolute right-0 top-13 w-56 rounded-xl border border-border-default bg-background-100 p-2 shadow-2xl"
           >
             <ul className="flex flex-col">
               {nav.map((item) => (
                 <li key={item.href}>
                   <a
-                    href={item.href}
-                    className="block rounded-lg px-3 py-2 text-copy-14 text-gray-900 hover:bg-gray-100 hover:text-gray-1000"
+                    href={homeAnchor(item.href)}
+                    className="block rounded-lg px-3 py-3 text-copy-14 text-gray-900 hover:bg-gray-100 hover:text-gray-1000"
                   >
                     {item.label}
                   </a>
@@ -121,7 +131,7 @@ export function SiteHeader() {
               <li className="mt-1 border-t border-border-subtle pt-1">
                 <a
                   href="/docs"
-                  className="block rounded-lg px-3 py-2 text-copy-14 text-gray-900 hover:bg-gray-100 hover:text-gray-1000"
+                  className="block rounded-lg px-3 py-3 text-copy-14 text-gray-900 hover:bg-gray-100 hover:text-gray-1000"
                 >
                   Docs
                 </a>
@@ -131,9 +141,22 @@ export function SiteHeader() {
                   href={site.github}
                   target="_blank"
                   rel="noreferrer"
-                  className="block rounded-lg px-3 py-2 text-copy-14 text-gray-900 hover:bg-gray-100 hover:text-gray-1000"
+                  className="block rounded-lg px-3 py-3 text-copy-14 text-gray-900 hover:bg-gray-100 hover:text-gray-1000"
                 >
                   GitHub
+                </a>
+              </li>
+              {/* The site's primary call to action lived only on the desktop
+                  side of this header, so a phone visitor who opened the menu
+                  looking for the way in did not find one — the flank carrying
+                  it is `hidden … md:flex`. Same destination and same label as
+                  that button, rendered as the panel's last row. */}
+              <li className="mt-1 border-t border-border-subtle pt-1">
+                <a
+                  href={homeAnchor("#get-started")}
+                  className="block rounded-lg px-3 py-3 text-copy-14 font-medium text-gray-1000 hover:bg-gray-100"
+                >
+                  Get started
                 </a>
               </li>
             </ul>

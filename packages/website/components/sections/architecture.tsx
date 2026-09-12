@@ -64,15 +64,51 @@ export async function Architecture() {
         </div>
         <Node node={agent} />
         <Node node={dashboard} />
-        <div data-arch-beams className="pointer-events-none absolute inset-0">
+        <div data-arch-beams className="pointer-events-none absolute inset-0 hidden md:block">
           <ArchitectureBeams />
         </div>
       </div>
 
+      {/* Below md the node grid above is ONE centred column, and every route in
+          architecture-beams.tsx is written for the three-column layout. "Left
+          edge of the agent → right edge of Postgres" becomes a full-width
+          diagonal drawn straight across the cards stacked in between, and the
+          dashboard → Postgres "arc over the top" degenerates into a vertical
+          line, because stacked cards share a centre x and the cubic's two
+          control points and its endpoint all collapse onto it. The labels go
+          with it: "saves every step" lands on the sandbox card and "reads
+          history" lands at y=0, where the SVG's overflow eats it. What an
+          iPhone actually showed was a dashed line ruled down the middle of all
+          four cards with a pulse riding it.
+
+          So the phone gets the four relationships as text instead — the same
+          four, from the same array, in the same order. It is a sibling of the
+          container rather than a child on purpose: ArchitectureBeams measures
+          [data-arch-container]'s own rect to build its viewBox, so a new child
+          would move the desktop beams. aria-hidden to match the diagram; the
+          srSummary paragraph above is still the accessible truth. */}
+      <ul aria-hidden className="mx-auto mt-2 flex max-w-64 flex-col gap-2 md:hidden">
+        {architecture.beams.map((beam) => {
+          const title = (id: string) =>
+            architecture.nodes.find((node) => node.id === id)?.title ?? id;
+          return (
+            <li
+              key={`${beam.from}-${beam.to}`}
+              className="flex flex-wrap items-baseline gap-x-2 font-mono text-mono-13 text-gray-700"
+            >
+              <span className="text-gray-1000">{title(beam.from)}</span>
+              <span aria-hidden>→</span>
+              <span className="text-gray-1000">{title(beam.to)}</span>
+              <span>{beam.label}</span>
+            </li>
+          );
+        })}
+      </ul>
+
       {/* The same four pieces, as the files that actually create them. Read
           from the repository at build time by lib/code-samples.ts, so this
           block cannot drift from the code it claims to show. */}
-      <div className="mt-16 border-t border-border-subtle pt-12">
+      <div className="mt-10 border-t border-border-subtle pt-8 md:mt-16 md:pt-12">
         <p className="mb-10 text-center text-copy-16 text-gray-900">
           {architecture.codeLead}
         </p>

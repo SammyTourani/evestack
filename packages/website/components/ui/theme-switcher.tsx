@@ -25,7 +25,7 @@ export function ThemeSwitcher() {
             aria-pressed={active}
             onClick={() => setTheme(opt)}
             className={
-              "rounded-full px-3 py-1 font-mono text-label-12 uppercase transition-colors " +
+              "rounded-full px-3 py-3.5 font-mono text-label-12 uppercase transition-colors md:py-1 " +
               (active ? "bg-gray-200 text-gray-1000" : "text-gray-700 hover:text-gray-1000")
             }
           >

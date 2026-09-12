@@ -21,7 +21,7 @@ export function Section({
     <section
       id={id}
       aria-labelledby={labelledBy ?? `${id}-heading`}
-      className={cn("scroll-mt-16 py-20", rule && "section-rule", className)}
+      className={cn("scroll-mt-16 py-14 md:py-20", rule && "section-rule", className)}
     >
       <div className={cn("site-container", containerClassName)}>{children}</div>
     </section>
@@ -46,7 +46,12 @@ export function SectionHeading({
   return (
     <div
       className={cn(
-        "mb-14 flex flex-col gap-4",
+        /* py-14/mb-10 below md, and today's exact py-20/mb-14 from md up. The
+           rhythm was set for a 1440px canvas: at 393pt those two numbers alone
+           spent ~430px — half a phone screen — on air between sections, on a
+           page that was already 18 screens long. Nothing is removed, the
+           spacing is just measured for the screen it is on. */
+        "mb-10 flex flex-col gap-4 md:mb-14",
         align === "center" && "items-center text-center",
       )}
     >

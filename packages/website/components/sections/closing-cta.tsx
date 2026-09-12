@@ -20,7 +20,7 @@ import { closing, site } from "@/lib/copy";
 export function ClosingCta() {
   return (
     <Section id="get-started" labelledBy="closing-heading">
-      <div className="flex flex-col items-center gap-8 py-12 text-center">
+      <div className="flex flex-col items-center gap-8 py-6 text-center md:py-12">
         {/* No data-reveal here, deliberately. This heading is painted by a
             gradient through background-clip:text, and SplitText re-wraps each
             line in a fresh element that inherits `color: transparent` without

@@ -213,7 +213,7 @@ export function MonitorsPanel() {
       {/* ── main ── */}
       <div className="min-w-0 flex-1">
         {/* toolbar */}
-        <div className="flex h-12 items-center gap-3 border-b border-border-subtle px-4">
+        <div className="flex h-12 items-center gap-3 border-b border-border-subtle px-4 max-md:h-auto max-md:flex-wrap max-md:gap-y-2 max-md:py-2.5">
           <p className="truncate text-copy-14">
             <span className="text-gray-700">Observability</span>
             <span className="mx-1.5 text-gray-500">/</span>
@@ -251,12 +251,12 @@ export function MonitorsPanel() {
               {[1, 2].map((c) => (
                 <g key={c}>
                   <line x1={RL} x2={RW - 8} y1={rY(c)} y2={rY(c)} stroke="var(--ds-border-subtle)" strokeDasharray="3 5" />
-                  <text x={RL - 8} y={rY(c) + 3} textAnchor="end" className="fill-gray-600" style={{ font: "10px var(--font-mono)" }}>
+                  <text x={RL - 8} y={rY(c) + 3} textAnchor="end" data-axis className="fill-gray-600">
                     {c}
                   </text>
                 </g>
               ))}
-              <text x={RL - 8} y={rBase + 3} textAnchor="end" className="fill-gray-600" style={{ font: "10px var(--font-mono)" }}>
+              <text x={RL - 8} y={rBase + 3} textAnchor="end" data-axis className="fill-gray-600">
                 0
               </text>
               {/* error series: flat zero */}
@@ -273,10 +273,10 @@ export function MonitorsPanel() {
                 strokeWidth="1.25"
                 fill="none"
               />
-              <text x={RL} y={RH - 6} className="fill-gray-600" style={{ font: "10px var(--font-mono)" }}>
+              <text x={RL} y={RH - 6} data-axis className="fill-gray-600">
                 12h ago
               </text>
-              <text x={RW - 8} y={RH - 6} textAnchor="end" className="fill-gray-600" style={{ font: "10px var(--font-mono)" }}>
+              <text x={RW - 8} y={RH - 6} textAnchor="end" data-axis className="fill-gray-600">
                 just now
               </text>
             </svg>
@@ -285,7 +285,7 @@ export function MonitorsPanel() {
           <div data-anim="fade" style={{ "--d": "0.1s" } as React.CSSProperties} className="relative bg-background-100 p-4">
             <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
               <p className="font-mono text-label-12 uppercase text-gray-700">Session duration</p>
-              <p className="flex items-center gap-3 font-mono text-label-12 text-gray-900">
+              <p className="flex items-center gap-3 font-mono text-label-12 text-gray-900 max-md:flex-wrap max-md:gap-y-1">
                 {CHIPS.map((c) => (
                   <span key={c.label} className="flex items-center gap-1.5 whitespace-nowrap">
                     <span aria-hidden className={cn("h-1.5 w-1.5 rounded-full", c.dot)} />
@@ -316,7 +316,7 @@ export function MonitorsPanel() {
                   strokeDasharray="2 4"
                   opacity="0.6"
                 />
-                <text x={DW - DPX} y={P95Y - 4} textAnchor="end" className="fill-gray-600" style={{ font: "10px var(--font-mono)" }}>
+                <text x={DW - DPX} y={P95Y - 4} textAnchor="end" data-axis className="fill-gray-600">
                   p95
                 </text>
                 <path d={AREA} fill="url(#mon-area)" data-anim="fade" style={{ "--d": "0.9s" } as React.CSSProperties} />
@@ -383,8 +383,8 @@ export function MonitorsPanel() {
 
         {/* sessions table */}
         <div className="bg-background-100">
-          <div className="grid grid-cols-[minmax(0,1fr)_100px_72px_64px] items-center gap-x-4 border-b border-border-subtle px-4 py-2.5 md:grid-cols-[minmax(0,1fr)_100px_72px_64px_24px]">
-            <p className="font-mono text-label-12 uppercase text-gray-700">Session</p>
+          <div className="grid grid-cols-[minmax(0,1fr)_100px_72px_64px] items-center gap-x-4 border-b border-border-subtle px-4 py-2.5 max-md:grid-cols-3 max-md:gap-y-1 md:grid-cols-[minmax(0,1fr)_100px_72px_64px_24px]">
+            <p className="font-mono text-label-12 uppercase text-gray-700 max-md:col-span-3">Session</p>
             <p className="text-right font-mono text-label-12 uppercase text-gray-700">Tokens</p>
             <p className="text-right font-mono text-label-12 uppercase text-gray-700">Duration</p>
             <p className="text-right font-mono text-label-12 uppercase text-gray-700">Cost</p>
@@ -395,9 +395,9 @@ export function MonitorsPanel() {
               key={s.id}
               data-anim="fade"
               style={{ "--d": `${0.3 + i * 0.08}s` } as React.CSSProperties}
-              className="grid grid-cols-[minmax(0,1fr)_100px_72px_64px] items-center gap-x-4 border-b border-border-subtle px-4 py-2.5 transition-colors hover:bg-gray-100/40 md:grid-cols-[minmax(0,1fr)_100px_72px_64px_24px]"
+              className="grid grid-cols-[minmax(0,1fr)_100px_72px_64px] items-center gap-x-4 border-b border-border-subtle px-4 py-2.5 max-md:grid-cols-3 max-md:gap-y-1 transition-colors hover:bg-gray-100/40 md:grid-cols-[minmax(0,1fr)_100px_72px_64px_24px]"
             >
-              <p className="flex min-w-0 items-center gap-2.5">
+              <p className="flex min-w-0 items-center gap-2.5 max-md:col-span-3">
                 <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-ok" />
                 <span className="truncate text-copy-14 text-gray-1000">{s.title}</span>
               </p>

@@ -56,7 +56,7 @@ export function Observability() {
               href={`${site.github}/blob/main/${capability.source}`}
               target="_blank"
               rel="noreferrer"
-              className="underline decoration-border-subtle underline-offset-4 transition-colors hover:text-gray-1000 hover:decoration-current"
+              className="underline decoration-border-subtle underline-offset-4 transition-colors hover:text-gray-1000 hover:decoration-current max-md:py-3.5"
             >
               {capability.source.replace("packages/dashboard/", "")}
             </a>
@@ -68,7 +68,25 @@ export function Observability() {
             of the panel, so it reads as part of this section rather than as a
             new one that forgot its heading. */}
         <div className="mx-auto mt-16 max-w-5xl border-t border-border-subtle pt-12">
-          <div className="grid items-center gap-12 lg:grid-cols-2">
+          {/* grid-cols-1 is not decoration, and removing it re-breaks the phone.
+              Below lg there is no grid-template-columns, so the single implicit
+              track is `auto` — and an auto track is sized by its largest item's
+              MIN-CONTENT. ApprovalDemo's min-content is 496px, because the args
+              line carries `truncate`, `truncate` sets white-space: nowrap, and a
+              nowrap string contributes its full width to intrinsic sizing. The
+              `min-w-0` on that row's inner column removes the flex automatic
+              minimum but does nothing to a min-content contribution, so it could
+              not help. The track went to 496px inside a 353px container, both
+              children stretched to match, and this section's own
+              `overflow-hidden` (line 21) deleted the 143px that stuck out — the
+              control paragraph was cut mid-sentence on every iPhone.
+
+              `grid-cols-1` compiles to repeat(1, minmax(0,1fr)), which gives the
+              track a zero minimum and a definite width; min-w-0 and truncate then
+              do the job they were always written to do. It is inert at lg, where
+              lg:grid-cols-2 wins, and inert at every width where the content
+              already fits — which is why the desktop is untouched. */}
+          <div className="grid grid-cols-1 items-center gap-12 lg:grid-cols-2">
             <div className="flex flex-col gap-4">
               <h3 className="text-heading-32">{control.heading}</h3>
               <p className="max-w-md text-copy-16 text-gray-900">{control.sub}</p>

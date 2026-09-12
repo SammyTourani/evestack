@@ -47,14 +47,14 @@ export function ApprovalDemo() {
         <button
           type="button"
           data-approval-approve
-          className="rounded-full border border-ok/40 px-4 py-1.5 text-ok transition-colors hover:bg-ok/10"
+          className="rounded-full border border-ok/40 px-4 py-1.5 text-ok transition-colors hover:bg-ok/10 max-md:py-3"
         >
           approve
         </button>
         <button
           type="button"
           data-approval-deny
-          className="rounded-full border border-border-default px-4 py-1.5 text-gray-700 transition-colors hover:border-err/40 hover:text-err"
+          className="rounded-full border border-border-default px-4 py-1.5 text-gray-700 transition-colors hover:border-err/40 hover:text-err max-md:py-3"
         >
           deny
         </button>

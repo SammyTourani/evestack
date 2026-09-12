@@ -280,6 +280,110 @@
   }
 }
 
+/* ── Hero layer labels on phones ──────────────────────────────────────────
+   LABEL_LEFT (hero-client.tsx) is the landed bar's RIGHT EDGE projected into
+   the stage box, so the anchor always sits at viewport-centre plus one bar
+   half-width. On a desktop there is half a page to the right of it. On a phone
+   there were 133px, the widest row ("sandbox" + its docker.sock pill) is
+   191px, and the sticky hero is overflow-hidden — so the port badges were not
+   scrolled off-screen, they were destroyed. The anchor moves further right as
+   the bars grow, so no stage size makes the flank fit, and the type cannot
+   give anything back: the badge is already at the 12px floor.
+
+   Below 40rem the four rows therefore leave the bars' flank and become a
+   legend under the diagram, in the same top-to-bottom order they label
+   (dashboard / agent runtime / Postgres / sandbox — the order is locked in
+   slab-data.ts and in the reveal cascade in choreography.tsx). ROW_TOP is what
+   is being given up, and only ROW_TOP: the cascade, the copy, the reveal and
+   the order are all untouched.
+
+   width: max-content is load-bearing, not tidiness. An absolutely positioned
+   row with left: 65.2% may only be (100 − 65.2)% of the box wide, which is why
+   "agent runtime" was ALREADY wrapping to two lines inside rows 39px apart.
+   Sizing to content unwraps it.
+
+   The !important is unavoidable. The component writes top/left as inline
+   styles because they are computed scene constants, and an inline style is the
+   one thing a stylesheet cannot outrank — the same corner the noscript
+   [data-hero-poster] rule is painted into.
+
+   The spine is hidden with opacity rather than display:none because
+   choreography.tsx calls getTotalLength() on it before it ever animates, and
+   that is not a question to ask an unrendered element. */
+@media (width < 40rem) {
+  [data-hero-annotations] > svg {
+    opacity: 0;
+  }
+  [data-layer-label] {
+    /* A common left edge rather than four independently-centred rows: this is
+       a legend, and a legend that rags down both sides reads as four stray
+       captions. calc(50% - 5.5rem) puts every row's dash at x≈108 on a 393pt
+       screen, and the widest row (sandbox + docker.sock, 191px) ends at ≈300
+       with 93px to spare.
+
+       Positioned with `left` and NOT with a transform, deliberately. The
+       reveal cascade in choreography.tsx animates these rows and writes its
+       own inline `transform`, which beats anything a stylesheet says — an
+       earlier pass centred them with translateX(-50%) and two of the four
+       silently ignored it. `left` is the one axis GSAP is not touching. */
+    left: calc(50% - 5.5rem) !important;
+    width: max-content;
+  }
+  [data-layer-label]:nth-of-type(1) {
+    top: calc(100% + 1.5rem) !important;
+  }
+  [data-layer-label]:nth-of-type(2) {
+    top: calc(100% + 3.25rem) !important;
+  }
+  [data-layer-label]:nth-of-type(3) {
+    top: calc(100% + 5rem) !important;
+  }
+  [data-layer-label]:nth-of-type(4) {
+    top: calc(100% + 6.75rem) !important;
+  }
+}
+
+/* ── Mobile menu: tap outside to close ───────────────────────────────────
+   Native <details> has no close-on-outside behaviour and this header ships
+   no JS on purpose, so once the panel was open it stayed open: it sat parked
+   over the top-right of whatever section the visitor had just jumped to, the
+   hamburger stayed rendered as an X, and there was no way back except finding
+   the 44px button again underneath it.
+
+   The backdrop is a pseudo-element of the SUMMARY rather than of the details,
+   and that is the whole trick: a tap on a summary's own ::before counts as a
+   tap on the summary, which is exactly what toggles the element closed. The
+   panel is a later, absolutely-positioned sibling, so it still paints above
+   this and still receives its own taps.
+
+   The explicit width/height rather than `inset: 0` is the whole reason this
+   works, and the first attempt shipped inert because of it. #site-header
+   carries `backdrop-blur-md`, and an element with a non-`none` backdrop-filter
+   becomes the containing block for its `position: fixed` descendants — so
+   `inset: 0` resolved against the header's own 393x64 box instead of the
+   viewport, and inside that strip `z-index: -1` put it behind the header's
+   content as well. The backdrop existed, covered 64px of screen, and could not
+   be tapped anywhere. 100vw/100dvh sidesteps the containing block by not
+   asking about it; the header is `sticky top-0`, so its origin is the
+   viewport's at every scroll offset.
+
+   Residual, stated rather than hidden: tapping a link inside the panel
+   navigates but does not close it, because nothing here can change the `open`
+   attribute. The next tap anywhere does. Closing on navigate needs this
+   subtree to become a client component, which is a bigger change than the
+   defect warrants. */
+@media (width < 48rem) {
+  #site-header details[open] > summary::before {
+    content: "";
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100dvh;
+    z-index: -1;
+  }
+}
+
 /* ── The agent menu ───────────────────────────────────────────────────────
    Opens on hover. All of the motion is here rather than in the component, so
    the component only toggles one attribute and this file decides what that
@@ -392,6 +496,37 @@
   overflow: hidden;
   vertical-align: bottom;
   max-width: 100%;
+}
+
+/* A phone is narrower than the longest line this terminal prints, and the
+   `max-width: 100%` above does not push that text off the side — it DELETES
+   it. This wrapper is the element that hides its own overflow, so the
+   [data-term] region around it (one-command.tsx, already tabIndex={0},
+   role="region", aria-label, overflow-x-auto) measured scrollWidth ===
+   clientWidth and had nothing to scroll: four of the nine lines were cut
+   mid-word with no gesture that could reach the rest.
+
+   Letting the wrapper take its natural width below md hands the overflow back
+   to the scroll region the markup already declares, so a line can be swiped
+   the way any terminal is. The width-typing choreography is untouched — it
+   measures offsetWidth and animates to it, which is now the natural width
+   instead of the clamped one.
+
+   The second rule is not optional. Once the wrapper is allowed its natural
+   width, the caret that follows it in the same line box has no room left and
+   wraps onto a row of its own under the last line — a terminal with its
+   cursor parked in the wrong place. Both are `whitespace-pre` already, so
+   pinning the row stops the wrap and re-flows nothing.
+
+   Scoped below md because the cap IS load-bearing above it: at lg the
+   terminal column is 545px and that same line is clamped to 505px. */
+@media (width < 48rem) {
+  [data-term-text] {
+    max-width: none;
+  }
+  [data-term] > p {
+    white-space: nowrap;
+  }
 }
 
 /* Block caret. `1.05em` tall and offset to sit on the text baseline, the same
@@ -574,6 +709,59 @@
   }
 }
 
+/* Chart axis labels. These carried `font: 10px var(--font-mono)` as an inline
+   style, and 10 there is ten viewBox USER UNITS, not ten CSS pixels: the svg is
+   authored `viewBox="0 0 520 148"` and laid out `h-auto w-full` into a panel
+   that is 319px wide on a 393pt phone, so everything is scaled by 319/520 and
+   the label arrives at 6.1px. Drawn, present, unreadable.
+
+   SVG text has no way to opt out of the viewBox scale, so the honest fix is to
+   re-author the labels in user units for the widths where the chart is small.
+   Measured rather than derived: at 393pt the two charts lay out 285px and 292px
+   wide against their 520-unit box, so the scale is 0.548/0.562 and 22 units is
+   what clears the floor — 12.1px and 12.4px. (20 units, the first guess, came
+   out at 11.0px and was still under it.) The size had to
+   leave the JSX first, because an inline style is the one thing a stylesheet
+   cannot outrank.
+
+   The cut-off is 40rem because at 40rem the chart is already 566px wide and 20
+   units would land at 21.7px, twice what the design asks for. Above that line
+   the original 10 units is left exactly alone.
+
+   Worth knowing and deliberately NOT changed here: the desktop's own 10 units
+   render at ~7.5px once xl:grid-cols-2 halves the chart at 1280. Same defect,
+   different viewport, and outside a mobile pass. */
+.mon [data-axis] {
+  font: 10px var(--font-mono);
+}
+/* Three bands, not one constant. A CSS font-size on SVG text resolves to a
+   number of USER UNITS, so what a reader sees is units x panelWidth/520 — it
+   grows with the viewport while the rule binds flat. A single 22 was right at
+   393pt (12.1px) and grotesque at 639pt (21.3px), snapping back to 9.7px one
+   pixel later. Stepping the constant keeps every width in the 0-40rem band
+   inside roughly 11-14 rendered px, which is the honest approximation: CSS
+   cannot express the inverse proportionality the exact answer needs.
+
+   Container queries were tried and are WRONG here, which is worth recording so
+   nobody retries it: sizing the units in `cqw` makes the unit count itself
+   proportional to the panel, so the rendered size grows with panel width
+   SQUARED. Measured, it changed nothing at 639 and made 393 worse. */
+@media (width < 40rem) {
+  .mon [data-axis] {
+    font-size: 14px;
+  }
+}
+@media (width < 34rem) {
+  .mon [data-axis] {
+    font-size: 18px;
+  }
+}
+@media (width < 27rem) {
+  .mon [data-axis] {
+    font-size: 22px;
+  }
+}
+
 /* Dashboard demo loop-progress hairline: brighter leading edge = honest
    "this is a scripted loop" signal. */
 .demo-progress {
@@ -707,6 +895,34 @@
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+/* ── Copy-button touch target ────────────────────────────────────────────
+   A copy button is a 28px glyph. That is the right size for a dense
+   figcaption and for a pointer, and it is a 28x28 tap target on a phone —
+   40% of the 44x44 the iOS HIG asks for, on the one control in the hero's
+   command pill and on every code card.
+
+   Growing the button is not available: it sits inside an h-12 pill beside
+   the command text and inside an h-12 figcaption, and both would move. So
+   grow only the part a finger hits — a transparent 44x44 ::after centred on
+   the glyph. It is out of flow, so nothing reflows and nothing is painted;
+   it hit-tests to the button that generated it; and the hover styling still
+   describes the 28px box a pointer sees. Neither host has another control
+   beside it for the overlay to steal a tap from. */
+@media (width < 48rem) {
+  [data-copy] {
+    position: relative;
+  }
+  [data-copy]::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    height: 44px;
+    width: 44px;
+    transform: translate(-50%, -50%);
   }
 }
 

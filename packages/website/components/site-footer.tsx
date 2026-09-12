@@ -29,7 +29,7 @@ export function SiteFooter() {
                       {...(link.href.startsWith("http")
                         ? { target: "_blank", rel: "noreferrer" }
                         : {})}
-                      className="text-copy-14 text-gray-900 transition-colors hover:text-gray-1000"
+                      className="block py-3 text-copy-14 text-gray-900 transition-colors hover:text-gray-1000 md:inline md:py-0"
                     >
                       {link.label}
                     </a>

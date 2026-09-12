@@ -25,8 +25,15 @@ import {
    tour stops driving forever). Panel heights GLIDE between tabs — no layout
    jumps into the copy beside the demo. Hover pauses everything. */
 
+/* Three columns on a phone, eight on a laptop. The 760px canvas below is
+   desktop geometry: on a 393pt screen it put Cost and Started 400px off the
+   side of the card behind a sideways drag with no affordance. Session /
+   Status / Cost is the row a person actually reads, and it gives the title
+   135px — WIDER than the 116px it gets at full desktop width. Nothing is
+   lost: every dropped number is in the disclosure panel the row already
+   opens (turns, model, in, out, duration, cost). */
 const ROW_GRID =
-  "grid grid-cols-[minmax(0,1fr)_88px_44px_136px_60px_64px_72px_64px] items-center gap-x-3 px-4";
+  "grid grid-cols-[minmax(0,1fr)_88px_72px] items-center gap-x-3 px-4 md:grid-cols-[minmax(0,1fr)_88px_44px_136px_60px_64px_72px_64px]";
 const NUM_CELL = "text-right font-mono text-mono-13 tabular-nums";
 /* CHAT FIRST (2026-08-11, Sammy's call). The panel opened on Sessions, which
    is a table: correct, dense, and the least legible way to answer "what is
@@ -128,9 +135,19 @@ const fmtInt = (n: number) => n.toLocaleString("en-US");
 const fmtTokens = (n: number) => (n >= 10_000 ? `${Math.round(n / 1000)}K` : fmtInt(n));
 const fmtCost = (n: number) => (n === 0 ? "$0.00" : `$${n.toFixed(4)}`);
 
-function Tile({ label, value, ok }: { label: string; value: string; ok?: boolean }) {
+function Tile({
+  label,
+  value,
+  ok,
+  className,
+}: {
+  label: string;
+  value: string;
+  ok?: boolean;
+  className?: string;
+}) {
   return (
-    <div className="bg-background-100 p-4">
+    <div className={cn("bg-background-100 p-4", className)}>
       <p className="font-mono text-label-12 uppercase text-gray-700">{label}</p>
       <p className={cn("mt-1 font-mono text-heading-24 tabular-nums", ok ? "text-ok" : "text-gray-1000")}>
         {value}
@@ -179,18 +196,18 @@ function SessionRow({
         onClick={onToggle}
         className={cn(
           ROW_GRID,
-          "h-10 w-full text-left transition-colors duration-300 hover:bg-gray-100 motion-reduce:transition-none",
+          "h-11 w-full text-left transition-colors duration-300 hover:bg-gray-100 motion-reduce:transition-none md:h-10",
           flash && "bg-gray-100",
         )}
       >
         <span className="truncate text-copy-14 text-gray-1000">{s.title}</span>
         <StatusPill status={s.status} />
-        <span className={cn(NUM_CELL, "text-gray-900")}>{s.turns}</span>
-        <span className="truncate font-mono text-mono-13 text-gray-700">{s.model}</span>
-        <span className={cn(NUM_CELL, "text-gray-900")}>{fmtInt(s.tokensIn)}</span>
-        <span className={cn(NUM_CELL, "text-gray-900")}>{fmtInt(s.tokensOut)}</span>
+        <span className={cn(NUM_CELL, "hidden text-gray-900 md:block")}>{s.turns}</span>
+        <span className="hidden truncate font-mono text-mono-13 text-gray-700 md:block">{s.model}</span>
+        <span className={cn(NUM_CELL, "hidden text-gray-900 md:block")}>{fmtInt(s.tokensIn)}</span>
+        <span className={cn(NUM_CELL, "hidden text-gray-900 md:block")}>{fmtInt(s.tokensOut)}</span>
         <span className={cn(NUM_CELL, "text-gray-900")}>{fmtCost(s.cost)}</span>
-        <span className="text-right font-mono text-mono-13 text-gray-700">{s.started}</span>
+        <span className="hidden text-right font-mono text-mono-13 text-gray-700 md:block">{s.started}</span>
       </button>
       <div
         id={panelId}
@@ -569,7 +586,17 @@ export function DashboardDemo() {
   return (
     <div
       ref={rootRef}
-      onMouseEnter={() => (pausedRef.current = true)}
+      /* Hover-pause is a POINTER affordance, and iOS turns it into a trap:
+         a tap fires a synthetic mouseenter and no matching mouseleave until
+         the visitor taps something else, so tapping a session row — the one
+         interaction this panel offers on touch — latched the demo paused.
+         The un-pause stays unconditional so a latched state can always
+         clear. */
+      onMouseEnter={() => {
+        if (window.matchMedia("(hover: hover) and (pointer: fine)").matches) {
+          pausedRef.current = true;
+        }
+      }}
       onMouseLeave={() => (pausedRef.current = false)}
       className="relative overflow-hidden rounded-xl border border-border-default bg-background-200"
     >
@@ -579,7 +606,7 @@ export function DashboardDemo() {
         className="demo-progress pointer-events-none absolute inset-x-0 top-0 z-10 h-px origin-left opacity-0"
         style={{ transform: "scaleX(0)" }}
       />
-      <div className="flex h-11 items-center gap-4 border-b border-border-subtle px-4">
+      <div className="flex h-12 items-center gap-4 border-b border-border-subtle px-4 md:h-11">
         <p className="flex shrink-0 items-center gap-2 font-mono text-mono-13 text-gray-1000">
           <span aria-hidden className="text-blue-700">▚</span>
           evestack
@@ -645,23 +672,23 @@ export function DashboardDemo() {
         >
           <div data-panel-anim>
             <div tabIndex={0} role="region" aria-label="Demo dashboard sessions" className="overflow-x-auto">
-              <div className="min-w-[760px] bg-background-100">
-                <div className="grid grid-cols-5 gap-px border-b border-border-subtle bg-border-subtle">
+              <div className="min-w-0 bg-background-100 md:min-w-[760px]">
+                <div className="grid grid-cols-2 gap-px border-b border-border-subtle bg-border-subtle md:grid-cols-5">
                   <Tile label="Sessions" value={fmtInt(stats.sessions)} />
                   <Tile label="Turns" value={fmtInt(stats.turns)} />
                   <Tile label="Tokens in/out" value={`${fmtTokens(stats.tokensIn)}/${fmtTokens(stats.tokensOut)}`} />
                   <Tile label="Model spend" value={`$${stats.spend.toFixed(2)}`} />
-                  <Tile label="Infrastructure" value="$0.00" ok />
+                  <Tile label="Infrastructure" value="$0.00" ok className="col-span-2 md:col-span-1" />
                 </div>
                 <div className={cn(ROW_GRID, "h-9 font-mono text-label-12 uppercase text-gray-700")}>
                   <span>Session</span>
                   <span>Status</span>
-                  <span className="text-right">Turns</span>
-                  <span>Model</span>
-                  <span className="text-right">In</span>
-                  <span className="text-right">Out</span>
+                  <span className="hidden text-right md:block">Turns</span>
+                  <span className="hidden md:block">Model</span>
+                  <span className="hidden text-right md:block">In</span>
+                  <span className="hidden text-right md:block">Out</span>
                   <span className="text-right">Cost</span>
-                  <span className="text-right">Started</span>
+                  <span className="hidden text-right md:block">Started</span>
                 </div>
                 {/* the three live rows are ordinary, permanent table rows —
                     passes only repaint their pill/numbers, never the layout */}

@@ -119,6 +119,41 @@
   font-size: 0.875em;
   font-weight: 400;
 }
+/* A path, a connection string or a JSON payload written as inline code is one
+   unbreakable token, and the docs grid clips rather than scrolls — so on a
+   phone the tail was destroyed rather than merely off-screen, and because
+   document.scrollWidth still equalled the viewport width no sideways-scroll
+   check would ever have caught it. /docs/troubleshooting's PATH value ran
+   139px past the edge.
+
+   Breaking mid-token is the lesser evil here: an unreadable half of a path is
+   worth less than a wrapped whole one. Phone widths only — above 48rem the
+   column is wide enough that nothing has ever wrapped. */
+@media (width < 48rem) {
+  #nd-page :not(pre) > code {
+    overflow-wrap: anywhere;
+  }
+}
+
+/* Fumadocs ships the two controls in its below-md nav at 34px, which is a
+   desktop icon-button size on a surface that only exists on a phone. One of
+   them, "Open Sidebar", is the single route into the docs tree there — the
+   sidebar is not even in the DOM until it is pressed — so it is the one
+   control on this route that cannot be allowed to be a near-miss.
+
+   Suffix match, not exact: fumadocs flips the same button's label from "Open
+   Sidebar" to "Close Sidebar" while the sidebar is on screen, so an exact
+   selector let the control fall back to 34x34 for exactly as long as a reader
+   was using it — and moved "Open Search" 10px sideways each time it toggled. */
+@media (width < 48rem) {
+  #nd-nav button[aria-label$="Sidebar"],
+  #nd-nav button[aria-label$="Search"],
+  #nd-subnav button[aria-label$="Sidebar"],
+  #nd-subnav button[aria-label$="Search"] {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
 #nd-page figure:has(pre),
 #nd-page pre {
   border-radius: 12px;

@@ -326,7 +326,12 @@ export function AgentPackButton({
           aria-expanded={open}
           aria-label={agentPack.menuLabel}
           className={cn(
-            "inline-flex items-center rounded-r-full px-3 transition-[opacity,transform] duration-200",
+            /* px-4 below md: the caret half measured 36px wide on a phone,
+               8px under the minimum on the axis that matters, and it is the
+               only way to reach the menu on touch — hover-open is gated on
+               (hover: hover) a few dozen lines up, precisely because it does
+               not exist there. md:px-3 is today's exact padding. */
+            "inline-flex items-center rounded-r-full px-4 transition-[opacity,transform] duration-200 md:px-3",
             filled ? "hover:opacity-90" : "hover:text-gray-1000",
             open && "rotate-180",
           )}

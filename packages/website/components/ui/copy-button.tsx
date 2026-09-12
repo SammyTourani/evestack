@@ -9,6 +9,7 @@ export function CopyButton({ text, className }: { text: string; className?: stri
   return (
     <button
       type="button"
+      data-copy
       aria-label={`Copy "${text}"`}
       onClick={async () => {
         try {
