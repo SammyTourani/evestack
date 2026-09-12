@@ -53,6 +53,15 @@ function renderedBox(slug: string, pad?: boolean) {
 export function LogoMarquee({ items }: { items: readonly Item[] }) {
   return (
     <div
+      /* data-marquee is a QA handle, in the same spirit as data-term and
+         data-mon. The track is deliberately ~13,400px wide inside this
+         overflow-hidden box — that is what a seam-proof marquee IS — so the
+         phone-layout suite, which fails anything extending past the right
+         edge with no scrollable ancestor, would report every logo in it as
+         clipped content. This says "the overflow here is the feature", and it
+         is an explicit opt-out rather than the suite pattern-matching on a
+         class name that could be renamed. */
+      data-marquee
       className="relative overflow-hidden"
       style={{
         maskImage:
