@@ -363,7 +363,29 @@
 @media (width < 40rem) and (height >= 700px) {
   [data-hero-pane] {
     justify-content: flex-end;
-    padding-bottom: 8.5rem;
+    padding-bottom: 5rem;
+  }
+}
+
+/* SHORT PHONE VIEWPORTS — Safari with its URL bar showing, which is most of
+   the time. At 390x664 the usable band under the header is 599px and the copy
+   column alone is ~320 of it, so the mark cannot have the size it gets at
+   390x844: at 21rem it overlapped the headline by 34px and, at the end of the
+   scrub, the top exploded bar tucked under the header.
+
+   The mark and the lift both come down here, and the copy gives back some of
+   its bottom padding. Nothing about the composition changes — it is the same
+   arrangement measured for a screen that is 180px shorter. `translate` rather
+   than a transform because Tailwind v4 compiles -translate-x-1/2 and
+   -translate-y-[…] into that one property, so both axes have to be restated. */
+@media (width < 40rem) and (height < 47.5rem) {
+  [data-hero-stage] {
+    height: min(15rem, 33svh);
+    translate: -50% calc(-50% - 7rem);
+  }
+  [data-hero-pane] {
+    justify-content: flex-end;
+    padding-bottom: 2.5rem;
   }
 }
 
@@ -590,37 +612,32 @@
 
    Scoped below md because the cap IS load-bearing above it: at lg the
    terminal column is 545px and that same line is clamped to 505px. */
+/* THE TERMINAL WRAPS ON A PHONE; IT DOES NOT SCROLL.
+   An earlier pass handed the overflow to [data-term]'s scroll region, which
+   fixed the clipping but left a log you had to drag sideways to read. No type
+   size solves it: the longest line ("evestack-postgres-1 | database system is
+   ready to accept connections") is ~462px of 11px mono against a 305px content
+   box, and shrinking to fit would need ~7px type.
+
+   So below 48rem the lines wrap instead. `pre-wrap` keeps the leading spaces
+   that indent the output, `anywhere` lets a long unbroken token break rather
+   than push the box wide, and the wrapper goes back to the full measure. The
+   width-typing choreography is switched off on phones alongside this (see
+   choreography.tsx) — animating the width of a box whose text re-flows on
+   every frame is what it looks like, so the phone gets a per-line reveal
+   instead. */
 @media (width < 48rem) {
   [data-term-text] {
-    max-width: none;
+    max-width: 100%;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
-  [data-term] > p {
-    white-space: nowrap;
+  [data-term] {
+    overflow-x: hidden;
   }
 }
 
-/* …and the overflow that rule hands back has to be VISIBLE, or it is not
-   reachable. Two scrims pinned to the BOX and two matching covers pinned to the
-   CONTENT: at rest the left cover sits over the left scrim and hides it while
-   the right scrim shows, and at the end of the scroll the right cover has
-   arrived and the left scrim has appeared. It cannot lie about which way there
-   is more to read, and it needs no JS, no scroll listener and no
-   scroll-timeline. Backgrounds paint behind text, so nothing is dimmed.
-   gray-300 rather than gray-200: at 8% luminance over this page's near-black
-   the quieter token is invisible at 2x. */
-@media (width < 48rem) {
-  [data-term] {
-    background-image:
-      linear-gradient(to right, var(--ds-background-200), transparent),
-      linear-gradient(to left, var(--ds-background-200), transparent),
-      linear-gradient(to right, var(--ds-gray-300), transparent),
-      linear-gradient(to left, var(--ds-gray-300), transparent);
-    background-position: left center, right center, left center, right center;
-    background-repeat: no-repeat;
-    background-size: 32px 100%;
-    background-attachment: local, local, scroll, scroll;
-  }
-}
+
 
 /* Block caret. `1.05em` tall and offset to sit on the text baseline, the same
    geometry the old single cursor used. */

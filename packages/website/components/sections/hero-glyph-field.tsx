@@ -347,7 +347,7 @@ export function HeroGlyphField() {
       const h = host.clientHeight;
       if (!w || !h || !cols) return;
       /* 1 on a desktop hero, ~0.42 on a phone. See the note at gProx below. */
-      const tight = w >= 768 ? 1 : Math.max(0.38, w / 940);
+      const tight = w >= 768 ? 1 : Math.max(0.26, w / 1180);
       const hostRect = host.getBoundingClientRect();
       const section = host.closest("#hero") ?? document;
       const toLocal = (el: Element | null, fw: number, fh: number) => {
@@ -398,8 +398,17 @@ export function HeroGlyphField() {
       const slabD = { x0: stage.x0 + stageW * 0.27, x1: stage.x1 - stageW * 0.27, y0: stage.y0 + 8, y1: stage.y1 - 8 };
       const dark = isDark();
       const floorA = dark ? 0.28 : 0.4;
-      const gBase = dark ? 0.85 : 0.9;
-      const dBase = dark ? 0.34 : 0.2;
+      /* Brighter on a phone, and not as a preference — as a correction.
+         These alphas were tuned on a 1440px hero where the field covers both
+         margins of a wide frame and reads as texture at 0.85. On a 393pt
+         screen it survives only in the corners and the band under the CTAs,
+         which is a fraction of the cells, so the same alpha renders as
+         something you have to hunt for. `lift` puts the visible remainder back
+         at the presence the desktop gets from sheer area. Pinned to 1 at and
+         above 768 so it cannot touch a laptop. */
+      const lift = w >= 768 ? 1 : 1.5;
+      const gBase = (dark ? 0.85 : 0.9) * lift;
+      const dBase = (dark ? 0.34 : 0.2) * lift;
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
           const i = r * cols + c;

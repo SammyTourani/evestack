@@ -41,7 +41,7 @@ export function HeroClient({ children }: { children: React.ReactNode }) {
            one from the aspect, and moves up.
 
            The mark's rendered size is 0.577 of the box height — pixel-scanned
-           at three box sizes, not derived — so h-[min(16.5rem,31svh)] draws a
+           at three box sizes, not derived — so h-[min(21rem,40svh)] draws a
            148px mark at 393x852, and the 30svh term keeps it from outgrowing a
            short screen. An earlier pass used 23.5rem here and the mark then
            covered the headline outright: the h1's bounding box sat entirely
@@ -57,7 +57,7 @@ export function HeroClient({ children }: { children: React.ReactNode }) {
            this read as a rendered object rather than four grey rounded
            rectangles, and below ~150px they stop resolving at all.
 
-           -translate-y-[calc(50%+9.5rem)] is the other half. It lifts the mark
+           -translate-y-[calc(50%+7rem)] is the other half. It lifts the mark
            to y=199..384 at 393x852 — 23px clear of the h1 and 134px of air
            above it — which is the composition REST_OFFSET_Y already describes in
            stack-mark.tsx and which the phone could not deliver. The aspect
@@ -67,7 +67,7 @@ export function HeroClient({ children }: { children: React.ReactNode }) {
 
            sm: restores today's exact strings, so nothing at or above 640px
            moves. */
-        className="pointer-events-none absolute left-1/2 top-1/2 z-0 aspect-auto h-[min(16.5rem,31svh)] w-[min(1240px,107vw)] -translate-x-1/2 -translate-y-[calc(50%+9.5rem)] sm:aspect-[1240/580] sm:h-auto sm:-translate-y-[calc(50%+2.5rem)]"
+        className="pointer-events-none absolute left-1/2 top-1/2 z-0 aspect-auto h-[min(21rem,40svh)] w-[min(1240px,107vw)] -translate-x-1/2 -translate-y-[calc(50%+7rem)] sm:aspect-[1240/580] sm:h-auto sm:-translate-y-[calc(50%+2.5rem)]"
       >
         {/* The canvas renders with film-back bleed (hero-canvas expands the
             frustum, composition unchanged) and these nested masks feather the

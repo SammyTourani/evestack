@@ -60,7 +60,7 @@ export function Hero() {
     <section
       id="hero"
       aria-labelledby="hero-heading"
-      className="relative h-[185svh] sm:h-[340vh]"
+      className="relative h-[155svh] sm:h-[340vh]"
     >
       {/* Layer labels for the scroll disassembly — real DOM, screen-reader
           visible list in every mode */}
