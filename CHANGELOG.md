@@ -52,52 +52,26 @@ They are summarised rather than itemised, deliberately.
 
 ## Unreleased
 
-**One dist-tag is outstanding.** `evestack@0.5.0` is published, but `latest` still points at
-`0.4.1`. Every package version in this tree is on npm; what differs is which one `npx
-evestack` resolves to by default.
+**One dist-tag is outstanding, and it currently points at a deprecated version.**
+`evestack`'s `latest` is `0.4.1`, which `npm deprecate evestack@"<0.5.0"` has since marked —
+so `npx evestack create` serves a deprecated package running the previous wizard, with a
+warning telling the reader to upgrade to the thing the tag should already name. Nothing is
+broken; the default is simply a release behind.
 
 That rollback was deliberate and is worth recording, because it is the failure RELEASING.md
 names. `evestack@0.5.0` was published BEFORE `create-evestack@0.11.0`, and 0.5.0 pins that
 version exactly — so for a few minutes `npx evestack create` resolved to a package whose only
 dependency did not exist, and died on a 404. `npm dist-tag add evestack@0.4.1 latest` put the
 default back on a working pair without unpublishing anything; publishing the scaffolder then
-repaired 0.5.0 in place. Moving `latest` forward is the last step, and the gate on it is a
-clean-cache `npx evestack@0.5.0 create` that scaffolds and boots — run and green.
+repaired 0.5.0 in place.
 
 The exact pin is what turned an ordering slip into a hard 404 rather than a silent fallback
 to an older scaffolder. That is the pin working as intended: the alternative is a CLI quietly
-driving a scaffolder it was never tested against, which is the bug 0.5.0 exists to end.
+driving a scaffolder it was never tested against, which is the bug 0.5.0 exists to end. Its
+standing cost is that the two move together always — the `0.11.1` patch below needed a `0.5.1`
+to reach anyone.
 
-Delete this section's contents once `latest` moves.
-
-> **This section claimed the opposite until 2026-08-19, and that is precisely the failure it
-> exists to prevent.** It opened with "**`@evestack/dashboard@0.4.0` is waiting to be
-> published** … the newest image GHCR serves is `0.3.1`, which installs spans v3 and facts
-> v1", and carried a `### Bumped and waiting to publish` list naming four more packages as
-> differing from npm. Every one of those claims had been false for days. Verified 2026-08-19:
->
-> - `docker manifest inspect ghcr.io/sammytourani/evestack-dashboard:0.4.0` returns a
->   two-platform (`linux/amd64`, `linux/arm64`) image index, and `git tag -l` carries
->   `@evestack/dashboard@0.4.0`, tagged 2026-08-11. GHCR has served 0.4.0 since.
-> - `npm view` reports `create-evestack` **0.10.0**, `evestack` **0.4.1**,
->   `@evestack/composio` **0.2.1** and `@evestack/schedules` **0.2.1** — the four "waiting"
->   versions, all live, all published 2026-08-13 (`time` field, converted from UTC). Their
->   entries have moved down into their own package sections, where the file's convention puts
->   a shipped release.
->
-> The staleness is not a harmless leftover. This section's entire job is to name the one
-> state RELEASING.md calls the dangerous one — a version number that means one thing in the
-> registry and another in the tree — so a reader who trusts it and is wrong has lost the only
-> signal this repository offers for that condition. Worse in the specific: a reader who
-> believed the "`0.3.1` is the newest image" sentence would go on pulling a tag that installs
-> spans v3 and facts v1, avoiding an image that had been correct and published for over a
-> week, on the authority of the changelog.
->
-> **The lesson for whoever writes here next:** a pending-state paragraph is a claim with an
-> expiry date, and nothing in CI checks it. `publish-dashboard.yml` gates on the
-> `### @evestack/dashboard@<version>` heading existing (publish-dashboard.yml:234) and never
-> reads this section, so "Unreleased" can rot indefinitely while every release passes green.
-> When you publish, empty this section in the same commit.
+Delete this section's contents once `latest` moves to `evestack@0.5.1`.
 
 ### Changed but not yet versioned
 
@@ -113,6 +87,28 @@ Delete this section's contents once `latest` moves.
 
 The `npm create` entry point. Carries `templates/default` inside it, so a change to the
 template ships as a change to this package.
+
+### create-evestack@0.11.1 — 2026-09-14
+
+#### Fixed
+
+- **The ASCII fallback carried the collision the Unicode set had just been fixed for, three
+  ways.** `ui.mjs` drops to ASCII automatically on win32 outside Windows Terminal, which
+  makes the classic console the DEFAULT rendering for a Windows user and therefore the one
+  nobody here ever looks at. Forced on with `EVESTACK_ASCII=1`, a row came out as
+
+  ```
+  > - Web Chat                 - Add the built-in Next.js Web Chat channel.
+  ```
+
+  with one character serving as the empty checkbox, the separator before every description,
+  and the separator between every step in the header — `g.sep` is `-` without unicode. The
+  empty box is `o` now: `> o Web Chat  - Add the built-in …`.
+
+  `MARKS` is exported so the set can be asserted as a set — the four glyphs that can land on
+  one row must be four different characters, in both sets, one column each, and the ASCII
+  ones must actually be ASCII. `test/ascii-fallback.test.mjs` pins all four and was verified
+  to fail when the `-` is put back.
 
 ### create-evestack@0.11.0 — 2026-09-14
 
@@ -514,6 +510,15 @@ not correspond to any commit in this repository. Do not install it.
 
 The CLI — `create`, `status`, `tour`, `open`, `verify`, `attach`, `doctor`. Depends on
 `create-evestack`, so it publishes last.
+
+### evestack@0.5.1 — 2026-09-14
+
+#### Changed
+
+- **Carries `create-evestack@0.11.1`.** No change of its own. This release exists because the
+  dependency is pinned exactly, so a scaffolder patch cannot reach anyone without a CLI
+  release alongside it — the standing cost of the pin 0.5.0 introduced, and the accepted
+  trade for never again shipping a CLI driving a scaffolder it was not tested against.
 
 ### evestack@0.5.0 — 2026-09-14
 
