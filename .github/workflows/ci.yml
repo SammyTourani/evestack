@@ -852,6 +852,60 @@ jobs:
   # block a merge on a platform nobody has committed to supporting. Promote it
   # by deleting that one line, once the row in README.md can honestly say
   # "supported" rather than "exercised".
+  # The platform this repository has never once run on, and the one whose
+  # default rendering path is the least-looked-at code here. `ui.mjs` drops to
+  # ASCII automatically on win32 outside Windows Terminal:
+  #
+  #     unicode = !(EVESTACK_ASCII !== undefined ||
+  #                 (platform === "win32" && !WT_SESSION && !TERM_PROGRAM))
+  #
+  # so the classic console is the DEFAULT for a Windows user, and it shipped
+  # with the empty checkbox, the description separator and the step separator
+  # all rendering as `-`. That was found by running it under a forced ASCII
+  # environment on a Mac, which is exactly the accident this job exists to stop
+  # relying on.
+  #
+  # `continue-on-error` like the macOS job: this is a new surface with no
+  # history, and a red Windows result should inform a maintainer rather than
+  # block an unrelated PR on day one. Tighten it once it has been green for a
+  # while.
+  #
+  # What it does NOT do: drive the interactive wizard. That needs a pty, and
+  # Windows has no equivalent of the `expect` harness used locally. The static
+  # tier is still worth having — the glyph sets, the path handling, the file
+  # modes and every pure function are all platform-sensitive in ways this
+  # catches.
+  windows:
+    runs-on: windows-latest
+    continue-on-error: true
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Same cold-checkout rule as every other job: workspace packages publish
+      # their types from a gitignored dist/.
+      - run: pnpm -r --if-present run build
+      - run: pnpm -r typecheck
+
+      # The glyph set Windows actually gets. Named on its own because a
+      # collision here is invisible in every other job — the Unicode set is what
+      # Linux and macOS render — and because it is the one failure that would
+      # reach a Windows user on their very first screen.
+      - name: the ASCII glyph set
+        run: pnpm --filter create-evestack exec node --test test/ascii-fallback.test.mjs
+
+      - name: scaffolder behaviour
+        run: pnpm --filter create-evestack test
+      - name: the template's own suite
+        run: pnpm --filter @evestack/template-default test
+      - name: the CLI
+        run: pnpm --filter evestack test
+
   macos:
     runs-on: macos-latest
     continue-on-error: true

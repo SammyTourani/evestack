@@ -33,6 +33,23 @@ import { c, chip, color, g, pad, plain, say, unicode, visible, width } from "./u
 /** Rows that render but cannot be landed on. */
 const isHeading = (item) => item?.heading !== undefined;
 
+/**
+ * The four marks a row can carry, exported so a test can prove they are four
+ * DIFFERENT characters in both glyph sets.
+ *
+ * They were not. In the ASCII fallback the empty checkbox was `-`, and `g.sep`
+ * is also `-` without unicode, so one row rendered
+ * `> - Web Chat   - Add the built-in …` with the same character as the empty
+ * box, the description separator and the step separator. That is the path
+ * Windows takes without Windows Terminal.
+ */
+export const MARKS = {
+  cursor: unicode ? "›" : ">",
+  gutter: unicode ? "▎" : ">",
+  empty: unicode ? "○" : "o",
+  caret: unicode ? "▏" : "_",
+};
+
 /** Thrown by a step that wants the wizard to go back one. */
 export const BACK = Symbol("wizard.back");
 /** Thrown when the reader presses Esc. */
@@ -171,18 +188,25 @@ function rowLine(item, { active, selected, query, labelWidth, badgeWidth, multi 
   // the pointer sat two characters away from the checkbox and four from the
   // name, and "which row am I on" had to be read rather than seen. A filled
   // bar in the gutter is a single mark the eye tracks down the list.
-  const bar = active ? c.brand(unicode ? "▎" : ">") : " ";
+  const bar = active ? c.brand(MARKS.gutter) : " ";
   // `○` and not `·` for an empty checkbox. The middle dot was already the
   // separator before every description on the same line, so the row read as
   // "· Slack … · Slack with Vercel Connect" — one glyph doing two unrelated
   // jobs, three columns apart. A hollow ring is unmistakably a box waiting to
   // be ticked, and it pairs with the ✓ that replaces it.
+  //
+  // `o` and NOT `-` in the ASCII fallback, for exactly the same reason and it
+  // was worse there. `g.sep` is `-` without unicode, so a row rendered
+  // `> - Web Chat  - Add the built-in …` — one character doing THREE jobs
+  // (empty box, description separator, step separator) on one line. That is the
+  // path Windows takes without Windows Terminal, so it is the path least likely
+  // to be looked at and the one that most needed looking at.
   const mark = multi
     ? selected
       ? c.green(g.ok)
-      : c.dim(unicode ? "○" : "-")
+      : c.dim(MARKS.empty)
     : active
-      ? c.brandBold(unicode ? "›" : ">")
+      ? c.brandBold(MARKS.cursor)
       : " ";
   const pointer = bar;
   const base = active ? c.brandBold : selected ? c.bold : c.bold;
@@ -286,7 +310,7 @@ export async function ask(
     // leftover output — something the wizard had printed rather than something
     // waiting for you. The glyph carries the brand colour and the typed text is
     // bright, so the line is the one place on screen that looks live.
-    const caret = c.brandBold(unicode ? "▏" : "_");
+    const caret = c.brandBold(MARKS.caret);
     const typed = query ? c.bold(query) : c.dim(multi ? "Type to filter" : "Type to filter, or pick below");
     lines.push(`   ${c.brand(unicode ? "⌕" : ">")} ${typed}${caret}`);
 
