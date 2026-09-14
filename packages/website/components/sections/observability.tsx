@@ -48,7 +48,7 @@ export function Observability() {
             it. That is worth keeping and costs one quiet line here instead of
             four paragraphs: the same four paths, linked, for the reader who
             wants to go and look. */}
-        <p className="mx-auto mt-8 flex max-w-5xl flex-wrap items-center justify-center gap-x-4 gap-y-2 font-mono text-label-12 text-gray-600">
+        <p className="mx-auto mt-8 hidden max-w-5xl flex-wrap items-center justify-center gap-x-4 gap-y-2 font-mono text-label-12 text-gray-600 md:flex">
           <span className="text-gray-700">built by</span>
           {observability.capabilities.map((capability) => (
             <a
@@ -67,7 +67,7 @@ export function Observability() {
             panel above: a hairline rule, then a two-column block at the width
             of the panel, so it reads as part of this section rather than as a
             new one that forgot its heading. */}
-        <div className="mx-auto mt-16 max-w-5xl border-t border-border-subtle pt-12">
+        <div className="mx-auto mt-10 max-w-5xl border-t border-border-subtle pt-8 md:mt-16 md:pt-12">
           {/* grid-cols-1 is not decoration, and removing it re-breaks the phone.
               Below lg there is no grid-template-columns, so the single implicit
               track is `auto` — and an auto track is sized by its largest item's
@@ -89,7 +89,7 @@ export function Observability() {
           <div className="grid grid-cols-1 items-center gap-12 lg:grid-cols-2">
             <div className="flex flex-col gap-4">
               <h3 className="text-heading-32">{control.heading}</h3>
-              <p className="max-w-md text-copy-16 text-gray-900">{control.sub}</p>
+              <p className="hidden max-w-md text-copy-16 text-gray-900 md:block">{control.sub}</p>
             </div>
             <ApprovalDemo />
           </div>

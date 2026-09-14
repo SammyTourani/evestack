@@ -190,6 +190,21 @@ export function HeroGlyphField() {
     const host = canvas.parentElement!;
     const root = document.documentElement;
     const reducedMq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    /* An earlier pass froze this on phones on a battery argument, and that was
+       the wrong call twice over. Sammy's note on seeing it: "the animation in
+       the background, you can do more of that" — the drifting field IS the
+       thing that makes the page feel alive on a device with no cursor, and it
+       was the one motion a phone reader could still see now that hover is gone
+       and the pointer paint never runs. And the measurement that justified
+       freezing it — 0.004% of pixels painted — was itself the bug rather than
+       the reason: the field was invisible because the mask had nothing left
+       between the copy union and the old oversized stage box, not because a
+       phone cannot afford it. The stage is 16rem now, which gives the mask
+       room, and the cell budget below scales the field to the viewport.
+
+       So the loop runs on a phone. Reduced motion is still honoured, and that
+       is the only setting that freezes it. */
+    const frozen = () => reducedMq.matches;
     const coarseMq = window.matchMedia("(pointer: coarse)");
 
     let raf = 0;
@@ -574,7 +589,7 @@ export function HeroGlyphField() {
     };
 
     const start = () => {
-      if (running || disposed || reducedMq.matches) return;
+      if (running || disposed || frozen()) return;
       running = true;
       lastNow = performance.now();
       raf = requestAnimationFrame(frame);
@@ -620,18 +635,18 @@ export function HeroGlyphField() {
     };
 
     layout();
-    if (reducedMq.matches) staticFrame();
+    if (frozen()) staticFrame();
 
     // the entrance choreography nudges the copy/stage into place — re-read the
     // content rects once it has settled (weights only; paint state survives)
     const remeasure = window.setTimeout(() => {
       computeWeights();
-      if (reducedMq.matches) staticFrame();
+      if (frozen()) staticFrame();
     }, 2600);
 
     const ro = new ResizeObserver(() => {
       layout();
-      if (reducedMq.matches) staticFrame();
+      if (frozen()) staticFrame();
     });
     ro.observe(host);
 
@@ -653,7 +668,7 @@ export function HeroGlyphField() {
       if (d === lastDark) return;
       lastDark = d;
       layout(); // ends in rebuildAtlas() with the new ink
-      if (reducedMq.matches) staticFrame();
+      if (frozen()) staticFrame();
     });
     mo.observe(root, { attributes: true, attributeFilter: ["class"] });
 
@@ -661,7 +676,7 @@ export function HeroGlyphField() {
     let dprMql: MediaQueryList | null = null;
     const onDprChange = () => {
       layout();
-      if (reducedMq.matches) staticFrame();
+      if (frozen()) staticFrame();
       armDprListener();
     };
     const armDprListener = () => {
@@ -672,7 +687,7 @@ export function HeroGlyphField() {
     armDprListener();
 
     const onReduced = () => {
-      if (reducedMq.matches) {
+      if (frozen()) {
         stop();
         staticFrame();
       } else start();

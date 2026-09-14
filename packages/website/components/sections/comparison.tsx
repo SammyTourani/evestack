@@ -28,26 +28,35 @@ export function Comparison() {
           fromTo whose trigger is display:none on a phone — the ticks would
           simply never arrive. Cards render at rest, which is also the right
           answer for the no-JS pass. */}
-      <ul
-        aria-label="Managed versus self-hosted comparison"
-        className="flex flex-col gap-3 md:hidden"
-      >
-        {comparison.rows.map(([label, hosted, ours]) => (
-          <li key={label} className="rounded-xl border border-border-subtle p-4">
-            <h3 className="text-copy-14 text-gray-1000">{label}</h3>
-            <dl className="mt-3 flex flex-col gap-3">
-              <div className="flex flex-col gap-1">
-                <dt className="font-mono text-label-12 uppercase text-gray-700">{hostedCol}</dt>
-                <dd className="text-copy-14 text-gray-700">{hosted}</dd>
-              </div>
-              <div className="flex flex-col gap-1.5 rounded-lg border border-border-strong bg-background-200 p-3">
-                <dt className="flex items-center gap-2 font-mono text-label-12 uppercase text-gray-1000">
-                  <span aria-hidden className="text-blue-700">
-                    ▚
-                  </span>
-                  {oursCol}
-                </dt>
-                <dd className="flex items-start gap-2.5 text-copy-14 text-gray-1000">
+      <div className="overflow-hidden rounded-xl border border-border-subtle md:hidden">
+        {/* The two sides are named ONCE, in a legend, instead of being repeated
+            inside all six cards. An earlier phone pass made each row its own
+            bordered card with its own two labels: correct, readable, and twelve
+            labels plus six borders for six facts. One grouped list with hairline
+            dividers says the same thing in 484px less, and it is the shape iOS
+            uses for exactly this — a set of rows that share a heading. */}
+        <div className="flex flex-col gap-1 border-b border-border-subtle bg-background-200 px-5 py-3">
+          <p className="font-mono text-label-12 uppercase text-gray-700">{hostedCol}</p>
+          <p className="flex items-center gap-2 font-mono text-label-12 uppercase text-gray-1000">
+            <span aria-hidden className="text-blue-700">
+              ▚
+            </span>
+            {oursCol}
+          </p>
+        </div>
+        <ul
+          aria-label="Managed versus self-hosted comparison"
+          data-reveal="phone-stagger"
+          className="flex flex-col gap-px bg-border-subtle"
+        >
+          {comparison.rows.map(([label, hosted, ours]) => (
+            <li key={label} className="bg-background-100 px-5 py-4">
+              <h3 className="text-copy-14 text-gray-1000">{label}</h3>
+              <dl className="mt-2 flex flex-col gap-1">
+                <dt className="sr-only">{hostedCol}</dt>
+                <dd className="pl-6 text-copy-14 text-gray-700">{hosted}</dd>
+                <dt className="sr-only">{oursCol}</dt>
+                <dd className="flex gap-2.5 text-copy-14 text-gray-1000">
                   <svg
                     viewBox="0 0 16 16"
                     width="14"
@@ -56,17 +65,17 @@ export function Comparison() {
                     stroke="var(--ds-ok)"
                     strokeWidth="2"
                     aria-hidden
-                    className="mt-1 shrink-0"
+                    className="mt-[3px] shrink-0"
                   >
                     <path d="M2.5 8.5 6 12l7.5-8" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
-                  {ours}
+                  <span>{ours}</span>
                 </dd>
-              </div>
-            </dl>
-          </li>
-        ))}
-      </ul>
+              </dl>
+            </li>
+          ))}
+        </ul>
+      </div>
       <div
         tabIndex={0}
         role="region"

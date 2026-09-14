@@ -55,6 +55,14 @@ function Choreography() {
       mm.add("(prefers-reduced-motion: no-preference)", () => {
         /* one signal tears down every listener this callback attaches */
         const uiAbort = new AbortController();
+
+        /* Read once, deliberately, rather than as a matchMedia condition.
+           Re-keying on a live resize would revert and replay the whole
+           choreography — SplitText re-splitting settled headings, the terminal
+           re-arming — which is a flicker the desktop has never had. A phone in
+           landscape is 852pt wide and keeps the desktop keying, which is the
+           right answer there anyway. */
+        const phone = window.matchMedia("(max-width: 47.999rem)").matches;
         /* ── No hero entrance, deliberately ──────────────────────────────
            The headline, sub and CTAs are server-rendered and MUST be legible
            in the first frame. There used to be a GSAP intro here that hid
@@ -148,8 +156,37 @@ function Choreography() {
           );
         });
 
-        gsap.utils.toArray<HTMLElement>("[data-reveal='stagger']").forEach((el) => {
-          gsap.fromTo(
+        gsap.utils
+          .toArray<HTMLElement>(
+            phone ? "[data-reveal='stagger'], [data-reveal='phone-stagger']" : "[data-reveal='stagger']",
+          )
+          .forEach((el) => {
+            if (phone) {
+              /* One column here, so the container runs up to 1,719px tall —
+                 measured in §features at 393x852, six children at y = 1 / 308 /
+                 563 / 834 / 1165 / 1448 from its own top. `top 80%` fires with
+                 170px of it on screen, so children 2..6 run AND FINISH a 0.7s
+                 tween as much as 1,448px below the fold and the reader meets
+                 five cards already at rest. Key each child to its own arrival
+                 instead; slightly tightened, because on a phone the card is
+                 already moving by the time it lands. */
+              gsap.utils.toArray<HTMLElement>(el.children).forEach((kid) => {
+                gsap.fromTo(
+                  kid,
+                  { autoAlpha: 0, y: 18 },
+                  {
+                    autoAlpha: 1,
+                    y: 0,
+                    duration: 0.55,
+                    ease: "power2.out",
+                    scrollTrigger: { trigger: kid, start: "top 92%", once: true },
+                    onComplete: () => gsap.set(kid, { clearProps: "all" }),
+                  },
+                );
+              });
+              return;
+            }
+            gsap.fromTo(
             el.children,
             { autoAlpha: 0, y: 24 },
             {
@@ -167,6 +204,27 @@ function Choreography() {
         /* blur-decode reveal (Exa's grammar) — content de-focuses into
            legibility; used where the payload is dense text (code cards) */
         gsap.utils.toArray<HTMLElement>("[data-reveal='decode']").forEach((el) => {
+          if (phone) {
+            /* Same defect, same fix: §architecture measured 1,238px tall at
+               393x852 with three children at y = 0 / 408 / 854, so cards two
+               and three decoded off-screen. */
+            gsap.utils.toArray<HTMLElement>(el.children).forEach((kid) => {
+              gsap.fromTo(
+                kid,
+                { autoAlpha: 0, y: 14, filter: "blur(8px)" },
+                {
+                  autoAlpha: 1,
+                  y: 0,
+                  filter: "blur(0px)",
+                  duration: 0.6,
+                  ease: "power2.out",
+                  scrollTrigger: { trigger: kid, start: "top 92%", once: true },
+                  onComplete: () => gsap.set(kid, { clearProps: "all" }),
+                },
+              );
+            });
+            return;
+          }
           gsap.fromTo(
             el.children,
             { autoAlpha: 0, y: 16, filter: "blur(8px)" },
@@ -183,8 +241,15 @@ function Choreography() {
           );
         });
 
-        /* evestack-column checks pop after the row cascade */
-        const checks = gsap.utils.toArray<SVGElement>("[data-check]");
+        /* evestack-column checks pop after the row cascade.
+           Desktop only: §06 renders a grouped card list on a phone and puts the
+           table behind `hidden md:block`, so at 393x852 the table, all six tbody
+           rows and all six [data-check] SVGs measure 0x0. Without this guard the
+           page sets scale:0 on six invisible SVGs and stands seven
+           ScrollTriggers against zero-height triggers. The phone's entrance for
+           §06 comes from the card list, which carries data-reveal="phone-stagger"
+           and is handled above. */
+        const checks = phone ? [] : gsap.utils.toArray<SVGElement>("[data-check]");
         if (checks.length) {
           gsap.fromTo(
             checks,
@@ -201,7 +266,8 @@ function Choreography() {
           );
         }
 
-        gsap.utils.toArray<HTMLElement>("[data-reveal='rows'] tbody tr").forEach((row, i) => {
+        const tableRows = phone ? [] : gsap.utils.toArray<HTMLElement>("[data-reveal='rows'] tbody tr");
+        tableRows.forEach((row, i) => {
           gsap.fromTo(
             row,
             { autoAlpha: 0, y: 12 },
@@ -402,6 +468,15 @@ function Choreography() {
 
         /* ── Screenshot perspective tilt (§8) ──────────────────────── */
         gsap.utils.toArray<HTMLElement>("[data-screenshot-tilt]").forEach((el) => {
+          /* Desktop only. Below md the panel inside this figure is full-bleed
+             (max-md:-mx-5 with its vertical borders removed), and the tilt's
+             start state scales it to 0.97 — which paints a ~6px strip of page
+             background down each screen edge of a panel that is supposed to
+             run edge to edge. It resolves by the end of the scrub, but every
+             scroll-in shows the panel peeling off both sides, and that reads
+             as a rendering bug rather than as an entrance. Read once, like the
+             other capability gates in this file. */
+          if (!window.matchMedia("(width >= 48rem)").matches) return;
           gsap.set(el.parentElement, { perspective: 1200 });
           gsap.fromTo(
             el,
@@ -461,8 +536,10 @@ function Choreography() {
         /* Match on the hash, not the whole href: since the site gained a
            /docs route the header links are home-absolute (/#compare), and
            feeding that to querySelector throws on an invalid selector. */
-        document
-          .querySelectorAll<HTMLAnchorElement>("[data-scrollspy] a[href*='#']")
+        /* Desktop only: [data-scrollspy] is `hidden md:block`, so on a phone
+           these four ScrollTriggers write data-active onto links nobody can
+           see. The phone's nav lives in the <details> panel instead. */
+        (phone ? [] : [...document.querySelectorAll<HTMLAnchorElement>("[data-scrollspy] a[href*='#']")])
           .forEach((link) => {
             const target = link.hash ? document.querySelector(link.hash) : null;
             if (!target) return;

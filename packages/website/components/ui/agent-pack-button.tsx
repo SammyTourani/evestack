@@ -259,7 +259,7 @@ export function AgentPackButton({
      plain clsx with no tailwind-merge, so a passed `border-*` would not
      replace the base one — both would land and the cascade would decide. */
   const shell = cn(
-    "inline-flex select-none items-stretch rounded-full border transition-colors duration-150",
+    "inline-flex select-none items-stretch rounded-full border transition-colors duration-150 max-sm:w-full",
     filled
       ? "border-transparent bg-gray-1000 text-background-100"
       : "border-blue-700/35 bg-background-100 text-gray-1000 hover:border-blue-700/70",
@@ -284,7 +284,7 @@ export function AgentPackButton({
     <div
       ref={rootRef}
       data-agent-pack={variant}
-      className={cn("relative inline-flex", full && "w-full")}
+      className={cn("relative inline-flex max-sm:w-full", full && "w-full")}
       onPointerEnter={hoverOpen}
       onPointerLeave={hoverClose}
       onFocus={(event) => {
@@ -306,7 +306,7 @@ export function AgentPackButton({
           type="button"
           onClick={onCopy}
           className={cn(
-            "inline-flex items-center gap-2 rounded-l-full pl-5 pr-4 font-medium transition-opacity",
+            "inline-flex items-center gap-2 rounded-l-full pl-5 pr-4 font-medium transition-opacity max-sm:flex-1 max-sm:justify-center",
             filled ? "hover:opacity-90" : "hover:text-gray-1000",
             full && "flex-1 justify-center",
           )}

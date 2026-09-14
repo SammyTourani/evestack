@@ -20,7 +20,7 @@ import { closing, site } from "@/lib/copy";
 export function ClosingCta() {
   return (
     <Section id="get-started" labelledBy="closing-heading">
-      <div className="flex flex-col items-center gap-8 py-6 text-center md:py-12">
+      <div className="flex flex-col items-center gap-5 py-0 text-center sm:gap-8 sm:py-6 md:py-12">
         {/* No data-reveal here, deliberately. This heading is painted by a
             gradient through background-clip:text, and SplitText re-wraps each
             line in a fresh element that inherits `color: transparent` without
@@ -32,7 +32,7 @@ export function ClosingCta() {
         >
           {closing.heading}
         </h2>
-        <p className="text-copy-16 text-gray-900">{closing.sub}</p>
+        <p className="hidden text-copy-16 text-gray-900 md:block">{closing.sub}</p>
         {/* The beam stays on the command alone. It is the site's one animated
             border and the reason it reads as the primary action; putting it
             round two things would make it decoration. The agent button brings
@@ -43,16 +43,16 @@ export function ClosingCta() {
             neighbour whose popover opens on hover, and a control that slides
             toward the cursor next to one that opens on approach made the whole
             row feel unstable. */}
-        <div className="flex flex-col items-center gap-4 sm:flex-row">
-          <span className="border-beam inline-flex rounded-full">
+        <div className="flex w-full flex-col items-center gap-4 sm:w-auto sm:flex-row">
+          <span className="border-beam inline-flex rounded-full max-sm:w-full">
             <CommandPill command={site.command} className="bg-background-100" />
           </span>
           <AgentPackButton size="lg" />
-          <Button href={site.github} external variant="secondary" size="lg">
+          <Button href={site.github} external variant="secondary" size="lg" className="max-sm:w-full">
             Star on GitHub
           </Button>
         </div>
-        <p className="text-copy-14 text-gray-700">
+        <p className="hidden text-copy-14 text-gray-700 md:block">
           Or read the{" "}
           <a
             href="/docs"

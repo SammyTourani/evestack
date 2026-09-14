@@ -35,13 +35,17 @@ export function Hero() {
        To make the animation FASTER without shortening the page, or the page
        shorter without speeding it up, retime slab-choreo.ts. Do not reach for
        this number for either. */
-    /* PHONE RUNWAY (< 40rem): 220svh, which is 1,874px instead of 2,897px at
-       393x852 — a full phone screen and a bit off the top of the page, and the
-       hero stops being 19% of the whole document on a device where it is also
-       the slowest thing to scroll past. 220 is not a new number: the comment
-       above records it as a shipped rung ("220vh gave 120vh of scroll"), so it
-       is a speed this disassembly has already run at, and still 2.4x the 50vh
-       that read as a glitch. The beat map in slab-choreo.ts is expressed in
+    /* PHONE RUNWAY (< 40rem): 185svh, which is 1,576px instead of 2,897px at
+       393x852 — a phone screen and a half off the top of the page, on a device
+       where this is also the slowest thing to scroll past.
+
+       185 rather than the 220 this started at, and the two numbers are not
+       independent of the mark's size. The phone diagram is 0.577 of a 16rem box
+       (hero-client.tsx), so the bars travel a shorter distance than the desktop
+       composition's do; a shorter runway over a shorter travel is close to
+       speed-NEUTRAL rather than a speed-up. 170svh is the floor — below that
+       the same travel starts reading as the flick the comment above warns
+       about at 150vh. Do not cut this number without also checking the mark. The beat map in slab-choreo.ts is expressed in
        fractions of the scrub, so every beat stretches with this and nothing
        needs retiming.
 
@@ -56,13 +60,13 @@ export function Hero() {
     <section
       id="hero"
       aria-labelledby="hero-heading"
-      className="relative h-[220svh] sm:h-[340vh]"
+      className="relative h-[185svh] sm:h-[340vh]"
     >
       {/* Layer labels for the scroll disassembly — real DOM, screen-reader
           visible list in every mode */}
       <p className="sr-only">{architecture.srSummary}</p>
 
-      <div className="sticky top-0 flex h-svh flex-col items-center justify-center overflow-hidden">
+      <div data-hero-pane className="sticky top-0 flex h-svh flex-col items-center justify-center overflow-hidden">
         {/* Ambient ASCII glyph field framing the copy + 3D stack (eve.dev
             imprint port; masked out of the center, fades on scroll) */}
         <HeroGlyphField />
@@ -71,7 +75,16 @@ export function Hero() {
             fallback rung */}
         <div
           aria-hidden
-          className="hero-glow pointer-events-none absolute left-1/2 top-1/2 z-0 h-[560px] w-[900px] max-w-[120vw] -translate-x-1/2 -translate-y-1/2"
+          /* The glow is painted INSIDE this box, so the box has to be at least as big
+              as the gradient wants to be or it clips. At 393x852 the desktop
+              constants gave a 472x560 box inside an 852px pane and the phone
+              gradient's 62vh ellipse was cut off square: 146px of flat black
+              above the glow and a matching band below, with a visible
+              horizontal seam where the colour stopped. Filling the pane on a
+              phone costs nothing — the element is empty, aria-hidden and
+              pointer-events-none — and it is what lets the one gradient moment
+              on this site actually reach the edges of the screen it is on. */
+          className="hero-glow pointer-events-none absolute left-1/2 top-1/2 z-0 h-full w-full max-w-none -translate-x-1/2 -translate-y-1/2 md:h-[560px] md:w-[900px] md:max-w-[120vw]"
         />
 
         <HeroClient>
@@ -109,14 +122,24 @@ export function Hero() {
           </h1>
           <p
             data-hero="sub"
-            className="max-w-xl text-balance text-copy-16 text-gray-900 md:text-copy-18"
+            className="hidden max-w-xl text-balance text-copy-16 text-gray-900 md:block md:text-copy-18"
           >
             {site.subhead}
           </p>
-          <div data-hero="ctas" className="mt-2 flex flex-col items-center gap-4 sm:flex-row">
-            <CommandPill command={site.command} />
-            <AgentPackButton size="lg" />
-            <Button href={site.github} external variant="ghost" size="lg">
+          {/* On a phone these were three independently-centred pills of three
+              different widths — 242 / 239 / 184 — ragging down both sides and
+              taking 21% of the screen. `items-stretch` inside a fixed measure
+              does the equalising; the w-full props are belt and braces and
+              matter only for AgentPackButton, whose shell would otherwise
+              shrink-wrap inside a stretched root. Every sm: value is today's
+              exact string, so the desktop row is untouched. */}
+          <div
+            data-hero="ctas"
+            className="mt-0 flex w-full max-w-[19.5rem] flex-col items-stretch gap-2.5 sm:mt-2 sm:w-auto sm:max-w-none sm:flex-row sm:items-center sm:gap-4"
+          >
+            <CommandPill command={site.command} className="w-full sm:w-auto" />
+            <AgentPackButton size="lg" className="w-full sm:w-auto" />
+            <Button href={site.github} external variant="ghost" size="lg" className="w-full sm:w-auto">
               <GitHubIcon />
               Star on GitHub
             </Button>

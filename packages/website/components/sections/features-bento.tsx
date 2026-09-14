@@ -112,10 +112,15 @@ export function FeaturesBento() {
             {i % 3 !== 0 ? <GridCross className="hidden lg:block" /> : null}
             {i >= 3 ? <GridCross className="hidden lg:block" /> : null}
             <SpotlightCard className="h-full">
-              <div className="flex h-full flex-col justify-between gap-6 p-7 transition-transform duration-300 ease-out group-hover:-translate-y-0.5 motion-reduce:transition-none">
+              <div className="flex h-full flex-col justify-between gap-5 px-5 py-6 transition-transform duration-300 ease-out group-hover:-translate-y-0.5 motion-reduce:transition-none md:gap-6 md:p-7">
                 <div className="flex flex-col gap-2">
                   <h3 className="text-heading-20">{cell.title}</h3>
-                  <p className="text-copy-14 text-gray-900">{cell.body}</p>
+                  {/* Same rule as the section subheads: the title claims it and
+                      the CellDemo below proves it, so the 24-35 word body is
+                      desktop's. "Nothing gets lost" over four real event rows
+                      says more on a phone than either does with a paragraph
+                      wedged between them. */}
+                  <p className="hidden text-copy-14 text-gray-900 md:block">{cell.body}</p>
                 </div>
                 <CellDemo kind={cell.demo} />
               </div>

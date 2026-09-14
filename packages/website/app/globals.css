@@ -210,7 +210,12 @@
   margin-inline: auto;
   width: 100%;
   max-width: var(--container-site);
-  padding-inline: 1.25rem;
+  /* 1.75rem below 48rem, not 1.25. The old 20px is the iOS default margin and
+     is right for a page of text — but nearly every beat here is a bordered
+     panel running the full measure, and at 20px those panels read as edge to
+     edge with the screen. 28px is what makes them read as cards sitting ON the
+     page instead of as the page itself. Desktop's 2rem is untouched. */
+  padding-inline: 1.75rem;
   @media (width >= 48rem) {
     padding-inline: 2rem;
   }
@@ -262,6 +267,36 @@
   }
 }
 
+/* The headline is TWO lines in lib/copy.ts and was rendering as three on every
+   phone, with a pinched "on your" orphaned in the middle. It misses the fit by
+   one pixel: at the h1's resolved font, "on your own machine." measures 354.0px
+   against the 353px the site-container leaves inside its gutters.
+
+   So the size is a function of width rather than a breakpoint step. 354/40 is
+   8.85px of advance per px of font-size, so the largest size that fits is
+   (100vw - 40px)/8.85; `10.6vw - 4px` is that with ~6% held back for browsers
+   whose vw includes a scrollbar. It resolves to 37.7px at 393pt, 37.2 at 375,
+   35.6 at 360 and 31.2 at 320 — two lines at every phone width, where a fixed
+   40px fails at all of them.
+
+   line-height 1.2 and letter-spacing -0.06em are exactly 3rem and -2.4px at
+   2.5rem, i.e. byte-identical to --text-heading-40, so they only ever track the
+   new size. min() caps at 2.5rem, so from ~419pt up — including the last pixel
+   this query matches, 639 — the computed values are the token's own and there
+   is no step at the breakpoint.
+
+   ORDER IS LOAD-BEARING. The max-height block below also targets #hero-heading
+   at identical specificity, and it is the guard that stops the copy clipping
+   against the sticky pane's overflow-hidden on short screens. This block must
+   stay ABOVE it so that guard still wins on a narrow AND short window. */
+@media (width < 40rem) {
+  #hero-heading {
+    font-size: min(2.5rem, calc(10.6vw - 4px));
+    line-height: 1.2;
+    letter-spacing: -0.06em;
+  }
+}
+
 /* Short viewports (laptop panes, small landscape screens): tighten the hero
    so badge + headline + subhead + CTAs + toggle never clip against the
    sticky viewport's overflow-hidden. */
@@ -310,7 +345,42 @@
    The spine is hidden with opacity rather than display:none because
    choreography.tsx calls getTotalLength() on it before it ever animates, and
    that is not a question to ask an unrendered element. */
+/* The hero's copy column was centred in a pane whose box starts 65px down (the
+   header is in normal flow), so the composition hung low and split the emptiness
+   in two: ~150px of nothing above the headline and ~137px below the last
+   control, while the mark and the type fought over the middle. Bottom-anchoring
+   spends that air deliberately — it goes above the mark, where it reads as the
+   frame around a composition, and the primary action lands where a thumb is.
+
+   pb-[8.5rem] rather than something rounder: the pane is h-svh but begins at
+   y=65, so 65px of it already hangs below the fold and the padding nets 71px of
+   visible clearance rather than its nominal 136.
+
+   The min-height guard is the important half. On a 375x667 phone the
+   max-height:760 rule below already compacts this copy, while the mark's centre
+   stays pinned — so bottom-anchoring there pushes the type UP into the mark and
+   leaves ~20px of overlap. Short phones keep today's centred composition. */
+@media (width < 40rem) and (height >= 700px) {
+  [data-hero-pane] {
+    justify-content: flex-end;
+    padding-bottom: 8.5rem;
+  }
+}
+
 @media (width < 40rem) {
+  /* Two component internals the CTA block cannot reach from a className.
+     The copy glyph is pushed to the far edge of the now full-width command row
+     so it reads as its own control rather than as punctuation after the text;
+     and AgentPackButton hardcodes `full = variant === "panel"` and sends its
+     className to the shell, so its label half has to be told to fill. */
+  #hero [data-hero="ctas"] [data-copy] {
+    margin-left: auto;
+  }
+  #hero [data-agent-pack] > div > button:first-of-type {
+    flex: 1;
+    justify-content: center;
+  }
+
   [data-hero-annotations] > svg {
     opacity: 0;
   }
@@ -526,6 +596,29 @@
   }
   [data-term] > p {
     white-space: nowrap;
+  }
+}
+
+/* …and the overflow that rule hands back has to be VISIBLE, or it is not
+   reachable. Two scrims pinned to the BOX and two matching covers pinned to the
+   CONTENT: at rest the left cover sits over the left scrim and hides it while
+   the right scrim shows, and at the end of the scroll the right cover has
+   arrived and the left scrim has appeared. It cannot lie about which way there
+   is more to read, and it needs no JS, no scroll listener and no
+   scroll-timeline. Backgrounds paint behind text, so nothing is dimmed.
+   gray-300 rather than gray-200: at 8% luminance over this page's near-black
+   the quieter token is invisible at 2x. */
+@media (width < 48rem) {
+  [data-term] {
+    background-image:
+      linear-gradient(to right, var(--ds-background-200), transparent),
+      linear-gradient(to left, var(--ds-background-200), transparent),
+      linear-gradient(to right, var(--ds-gray-300), transparent),
+      linear-gradient(to left, var(--ds-gray-300), transparent);
+    background-position: left center, right center, left center, right center;
+    background-repeat: no-repeat;
+    background-size: 32px 100%;
+    background-attachment: local, local, scroll, scroll;
   }
 }
 
@@ -762,6 +855,28 @@
   }
 }
 
+/* The series line has the same defect as the labels and takes the same fix. It
+   is authored 1.25 units wide in a 520-unit canvas that lays out at 353px on a
+   393pt phone, so it renders at 0.85px — thinner than a hairline, on the one
+   mark in the panel that carries the data.
+
+   `vector-effect: non-scaling-stroke` is the obvious answer and is wrong here:
+   .beam-draw normalises its draw-on with pathLength="1" and
+   stroke-dasharray: 1 1, and a non-scaling stroke resolves that dash in SCREEN
+   pixels, which shatters the line into a 1px dotted rule. Scaling the authored
+   width is exact and leaves the dash arithmetic alone.
+
+   Keyed to data-series rather than to .beam-draw because .beam-draw is applied
+   as cn(armed && ...) and `armed` is never set under prefers-reduced-motion —
+   so a class-based rule would leave reduced-motion readers, no-JS readers and
+   everyone before hydration with the smudge, which is the bug. Only the <27rem
+   band needs it: that is where every iPhone lives (320-430pt). */
+@media (width < 27rem) {
+  .mon svg [data-series] {
+    stroke-width: 1.8;
+  }
+}
+
 /* Dashboard demo loop-progress hairline: brighter leading edge = honest
    "this is a scripted loop" signal. */
 .demo-progress {
@@ -971,4 +1086,36 @@
     rgba(0, 223, 216, 0.1) 45%,
     transparent 70%
   );
+}
+
+/* On a phone the glow was sized for a 1440px canvas and centred on a copy
+   column that has since moved: an ellipse 620px wide behind a 393px screen,
+   at 28% of one colour, reads as a slightly-less-black rectangle. It is the
+   site's ONE gradient moment and on the device with the least colour on it,
+   it was doing nothing.
+
+   Re-aimed rather than recoloured. It follows the mark up the screen (42%
+   rather than 52%), sizes itself to the viewport instead of to a desktop
+   constant, and carries a third stop so the cyan actually arrives — the
+   two-stop version spent its whole range getting from blue to transparent.
+   Same three tokens the desktop glow uses, same family as the charts below. */
+@media (width < 40rem) {
+  .hero-glow {
+    background: radial-gradient(
+      ellipse 108vw 62vh at 50% 42%,
+      rgba(0, 124, 240, 0.2),
+      rgba(0, 223, 216, 0.1) 38%,
+      rgba(121, 40, 202, 0.07) 62%,
+      transparent 78%
+    );
+  }
+  .dark .hero-glow {
+    background: radial-gradient(
+      ellipse 108vw 62vh at 50% 42%,
+      rgba(0, 124, 240, 0.36),
+      rgba(0, 223, 216, 0.17) 38%,
+      rgba(121, 40, 202, 0.13) 62%,
+      transparent 78%
+    );
+  }
 }

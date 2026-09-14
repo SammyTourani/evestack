@@ -16,7 +16,7 @@ export function Integrations() {
           title={integrations.heading}
           sub={integrations.sub}
         />
-        <div data-reveal="stagger" className="mx-auto mb-16 max-w-4xl">
+        <div data-reveal="stagger" className="mx-auto mb-10 max-w-4xl md:mb-16">
           <IntegrationHub />
         </div>
       </div>

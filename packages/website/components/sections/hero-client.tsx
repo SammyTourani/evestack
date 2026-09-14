@@ -38,20 +38,36 @@ export function HeroClient({ children }: { children: React.ReactNode }) {
            the subhead. It read as a collision, not a backdrop.
 
            So below 40rem the box takes a definite height instead of inheriting
-           one from the aspect, and moves up. h-[min(23.5rem,46svh)]: the 46svh
-           term keeps the box from outgrowing the screen on a tall phone, and
-           the 23.5rem cap keeps it from outgrowing the LAYOUT — the exploded
-           bars reach ±1.86u while the camera arc pushes ±0.55u sideways
-           (ARC_X, slab-choreo.ts), which needs a box aspect of at least ~0.95
-           to stay in frame; 421/376 = 1.12 leaves 18% of margin. Going portrait
-           would start sliding the bars out of frame mid-explode.
-           -translate-y-[calc(50%+8rem)] then puts the mark's crown above the
-           h1's first line, which is the composition REST_OFFSET_Y already
-           describes in stack-mark.tsx and which the phone could not deliver.
+           one from the aspect, and moves up.
+
+           The mark's rendered size is 0.577 of the box height — pixel-scanned
+           at three box sizes, not derived — so h-[min(16.5rem,31svh)] draws a
+           148px mark at 393x852, and the 30svh term keeps it from outgrowing a
+           short screen. An earlier pass used 23.5rem here and the mark then
+           covered the headline outright: the h1's bounding box sat entirely
+           inside the mark's, on both axes, with three chamfer rim-lights
+           crossing three lines of 40px type. A later pass over-corrected to
+           14rem, at which point the finished diagram (128px) was smaller than
+           the legend labelling it (191px) and the caption out-weighed its
+           subject. 16rem cleared the type but only because the headline was
+           still THREE lines; the copy diet made it two (90px instead of 144)
+           and handed back 54px of the band above it, so the mark takes 20rem —
+           a 185px object rather than a 148px one. That difference is not
+           vanity. The chamfer rim-lights and the crimson seam are what make
+           this read as a rendered object rather than four grey rounded
+           rectangles, and below ~150px they stop resolving at all.
+
+           -translate-y-[calc(50%+9.5rem)] is the other half. It lifts the mark
+           to y=199..384 at 393x852 — 23px clear of the h1 and 134px of air
+           above it — which is the composition REST_OFFSET_Y already describes in
+           stack-mark.tsx and which the phone could not deliver. The aspect
+           guard the earlier note worried about moves the right way, not the
+           wrong one: 421/256 is further from portrait than 421/376 was, and a
+           shorter box makes the exploded bars narrower too.
 
            sm: restores today's exact strings, so nothing at or above 640px
            moves. */
-        className="pointer-events-none absolute left-1/2 top-1/2 z-0 aspect-auto h-[min(23.5rem,46svh)] w-[min(1240px,107vw)] -translate-x-1/2 -translate-y-[calc(50%+8rem)] sm:aspect-[1240/580] sm:h-auto sm:-translate-y-[calc(50%+2.5rem)]"
+        className="pointer-events-none absolute left-1/2 top-1/2 z-0 aspect-auto h-[min(16.5rem,31svh)] w-[min(1240px,107vw)] -translate-x-1/2 -translate-y-[calc(50%+9.5rem)] sm:aspect-[1240/580] sm:h-auto sm:-translate-y-[calc(50%+2.5rem)]"
       >
         {/* The canvas renders with film-back bleed (hero-canvas expands the
             frustum, composition unchanged) and these nested masks feather the

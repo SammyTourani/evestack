@@ -147,9 +147,9 @@ function Tile({
   className?: string;
 }) {
   return (
-    <div className={cn("bg-background-100 p-4", className)}>
+    <div className={cn("bg-background-100 p-4 max-md:py-2.5", className)}>
       <p className="font-mono text-label-12 uppercase text-gray-700">{label}</p>
-      <p className={cn("mt-1 font-mono text-heading-24 tabular-nums", ok ? "text-ok" : "text-gray-1000")}>
+      <p className={cn("mt-1 font-mono text-heading-24 tabular-nums max-md:text-heading-20", ok ? "text-ok" : "text-gray-1000")}>
         {value}
       </p>
     </div>

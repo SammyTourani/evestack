@@ -31,7 +31,7 @@ export function OneCommand() {
               the right, so the abstract claim and the concrete evidence are
               on screen together. Sits above the ports because "what would I
               use this for" is a bigger question than "which ports". */}
-          <p className="mb-8 text-copy-14 text-gray-700">{terminal.examples}</p>
+          <p className="mb-8 hidden text-copy-14 text-gray-700 md:block">{terminal.examples}</p>
           <dl className="grid grid-cols-3 gap-6 font-mono text-mono-13">
             <div className="flex flex-col gap-1">
               <dt className="text-gray-700">agent</dt>

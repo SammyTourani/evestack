@@ -51,15 +51,22 @@ export function SectionHeading({
            spent ~430px — half a phone screen — on air between sections, on a
            page that was already 18 screens long. Nothing is removed, the
            spacing is just measured for the screen it is on. */
-        "mb-10 flex flex-col gap-4 md:mb-14",
-        align === "center" && "items-center text-center",
+        /* Left-aligned below md. A centred 353px measure rags down BOTH sides,
+           so nothing lines up with the content underneath it and every heading
+           costs ~272px before the section says anything. Left is the phone's
+           best-reading arrangement and it gives the whole page one rail. The
+           md: variants restore today's exact centred treatment. */
+        "mb-8 flex flex-col gap-3 md:mb-14 md:gap-4",
+        align === "center" && "md:items-center md:text-center",
       )}
     >
       {eyebrow ? (
         <p aria-hidden className="flex items-center gap-3 font-mono text-label-12 uppercase text-gray-700">
           <span className="inline-block h-px w-6 bg-border-strong" />
           {eyebrow}
-          {align === "center" ? <span className="inline-block h-px w-6 bg-border-strong" /> : null}
+          {align === "center" ? (
+            <span aria-hidden className="hidden h-px w-6 bg-border-strong md:inline-block" />
+          ) : null}
         </p>
       ) : null}
       <h2
@@ -69,8 +76,21 @@ export function SectionHeading({
       >
         {title}
       </h2>
+      {/* THE PHONE DOES NOT GET THE PARAGRAPH.
+          Nine section subheads run 19-44 words each and, with the six feature
+          bodies, they were ~500 of the page's 710 words — the bulk of a 14-screen
+          scroll on a device someone is holding in one hand. Every one of them
+          explains a claim the heading has already made and the visual
+          underneath is about to prove. So on a phone the beat is: the claim, in
+          big type, and the real thing doing the work. Desktop keeps every word,
+          where there is a column to read them in. */}
       {sub ? (
-        <p className={cn("max-w-2xl text-copy-16 text-gray-900", align === "center" && "text-balance")}>
+        <p
+          className={cn(
+            "hidden max-w-2xl text-copy-16 text-gray-900 md:block",
+            align === "center" && "md:text-balance",
+          )}
+        >
           {sub}
         </p>
       ) : null}

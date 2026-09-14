@@ -219,7 +219,7 @@ export function MonitorsPanel() {
             <span className="mx-1.5 text-gray-500">/</span>
             <span className="text-gray-1000">Monitors</span>
           </p>
-          <div className="ml-auto flex shrink-0 items-center gap-2">
+          <div className="ml-auto hidden shrink-0 items-center gap-2 md:flex">
             <PickerChip>Production</PickerChip>
             <span className="hidden md:inline-flex">
               <PickerChip>Last 12 hours</PickerChip>
@@ -267,7 +267,7 @@ export function MonitorsPanel() {
               <path
                 d={RUNS_PATH}
                 pathLength={1}
-                className={cn(armed && "beam-draw")}
+                data-series className={cn(armed && "beam-draw")}
                 style={{ "--beam-delay": "0.25s" } as React.CSSProperties}
                 stroke="var(--ds-blue-700)"
                 strokeWidth="1.25"
@@ -323,7 +323,7 @@ export function MonitorsPanel() {
                 <path
                   d={LINE}
                   pathLength={1}
-                  className={cn(armed && "beam-draw")}
+                  data-series className={cn(armed && "beam-draw")}
                   style={{ "--beam-delay": "0.35s" } as React.CSSProperties}
                   stroke="var(--ds-blue-700)"
                   strokeWidth="1.25"
@@ -370,7 +370,7 @@ export function MonitorsPanel() {
         </div>
 
         {/* search */}
-        <div data-anim="fade" style={{ "--d": "0.2s" } as React.CSSProperties} className="border-b border-border-subtle bg-background-100 px-4 py-3">
+        <div data-anim="fade" style={{ "--d": "0.2s" } as React.CSSProperties} className="hidden border-b border-border-subtle bg-background-100 px-4 py-3 md:block">
           <div aria-hidden className="flex items-center gap-2.5 rounded-md border border-border-subtle px-3 py-1.5">
             <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 text-gray-600" fill="none" stroke="currentColor" strokeWidth="1.3">
               <circle cx="7" cy="7" r="4.5" />
@@ -381,7 +381,14 @@ export function MonitorsPanel() {
           </div>
         </div>
 
-        {/* sessions table */}
+        {/* SESSIONS TABLE — three rows on a phone, eight on a laptop.
+            This panel is a full observability console: breadcrumb, environment
+            pickers, two charts, a search field, eight rows and pagination. All
+            of that at 393pt is a console that has been shrunk, not a phone
+            view. What a phone wants from it is the picture — the two charts —
+            plus just enough of the table to show the rows are real sessions
+            with real names and real costs. The rest of the console is
+            desktop's. */}
         <div className="bg-background-100">
           <div className="grid grid-cols-[minmax(0,1fr)_100px_72px_64px] items-center gap-x-4 border-b border-border-subtle px-4 py-2.5 max-md:grid-cols-3 max-md:gap-y-1 md:grid-cols-[minmax(0,1fr)_100px_72px_64px_24px]">
             <p className="font-mono text-label-12 uppercase text-gray-700 max-md:col-span-3">Session</p>
@@ -395,7 +402,7 @@ export function MonitorsPanel() {
               key={s.id}
               data-anim="fade"
               style={{ "--d": `${0.3 + i * 0.08}s` } as React.CSSProperties}
-              className="grid grid-cols-[minmax(0,1fr)_100px_72px_64px] items-center gap-x-4 border-b border-border-subtle px-4 py-2.5 max-md:grid-cols-3 max-md:gap-y-1 transition-colors hover:bg-gray-100/40 md:grid-cols-[minmax(0,1fr)_100px_72px_64px_24px]"
+              className={cn("grid grid-cols-[minmax(0,1fr)_100px_72px_64px] items-center gap-x-4 border-b border-border-subtle px-4 py-2.5 max-md:grid-cols-3 max-md:gap-y-1 transition-colors hover:bg-gray-100/40 md:grid-cols-[minmax(0,1fr)_100px_72px_64px_24px]", i > 2 && "max-md:hidden")}
             >
               <p className="flex min-w-0 items-center gap-2.5 max-md:col-span-3">
                 <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-ok" />
@@ -413,7 +420,7 @@ export function MonitorsPanel() {
               </svg>
             </div>
           ))}
-          <div className="flex items-center justify-between px-4 py-2.5">
+          <div className="hidden items-center justify-between px-4 py-2.5 md:flex">
             <span className="inline-flex items-center gap-1.5 font-mono text-label-12 text-gray-700">
               Show 10
               <svg viewBox="0 0 8 6" className="h-1.5 w-2 text-gray-600" fill="none" stroke="currentColor" strokeWidth="1.2" aria-hidden>
