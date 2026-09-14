@@ -52,8 +52,10 @@ They are summarised rather than itemised, deliberately.
 
 ## Unreleased
 
-Nothing is pending. Every package in this tree matches the version its registry serves, and
-`evestack`'s `latest` names the newest release rather than a deprecated one.
+**`create-evestack@0.12.0` and `evestack@0.6.0` are written and not published.** Both entries
+below are complete; the tree is ahead of the registry, which serves 0.11.2 and 0.5.2. They
+publish as a pair and in that order — `evestack` pins the scaffolder exactly, so publishing it
+first is the 404 recorded further down this section.
 
 > **Emptied 2026-09-14, and the state it described is worth keeping in the history rather
 > than only in git.** For about half an hour `evestack`'s `latest` pointed at `0.4.1` — a
@@ -81,8 +83,9 @@ Nothing is pending. Every package in this tree matches the version its registry 
   here because the *symptom* reached users as "the database that would not boot", and
   docs/troubleshooting.mdx carries the repair.
 
-- **`@evestack/dashboard`, `@evestack/budget` and `evestack`** all learned the `chatgpt`
-  provider alongside `create-evestack@0.11.2`, and none of the three is versioned for it yet.
+- **`@evestack/dashboard` and `@evestack/budget`** both learned the `chatgpt` provider
+  alongside `create-evestack@0.12.0`, and neither is versioned for it yet — they only affect a
+  project that has already chosen that provider, so they can follow rather than block.
   The dashboard change is the one worth reading: **every provider arrives at `findPrice`
   under two different names**, and the table only ever answered to one of them.
   `@evestack/budget` builds its key from the environment (`chatgpt/gpt-5.6-sol`); the
@@ -101,7 +104,12 @@ Nothing is pending. Every package in this tree matches the version its registry 
 The `npm create` entry point. Carries `templates/default` inside it, so a change to the
 template ships as a change to this package.
 
-### create-evestack@0.11.2 — 2026-09-14
+### create-evestack@0.12.0 — unreleased
+
+Adds a model option and a Review option, so a minor rather than a patch. The numbered
+non-interactive answers are unchanged — `1`–`4` still mean what they meant and ChatGPT is
+appended as `5`.
+
 
 #### Fixed
 
@@ -156,6 +164,10 @@ template ships as a change to this package.
   untick them one at a time to get their scaffold. It writes the project, skips the installs,
   and prints the `eve add` commands. Hidden when nothing is ticked, where it is the same door
   as the one above it under another name.
+
+### create-evestack@0.11.2 — 2026-09-14
+
+#### Added
 
 - **The version is on screen before anything else.** `evestack v0.11.2` sits beside the
   wordmark. npx resolves a version out of a cache the reader cannot see — this session spent
@@ -625,6 +637,19 @@ not correspond to any commit in this repository. Do not install it.
 
 The CLI — `create`, `status`, `tour`, `open`, `verify`, `attach`, `doctor`. Depends on
 `create-evestack`, so it publishes last.
+
+### evestack@0.6.0 — unreleased
+
+Carries `create-evestack@0.12.0`, which it pins exactly. `evestack create` is that wizard, so
+everything in the 0.12.0 entry above reaches users through this release and not before it —
+the exact pin is deliberate and is why the two always ship as a pair, oldest first.
+
+#### Added
+
+- **`chatgpt` in `evestack status`.** Its default model, and `null` for its key variable —
+  the ChatGPT session lives in the OS secret store, so there is no variable whose absence is
+  a fault to report. Without the second half, `providerKeyVar()`'s fallback would have told a
+  correctly configured project it was missing an OpenAI key it will never call.
 
 ### evestack@0.5.2 — 2026-09-14
 
