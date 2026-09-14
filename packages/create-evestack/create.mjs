@@ -2362,8 +2362,28 @@ export async function create(argv) {
   blank();
   say(`  ${c.bold("Dashboard")}   ${c.brandBold(dashboardUrl)}`);
   say(`  ${c.bold("Sign in")}     evestack ${c.dim("/")} ${c.bold(password)}`);
+  // THE COMMAND, NOT A FOOTNOTE ABOUT THE COMMAND.
+  //
+  // This line used to read "`npx evestack open` prints them again — this
+  // terminal will scroll", in dim grey, under a URL and a password. Two things
+  // wrong with that, and the second is the expensive one.
+  //
+  // It is dim, at the moment of highest attention in the whole run. And it
+  // describes the command as doing LESS than it does: `open` reads the port out
+  // of .env.local, health-checks the dashboard, prints the credentials AND
+  // launches the browser. Sold as "prints them again" it reads like a clipboard
+  // helper, so the reader's conclusion is "copy this URL, then type this
+  // password" — the manual version of a command that was sitting right there.
+  //
+  // Same arrow and same shape as `evestack status`'s own line, because they are
+  // the same instruction and someone who meets one should recognise the other.
+  //
+  // `npx` regardless of the project's package manager, matching the
+  // `npx evestack status` line below: evestack is not a dependency of the
+  // scaffold, so there is no local binary for `pnpm evestack` to find, and
+  // `pnpm dlx` / `yarn dlx` would be a third spelling of one idea.
+  say(`  ${c.dim(`${g.arrow} `)}${c.bold("npx evestack open")}   ${c.dim("opens it in your browser, already signed in")}`);
   say(`  ${c.dim("Both are in .env.local, which the dashboard container reads too.")}`);
-  say(`  ${c.dim("`npx evestack open` prints them again — this terminal will scroll.")}`);
   blank();
 
   if (!useOllama && apiKeyLine.endsWith("=")) {
@@ -2386,14 +2406,20 @@ export async function create(argv) {
     say(`  ${c.bold("Next")}`);
     say(`    ${c.bold(`cd ${cd}`)}`);
     if (!dockerUp) say(`    ${c.dim("start Docker Desktop")}`);
-    say(`    ${c.bold("docker compose up -d postgres")}              ${c.dim("# durable sessions")}`);
-    // `npx --package=@workflow/world-postgres bootstrap` looks equivalent and is
-    // not: its CLI loads `.env` via dotenv and never reads `.env.local`, so it
-    // silently falls back to postgres://world:world@localhost:5432/world and dies
-    // on ECONNREFUSED. The script wires the generated .env.local in explicitly.
-    say(`    ${c.bold(`${pm} run db:bootstrap`)}                        ${c.dim("# create the workflow schema")}`);
-    say(`    ${c.bold("docker compose --profile dashboard up -d")}   ${c.dim(`# the dashboard on :${dashboardPort}`)}`);
-    say(`    ${c.bold(`${pm} run dev`)}                                ${c.dim("# the agent")}`);
+    // Aligned by measurement rather than by hand-counted spaces.
+    //
+    // The padding here was five hardcoded runs of spaces sized for `npm`, which
+    // put the bootstrap line's `#` one column right of the other four — and put
+    // ALL of them somewhere different the moment `pm` is `pnpm`, which is two
+    // characters longer and appears in two of the commands. A column that only
+    // lines up for one package manager is not a column.
+    //
+    // The last entry is the payoff, and it is what the list was missing: four
+    // commands that start things, and the one that shows you what you started.
+    // Without it the list ended on `run dev` — an agent in a terminal — with
+    // the dashboard a container the reader had booted and never been told how
+    // to look at.
+    for (const line of nextSteps({ pm, dashboardPort })) say(`    ${line}`);
     blank();
     say(`  ${c.dim("Then `npx evestack status` from anywhere inside the project.")}`);
     reportPicked({ ready, pending, failed, moved, broke, missingEnv, deferred, pm });
@@ -2407,7 +2433,12 @@ export async function create(argv) {
   say(`  ${c.bold("One command left")}`);
   say(`    ${c.bold(`cd ${cd} && ${pm} run dev`)}`);
   blank();
-  say(`  ${c.dim("Then, in another terminal:")} ${c.bold("npx evestack tour")} ${c.dim("— a guided first run.")}`);
+  // This branch is the one where the dashboard is ALREADY UP — the wizard just
+  // pulled the image and started the container. So "one command left" was true
+  // of the agent and quietly untrue of the thing the reader can look at right
+  // now, in another terminal, without waiting for anything.
+  say(`  ${c.dim("Right now, in another terminal:")} ${c.bold("npx evestack open")} ${c.dim("— the dashboard, signed in.")}`);
+  say(`  ${c.dim("Then:")} ${c.bold("npx evestack tour")} ${c.dim("— a guided first run.")}`);
   reportPicked({ ready, pending, failed, moved, broke, missingEnv, deferred, pm });
   blank();
 
@@ -2514,6 +2545,43 @@ function architecture({ agentPort, pgPort, dashboardPort, provider, model, up, o
  * provider name and then this, so anything past about 60 characters wraps on an
  * 80-column terminal. The test beside this pins that budget.
  */
+/**
+ * The commands to paste, in order, when the wizard did not start anything.
+ *
+ * Extracted so the two properties that keep breaking can be asserted rather
+ * than eyeballed.
+ *
+ * ALIGNMENT BY MEASUREMENT. This was five hardcoded runs of spaces sized for
+ * `npm`, which put the bootstrap line's `#` one column right of the other four
+ * — and put ALL of them somewhere different the moment `pm` is `pnpm`, two
+ * characters longer and present in two of the commands. A column that lines up
+ * for one package manager is not a column.
+ *
+ * AND THE LAST ENTRY IS THE PAYOFF. Four of these start something; the fifth is
+ * the one that shows you what you started. Without it the list ended on
+ * `run dev` — an agent in a terminal — with the dashboard a container the
+ * reader had booted and never been told how to look at. `evestack open` reads
+ * the port out of .env.local, health-checks it, prints the credentials and
+ * launches the browser, and this is the list where someone goes looking for it.
+ */
+export function nextSteps({ pm = "npm", dashboardPort = 4000 } = {}) {
+  const steps = [
+    ["docker compose up -d postgres", "durable sessions"],
+    // `npx --package=@workflow/world-postgres bootstrap` looks equivalent and is
+    // not: its CLI loads `.env` via dotenv and never reads `.env.local`, so it
+    // silently falls back to postgres://world:world@localhost:5432/world and
+    // dies on ECONNREFUSED. The script wires the generated .env.local in.
+    [`${pm} run db:bootstrap`, "create the workflow schema"],
+    ["docker compose --profile dashboard up -d", `the dashboard on :${dashboardPort}`],
+    [`${pm} run dev`, "the agent"],
+    // `npx` whatever `pm` is: evestack is not a dependency of the scaffold, so
+    // there is no local binary for `pnpm evestack` to find.
+    ["npx evestack open", `see it, signed in, on :${dashboardPort}`],
+  ];
+  const gutter = Math.max(...steps.map(([command]) => command.length)) + 3;
+  return steps.map(([command, note]) => `${c.bold(pad(command, gutter))}${c.dim(`# ${note}`)}`);
+}
+
 export function modelEdge(provider, model, localBaseUrl = null) {
   // Two providers are decided by their URL rather than by their name. Ollama is
   // loopback by default and remote if someone pointed it at a server; an

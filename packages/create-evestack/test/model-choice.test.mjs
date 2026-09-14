@@ -26,6 +26,7 @@ import { test } from "node:test";
 
 import {
   askKey,
+  nextSteps,
   chooseModel,
   envAlreadySet,
   explainBuildFailure,
@@ -696,3 +697,47 @@ test("a list shorter than the viewport shows all of itself", () => {
   const rows = [group("One"), option("a", 1), option("b", 2)];
   assert.deepEqual(visibleRange(rows, [rows[1], rows[2]], 0), [1, 2]);
 });
+
+/* -------------------------------------------------------------------------- */
+/* the list called "Next"                                                      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Two things about this list keep going wrong, and neither shows up as a
+ * failure anywhere — they show up as a reader who never finds the dashboard.
+ */
+test("the last step is the one that shows you what the others started", () => {
+  // Four commands start something. Without the fifth the list ends on `run dev`
+  // — an agent in a terminal — and the dashboard is a container the reader has
+  // booted and never been told how to look at. `evestack open` reads the port
+  // from .env.local, health-checks it, prints the credentials AND launches the
+  // browser; this is where someone goes looking for it.
+  const lines = nextSteps({ pm: "npm", dashboardPort: 4000 });
+  assert.match(lines.at(-1), /npx evestack open/);
+  assert.match(lines.at(-1), /signed in/);
+});
+
+test("the comment column is a column under every package manager", () => {
+  // It was five hardcoded runs of spaces sized for `npm`: the bootstrap line
+  // sat one column right of the other four, and `pnpm` — two characters longer,
+  // in two of the commands — moved all of them.
+  for (const pm of ["npm", "pnpm", "yarn", "bun"]) {
+    const columns = nextSteps({ pm }).map((line) => strip(line).indexOf("#"));
+    assert.equal(new Set(columns).size, 1, `${pm}: ${columns.join(", ")}`);
+    assert.ok(columns[0] > 0, `${pm}: no comment column at all`);
+  }
+});
+
+test("the port the wizard actually picked is the port the list names", () => {
+  // freePort() moves off 4000 when something already has it, and a list naming
+  // a port nobody is serving is worse than a list naming none.
+  const lines = nextSteps({ pm: "npm", dashboardPort: 4317 }).join("\n");
+  assert.match(lines, /:4317/);
+  assert.doesNotMatch(lines, /:4000/);
+});
+
+/** SGR out, so a column is measured in characters a reader can see. */
+function strip(line) {
+  // eslint-disable-next-line no-control-regex
+  return line.replace(/\x1b\[[0-9;]*m/g, "");
+}

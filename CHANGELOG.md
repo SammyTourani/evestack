@@ -52,9 +52,9 @@ They are summarised rather than itemised, deliberately.
 
 ## Unreleased
 
-Nothing is pending. `create-evestack@0.12.0` and `evestack@0.6.0` went out on 2026-09-14 and
-`latest` names both; `evestack@0.6.0` depends on `create-evestack` at exactly `0.12.0`, read
-back off the registry rather than assumed.
+**`create-evestack@0.12.1` and `evestack@0.6.1` are written and not published.** 0.12.0 and
+0.6.0 went out on 2026-09-14 and `latest` names both, so the registry is serving a good pair;
+the tree is one patch ahead of it.
 
 > **A publish can sit STAGED, and it looks exactly like a failure.** Both of these answered
 > `+ create-evestack@0.12.0` and then `npm view` kept saying `0.11.2` — because npm had
@@ -114,6 +114,35 @@ back off the registry rather than assumed.
 
 The `npm create` entry point. Carries `templates/default` inside it, so a change to the
 template ships as a change to this package.
+
+### create-evestack@0.12.1 — unreleased
+
+#### Changed
+
+- **The finish screen sold `evestack open` as doing less than it does.** The command reads the
+  dashboard port out of `.env.local`, health-checks it, prints the credentials AND launches
+  the browser. It was advertised in one dim grey line as
+  ``npx evestack open` prints them again — this terminal will scroll`, which reads like a
+  clipboard helper — so the reader's conclusion at the moment of highest attention in the
+  whole run was "copy this URL, then type this password", with the command that would have
+  done it sitting right there. It is now a real instruction, in the same arrow shape
+  `evestack status` already uses for it, because they are the same instruction:
+
+  ```
+  Dashboard   http://localhost:4000
+  Sign in     evestack / …
+  → npx evestack open   opens it in your browser, already signed in
+  ```
+
+- **The list called "Next" said how to start the dashboard and never how to see it.** Four
+  commands that start something, ending on `npm run dev` — an agent in a terminal — with the
+  dashboard a container the reader had booted and been told nothing more about.
+  `npx evestack open` is the fifth entry now.
+
+- **And that list's comment column only lined up under `npm`.** It was five hardcoded runs of
+  spaces: the bootstrap line's `#` sat one column right of the other four, and `pnpm` — two
+  characters longer, and in two of the commands — moved all of them. Computed from the widest
+  command now, with a test that checks the column across npm, pnpm, yarn and bun.
 
 ### create-evestack@0.12.0 — 2026-09-14
 
@@ -656,6 +685,12 @@ not correspond to any commit in this repository. Do not install it.
 
 The CLI — `create`, `status`, `tour`, `open`, `verify`, `attach`, `doctor`. Depends on
 `create-evestack`, so it publishes last.
+
+### evestack@0.6.1 — unreleased
+
+Carries `create-evestack@0.12.1`, which it pins exactly. Nothing in the CLI itself changed —
+`evestack open` was already correct, and already advertised properly by `evestack status`. What
+changed is the one screen that undersold it.
 
 ### evestack@0.6.0 — 2026-09-14
 
