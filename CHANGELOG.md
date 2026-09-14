@@ -88,6 +88,37 @@ Nothing is pending. Every package in this tree matches the version its registry 
 The `npm create` entry point. Carries `templates/default` inside it, so a change to the
 template ships as a change to this package.
 
+### create-evestack@0.11.2 — 2026-09-14
+
+#### Fixed
+
+- **A name that is already taken ended the run.** Reported from a real first use:
+  `npx evestack create my-agent` against an existing directory printed the wordmark, printed
+  the first step's header, and then exited on one bare line —
+  `/Users/…/my-agent already exists and is not empty.` A wizard that has just drawn its
+  opening screen, with a prompter already open, does not need to quit over a name.
+
+  It now says what is in the way, offers the nearest free name as the default, and asks
+  again:
+
+  ```
+  ! ~/my-agent already exists and is not empty.
+    It holds 3 entries including package.json — probably an earlier project.
+    ~/my-agent-2 is free — press Enter to take it.
+
+  ? Project name? (my-agent-2)
+  ```
+
+  Naming the contents is usually the whole explanation — almost every collision is a scaffold
+  the reader forgot about. The hard exit survives for the case that genuinely cannot be
+  asked: `--yes`, CI, a closed pipe still fail with the same words and exit 1.
+
+- **The single-select list carried two markers for one fact.** It rendered `▎ › OpenAI` — the
+  gutter bar and a cursor arrow both meaning "this row". In a multi-select the two columns
+  say different things (here / chosen) and both earn their place; in a single-select the
+  active row IS the one that would be taken, so the arrow was the very double-marker the
+  gutter was introduced to remove, surviving in the other mode.
+
 ### create-evestack@0.11.1 — 2026-09-14
 
 #### Fixed
@@ -510,6 +541,13 @@ not correspond to any commit in this repository. Do not install it.
 
 The CLI — `create`, `status`, `tour`, `open`, `verify`, `attach`, `doctor`. Depends on
 `create-evestack`, so it publishes last.
+
+### evestack@0.5.2 — 2026-09-14
+
+#### Changed
+
+- **Carries `create-evestack@0.11.2`.** No change of its own; the pin is exact, so a
+  scaffolder patch needs a CLI release beside it.
 
 ### evestack@0.5.1 — 2026-09-14
 

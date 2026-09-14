@@ -201,13 +201,14 @@ function rowLine(item, { active, selected, query, labelWidth, badgeWidth, multi 
   // (empty box, description separator, step separator) on one line. That is the
   // path Windows takes without Windows Terminal, so it is the path least likely
   // to be looked at and the one that most needed looking at.
-  const mark = multi
-    ? selected
-      ? c.green(g.ok)
-      : c.dim(MARKS.empty)
-    : active
-      ? c.brandBold(MARKS.cursor)
-      : " ";
+  //
+  // And only in a MULTI-select. There the two columns carry different facts —
+  // the bar is "you are here", the box is "this one is chosen" — so both earn
+  // their place. In a SINGLE select they are the same fact twice, because the
+  // active row IS the one that would be taken; it rendered `▎ › OpenAI`, which
+  // is the very double-marker the gutter was introduced to remove, surviving in
+  // the other mode.
+  const mark = multi ? (selected ? c.green(g.ok) : c.dim(MARKS.empty)) : " ";
   const pointer = bar;
   const base = active ? c.brandBold : selected ? c.bold : c.bold;
   const label = highlight(item.label, query, base);

@@ -32,6 +32,8 @@ import {
   lastJsonLine,
   recommendedAnswer,
   requiredEnvFrom,
+  targetProblem,
+  freeNameNear,
   restoreScripts,
   KEY_ATTEMPTS,
   modelEdge,
@@ -526,4 +528,54 @@ test("only a variable with a value counts as set", () => {
 test("no .env.local at all is the same as nothing set", () => {
   const dir = mkdtempSync(join(tmpdir(), "evestack-env-"));
   assert.equal(envAlreadySet(dir).size, 0);
+});
+
+/* -------------------------------------------------------------------------- */
+/* a name that is taken is a question, not an exit                             */
+/* -------------------------------------------------------------------------- */
+
+test("a directory that is there and not empty is explained, not just named", () => {
+  // What shipped in 0.11.1 printed the wordmark, printed the first step's
+  // header, and then exited on one bare line:
+  //
+  //     /Users/…/my-agent already exists and is not empty.
+  //
+  // The reader is looking at a wizard that has just drawn its first screen.
+  // Saying what is in the directory is usually the whole explanation — almost
+  // every collision is an earlier scaffold they forgot about.
+  const problem = targetProblem("/tmp/proj/my-agent", {
+    kind: "directory",
+    entries: ["package.json", "agent", ".env"],
+  });
+
+  assert.match(problem.short, /already exists and is not empty/);
+  assert.match(problem.why, /3 entries/);
+  assert.match(problem.why, /package\.json/, "naming it is what identifies an old project");
+});
+
+test("one entry is an entry, not entries", () => {
+  const problem = targetProblem("/tmp/x", { kind: "directory", entries: ["notes.md"] });
+  assert.match(problem.why, /1 entry\b/);
+  assert.doesNotMatch(problem.why, /package\.json/);
+});
+
+test("a free directory is no problem at all", () => {
+  assert.equal(targetProblem("/tmp/x", { kind: "missing" }), null);
+  assert.equal(targetProblem("/tmp/x", { kind: "directory", entries: [] }), null);
+});
+
+test("a file and an unreadable path each say their own thing", () => {
+  assert.match(targetProblem("/tmp/x", { kind: "file" }).short, /is a file, not a directory/);
+  const denied = targetProblem("/tmp/x", { kind: "unreadable", code: "EACCES" });
+  assert.match(denied.short, /EACCES/);
+  assert.match(denied.why, /permission/);
+});
+
+test("the suggested name is the nearest free one, so Enter resolves it", () => {
+  // Recovering from a collision should be one keystroke, not a decision.
+  const taken = new Set(["/w/my-agent", "/w/my-agent-2", "/w/my-agent-3"]);
+  const exists = (p) => taken.has(p);
+
+  assert.equal(freeNameNear("my-agent", exists, "/w"), "my-agent-4");
+  assert.equal(freeNameNear("other", exists, "/w"), "other", "a free name is returned unchanged");
 });

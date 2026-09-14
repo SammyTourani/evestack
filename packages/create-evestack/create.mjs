@@ -143,6 +143,56 @@ export async function chooseProvider({ ask, closed = () => false, nonInteractive
   return { provider: PROVIDERS.get(DEFAULT_PROVIDER), defaulted: true };
 }
 
+/**
+ * What is wrong with this path, said in one line, or null if nothing is.
+ *
+ * Split from the asking so the wizard can re-ask and `--yes` can still fail
+ * hard with the same words.
+ */
+export function targetProblem(target, existing) {
+  if (existing.kind === "file") {
+    return { short: `${shortPath(target)} is a file, not a directory.`, why: "create makes a new directory and fills it." };
+  }
+  if (existing.kind === "unreadable") {
+    return {
+      short: `${shortPath(target)} cannot be read — ${existing.code}.`,
+      why:
+        existing.code === "EACCES" || existing.code === "EPERM"
+          ? "This user does not have permission to look inside it."
+          : "The filesystem refused the lookup.",
+    };
+  }
+  if (existing.kind === "directory" && existing.entries.length > 0) {
+    const n = existing.entries.length;
+    // Naming what is in there is usually the whole explanation: almost every
+    // collision is an earlier scaffold the reader forgot about.
+    const looksScaffolded = existing.entries.includes("package.json");
+    return {
+      short: `${shortPath(target)} already exists and is not empty.`,
+      why: looksScaffolded
+        ? `It holds ${n} ${n === 1 ? "entry" : "entries"} including package.json — probably an earlier project.`
+        : `It holds ${n} ${n === 1 ? "entry" : "entries"}.`,
+    };
+  }
+  return null;
+}
+
+/**
+ * The nearest name that is free: `my-agent`, then `my-agent-2`, `my-agent-3`.
+ *
+ * Offered as the default on the re-ask, so recovering from a collision is one
+ * keystroke rather than a decision.
+ */
+export function freeNameNear(name, exists = (p) => existsSync(p), cwd = process.cwd()) {
+  const full = (n) => (isAbsolute(n) ? n : resolve(cwd, n));
+  if (!exists(full(name))) return name;
+  for (let n = 2; n < 100; n += 1) {
+    const candidate = `${name}-${n}`;
+    if (!exists(full(candidate))) return candidate;
+  }
+  return `${name}-${Date.now()}`;
+}
+
 /* -------------------------------------------------------------------------- */
 /* the door for someone who has never seen this before                         */
 /* -------------------------------------------------------------------------- */
@@ -472,6 +522,9 @@ async function checkLocalModel(model) {
  * guesses is a validator that eventually rejects a real key.
  */
 export const KEY_ATTEMPTS = 3;
+
+/** A bound on the name loop, for the same reason CHOICE_ATTEMPTS has one. */
+const NAME_ATTEMPTS = 6;
 
 export async function askKey(
   { ask, closed = () => false, label, shape = null, attempts = KEY_ATTEMPTS, complain = warn, note = dim },
@@ -1543,37 +1596,55 @@ export async function create(argv) {
           "drive them. Nothing outside it is touched, and it is a git repo from the",
           "start — which is also the boundary of what eve copies into the sandbox.",
         ]);
-        // A name given on the command line is not re-asked, but it IS
-        // re-validated on every pass, because coming back here after creating a
-        // directory by hand should not sail past a collision.
-        const answer = ctx.name ?? (await ask("Project name?", "my-agent"));
-        if (closed() && !ctx.name) return CANCEL;
-        ctx.name = answer;
-        const target = isAbsolute(answer) ? answer : resolve(process.cwd(), answer);
-        const existing = inspectTarget(target);
-        if (existing.kind === "file") {
-          ctx.fatal =
-            `${target} is a file, not a directory.\n` +
-            `  create makes a new directory and fills it. Give it a name that is free:\n` +
-            `    npx create-evestack ${shellQuote(`${basename(target)}-agent`)}`;
-          return CANCEL;
+
+        // A COLLISION IS NOT FATAL HERE, AND USED TO BE.
+        //
+        // `npx evestack create my-agent` against an existing directory printed
+        // the wordmark, printed this step's header, then exited on a bare line:
+        //
+        //     /Users/…/my-agent already exists and is not empty.
+        //
+        // A wizard that has just drawn its first screen and has a prompter open
+        // does not need to quit over a name. It asks for another one — and
+        // offers a free one as the default, so recovering is one keystroke.
+        //
+        // The hard exit survives for the case that genuinely cannot be asked:
+        // `--yes`, CI, a closed pipe. Same words, different ending.
+        //
+        // EXACTLY ONE `ask` PER PASS. The first draft asked at the top of the
+        // loop and again at the bottom, so a rejected name prompted twice and
+        // the second prompt discarded the first answer.
+        let taken = ctx.name;
+        let suggestion = freeNameNear("my-agent");
+        for (let attempt = 0; attempt < NAME_ATTEMPTS; attempt += 1) {
+          const answer = taken ?? (await ask(`Project name? ${c.dim(`(${suggestion})`)}`, suggestion));
+          taken = null;
+          if (!answer || (closed() && !answer)) return CANCEL;
+
+          const target = isAbsolute(answer) ? answer : resolve(process.cwd(), answer);
+          const problem = targetProblem(target, inspectTarget(target));
+          if (!problem) {
+            ctx.name = answer;
+            ctx.target = target;
+            say(`    ${c.dim(`${g.arrow} ${shortPath(target)}`)}`);
+            return undefined;
+          }
+
+          // Nobody to ask: `--yes`, CI, a pipe that closed. Fail with the words.
+          if (nonInteractive || closed()) {
+            ctx.fatal = `${problem.short}\n  ${problem.why}`;
+            return CANCEL;
+          }
+
+          blank();
+          warn(problem.short);
+          dim(problem.why);
+          suggestion = freeNameNear(basename(answer));
+          dim(`${shortPath(resolve(process.cwd(), suggestion))} is free — press Enter to take it.`);
+          blank();
         }
-        if (existing.kind === "unreadable") {
-          ctx.fatal =
-            `${target} cannot be read — ${existing.code}.\n` +
-            `  ${existing.code === "EACCES" || existing.code === "EPERM"
-              ? "This user does not have permission to look inside it."
-              : "The filesystem refused the lookup."}\n` +
-            `  Scaffold somewhere you own instead, e.g. ${shellQuote(join(process.cwd(), basename(target)))}.`;
-          return CANCEL;
-        }
-        if (existing.kind === "directory" && existing.entries.length > 0) {
-          ctx.fatal = `${target} already exists and is not empty.`;
-          return CANCEL;
-        }
-        ctx.target = target;
-        say(`    ${c.dim(`${g.arrow} ${shortPath(target)}`)}`);
-        return undefined;
+        ctx.fatal = "Too many names in a row were already taken.";
+        return CANCEL;
       },
     },
     {
