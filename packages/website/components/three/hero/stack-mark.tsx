@@ -128,42 +128,6 @@ export function StackMark({ theme }: { theme: "dark" | "light" }) {
     return () => window.removeEventListener("pointermove", onMove);
   }, []);
 
-  /* THE SAME PARALLAX, DRIVEN BY HOW THE PHONE IS HELD.
-     A phone has no cursor, so the mark lost the one bit of interactivity the
-     desktop has: the tilt that follows where you are looking from. The
-     gyroscope is the natural substitute — it answers the same question ("where
-     is the viewer relative to this object") with a different sensor, so it
-     feeds the SAME `pointer` ref and every bit of easing, clamping and
-     `calm` blending downstream is unchanged. Nothing else in this file knows
-     the difference.
-
-     gamma is the left/right tilt in degrees and beta the front/back. A phone
-     being read is held around 40° back, not flat, so beta is offset by that
-     before scaling — otherwise the mark sits permanently pitched. Both are
-     divided by 26° and clamped, which means a small, comfortable wrist
-     movement covers the full range rather than requiring you to wave it
-     around.
-
-     iOS 13+ gates DeviceOrientationEvent behind a permission call that must
-     come from a user gesture, so on an iPhone the listener simply receives
-     nothing until that is granted. That is deliberate: this is a landing page
-     and an unprompted "Allow Motion Access?" dialog on arrival is worse than a
-     mark that does not tilt. Android and any already-permitted iOS device get
-     it for free. If the prompt is ever wanted, it belongs on a deliberate tap,
-     not on load. */
-  useEffect(() => {
-    if (!window.matchMedia("(pointer: coarse)").matches) return;
-    if (typeof window.DeviceOrientationEvent === "undefined") return;
-    const clamp = (v: number) => Math.max(-1, Math.min(1, v));
-    const onTilt = (e: DeviceOrientationEvent) => {
-      if (e.gamma === null || e.beta === null) return;
-      pointer.current.x = clamp(e.gamma / 26);
-      pointer.current.y = clamp((e.beta - 40) / 26);
-    };
-    window.addEventListener("deviceorientation", onTilt, { passive: true });
-    return () => window.removeEventListener("deviceorientation", onTilt);
-  }, []);
-
   /* Assemble-on-load: slabs fly in from off-frame corners and settle. */
   useEffect(() => {
     const ctx = gsap.context(() => {
