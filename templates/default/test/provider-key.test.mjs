@@ -30,6 +30,16 @@ test("a compatible endpoint needs no key, and null survives the lookup", () => {
   assert.equal(providerKeyVar("compatible"), null);
 });
 
+test("a ChatGPT subscription has no key variable to be missing", () => {
+  // The same shape as `compatible` and a sharper failure if it is forgotten.
+  // There is nothing a ChatGPT project could put in .env.local — the session is
+  // a refresh token in the OS secret store — so falling through to the unknown
+  // branch would stop a correctly configured project with a demand for an
+  // OpenAI key it will never call, at the one moment the reader has no reason
+  // to doubt the message.
+  assert.equal(providerKeyVar("chatgpt"), null);
+});
+
 test("a provider nobody recognises is not the same as one needing no key", () => {
   // Unknown falls back to OpenAI because unset has always meant openai. That is
   // a different case from `compatible`, and collapsing the two is what `??` did.

@@ -50,7 +50,7 @@ import {
   localBadge,
   recommendedLocal,
 } from "../models.mjs";
-import { ask as pick, group, option, stepHeaderLine } from "../wizard.mjs";
+import { ask as pick, group, option, stepHeaderLine, visibleRange } from "../wizard.mjs";
 import { visible } from "../ui.mjs";
 
 /** Answers from a script, records the questions, can hit EOF partway through. */
@@ -137,6 +137,43 @@ test("OpenRouter is reachable without editing .env.local by hand", () => {
   assert.equal(gateway.keyVar, "OPENROUTER_API_KEY");
   assert.ok([...PROVIDERS.values()].some((p) => p.id === "openrouter"),
     "and it has a number, so --yes and CI can pick it too");
+});
+
+test("the easiest option needs no key at all", () => {
+  const sub = REMOTE.find((r) => r.id === "chatgpt");
+  assert.ok(sub, "a ChatGPT plan is the shortest path from this prompt to an answer");
+  assert.equal(sub.keyVar, null, "there is no variable — the session is in the OS secret store");
+  assert.equal(sub.signIn, true, "and `signIn` is what every other file branches on to know that");
+  assert.equal(REMOTE[0].id, "chatgpt", "first, because everything below it sends you elsewhere first");
+});
+
+test("a ChatGPT plan does not fall through to the `null=` line", async () => {
+  // `echo 5 | npx create-evestack`: no terminal, so the numbered question, and
+  // stdin closes as the pipe drains. That is the exact shape that reaches
+  // settle() with `closed()` true and `keyVar` null — and the branch that
+  // handles a closed pipe writes `${keyVar}=`, which here is the literal string
+  // "null=". .env.local would carry a variable named null, .env.example would
+  // not mention it, and nothing would complain until the first model call.
+  //
+  // Which is to say: the sign-in branch has to come FIRST in that chain, and
+  // this is the assertion that keeps it there.
+  let drained = false;
+  const chosen = await chooseModel({
+    ask: async () => { drained = true; return "5"; },
+    closed: () => drained,
+    borrowStdin: async (fn) => fn(),
+  });
+
+  assert.equal(chosen.id, "chatgpt");
+  assert.doesNotMatch(chosen.apiKeyLine, /null/);
+  assert.match(chosen.apiKeyLine, /^#/, "a comment saying why, not a variable to fill in");
+  assert.match(chosen.modelLine, /EVESTACK_PROVIDER=chatgpt/);
+  assert.doesNotMatch(
+    chosen.modelLine,
+    /EVESTACK_CONTEXT_WINDOW/,
+    "eve answers 200k for this route before it consults the catalog; declaring 32768 would " +
+      "replace a right number with a wrong one",
+  );
 });
 
 test("the numbers 1, 2 and 3 still mean what they meant", () => {
@@ -608,4 +645,48 @@ test("the count survives the collapse", () => {
   // step is what says the answer is still there.
   const steps = [{ title: "Model" }, { title: "Channels", count: 3 }, { title: "Review" }];
   assert.match(stepHeaderLine(steps, 1, 40), /\(3\)/);
+});
+
+/* -------------------------------------------------------------------------- */
+/* the line that says how much more there is                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * `↑↓ 14 options, showing 10–17` shipped, on the model list, at the bottom of
+ * the scroll. The range and the total were counted in different units: the
+ * range in ROWS — a group heading is a row, and so is the blank line between
+ * tiers — and the total in choosable options. Flat lists (channels,
+ * integrations) have no headings, so the two agreed there and nothing caught
+ * it; the model list has four tiers, and adding a fifth made it absurd rather
+ * than merely wrong.
+ */
+test("the range and the total are counted in the same units", () => {
+  const rows = [
+    group("Subscription"), option("ChatGPT", "a"),
+    group(""), group("Hosted"), option("OpenAI", "b"), option("Anthropic", "c"),
+    group(""), group("Local"), option("Granite", "d"), option("Qwen", "e"), option("Llama", "f"),
+  ];
+  const opts = rows.filter((r) => r.heading === undefined);
+
+  assert.equal(opts.length, 6);
+  for (let cursor = 0; cursor < opts.length; cursor += 1) {
+    const [first, last] = visibleRange(rows, opts, cursor);
+    assert.ok(first >= 1, `cursor ${cursor}: starts at ${first}`);
+    assert.ok(last <= opts.length, `cursor ${cursor}: showing ${first}–${last} of ${opts.length}`);
+    assert.ok(first <= last, `cursor ${cursor}: ${first}–${last} runs backwards`);
+    assert.ok(first <= cursor + 1 && cursor + 1 <= last,
+      `cursor ${cursor}: the highlighted row must be inside what is claimed to be shown`);
+  }
+});
+
+test("a list with no headings still reports every row", () => {
+  // The case that was always correct, kept correct: 26 channels, no tiers.
+  const rows = Array.from({ length: 26 }, (_, i) => option(`ch-${i}`, i));
+  assert.deepEqual(visibleRange(rows, rows, 0), [1, 8]);
+  assert.deepEqual(visibleRange(rows, rows, 25), [19, 26]);
+});
+
+test("a list shorter than the viewport shows all of itself", () => {
+  const rows = [group("One"), option("a", 1), option("b", 2)];
+  assert.deepEqual(visibleRange(rows, [rows[1], rows[2]], 0), [1, 2]);
 });

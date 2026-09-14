@@ -47,6 +47,48 @@ import { c } from "./ui.mjs";
  */
 export const REMOTE = [
   {
+    /**
+     * The easiest answer on this list, and the only one that needs no
+     * credential at all: if you already pay for ChatGPT, you already have it.
+     *
+     * This is eve's own implementation, not a second one. `chatgpt()` is a
+     * public export of `eve/models/openai` and hands back the same
+     * `LanguageModel` object agent.ts builds for every other provider, so the
+     * template branch is one line. The sign-in is eve's too — a PKCE browser
+     * flow that puts a refresh token in the OS secret store (Keychain,
+     * Credential Manager, Secret Service) and never in .env.local.
+     *
+     * Three consequences, all stated where the choice is made rather than
+     * discovered afterwards:
+     *
+     *   - Nothing lands in .env.local, so there is nothing to paste and nothing
+     *     to leak — but also nothing a container can read. This is the one
+     *     provider that does not travel to a server. `signIn` is what the
+     *     wizard, verify and status all branch on to say so.
+     *   - eve keeps its own `/model` picker ALIVE for this one. Every other
+     *     evestack provider makes the model source-owned and eve disables the
+     *     picker ("Set via an SDK model call in agent.ts"); ChatGPT routing is
+     *     special-cased on `provider === "codex"`, so `/model` inside `eve dev`
+     *     can still re-sign-in later.
+     *   - Its context window must NOT be declared. eve returns 200,000 tokens
+     *     for ChatGPT routing before it ever consults the AI Gateway catalog,
+     *     so the `modelContextWindowTokens` that rescues Ollama and OpenRouter
+     *     would here replace a right number with a wrong one.
+     */
+    id: "chatgpt",
+    label: "ChatGPT subscription",
+    // eve's own default for this route. Kept identical on purpose: the account,
+    // the transport and the model allow-list are all the Codex backend's, so a
+    // different guess here is a guess about someone else's product.
+    model: "gpt-5.6-sol",
+    keyVar: null,
+    keyHint: null,
+    keyShape: null,
+    note: "sign in with the plan you already pay for",
+    badge: "subscription",
+    signIn: true,
+  },
+  {
     id: "openai",
     label: "OpenAI",
     model: "gpt-5-mini",

@@ -333,7 +333,7 @@ function probeModel(env) {
   const model =
     env("EVESTACK_MODEL") ||
     { openai: "gpt-5-mini", anthropic: "claude-sonnet-5", openrouter: "qwen/qwen3.8-27b",
-      ollama: "qwen3:0.6b", compatible: "" }[provider] ||
+      ollama: "qwen3:0.6b", compatible: "", chatgpt: "gpt-5.6-sol" }[provider] ||
     "unknown";
   if (provider === "ollama") {
     return { part: "model", state: "ok", where: provider, detail: `${model} ${c.dim("(local)")}` };
@@ -365,6 +365,9 @@ function providerKeyVar(provider) {
     anthropic: "ANTHROPIC_API_KEY",
     openrouter: "OPENROUTER_API_KEY",
     compatible: null,
+    // No variable at all: the ChatGPT session lives in the OS secret store,
+    // not in .env.local, so there is nothing here whose absence is a fault.
+    chatgpt: null,
   };
   // `hasOwn` and not `?? "OPENAI_API_KEY"`. `??` falls back on null, so the one
   // entry deliberately set to null — "this provider needs no key" — came back

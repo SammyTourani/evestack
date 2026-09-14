@@ -81,6 +81,19 @@ Nothing is pending. Every package in this tree matches the version its registry 
   here because the *symptom* reached users as "the database that would not boot", and
   docs/troubleshooting.mdx carries the repair.
 
+- **`@evestack/dashboard`, `@evestack/budget` and `evestack`** all learned the `chatgpt`
+  provider alongside `create-evestack@0.11.2`, and none of the three is versioned for it yet.
+  The dashboard change is the one worth reading: **every provider arrives at `findPrice`
+  under two different names**, and the table only ever answered to one of them.
+  `@evestack/budget` builds its key from the environment (`chatgpt/gpt-5.6-sol`); the
+  dashboard reads `$eve.model` off the span, which eve writes from the model object itself
+  (`codex/gpt-5.6-sol`). They happen to agree for openai, anthropic and ollama, which is why
+  nothing caught the case where they do not — **the wizard's own OpenRouter default was
+  priced for the spend cap and unpriced on the dashboard at the same time**, since
+  `createOpenRouter({})("qwen/qwen3.8-27b")` reports `openrouter.chat` and the key was the
+  bare id. Both names are now priced, and a test states the rule: a provider is not priced
+  until both of its names are.
+
 ---
 
 ## `create-evestack`
@@ -92,7 +105,57 @@ template ships as a change to this package.
 
 #### Fixed
 
+- **Ctrl-C during a yes/no prompt did not quit.** readline turns SIGINT into its own `close`
+  event, so `ask` returned its *fallback* — the wizard recorded a "yes" nobody typed, walked
+  on to Review, and signed off with `readline was closed`. An interrupt now means the same
+  thing at every prompt: stop, write nothing, exit 130.
+
+- **`↑↓ 14 options, showing 10–17`.** The range and the total were counted in different
+  units. The window is computed in ROWS, and a group heading is a row — so is the blank line
+  between tiers — while the count beside it is of things you can choose. Flat lists (all 26
+  channels, all 73 integrations) have no headings, so the two agreed there and nothing caught
+  it; the model list has tiers, and its range overran its own total on the one line whose
+  whole job is to say how much more there is.
+
 #### Added
+
+- **ChatGPT subscription, as the first model on the list.** The only option here that needs
+  no credential at all: if you already pay for ChatGPT, that is what answers. Picking it asks
+  for nothing, writes nothing to `.env.local`, and opens a browser after the install.
+
+  It is eve's own implementation rather than a second one. `chatgpt()` is a public export of
+  `eve/models/openai` and returns the same `LanguageModel` object the template builds for
+  every other provider, so `agent.ts` gained one branch; the sign-in is eve's too, reached by
+  path into the scaffold's own `node_modules`, and a test asserts the module is still where
+  the wizard looks — a move upstream would otherwise take the easiest option off the list
+  with nothing failing anywhere.
+
+  Three things measured rather than assumed, each of which would have been a quiet bug:
+
+  - **Its context window must NOT be declared.** It looks like the fourth member of
+    `UNCATALOGUED` — a Codex model id is no more a gateway id than an Ollama tag is — but eve
+    answers 200,000 tokens for ChatGPT routing *before* it consults the catalog. Setting
+    `modelContextWindowTokens` would replace a right number with a wrong one and start
+    compaction firing six times too early. Verified against a compiled manifest:
+    `{"id":"codex/gpt-5.6-sol","routing":{"kind":"external","provider":"codex"},"contextWindowTokens":200000}`.
+  - **It is the one provider that leaves eve's own `/model` picker working.** Everything else
+    evestack writes makes the model source-owned, and eve responds by disabling the picker
+    ("Set via an SDK model call in agent.ts"). ChatGPT routing is the exception eve carved out
+    for itself, which is what makes a failed sign-in recoverable from inside the running agent.
+  - **`keyVar: null` had to be handled before the non-interactive branch**, which writes
+    `${keyVar}=` — literally `null=` for this provider. Pinned by a test that drives the
+    piped-stdin path.
+
+  Two limits, both stated at the moment of choosing rather than discovered later: it runs
+  where a person can sign in, so a container or remote host still needs a key; and the Codex
+  backend serves chat only, so `remember`/`recall` need `OPENAI_API_KEY` or a local Ollama
+  for embeddings.
+
+- **"Finish without adding" on the Review step**, which eve's own review has and this one did
+  not. Someone who ticked four integrations and then thought better of it had to go back and
+  untick them one at a time to get their scaffold. It writes the project, skips the installs,
+  and prints the `eve add` commands. Hidden when nothing is ticked, where it is the same door
+  as the one above it under another name.
 
 - **The version is on screen before anything else.** `evestack v0.11.2` sits beside the
   wordmark. npx resolves a version out of a cache the reader cannot see — this session spent

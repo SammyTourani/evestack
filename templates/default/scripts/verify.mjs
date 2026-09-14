@@ -46,6 +46,11 @@ function providerKeyVar(provider) {
     anthropic: "ANTHROPIC_API_KEY",
     openrouter: "OPENROUTER_API_KEY",
     compatible: null,
+    // Also null, and for a stronger reason than `compatible`: the ChatGPT
+    // session is a refresh token in the OS secret store, so there is no
+    // variable whose absence means anything. Demanding one here would send
+    // someone hunting for a key that does not exist.
+    chatgpt: null,
   };
   // `hasOwn` and not `?? "OPENAI_API_KEY"`. `??` falls back on null, so the one
   // entry deliberately set to null — "this provider needs no key" — came back
@@ -264,7 +269,20 @@ if (provider === "ollama") {
   }
 } else {
   const keyVar = providerKeyVar(provider);
-  if (!keyVar) {
+  if (provider === "chatgpt") {
+    // A pass, and the limit of the claim is in the words rather than left to be
+    // inferred. This script checks that a credential is CONFIGURED, never that
+    // it works — it does not call OpenAI to test an OPENAI_API_KEY either. For
+    // this provider there is nothing configured to look at: the session is a
+    // refresh token in the OS secret store, and reading it from here would pop
+    // a keychain dialog, which is how you turn `npm run verify` into a command
+    // people stop running.
+    //
+    // Nothing is lost by leaving it. A missing session is not a silent failure
+    // downstream — eve raises `ChatGptSignInRequiredError`, which names the
+    // exact recovery, and that message is better than a guess made here.
+    pass("model", `${provider}/${model}, billed to your ChatGPT plan — no key to set`);
+  } else if (!keyVar) {
     pass("model", `${provider}/${model} on ${env("EVESTACK_BASE_URL") || "this machine"}, no key needed`);
   } else if (env(keyVar)) {
     // Not called. A verify command that spends money the first time you run it

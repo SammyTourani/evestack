@@ -22,7 +22,11 @@
  * it demanded was wrong, which is worse than saying nothing.
  *
  * `compatible` returns null: a loopback LM Studio or llama.cpp authenticates
- * nobody, so there is no key whose absence is a problem to report.
+ * nobody, so there is no key whose absence is a problem to report. `chatgpt` is
+ * null for a stronger reason — its session lives in the OS secret store, so
+ * there is no variable at all whose absence could mean anything, and the
+ * fallback below would have stopped a correctly configured project dead with a
+ * demand for an OpenAI key it will never call.
  */
 export function providerKeyVar(provider) {
   const keys = {
@@ -30,6 +34,7 @@ export function providerKeyVar(provider) {
     anthropic: "ANTHROPIC_API_KEY",
     openrouter: "OPENROUTER_API_KEY",
     compatible: null,
+    chatgpt: null,
   };
   // `hasOwn` and not `?? "OPENAI_API_KEY"`. `??` falls back on null, so the one
   // entry deliberately set to null — "this provider needs no key" — came back

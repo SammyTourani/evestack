@@ -179,6 +179,7 @@ const PROVIDER_DEFAULT_MODEL: Record<string, string | undefined> = {
   anthropic: "claude-sonnet-5",
   openrouter: "qwen/qwen3.8-27b",
   ollama: "qwen3:0.6b",
+  chatgpt: "gpt-5.6-sol",
   // Deliberately absent, not "": a custom endpoint has no price table anywhere,
   // so the honest outcome is the unpriced warning below rather than a number
   // borrowed from whichever vendor the model id happens to resemble.

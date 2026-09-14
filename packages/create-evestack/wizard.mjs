@@ -276,6 +276,33 @@ function windowFor(index, total, size = VIEWPORT) {
 }
 
 /**
+ * Which OPTIONS the viewport is currently showing, 1-based and inclusive.
+ *
+ * Two numbering systems meet in the line this feeds, and it used to state them
+ * as if they were one. `windowFor` works in ROWS — a group heading is a row, and
+ * so is the blank line between tiers — while the count beside it is of things
+ * you can actually choose. On a flat list (every channel, every integration)
+ * the two are identical, which is why the line was right for a year by
+ * accident. On the model list, which has four tiers, it read:
+ *
+ *   ↑↓ 14 options, showing 10–17
+ *
+ * A range overrunning its own total, on the one line whose entire job is to say
+ * how much more there is. So the window is converted back into the units of the
+ * count before it is printed.
+ */
+export function visibleRange(rows, opts, cursor, size = VIEWPORT) {
+  if (opts.length === 0) return [0, 0];
+  const { from, to } = windowFor(rows.indexOf(opts[cursor]), rows.length, size);
+  const shown = rows.slice(from, to).filter((i) => !isHeading(i));
+  // A window of nothing but headings cannot happen while the cursor is on an
+  // option — the cursor's own row is always in it — but an empty slice would
+  // otherwise report "0–0" as if the list were empty rather than scrolled.
+  if (shown.length === 0) return [cursor + 1, cursor + 1];
+  return [opts.indexOf(shown[0]) + 1, opts.indexOf(shown.at(-1)) + 1];
+}
+
+/**
  * Ask one question against a list.
  *
  * `multi: true` turns it into a checklist: space toggles, enter accepts the
@@ -407,9 +434,8 @@ export async function ask(
     }
     if (opts.length < options.length) counts.push(c.dim(`${opts.length} of ${options.length} match "${query}"`));
     else if (opts.length > VIEWPORT) {
-      const cursorIndexInShown = view().indexOf(opts[cursor]);
-      const { from, to } = windowFor(cursorIndexInShown, view().length);
-      counts.push(c.dim(`${unicode ? "↑↓" : "^v"} ${opts.length} options, showing ${from + 1}–${Math.min(to, view().length)}`));
+      const [first, last] = visibleRange(view(), opts, cursor);
+      counts.push(c.dim(`${unicode ? "↑↓" : "^v"} ${opts.length} options, showing ${first}–${last}`));
     }
     if (counts.length) lines.push(`  ${counts.join(`  ${c.dim(g.sep)}  `)}`);
 

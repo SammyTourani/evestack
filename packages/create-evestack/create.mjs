@@ -26,6 +26,7 @@ import {
   cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   basename, C, DASHBOARD_IMAGE, detectPm, dim, freePort, makePrompter, ok,
   packageVersion, REPO, say, shellQuote, step, templateDir, warn, writeSecretFile,
@@ -84,6 +85,11 @@ export const PROVIDERS = new Map([
   // then had to run it beside Docker, Postgres, the dashboard and the agent.
   ["3", { id: "ollama", keyVar: null, model: "qwen3:0.6b", keyHint: null }],
   ["4", { id: "openrouter", keyVar: "OPENROUTER_API_KEY", model: "qwen/qwen3.8-27b", keyHint: "https://openrouter.ai/keys" }],
+  // Appended for the same reason 4 was. It is last here and FIRST in the TTY
+  // list, which is not a contradiction: this path exists for `--yes` and CI,
+  // where a browser sign-in cannot happen and so the friendliest option is the
+  // least useful one.
+  ["5", { id: "chatgpt", keyVar: null, model: "gpt-5.6-sol", keyHint: null, signIn: true }],
 ]);
 
 /** "1, 2 or 3" — derived, so adding a provider cannot leave the prose behind. */
@@ -318,6 +324,12 @@ function modelItems(ram) {
   const remote = (badge) => REMOTE.filter((r) => r.badge === badge);
   const toOption = (r) => option(r.label, { kind: "remote", spec: r }, { badge: r.model, note: r.note });
   return [
+    // First, because it is the shortest path from this prompt to a working
+    // agent: no key to go and find, no card, no download. Everything below it
+    // asks the reader to leave and come back with something.
+    group(`Subscription ${g.sep} no API key, no download`),
+    ...remote("subscription").map(toOption),
+    group(""),
     group(`Hosted ${g.sep} you bring an API key`),
     ...remote("hosted").map(toOption),
     group(""),
@@ -422,6 +434,25 @@ export async function chooseModel({ ask, closed, borrowStdin, nonInteractive = f
         dim(`${safe.label} (${humanSize(safe.mb)}) is the largest one that comfortably fits here.`);
       }
       apiKeyLine = "# Local models need no API key.";
+    } else if (picked.signIn) {
+      // Nothing to paste and nothing to store: the ChatGPT session is a refresh
+      // token in the OS secret store, put there by a browser sign-in after the
+      // install. This branch is ahead of the non-interactive one on purpose —
+      // `--yes` used to fall through to it and write the literal line `null=`.
+      apiKeyLine = "# ChatGPT subscription — no API key. The session lives in your OS keychain.";
+      blank();
+      dim("No key to find: you sign in with your ChatGPT account after the install.");
+      // The two things this option cannot do, said at the moment of choosing
+      // rather than discovered later — the reader can still press ← and take
+      // something else. Both are real and neither is obvious from the name.
+      //
+      // The second one is the sharper of the two: the Codex backend serves chat
+      // and nothing else, so `remember` and `recall` have no embeddings model.
+      // lib/memory.ts throws with the same two fixes named here, but it throws
+      // at the first `remember` — inside a tool call, days later, where nothing
+      // on screen connects back to this prompt.
+      dim("Runs where you can sign in; a container or remote host needs a key instead.");
+      dim("Memory needs embeddings; add OPENAI_API_KEY later, or serve them from Ollama.");
     } else if (nonInteractive || closed()) {
       // `--yes`, CI, a heredoc. There is nobody to paste a key, and askKey would
       // spend its three attempts talking to a closed pipe before giving up — so
@@ -550,6 +581,72 @@ export async function askKey(
   }
   note(`Skipping ${label}. Add it to .env.local later and restart; nothing else here depends on it.`);
   return { key: "", skipped: true, reason: "attempts" };
+}
+
+/**
+ * Where eve keeps the ChatGPT sign-in, inside the project's own node_modules.
+ *
+ * Not a public export, and named here in ONE place so that when eve moves it
+ * there is a single line to change and a test that fails the day it moves
+ * (`test/chatgpt-signin.test.mjs`) rather than a scaffold that quietly stops
+ * offering the easiest option.
+ *
+ * Importing eve's module by path rather than reimplementing its OAuth is a
+ * deliberate trade. The flow is PKCE against auth.openai.com with a fixed
+ * client id, a loopback listener on :1455, a device-code fallback for SSH, and
+ * a refresh token written to the OS secret store under service `eve`. Every one
+ * of those is a detail eve owns and can change; a copy of them here would look
+ * right and rot silently. A path that stops resolving is the loud failure, and
+ * it costs the user one printed sentence.
+ */
+const CHATGPT_AUTH_PATH = "node_modules/eve/dist/src/setup/flows/chatgpt-auth.js";
+
+/**
+ * Sign in to ChatGPT, the way eve itself does.
+ *
+ * Runs AFTER the dependency install, because the module above does not exist
+ * until then. Never fatal, and never silent: the three endings are `ready`
+ * (this account can now answer), `skipped` (nobody is at the keyboard), and
+ * `failed` — and all three carry the same one-line recovery, because `/model`
+ * inside `eve dev` is the answer to every one of them.
+ *
+ * That recovery only exists because of how the template asks for this model.
+ * Every other evestack provider builds a `LanguageModel` in agent.ts, which eve
+ * reads as source-owned and responds to by DISABLING its own model picker. The
+ * ChatGPT route is the exception eve carved out for itself — it classifies as
+ * `provider === "codex"` and keeps the picker live — so a sign-in that fails
+ * here is recoverable inside the running agent instead of being a dead end.
+ */
+export async function signInToChatGpt({ target, nonInteractive = false, importer = (url) => import(url) }) {
+  const recovery = "npm run dev, then /model → ChatGPT subscription";
+  if (nonInteractive) {
+    return { state: "skipped", why: "no browser to open in --yes mode", command: recovery };
+  }
+
+  let ensureChatGptAuth;
+  try {
+    ({ ensureChatGptAuth } = await importer(pathToFileURL(join(target, CHATGPT_AUTH_PATH)).href));
+    if (typeof ensureChatGptAuth !== "function") throw new TypeError("not a function");
+  } catch {
+    return { state: "skipped", why: "this eve keeps its sign-in somewhere else", command: recovery };
+  }
+
+  blank();
+  say(`  ${c.bold("Sign in to ChatGPT")}`);
+  // Said before the browser opens rather than after, because a tab appearing on
+  // its own is alarming in a way that a tab you were told about is not. The
+  // second line is the fact people actually want: this is not another key that
+  // ends up in a file in this directory.
+  dim("Opening your browser. Already signed in through eve? This finishes instantly.");
+  dim("The session is stored in your OS keychain — nothing is written to this project.");
+  try {
+    // eve prints the URL, the device code and its own "waiting" line through
+    // this log; `dim` keeps them in the wizard's voice instead of bare stdout.
+    await ensureChatGptAuth({ log: (line) => { for (const l of String(line).split("\n")) dim(`  ${l}`); } });
+    return { state: "ready" };
+  } catch (error) {
+    return { state: "failed", why: error?.message ?? "sign-in did not finish", command: recovery };
+  }
 }
 
 /**
@@ -857,7 +954,20 @@ export function looksLikeANetworkFailure(output) {
  * your five channels half-configured and lets you discover it one message at a
  * time.
  */
-function reportPicked({ ready, pending, failed, moved = [], broke = null, missingEnv = [], pm }) {
+function reportPicked({ ready, pending, failed, moved = [], broke = null, missingEnv = [], deferred = [], pm }) {
+  // Chosen and deliberately not installed. Printed as commands rather than as a
+  // list of names, because the only thing anyone wants from this paragraph is
+  // the ability to paste it later — and printed even though nothing went wrong,
+  // because a choice with no trace on the finish screen reads as a choice that
+  // was ignored.
+  if (deferred.length > 0) {
+    blank();
+    say(`  ${c.bold(`${deferred.length} left for later, as you asked:`)}`);
+    for (const item of deferred) {
+      say(`      ${c.dim(g.branch)} ${c.bold(item.title)} ${c.dim(g.sep)} ${c.dim(`${pm} exec eve add ${item.id}`)}`);
+    }
+    dim("Run them from inside the project, in any order, whenever you want them.");
+  }
   if (ready.length === 0 && pending.length === 0 && failed.length === 0) return;
 
   blank();
@@ -1572,6 +1682,11 @@ export async function create(argv) {
     wantComposio: false,
     composioKey: "",
     wantStart: false,
+    // Set by the Review step's third door. Declared here, with everything else
+    // a step can decide, because a step reaching back into `main` for a field
+    // that exists only after someone chose it is how a re-entered wizard ends
+    // up carrying an answer from a run it already abandoned.
+    skipAdds: false,
     fatal: null,
     cancelled: false,
   };
@@ -1797,10 +1912,29 @@ export async function create(argv) {
         }
         blank();
 
+        const picks = channels.length + integrations.length;
         const answer = await pick({
           question: "Ready?",
           items: [
             option("Install and finish setup", "go", { note: "writes the project, then installs what you picked" }),
+            // eve's own review offers this third door, and it earns its place
+            // here for a reason eve's does not have: eve is asking inside a
+            // running agent, where "finish without adding" costs nothing to
+            // redo. Here it is the difference between a project you have and a
+            // project you do not. Someone who ticked four integrations and then
+            // remembered the plane wifi should not have to go back and untick
+            // them one at a time to get their scaffold.
+            //
+            // Hidden when nothing is ticked, because then it is the same door
+            // as the one above it wearing a different name.
+            ...(picks > 0
+              // Short enough to survive the note column at 100 columns: the
+              // longer first draft was cut mid-word at "the commands ar…",
+              // which is the one clause a reader needs from it.
+              ? [option("Finish without adding", "bare", {
+                  note: `writes the project, skips all ${picks} — commands printed`,
+                })]
+              : []),
             option("Back", "back", { note: "change any answer above" }),
           ],
           borrowStdin,
@@ -1811,6 +1945,7 @@ export async function create(argv) {
         });
         if (answer.cancelled) return CANCEL;
         if (answer.back || answer.value === "back") return BACK;
+        ctx.skipAdds = answer.value === "bare";
         return undefined;
       },
     },
@@ -2156,12 +2291,31 @@ export async function create(argv) {
     return 1;
   }
 
+  // ---- the one credential that is not a key ---------------------------------
+  //
+  // Before the registry installs rather than after: those can take a minute
+  // each and some of them stop to ask for their own credentials, so a browser
+  // tab opening in the middle of that is a tab nobody connects to a question
+  // they answered two screens ago.
+  const signIn = chosen.signIn ? await signInToChatGpt({ target, nonInteractive }) : null;
+  if (signIn?.state === "ready") {
+    blank();
+    ok(`Signed in to ChatGPT ${c.dim("— your plan is what answers")}`);
+  } else if (signIn) {
+    blank();
+    warn(`Not signed in yet — ${signIn.why}.`);
+    dim(`Finish it any time: ${signIn.command}`);
+  }
+
   // ---- what was picked ------------------------------------------------------
   //
   // After the dependency install, because `eve add` runs the project's own eve
   // and there is no `node_modules/.bin/eve` until the install has finished.
   const wanted = [...chosenChannels(), ...chosenIntegrations()];
-  const { ready, pending, failed, moved, broke, missingEnv } = await addRegistryItems({ target, items: wanted, verbose: args.verbose });
+  const deferred = ctx.skipAdds ? wanted : [];
+  const { ready, pending, failed, moved, broke, missingEnv } = ctx.skipAdds
+    ? { ready: [], pending: [], failed: [], moved: [], broke: null, missingEnv: [] }
+    : await addRegistryItems({ target, items: wanted, verbose: args.verbose });
 
   // ---- bring it up ----------------------------------------------------------
   //
@@ -2192,6 +2346,15 @@ export async function create(argv) {
     say(`  ${c.yellowBold(`Add ${chosen.keyVar} to .env.local before you start.`)}`);
     blank();
   }
+  // The same thing an unset key is — one step between here and a reply — said
+  // in the same place, because "sign in" and "paste a key" are the same
+  // sentence to someone who just wants the agent to answer. Repeated at the
+  // bottom deliberately: the attempt itself happened before a minute of
+  // registry installs and has scrolled off by now.
+  if (signIn && signIn.state !== "ready") {
+    say(`  ${c.yellowBold("Sign in to ChatGPT before you start:")} ${c.bold(signIn.command)}`);
+    blank();
+  }
 
   const cd = shellQuote(basename(target));
   if (!up) {
@@ -2209,7 +2372,7 @@ export async function create(argv) {
     say(`    ${c.bold(`${pm} run dev`)}                                ${c.dim("# the agent")}`);
     blank();
     say(`  ${c.dim("Then `npx evestack status` from anywhere inside the project.")}`);
-    reportPicked({ ready, pending, failed, moved, broke, missingEnv, pm });
+    reportPicked({ ready, pending, failed, moved, broke, missingEnv, deferred, pm });
     blank();
     return 0;
   }
@@ -2221,7 +2384,7 @@ export async function create(argv) {
   say(`    ${c.bold(`cd ${cd} && ${pm} run dev`)}`);
   blank();
   say(`  ${c.dim("Then, in another terminal:")} ${c.bold("npx evestack tour")} ${c.dim("— a guided first run.")}`);
-  reportPicked({ ready, pending, failed, moved, broke, missingEnv, pm });
+  reportPicked({ ready, pending, failed, moved, broke, missingEnv, deferred, pm });
   blank();
 
   if (await confirmRunAgent(cd)) {

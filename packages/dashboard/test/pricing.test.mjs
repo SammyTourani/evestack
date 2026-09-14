@@ -268,6 +268,51 @@ test("the wildcard matches on the slash, not on the vendor prefix", () => {
 });
 
 /* -------------------------------------------------------------------------- */
+/* one configuration, two keys                                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Every provider this project offers arrives at `findPrice` under TWO names,
+ * and the table has to answer to both.
+ *
+ *   @evestack/budget  `envModel()` -> `${EVESTACK_PROVIDER}/${EVESTACK_MODEL}`
+ *   the dashboard     `$eve.model` -> `provider.split(".")[0] + "/" + modelId`
+ *
+ * They agree for openai, anthropic and ollama, which is why nothing caught the
+ * two that do not. `createOpenRouter({})("qwen/qwen3.8-27b")` reports its
+ * provider as `openrouter.chat`, and the model eve builds for a ChatGPT plan
+ * reports `codex.responses` — both measured, the second against a compiled
+ * manifest. So the wizard's own OpenRouter default was priced for the spend cap
+ * and unpriced on the dashboard at the same time, and nothing anywhere said so.
+ *
+ * The rule this pins: a provider is not priced until BOTH of its names are.
+ */
+test("a ChatGPT plan is priced under the env name and the span name", () => {
+  for (const model of ["chatgpt/gpt-5.6-sol", "codex/gpt-5.6-sol"]) {
+    assert.equal(isPriced(model), true, model);
+    assert.equal(costUsd(model, 5_000_000, 5_000_000, 1_000_000), 0, model);
+  }
+});
+
+test("the wizard's OpenRouter default is priced under both of its names", () => {
+  const bare = findPrice("qwen/qwen3.8-27b");
+  const prefixed = findPrice("openrouter/qwen/qwen3.8-27b");
+
+  assert.ok(bare, "the key @evestack/budget builds");
+  assert.ok(prefixed, "the key the dashboard reads off the span");
+  assert.deepEqual(prefixed, bare, "the same model at the same price, whoever is asking");
+});
+
+test("neither alias turns into a wildcard over the vendor", () => {
+  // `codex/*` is safe to wildcard — every model that backend serves bills the
+  // same way. OpenRouter is not: it fronts hundreds of models from frontier
+  // down to `:free`, and a wildcard at one price would be wrong for nearly all
+  // of them AND would stop the spend cap from ever tripping.
+  assert.equal(isPriced("openrouter/anthropic/claude-opus-4.8"), false);
+  assert.equal(isPriced("openrouter/"), false);
+});
+
+/* -------------------------------------------------------------------------- */
 /* the EVESTACK_PRICING override                                               */
 /* -------------------------------------------------------------------------- */
 

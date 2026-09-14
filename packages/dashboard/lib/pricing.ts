@@ -69,6 +69,39 @@ const FALLBACK_PRICING: Record<string, ModelPrice> = {
   // 317), so this rule cannot come from the generator.
   "ollama/*": { input: 0, output: 0, cacheRead: 0 },
   /**
+   * A ChatGPT subscription is zero at the margin, which is a different claim
+   * from "free" and the only one a per-token table can make truthfully.
+   *
+   * The alternative was to leave it unpriced, and that is worse than it sounds:
+   * unpriced means every session on this provider trips the loud
+   * `no price for …` warning and the spend cap can never evaluate, so someone
+   * running the easiest option on the list gets the noisiest dashboard. The
+   * real cost is a fixed monthly one, and it does not vary with a token — so
+   * counting tokens at 0 is not a fiction here the way `openrouter/*` at 0
+   * would be. What the dashboard cannot show is the subscription itself.
+   *
+   * A wildcard because the Codex backend decides per account which model slugs
+   * it serves; every one of them bills the same way, which is not at all.
+   */
+  "chatgpt/*": { input: 0, output: 0, cacheRead: 0 },
+  /**
+   * The SAME provider under the name its spans carry, and the reason every
+   * entry in this table needs checking against both consumers rather than one.
+   *
+   * Two different strings reach `findPrice` for one configuration. The budget
+   * hook builds its key from the environment — `envModel()` returns
+   * `${EVESTACK_PROVIDER}/${EVESTACK_MODEL}`, so `chatgpt/gpt-5.6-sol`. The
+   * dashboard reads `$eve.model` off the span, which eve writes as
+   * `provider.split(".")[0] + "/" + modelId` from the model object itself —
+   * and the object eve builds for a ChatGPT plan reports `codex.responses`.
+   * So the span says `codex/gpt-5.6-sol`, verified from a compiled manifest.
+   *
+   * Miss this and the failure is one-sided and quiet: the spend cap works, the
+   * dashboard shows the same sessions as unpriced, and the two disagree with no
+   * error to connect them.
+   */
+  "codex/*": { input: 0, output: 0, cacheRead: 0 },
+  /**
    * The wizard's OpenRouter default, priced from OpenRouter's own /models
    * endpoint (USD per 1M: prompt 0.214, completion 2.55, cache read 0.15).
    *
@@ -88,8 +121,16 @@ const FALLBACK_PRICING: Record<string, ModelPrice> = {
    * vendor. The cost of that convention, stated plainly: this is OpenRouter's
    * price, and it would also be applied to the same id reached through another
    * gateway at another rate. EVESTACK_BUDGET_MODEL is the override.
+   *
+   * And then the prefixed form as well, because that convention only ever
+   * described one of the two callers. `createOpenRouter({})("qwen/qwen3.8-27b")`
+   * reports its provider as `openrouter.chat`, so the span eve records says
+   * `openrouter/qwen/qwen3.8-27b` — measured, not assumed. The bare key priced
+   * the budget hook correctly and left the dashboard calling the wizard's own
+   * default model unpriced.
    */
   "qwen/qwen3.8-27b": { input: 0.214, output: 2.55, cacheRead: 0.15 },
+  "openrouter/qwen/qwen3.8-27b": { input: 0.214, output: 2.55, cacheRead: 0.15 },
 };
 
 // GENERATED:pricing start
