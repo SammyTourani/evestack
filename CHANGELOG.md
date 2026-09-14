@@ -92,6 +92,27 @@ template ships as a change to this package.
 
 #### Fixed
 
+#### Added
+
+- **The version is on screen before anything else.** `evestack v0.11.2` sits beside the
+  wordmark. npx resolves a version out of a cache the reader cannot see — this session spent
+  an hour on a broken install that came from a stale `0.10.0` — so the only reliable answer to
+  "which one am I running" is the one the running process prints about itself.
+
+#### Changed
+
+- **A short list no longer gets a search box.** Three options fit in one glance; a filter
+  above them is an affordance for a problem nobody has, and on the opening screen it was the
+  first thing the reader saw. It appears above six options, and always once something has been
+  typed, so an active filter can never be invisible.
+
+- **The step header collapses instead of wrapping on a narrow terminal.** Naming six steps
+  does not fit 52 columns, and a header breaking mid-`Integrations` stops reading as a header;
+  it falls back to the current step plus `step 3 of 6`. Prose — the question hint and the group
+  headings — is cut with an ellipsis for the same reason: the columns were measured from the
+  start and the sentences were not, so at 52 columns rows adapted while sentences broke
+  mid-word. Verified at 52, 60, 80 and 100 columns: nothing exceeds the terminal.
+
 - **A name that is already taken ended the run.** Reported from a real first use:
   `npx evestack create my-agent` against an existing directory printed the wordmark, printed
   the first step's header, and then exited on one bare line —

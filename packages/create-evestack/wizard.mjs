@@ -68,7 +68,7 @@ export const CANCEL = Symbol("wizard.cancel");
  * you have already answered (`Channels (3)`) is what makes going back feel
  * possible rather than destructive.
  */
-export function stepHeaderLine(steps, current) {
+export function stepHeaderLine(steps, current, columns = width()) {
   const parts = steps.map((step, index) => {
     const count = step.count ? ` ${c.dim(`(${step.count})`)}` : "";
     if (index === current) return `${chip(` ${step.title} `)}${count}`;
@@ -83,7 +83,17 @@ export function stepHeaderLine(steps, current) {
     if (index === 0) return part;
     return `${index === current + 1 ? c.dim(g.arrow) : c.dim(g.sep)}  ${part}`;
   });
-  return `  ${joined.join("  ")}`;
+  const full = `  ${joined.join("  ")}`;
+  if (visible(full) <= columns) return full;
+  // NAMING SIX STEPS TAKES ROOM THAT A 52-COLUMN TERMINAL DOES NOT HAVE, and a
+  // header that wraps mid-list is worse than one that says less: it breaks
+  // across two lines in the middle of `Integrations`, and the eye stops reading
+  // it as a header at all. The fallback is the thing the named header replaced,
+  // which is still true and still useful — you are here, and here is where that
+  // falls in the sequence.
+  const step = steps[current];
+  const count = step.count ? ` ${c.dim(`(${step.count})`)}` : "";
+  return `  ${chip(` ${step.title} `)}${count}  ${c.dim(`${g.sep} step ${current + 1} of ${steps.length}`)}`;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -164,6 +174,21 @@ function matches(item, query) {
   return `${item.label} ${item.note ?? ""} ${item.value ?? ""}`.toLowerCase().includes(needle);
 }
 
+/**
+ * One line of prose, cut to the terminal rather than left to wrap.
+ *
+ * Everything on these screens is a column or a sentence, and the columns were
+ * measured from the start while the sentences were not — so at 52 columns the
+ * question hint and the group headings broke mid-word (`an` / `ything`) while
+ * the rows beside them adapted correctly. A cut sentence reads as a cut
+ * sentence; a wrapped one reads as a layout bug.
+ */
+function fit(text, room = width() - 4) {
+  const plainText = plain(text);
+  if (plainText.length <= room || room < 8) return text;
+  return `${plainText.slice(0, room - 1)}${g.ellip}`;
+}
+
 /** The matched run, in brand colour, inside an otherwise normal label. */
 function highlight(text, query, base) {
   if (!query) return base(text);
@@ -224,6 +249,14 @@ function rowLine(item, { active, selected, query, labelWidth, badgeWidth, multi 
   const note = plain(item.note).length > room ? `${plain(item.note).slice(0, room - 1)}${g.ellip}` : item.note;
   return `${head}  ${c.dim(g.sep)} ${c.dim(note)}`;
 }
+
+/**
+ * Above this many options, the list gets a search box.
+ *
+ * Six is "more than fits in one glance". Below it, filtering is slower than
+ * looking.
+ */
+const SEARCHABLE_FROM = 6;
 
 /** How many option rows fit without pushing the header off the screen. */
 const VIEWPORT = 8;
@@ -301,7 +334,7 @@ export async function ask(
     // each other, so the screen had no entry point — the eye landed wherever it
     // happened to land.
     lines.push(`  ${c.brandBold(question)}`);
-    if (hint) lines.push(`  ${c.dim(hint)}`);
+    if (hint) lines.push(`  ${c.dim(fit(hint))}`);
     lines.push("");
 
     // The search box is always present, even before anything is typed, because
@@ -311,9 +344,16 @@ export async function ask(
     // leftover output — something the wizard had printed rather than something
     // waiting for you. The glyph carries the brand colour and the typed text is
     // bright, so the line is the one place on screen that looks live.
-    const caret = c.brandBold(MARKS.caret);
-    const typed = query ? c.bold(query) : c.dim(multi ? "Type to filter" : "Type to filter, or pick below");
-    lines.push(`   ${c.brand(unicode ? "⌕" : ">")} ${typed}${caret}`);
+    // NOT ON A SHORT LIST. Three options fit on screen at once, so a search box
+    // above them is an affordance for a problem nobody has — and on the very
+    // first screen it is the first thing the reader sees. It appears once the
+    // list is long enough that scanning it is work, and always once something
+    // has been typed, so the filter can never be invisible while it is active.
+    if (query || options.length > SEARCHABLE_FROM) {
+      const caret = c.brandBold(MARKS.caret);
+      const typed = query ? c.bold(query) : c.dim(multi ? "Type to filter" : "Type to filter, or pick below");
+      lines.push(`   ${c.brand(unicode ? "⌕" : ">")} ${typed}${caret}`);
+    }
 
     if (opts.length === 0) {
       lines.push("");
@@ -323,7 +363,7 @@ export async function ask(
       const { from, to } = windowFor(cursorIndexInShown, shown.length);
       for (const item of shown.slice(from, to)) {
         if (isHeading(item)) {
-          lines.push(item.heading === "" ? "" : `    ${c.dim(item.heading)}`);
+          lines.push(item.heading === "" ? "" : `    ${c.dim(fit(item.heading, width() - 6))}`);
           continue;
         }
         lines.push(
@@ -374,7 +414,7 @@ export async function ask(
     if (counts.length) lines.push(`  ${counts.join(`  ${c.dim(g.sep)}  `)}`);
 
     lines.push("");
-    lines.push(`  ${c.dim(keyHint({ multi, canBack, canForward, query }))}`);
+    lines.push(`  ${c.dim(keyHint({ multi, canBack, canForward, query, searchable: query !== "" || options.length > SEARCHABLE_FROM }))}`);
     return lines;
   };
 
@@ -464,14 +504,14 @@ export async function ask(
  * Moving and choosing never go, because a list you cannot move in or choose from
  * is not a list.
  */
-function keyHint({ multi, canBack, canForward, query, columns = width() }) {
+function keyHint({ multi, canBack, canForward, query, searchable = true, columns = width() }) {
   // Reading order and drop order are two different things, and conflating them
   // is how a trimmed line came out as `esc cancel · → next · ↑↓ move`. The list
   // below is the order they READ in; `drop` is the order they LEAVE in, lowest
   // first. `keep: true` is the floor — a list you cannot move in or choose from
   // is not a list, whatever the width.
   const parts = [
-    { text: "type to filter", drop: 1 },
+    ...(searchable ? [{ text: "type to filter", drop: 1 }] : []),
     { text: `${unicode ? "↑↓" : "up/down"} move`, keep: true },
     { text: multi ? "space toggle" : "enter select", keep: true },
     ...(multi ? [{ text: "enter accept", keep: true }] : []),

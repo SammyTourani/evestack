@@ -316,17 +316,22 @@ export function heading(title, subtitle = "") {
  * the diagonal, at the only resolution a terminal has. `big` is the 2x version,
  * printed once by `create` and nowhere else.
  */
-export function wordmark({ big = false, tagline = "the whole eve stack, on your own machine" } = {}) {
+export function wordmark({ big = false, tagline = "the whole eve stack, on your own machine", version = "" } = {}) {
   const solid = c.brand(G.block.repeat(big ? 4 : 2));
   const ghost = c.brandDim(G.block.repeat(big ? 4 : 2));
+  // Beside the name, always, because "which version am I running" is the first
+  // question of every support conversation and the last one anybody thinks to
+  // ask. npx resolves a version from a cache the reader cannot see, so the only
+  // reliable answer is the one the running process prints about itself.
+  const name = version ? `${c.bold("evestack")} ${c.dim(`v${version}`)}` : c.bold("evestack");
   blank();
   if (big) {
     say(`    ${solid}`);
-    say(`    ${solid}        ${c.bold("evestack")}`);
+    say(`    ${solid}        ${name}`);
     say(`        ${ghost}    ${c.dim(tagline)}`);
     say(`        ${ghost}`);
   } else {
-    say(`    ${solid}      ${c.bold("evestack")}`);
+    say(`    ${solid}      ${name}`);
     say(`      ${ghost}    ${c.dim(tagline)}`);
   }
   blank();

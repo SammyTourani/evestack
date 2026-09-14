@@ -1548,7 +1548,7 @@ export async function create(argv) {
 
   const { ask, confirm, borrowStdin, closed, close } = await makePrompter(nonInteractive);
 
-  wordmark({ big: true });
+  wordmark({ big: true, version: packageVersion() });
   blank();
 
   // Asked before the steps, and outside them, because it is not one of the

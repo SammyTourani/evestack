@@ -50,7 +50,8 @@ import {
   localBadge,
   recommendedLocal,
 } from "../models.mjs";
-import { ask as pick, group, option } from "../wizard.mjs";
+import { ask as pick, group, option, stepHeaderLine } from "../wizard.mjs";
+import { visible } from "../ui.mjs";
 
 /** Answers from a script, records the questions, can hit EOF partway through. */
 function prompterThatAnswers(answers, { eofAfter = Infinity } = {}) {
@@ -578,4 +579,33 @@ test("the suggested name is the nearest free one, so Enter resolves it", () => {
 
   assert.equal(freeNameNear("my-agent", exists, "/w"), "my-agent-4");
   assert.equal(freeNameNear("other", exists, "/w"), "other", "a free name is returned unchanged");
+});
+
+/* -------------------------------------------------------------------------- */
+/* the screen when the terminal is small                                       */
+/* -------------------------------------------------------------------------- */
+
+test("the step header collapses rather than wrapping", () => {
+  const steps = [
+    { title: "Where" }, { title: "Model" }, { title: "Channels", count: 2 },
+    { title: "Integrations" }, { title: "Services" }, { title: "Review" },
+  ];
+  const wide = stepHeaderLine(steps, 2, 100);
+  const narrow = stepHeaderLine(steps, 2, 52);
+
+  // Naming six steps does not fit 52 columns, and a header that breaks in the
+  // middle of `Integrations` stops reading as a header at all.
+  assert.match(wide, /Integrations/, "the full header names every step when there is room");
+  assert.doesNotMatch(narrow, /Integrations/, "and gives that up rather than wrapping");
+  assert.match(narrow, /step 3 of 6/, "the fallback still says where you are");
+  assert.match(narrow, /Channels/, "and which step you are on");
+  assert.ok(visible(narrow) <= 52, `${visible(narrow)} columns in a 52-column terminal`);
+  assert.ok(visible(wide) <= 100);
+});
+
+test("the count survives the collapse", () => {
+  // Losing it would make going back look destructive — the count on an answered
+  // step is what says the answer is still there.
+  const steps = [{ title: "Model" }, { title: "Channels", count: 3 }, { title: "Review" }];
+  assert.match(stepHeaderLine(steps, 1, 40), /\(3\)/);
 });
