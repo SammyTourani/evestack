@@ -34,25 +34,15 @@ export function HeroStage() {
      that can't run the scene gets the poster; a capable one gets the empty
      stage until the assemble entrance. */
   useEffect(() => {
-    /* THE PHONE NEVER SHOWS AN EMPTY STAGE.
-       The narrative below — capable visitors see nothing, then the slabs
-       assemble in — is right on a laptop, where the gap between hydration and
-       the first WebGL frame is a blink and the mark is one object among many
-       on a wide screen. On a phone it is the whole top of the first screen,
-       and the chunk is ~267kB of three + drei + postprocessing being compiled
-       on a phone CPU: the gap is long enough to read as a blank page with a
-       headline stranded under it. First impressions do not get a second frame.
-
-       So below 48rem the poster paints IMMEDIATELY and the canvas crossfades
-       over it when it is ready (the canvas wrapper already transitions opacity
-       over 700ms, and the poster is held at 1 until `ready` flips). The poster
-       is the same assembled mark in four CSS divs, so what a reader sees is
-       the right shape from the first paint and then simply gains depth. */
-    const phone = window.matchMedia("(max-width: 47.999rem)").matches;
-    if (canRunHeroScene()) {
-      setEligible(true);
-      if (phone) setPosterVisible(true);
-    } else setPosterVisible(true);
+    /* Deliberately NO poster-first path on phones. An earlier pass painted the
+       static CSS mark immediately so the first frame was never blank, and it
+       was the wrong trade: Sammy's note was "I hate those squares that show up
+       immediately... it's okay if it's blank and it takes time for the
+       animation to load in". The flat four-square poster arriving first reads
+       as the finished article, so the real mark assembling afterwards looks
+       like a redraw rather than an entrance. Empty, then it builds. */
+    if (canRunHeroScene()) setEligible(true);
+    else setPosterVisible(true);
   }, []);
 
   /* Mount gating: post-hydration idle + hero visible → request the chunk. */

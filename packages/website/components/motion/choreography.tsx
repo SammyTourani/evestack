@@ -108,6 +108,35 @@ function Choreography() {
           },
           defaults: { ease: "none" },
         });
+        /* PHONE: THE DIAGRAM SETTLES DOWNWARD AS IT EXPLODES.
+           The stage is lifted ~7rem so the assembled mark clears the headline
+           at rest. Once the scrub starts, the copy fades out — and that lift
+           becomes pure dead space under the finished diagram, which is the band
+           Sammy kept pointing at between "sandbox docker.sock" and §01. It is
+           not scroll length, it is empty pixels inside the last frame.
+
+           So the lift is spent rather than held: the group slides DOWN 170px
+           across the disassembly, which lands the finished diagram and its
+           legend near the middle of the payoff frame instead of pinned to the
+           top third. Measured at 390x844 the dead band under "sandbox
+           docker.sock" goes 247px -> ~77px, and at 390x664 the top bar stops
+           tucking under the header.
+
+           The sign is easy to get wrong: --stage-shift is added inside a
+           NEGATED translate, so a positive value moves the group UP and makes
+           the band bigger. Down is negative. GSAP writes `transform` and
+           Tailwind's -translate-* compile to `translate`, which are separate
+           properties that compose — so this adds to the lift rather than
+           fighting it, and nothing has to restate the base position. */
+        if (phone) {
+          scrub.fromTo(
+            "[data-hero-stage]",
+            { "--stage-shift": "0px" },
+            { "--stage-shift": "-170px", ease: "none", duration: 0.62 },
+            0.12,
+          );
+        }
+
         // timeline positions ≡ progress fractions (duration 1).
         // Beat map mirrors stack-mark.tsx: unglyph 0.10–0.38, explode
         // 0.34–0.895 (stagger 0.045, travel-then-widen).

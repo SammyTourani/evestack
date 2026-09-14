@@ -67,7 +67,7 @@ export function HeroClient({ children }: { children: React.ReactNode }) {
 
            sm: restores today's exact strings, so nothing at or above 640px
            moves. */
-        className="pointer-events-none absolute left-1/2 top-1/2 z-0 aspect-auto h-[min(21rem,40svh)] w-[min(1240px,107vw)] -translate-x-1/2 -translate-y-[calc(50%+7rem)] sm:aspect-[1240/580] sm:h-auto sm:-translate-y-[calc(50%+2.5rem)]"
+        className="pointer-events-none absolute left-1/2 top-1/2 z-0 aspect-auto h-[min(21rem,40svh)] w-[min(1240px,107vw)] -translate-x-1/2 -translate-y-[calc(50%+7rem+var(--stage-shift,0px))] sm:aspect-[1240/580] sm:h-auto sm:-translate-y-[calc(50%+2.5rem)]"
       >
         {/* The canvas renders with film-back bleed (hero-canvas expands the
             frustum, composition unchanged) and these nested masks feather the

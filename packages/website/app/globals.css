@@ -381,7 +381,7 @@
 @media (width < 40rem) and (height < 47.5rem) {
   [data-hero-stage] {
     height: min(15rem, 33svh);
-    translate: -50% calc(-50% - 7rem);
+    translate: -50% calc(-50% - 7rem - var(--stage-shift, 0px));
   }
   [data-hero-pane] {
     justify-content: flex-end;
