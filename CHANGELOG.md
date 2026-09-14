@@ -52,26 +52,26 @@ They are summarised rather than itemised, deliberately.
 
 ## Unreleased
 
-**One dist-tag is outstanding, and it currently points at a deprecated version.**
-`evestack`'s `latest` is `0.4.1`, which `npm deprecate evestack@"<0.5.0"` has since marked —
-so `npx evestack create` serves a deprecated package running the previous wizard, with a
-warning telling the reader to upgrade to the thing the tag should already name. Nothing is
-broken; the default is simply a release behind.
+Nothing is pending. Every package in this tree matches the version its registry serves, and
+`evestack`'s `latest` names the newest release rather than a deprecated one.
 
-That rollback was deliberate and is worth recording, because it is the failure RELEASING.md
-names. `evestack@0.5.0` was published BEFORE `create-evestack@0.11.0`, and 0.5.0 pins that
-version exactly — so for a few minutes `npx evestack create` resolved to a package whose only
-dependency did not exist, and died on a 404. `npm dist-tag add evestack@0.4.1 latest` put the
-default back on a working pair without unpublishing anything; publishing the scaffolder then
-repaired 0.5.0 in place.
-
-The exact pin is what turned an ordering slip into a hard 404 rather than a silent fallback
-to an older scaffolder. That is the pin working as intended: the alternative is a CLI quietly
-driving a scaffolder it was never tested against, which is the bug 0.5.0 exists to end. Its
-standing cost is that the two move together always — the `0.11.1` patch below needed a `0.5.1`
-to reach anyone.
-
-Delete this section's contents once `latest` moves to `evestack@0.5.1`.
+> **Emptied 2026-09-14, and the state it described is worth keeping in the history rather
+> than only in git.** For about half an hour `evestack`'s `latest` pointed at `0.4.1` — a
+> version that `npm deprecate evestack@"<0.5.0"` had by then marked — so the default
+> `npx evestack create` served a deprecated package running the previous wizard.
+>
+> It got there honestly. `evestack@0.5.0` was published BEFORE `create-evestack@0.11.0`, and
+> 0.5.0 pins that version exactly, so for a few minutes the default resolved to a package
+> whose only dependency did not exist and died on a 404. `npm dist-tag add evestack@0.4.1
+> latest` restored a working default in seconds without unpublishing anything; publishing the
+> scaffolder repaired 0.5.0 in place; the tag then moved forward to 0.5.1.
+>
+> Two things that are only obvious afterwards. **The exact pin is what made the ordering slip
+> loud** — a caret would have quietly resolved an older scaffolder and shipped a CLI driving
+> one it was never tested against, which is the bug 0.5.0 exists to end. And **a dist-tag is
+> the cheapest repair in the registry**: it needs no unpublish, no version burn and no 72-hour
+> window, and it is the right first move any time `latest` names something that should not be
+> the default.
 
 ### Changed but not yet versioned
 
