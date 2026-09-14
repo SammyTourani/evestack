@@ -27,6 +27,34 @@
  *   npm run verify -- --no-open never open it (implied when not a terminal)
  *   npm run verify -- --json    machine-readable, opens nothing
  */
+
+/**
+ * Which environment variable holds this provider's key.
+ *
+ * A ternary lived here — `anthropic ? ANTHROPIC_API_KEY : OPENAI_API_KEY` —
+ * which is only correct while there are exactly two remote providers. With a
+ * gateway on the list it told someone their openrouter project was missing an
+ * OPENAI_API_KEY: the provider name in the message was right and the variable
+ * it demanded was wrong, which is worse than saying nothing.
+ *
+ * `compatible` returns null: a loopback LM Studio or llama.cpp authenticates
+ * nobody, so there is no key whose absence is a problem to report.
+ */
+function providerKeyVar(provider) {
+  const keys = {
+    openai: "OPENAI_API_KEY",
+    anthropic: "ANTHROPIC_API_KEY",
+    openrouter: "OPENROUTER_API_KEY",
+    compatible: null,
+  };
+  // `hasOwn` and not `?? "OPENAI_API_KEY"`. `??` falls back on null, so the one
+  // entry deliberately set to null — "this provider needs no key" — came back
+  // out of the lookup as OPENAI_API_KEY, and a scaffold pointed at LM Studio on
+  // loopback refused to start until an OpenAI key it will never call was set.
+  // The two cases are genuinely different: a known provider with no key, and a
+  // provider nobody here recognises.
+  return Object.hasOwn(keys, provider) ? keys[provider] : "OPENAI_API_KEY";
+}
 import { spawn } from "node:child_process";
 
 import { existsSync, readFileSync } from "node:fs";
@@ -174,7 +202,13 @@ if (client) {
 /* -------------------------------------------------------------------------- */
 
 const provider = (env("EVESTACK_PROVIDER")?.trim() || "openai").toLowerCase();
-const model = env("EVESTACK_MODEL") || { openai: "gpt-5-mini", anthropic: "claude-sonnet-5", ollama: "qwen3" }[provider];
+// The fourth copy of this table — agent.ts, @evestack/budget and .env.example
+// carry the other three, and budget's header records the outage that drift
+// caused. Adding a provider means touching all four.
+const model = env("EVESTACK_MODEL") || {
+  openai: "gpt-5-mini", anthropic: "claude-sonnet-5", openrouter: "qwen/qwen3.8-27b",
+  ollama: "qwen3:0.6b", compatible: "",
+}[provider];
 
 /**
  * Which provider will actually be asked for EMBEDDINGS.
@@ -229,8 +263,10 @@ if (provider === "ollama") {
     pass("model", `ollama/${model} is pulled and ready`);
   }
 } else {
-  const keyVar = provider === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY";
-  if (env(keyVar)) {
+  const keyVar = providerKeyVar(provider);
+  if (!keyVar) {
+    pass("model", `${provider}/${model} on ${env("EVESTACK_BASE_URL") || "this machine"}, no key needed`);
+  } else if (env(keyVar)) {
     // Not called. A verify command that spends money the first time you run it
     // is a verify command people stop running.
     pass("model", `${provider}/${model}, ${keyVar} is set`);

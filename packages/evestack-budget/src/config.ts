@@ -162,7 +162,7 @@ function validTimeZone(raw: string | undefined): string {
 /**
  * Each provider's default model, which has to match the agent's.
  *
- * `templates/default/agent/agent.ts` carries the same three and says out loud
+ * `templates/default/agent/agent.ts` carries the same five and says out loud
  * that the two tables must stay in step. They had drifted: this file defaulted
  * every non-ollama provider to `gpt-5-mini`, so the documented anthropic setup —
  * `EVESTACK_PROVIDER=anthropic` with `EVESTACK_MODEL` left commented out, which
@@ -177,7 +177,12 @@ function validTimeZone(raw: string | undefined): string {
 const PROVIDER_DEFAULT_MODEL: Record<string, string | undefined> = {
   openai: "gpt-5-mini",
   anthropic: "claude-sonnet-5",
-  ollama: "qwen3",
+  openrouter: "qwen/qwen3.8-27b",
+  ollama: "qwen3:0.6b",
+  // Deliberately absent, not "": a custom endpoint has no price table anywhere,
+  // so the honest outcome is the unpriced warning below rather than a number
+  // borrowed from whichever vendor the model id happens to resemble.
+  compatible: undefined,
 };
 
 /**

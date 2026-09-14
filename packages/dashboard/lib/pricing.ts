@@ -68,6 +68,28 @@ const FALLBACK_PRICING: Record<string, ModelPrice> = {
   // The gateway catalog contains no `ollama/` entry at all (checked: zero of
   // 317), so this rule cannot come from the generator.
   "ollama/*": { input: 0, output: 0, cacheRead: 0 },
+  /**
+   * The wizard's OpenRouter default, priced from OpenRouter's own /models
+   * endpoint (USD per 1M: prompt 0.214, completion 2.55, cache read 0.15).
+   *
+   * Here rather than in the generated block because the AI Gateway catalog does
+   * not carry it — it lists Qwen under `alibaba/`, and this is OpenRouter's id
+   * for a different build of the model at a different price.
+   *
+   * One exact id and deliberately NOT an `openrouter/*` wildcard. OpenRouter
+   * fronts 445 models, from a frontier model down to `:free`, so a single
+   * wildcard price would be wrong for nearly all of them — and wrong in the
+   * direction that matters, because a wildcard at 0 leaves the cap unable to
+   * trip while looking perfectly configured. Every other OpenRouter model stays
+   * honestly unpriced, which is what the unpriced warning exists for.
+   *
+   * Keyed WITHOUT a provider prefix because `envModel()` passes any id
+   * containing a slash through unchanged — a gateway id already names its own
+   * vendor. The cost of that convention, stated plainly: this is OpenRouter's
+   * price, and it would also be applied to the same id reached through another
+   * gateway at another rate. EVESTACK_BUDGET_MODEL is the override.
+   */
+  "qwen/qwen3.8-27b": { input: 0.214, output: 2.55, cacheRead: 0.15 },
 };
 
 // GENERATED:pricing start

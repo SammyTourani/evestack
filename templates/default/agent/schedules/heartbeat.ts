@@ -131,7 +131,7 @@ async function readTasks(): Promise<string | null> {
 
 async function fire(
   channelName: string,
-  { receive, waitUntil, appAuth }: ScheduleHandlerArgs,
+  { to, waitUntil, appAuth }: ScheduleHandlerArgs,
 ): Promise<void> {
   // Which conversation to speak into. Every channel's target has a different
   // shape — Telegram wants a chatId, Slack a channelId — so this is JSON rather
@@ -150,16 +150,17 @@ async function fire(
 
   const channel = loadChannel(channelName);
 
-  const dispatch = receive(channel as never, {
-    target: target as never,
-    message:
-      `${tasks}\n\n---\n` +
+  // eve 0.54 split the old single-call `receive(channel, {target, message, auth})`
+  // into addressing and sending: `to(channel, target)` returns a handle whose
+  // `send(message, {auth})` does the dispatch. Same two arguments, one more hop.
+  const dispatch = to(channel as never, target as never).send(
+    `${tasks}\n\n---\n` +
       `You are running as a scheduled heartbeat, not in a conversation. Work through the ` +
       `checks above. If nothing needs the user's attention, reply with exactly ${ACK} and ` +
       `nothing else. Only write a real message when there is something they would want to ` +
       `be interrupted for.`,
-    auth: appAuth,
-  });
+    { auth: appAuth },
+  );
 
   // `waitUntil(p)` WITHOUT awaiting `p` is what made every heartbeat record
   // itself `completed` in a handful of milliseconds, whatever happened.

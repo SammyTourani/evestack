@@ -81,8 +81,8 @@ reach it. See [Observability](/docs/observability).
 <Steps>
   <Step title="Pin the three versions that have to agree">
     `eve`, the `@workflow/*` line, and the world package are one compatibility unit, and only one
-    of the three is checked for you. The shipped `package.json` pins `eve` at `^0.30.8` and
-    `@workflow/world-postgres` at exactly `5.0.0-beta.32` — an exact version, not a range and not
+    of the three is checked for you. The shipped `package.json` pins `eve` at `^0.54.3` and
+    `@workflow/world-postgres` at exactly `5.0.0-beta.42` — an exact version, not a range and not
     a dist-tag. `>=0.30.0` is the floor for any deployment reachable from a network — see
     [Auth off Vercel](#auth-off-vercel).
   </Step>
@@ -156,24 +156,49 @@ reach it. See [Observability](/docs/observability).
 
 ## The Postgres world
 
+<Callout title="Upgrading an existing database from eve 0.30 to 0.54">
+  The World spec moves from **5** to **7**, and the spec-7 World keeps a per-run slot sequencer
+  in a table the older schema does not have. Booting does **not** create it. Measured on a
+  database holding 3 runs and 52 spec-5 events:
+
+  - the upgraded agent **starts** against the old database, and old runs stay readable — a
+    request against a finished one answers `session_not_active`, not a parse error;
+  - creating a **new** session fails with
+    `insert into "workflow"."workflow_event_slots" … Queue execution failed (500)`;
+  - `npm run db:bootstrap` creates the missing table, keeps every existing row, and new sessions
+    then work. Afterwards both generations coexist: spec 5 with 52 events, spec 7 alongside it.
+
+  So the upgrade is two steps, not one: install, then **re-run `npm run db:bootstrap`** before
+  the first boot. Nothing is lost, but skipping the second step leaves an agent that reads
+  history and cannot start a conversation.
+</Callout>
+
+
 <Warning>
-  Pin `@workflow/world-postgres` to an **exact version** — `5.0.0-beta.32`, which is what
-  `templates/default` declares. Never `latest`, and no longer the `beta` dist-tag either.
+  Pin `@workflow/world-postgres` to an **exact version** — `5.0.0-beta.42`, which is what
+  `templates/default` declares. Never `latest`, and never the `beta` dist-tag.
 
   `latest` is a whole major behind the protocol eve speaks and always has been. `beta` was the
   documented workaround for that, and it stopped being safe: upstream ships World **spec**
   changes inside the `5.0.0-beta.*` line with no semver signal, so the same tag hands out
-  incompatible worlds on different days. Measured against eve 0.30.8:
+  incompatible worlds on different days. The World a given release declares comes from the exact
+  `@workflow/world` it pins, and eve embeds the one spec it will accept:
 
-  | `world-postgres` | pulls `@workflow/world` | World spec | eve 0.30.8 |
-  | --- | --- | --- | --- |
-  | `5.0.0-beta.32` | `5.0.0-beta.25` | 5 | boots |
-  | `5.0.0-beta.34` | `5.0.0-beta.27` | 6 | `worker init failed` at startup |
+  | `world-postgres` | pulls `@workflow/world` | World spec | eve 0.30.8 | eve 0.54.3 |
+  | --- | --- | --- | --- | --- |
+  | `5.0.0-beta.32` | `5.0.0-beta.25` | 5 | boots | `worker init failed` |
+  | `5.0.0-beta.42` | `5.0.0-beta.35` | 7 | `worker init failed` | boots |
 
-  On 2026-08-19 the `beta` tag moved from `.34` to `.35` inside a single working session, so
-  "check the tag yourself" is not a defence — the answer expires. `^5.0.0-beta.32` and
-  `~5.0.0-beta.32` are not fixes either: both still resolve to `.34` and `.35`. Move the pin only
-  after installing a candidate and watching it boot.
+  This is not theoretical. Every published `create-evestack` from `0.3.1` to `0.10.0` shipped the
+  `beta` tag; when it moved from `.32` to `.42` the World's spec went 5 → 7 while the template
+  still pinned eve 0.30.8, and every new project died on its first `npm run dev` with
+  `requires a World with matching spec version 5, but the configured World declares spec
+  version 7`. Nothing in the repository had changed. `^5.0.0-beta.42` and `~5.0.0-beta.42` are
+  not fixes either — both float forward inside the same prerelease line. Move the pin only after
+  installing a candidate and watching it boot.
+
+  `packages/create-evestack/test/no-floating-tags.test.mjs` now fails the build if any dependency
+  in the scaffold is specified by tag rather than by version.
 </Warning>
 
 Selecting the world is one field in `agent/agent.ts`, and it is conditional on the connection
@@ -234,7 +259,7 @@ wrapper was deleted rather than kept — on 0.30 it could add no protection and 
 legitimate local-dev access over a LAN IP, a tunnel, or a container hostname.
 
 **Pin `eve` `>=0.30.0`.** That is the release the fix landed in, and it is the same floor
-SECURITY.md and every published peer range state; the template pins `^0.30.8` because that is
+SECURITY.md and every published peer range state; the template pins `^0.54.3` because that is
 the release evestack tests against, which is a different question.
 `contract/contracts/07-auth.contract.mjs` asserts both
 halves of the fixed behaviour — that no hostile `Host` makes `localDev()` grant, and that it

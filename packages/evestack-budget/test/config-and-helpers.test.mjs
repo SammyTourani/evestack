@@ -170,15 +170,18 @@ test("dayKey still throws on a config nobody validated, which is why hook.ts gua
 /* -------------------------------------------------------------------------- */
 
 test("every provider the agent knows resolves to the model the agent would pick", () => {
-  // These three must equal DEFAULT_MODEL in templates/default/agent/agent.ts.
+  // These must equal DEFAULT_MODEL in templates/default/agent/agent.ts.
   // They had drifted on one row and that row was enough: anthropic defaulted to
   // gpt-5-mini here, so EVESTACK_PROVIDER=anthropic with EVESTACK_MODEL unset —
   // what .env.example documents — priced as "anthropic/gpt-5-mini". Nothing
   // prices that and there is no anthropic wildcard, so the caps were dead.
   assert.equal(config({ EVESTACK_PROVIDER: "openai" }).model, "openai/gpt-5-mini");
   assert.equal(config({ EVESTACK_PROVIDER: "anthropic" }).model, "anthropic/claude-sonnet-5");
-  assert.equal(config({ EVESTACK_PROVIDER: "ollama" }).model, "ollama/qwen3");
-  for (const provider of ["openai", "anthropic", "ollama"]) {
+  assert.equal(config({ EVESTACK_PROVIDER: "ollama" }).model, "ollama/qwen3:0.6b");
+  // No provider prefix: envModel passes a slash-bearing id through unchanged,
+  // because a gateway model id already names its own vendor.
+  assert.equal(config({ EVESTACK_PROVIDER: "openrouter" }).model, "qwen/qwen3.8-27b");
+  for (const provider of ["openai", "anthropic", "ollama", "openrouter"]) {
     const { model } = config({ EVESTACK_PROVIDER: provider });
     assert.notEqual(findPrice(model), null, `${model} must be priced or the cap cannot trip`);
   }
@@ -195,8 +198,8 @@ test("EVESTACK_PROVIDER is trimmed and lowercased the way agent.ts reads it", ()
   // string to "ollama", so "Anthropic" and " ollama " became providers of their
   // own and produced unpriced keys.
   assert.equal(config({ EVESTACK_PROVIDER: "Anthropic" }).model, "anthropic/claude-sonnet-5");
-  assert.equal(config({ EVESTACK_PROVIDER: " ollama " }).model, "ollama/qwen3");
-  assert.equal(config({ EVESTACK_PROVIDER: "OLLAMA" }).model, "ollama/qwen3");
+  assert.equal(config({ EVESTACK_PROVIDER: " ollama " }).model, "ollama/qwen3:0.6b");
+  assert.equal(config({ EVESTACK_PROVIDER: "OLLAMA" }).model, "ollama/qwen3:0.6b");
   assert.equal(config({ EVESTACK_PROVIDER: "" }).model, "openai/gpt-5-mini");
   assert.equal(config({ EVESTACK_PROVIDER: "  " }).model, "openai/gpt-5-mini");
 });

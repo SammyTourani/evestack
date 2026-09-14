@@ -11,6 +11,35 @@
  * Dependency-free apart from `pg`, which the project already has. It runs
  * before `npm install` has necessarily finished anything else.
  */
+
+/**
+ * Which environment variable holds this provider's key.
+ *
+ * A ternary lived here — `anthropic ? ANTHROPIC_API_KEY : OPENAI_API_KEY` —
+ * which is only correct while there are exactly two remote providers. With a
+ * gateway on the list it told someone their openrouter project was missing an
+ * OPENAI_API_KEY: the provider name in the message was right and the variable
+ * it demanded was wrong, which is worse than saying nothing.
+ *
+ * `compatible` returns null: a loopback LM Studio or llama.cpp authenticates
+ * nobody, so there is no key whose absence is a problem to report.
+ */
+export function providerKeyVar(provider) {
+  const keys = {
+    openai: "OPENAI_API_KEY",
+    anthropic: "ANTHROPIC_API_KEY",
+    openrouter: "OPENROUTER_API_KEY",
+    compatible: null,
+  };
+  // `hasOwn` and not `?? "OPENAI_API_KEY"`. `??` falls back on null, so the one
+  // entry deliberately set to null — "this provider needs no key" — came back
+  // out of the lookup as OPENAI_API_KEY, and a scaffold pointed at LM Studio on
+  // loopback refused to start until an OpenAI key it will never call was set.
+  // The two cases are genuinely different: a known provider with no key, and a
+  // provider nobody here recognises.
+  return Object.hasOwn(keys, provider) ? keys[provider] : "OPENAI_API_KEY";
+}
+
 import { existsSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
@@ -685,8 +714,8 @@ export async function preflight({ label = "npm run dev", requireEmbedModel = fal
       ]);
     }
   } else {
-    const keyVar = provider === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY";
-    if (!env(keyVar)) {
+    const keyVar = providerKeyVar(provider);
+    if (keyVar && !env(keyVar)) {
       stop(`${keyVar} is not set, so the agent has no model to call.`, [
         `This project is configured for ${C.bold}${provider}${C.reset}. Add the key to .env.local:`,
         "",
