@@ -52,8 +52,23 @@ They are summarised rather than itemised, deliberately.
 
 ## Unreleased
 
-Nothing is pending. Every package in this tree matches the version its registry serves, and
-the container image is published at the version the repository is on.
+**One dist-tag is outstanding.** `evestack@0.5.0` is published, but `latest` still points at
+`0.4.1`. Every package version in this tree is on npm; what differs is which one `npx
+evestack` resolves to by default.
+
+That rollback was deliberate and is worth recording, because it is the failure RELEASING.md
+names. `evestack@0.5.0` was published BEFORE `create-evestack@0.11.0`, and 0.5.0 pins that
+version exactly — so for a few minutes `npx evestack create` resolved to a package whose only
+dependency did not exist, and died on a 404. `npm dist-tag add evestack@0.4.1 latest` put the
+default back on a working pair without unpublishing anything; publishing the scaffolder then
+repaired 0.5.0 in place. Moving `latest` forward is the last step, and the gate on it is a
+clean-cache `npx evestack@0.5.0 create` that scaffolds and boots — run and green.
+
+The exact pin is what turned an ordering slip into a hard 404 rather than a silent fallback
+to an older scaffolder. That is the pin working as intended: the alternative is a CLI quietly
+driving a scaffolder it was never tested against, which is the bug 0.5.0 exists to end.
+
+Delete this section's contents once `latest` moves.
 
 > **This section claimed the opposite until 2026-08-19, and that is precisely the failure it
 > exists to prevent.** It opened with "**`@evestack/dashboard@0.4.0` is waiting to be
@@ -98,6 +113,68 @@ the container image is published at the version the repository is on.
 
 The `npm create` entry point. Carries `templates/default` inside it, so a change to the
 template ships as a change to this package.
+
+### create-evestack@0.11.0 — 2026-09-14
+
+#### Added
+
+- **A setup wizard with steps you can walk back through, and lists you can search.** Six
+  steps with a header that names them — `✓ Where · ✓ Model · Channels (2) → …` — rather
+  than four numbered questions with no way back. Channels and integrations come from eve's
+  own registry (`https://eve.dev/r`, 99 items), read live with a 2s timeout and an embedded
+  snapshot behind it so the wizard still opens with no network. Filter matches descriptions
+  as well as labels, so "sms" finds Twilio. `wizard.mjs` replaces `select.mjs`.
+
+- **Every pick says what it will cost you before you pick it.** eve's list does not record
+  which items need an account; `needs` is the one thing added on top, and it is structural
+  rather than textual — everything under `connection/` needs authenticating whether or not
+  its description says "token". Reading descriptions alone flagged 7 of 99; the prefix rule
+  brings it to 52.
+
+- **Two providers and a much smaller local default.** `openrouter` (one key, 400+ models,
+  open weights included) and `compatible` (LM Studio, llama.cpp, vLLM, Groq, Together —
+  `EVESTACK_BASE_URL` required, never defaulted). Local models are listed with verified
+  sizes and verified tool-calling, smallest first: `granite4:350m-h` at 366 MB is the
+  smallest thing that can still drive an agent. The default moves from `qwen3` (5.2 GB) to
+  `qwen3:0.6b` (523 MB).
+
+  Gemma is on the list and marked `no tools`. Its Ollama template references no `.Tools` at
+  any size, and a pulled `gemma3:1b` reports `capabilities: ["completion"]`. Unmarked, it
+  produces an agent that answers fluently and does nothing.
+
+- **A door for someone who has never seen this before.** The wizard opens by asking whether
+  you want to set up, read the quickstart (opens the browser and keeps the wizard running),
+  or have each step explained.
+
+#### Changed
+
+- **The scaffold targets eve 0.54.3**, up from 0.30.8. See the `evestack` entry below for
+  the database migration this implies.
+
+- **Key prompts take three tries and then move on.** The Composio prompt was where people
+  stalled — the key is behind a sign-up, so the honest first answer is an empty line, and
+  the old wizard took that as final and wrote `COMPOSIO_API_KEY=`, a setting that looks
+  configured and is not.
+
+#### Fixed
+
+- **`eve add channel/web` silently took over `npm run dev`.** It rewrites `dev`, `build` and
+  `start` to `next dev` and friends — correct for a bare eve project, fatal here, because
+  `scripts/dev.mjs` is the wrapper that wires Postgres and `.env.local` and the finish
+  screen says `npm run dev   # the agent`. Collisions are restored and the installer's
+  versions parked at `dev:web`.
+
+- **A registry item can install cleanly and stop the agent compiling.** `eve build` catches
+  it in ~1.5s and names both the module and the cause, so it now runs after every install.
+
+- **Required environment variables are named.** Generated wiring declares them with a
+  non-null assertion (`process.env.BROWSERBASE_API_KEY!`). Unset is not a warning, it is
+  `Invalid extension config: apiKey: Too small` at boot — a message naming a zod field and
+  never the variable. Newly-written files are scanned for that assertion.
+
+- **`no-floating-tags.test.mjs` fails the build if any scaffold dependency is named by tag
+  rather than by version.** Verified to catch the original `"beta"`. This is the regression
+  test for the defect fixed in 0.10.1.
 
 ### create-evestack@0.10.1 — 2026-08-19
 
@@ -438,6 +515,27 @@ not correspond to any commit in this repository. Do not install it.
 The CLI — `create`, `status`, `tour`, `open`, `verify`, `attach`, `doctor`. Depends on
 `create-evestack`, so it publishes last.
 
+### evestack@0.5.0 — 2026-09-14
+
+#### Changed
+
+- **`create-evestack` is pinned exactly rather than by caret.** `workspace:^` published as
+  `^0.10.0`, which let npx satisfy the dependency from a cached `0.10.0` — carrying the
+  floating `"@workflow/world-postgres": "beta"` — long after `0.10.1` had fixed it. A range
+  means the CLI and the scaffolder it drives are only *probably* the pair that was tested
+  together. `workspace:*` resolves to the exact version at pack time; verified by packing
+  and reading the manifest back.
+
+- **The scaffold it produces targets eve 0.54.3**, up from 0.30.8.
+
+  **Upgrading an existing database is two steps, not one.** The World spec moves 5 → 7 and
+  the spec-7 World keeps a per-run slot sequencer in a table the older schema lacks; booting
+  does not create it. Measured against a database holding 3 runs and 52 spec-5 events: the
+  agent starts and old runs stay readable, but a new session fails with `insert into
+  "workflow"."workflow_event_slots" … (500)`. `npm run db:bootstrap` creates the table,
+  keeps every row, and both generations then coexist. Skipping it leaves an agent that reads
+  its history and cannot start a conversation.
+
 ### evestack@0.4.1 — 2026-08-13
 
 Tagged `evestack@0.4.1`.
@@ -558,6 +656,25 @@ First release (51d2b85), alongside the fix to the trace tier that had never work
 
 Spend caps. A **template dependency** — it must exist on npm before `create-evestack`
 does.
+
+### @evestack/budget@0.3.0 — 2026-09-14
+
+#### Changed
+
+- **`PROVIDER_DEFAULT_MODEL` gains `openrouter` and `compatible`, and the ollama default
+  moves to `qwen3:0.6b`.** This table must equal `DEFAULT_MODEL` in
+  `templates/default/agent/agent.ts`; the header above it records the outage a drifted row
+  caused. `compatible` is deliberately absent rather than `""` — a custom endpoint has no
+  price table anywhere, so the honest outcome is the unpriced warning rather than a number
+  borrowed from whichever vendor the model id resembles.
+
+#### Added
+
+- **A price for `qwen/qwen3.8-27b`**, the wizard's OpenRouter default, from OpenRouter's own
+  `/models` endpoint. One exact id and deliberately not an `openrouter/*` wildcard: that
+  gateway fronts 445 models from a frontier model down to `:free`, and a wildcard at 0 would
+  leave the spend cap unable to trip while looking perfectly configured. Keyed without a
+  provider prefix because `envModel()` passes any id containing a slash through unchanged.
 
 ### @evestack/budget@0.2.1 — 2026-08-09
 
