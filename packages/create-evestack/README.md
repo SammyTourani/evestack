@@ -93,7 +93,12 @@ goes to whichever provider was already selected, so change them together:
 | --- | --- | --- |
 | unset, or `openai` | `OPENAI_API_KEY` | `gpt-5-mini` |
 | `anthropic` | `ANTHROPIC_API_KEY` | `claude-sonnet-5` |
-| `ollama` | none | `qwen3` |
+| `openrouter` | `OPENROUTER_API_KEY` | `qwen/qwen3.8-27b` |
+| `ollama` | none | `qwen3:0.6b` |
+| `compatible` | `EVESTACK_COMPATIBLE_API_KEY` (optional) | none — plus `EVESTACK_BASE_URL` |
+
+`openrouter` is one key for 400+ models, open weights included. `compatible` is anything else
+speaking the OpenAI wire format — LM Studio, llama.cpp, vLLM, Groq, Together.
 
 ## The dashboard
 

@@ -49,6 +49,11 @@ test("ui.mjs emits no escapes when colour is off", async () => {
     const ui = await import(${JSON.stringify(PACKAGE_COPY)});
     process.stdout.write(String(ui.color) + "\\n");
     process.stdout.write(ui.c.red("red") + ui.c.brand("brand") + ui.g.OK + "\\n");
+    // chip() writes its escapes by hand rather than through wrap(), which is
+    // exactly the shape that forgets to check \`color\`. It is the step header's
+    // "you are here" highlight, so a leaked escape here lands in every piped
+    // transcript of every run.
+    process.stdout.write(ui.chip(" Channels ") + "\\n");
   `;
   const out = execFileSync(process.execPath, ["--input-type=module", "-e", script], {
     env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: undefined },

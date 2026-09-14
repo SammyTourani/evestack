@@ -296,7 +296,48 @@ export async function makePrompter(nonInteractive) {
     return a === "" ? def : a.startsWith("y");
   };
 
-  return { ask, confirm, closed: () => stdinClosed, close: () => rl?.close() };
+  /**
+   * Hand stdin to something that wants to read keys itself, and take it back.
+   *
+   * A readline interface over a TTY owns stdin completely: it puts the terminal
+   * in raw mode, attaches its own `keypress` handler, and keeps the stream
+   * flowing. A second reader attached underneath it does not take over, it
+   * competes — and the way that surfaced was brutal. The arrow-key picker ran
+   * fine, then the NEXT `ask()` never settled, Node printed "Detected unsettled
+   * top-level await" and the wizard exited between two questions with a
+   * half-written scaffold and no error of its own.
+   *
+   * So the interface is paused and its listeners are lifted for the duration,
+   * then put back exactly as they were. Restoring rather than re-creating
+   * matters: `rl` holds the history and the `close` handler that `closed()`
+   * depends on, and a fresh interface would lose the EOF tracking every prompt
+   * after it relies on.
+   */
+  const borrowStdin = async (run) => {
+    if (!rl) return run();
+    // ONLY the `keypress` listeners move. The `data` listener under them is the
+    // pump that turns bytes into keypress events, installed once by
+    // `emitKeypressEvents` behind an internal guard — so removing it does not
+    // hand the stream over, it switches key decoding off for the rest of the
+    // process. `emitKeypressEvents` then declines to reinstall it (the guard is
+    // already set), the borrower's listener is attached to an event nothing
+    // emits any more, and the wizard hangs on a list that never responds to a
+    // keystroke. Observed exactly that: no output, no error, no exit.
+    const keypress = process.stdin.rawListeners("keypress");
+    const wasRaw = process.stdin.isRaw;
+    rl.pause();
+    process.stdin.removeAllListeners("keypress");
+    try {
+      return await run();
+    } finally {
+      process.stdin.removeAllListeners("keypress");
+      for (const listener of keypress) process.stdin.on("keypress", listener);
+      if (process.stdin.isRaw !== wasRaw) process.stdin.setRawMode(wasRaw);
+      rl.resume();
+    }
+  };
+
+  return { ask, confirm, borrowStdin, closed: () => stdinClosed, close: () => rl?.close() };
 }
 
 /* -------------------------------------------------------------------------- */

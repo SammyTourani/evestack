@@ -527,15 +527,31 @@ function buildPlan({
           `nothing in that directory's metadata carries a literal credential.`,
       );
     } else {
+      // WORDED AGAINST WHAT EVE ACTUALLY DOES, WHICH CHANGED.
+      //
+      // This used to say `eve dev` "copies that file into
+      // .eve/dev-runtime/snapshots/ on every boot". That was measured and true
+      // of eve 0.30. It is NOT true of eve 0.54: the same fixture now plans
+      // exactly one copied file — the project's own package.json — and nothing
+      // outside the project at all. The credential is still *watched*
+      // (`watchPaths` includes it, which is why an unrelated edit up there
+      // rebuilds), and the snapshot source root is still that workspace root,
+      // but it is not carried into the snapshot any more.
+      //
+      // Keeping the old sentence would have been worse than saying nothing. A
+      // security alert that names a file and then describes a copy the reader
+      // can go and fail to find is how the next real alert gets ignored.
       plan.alerts.push(
-        `${join(markerRoot, exposed)} carries a literal credential, and \`eve dev\` copies that ` +
-          `file into .eve/dev-runtime/snapshots/ on every boot — ${markerRoot} is the nearest ` +
-          `workspace root above this project, so it is where eve snapshots the source from. ` +
-          `attach does not fence a project off from a workspace it belongs to: eve reaches the ` +
-          `sibling packages through that root. Move the secret into your own ~/.npmrc, or ` +
-          `replace it with an environment reference like \`_authToken=\${NPM_TOKEN}\`, and the ` +
-          `copies stop carrying it. If this project does not belong to that workspace, ` +
-          `\`git init\` here and eve will stop at the project instead.`,
+        `${join(markerRoot, exposed)} carries a literal credential, and ${markerRoot} is the ` +
+          `nearest workspace root above this project — which is where \`eve dev\` resolves its ` +
+          `snapshot source from, and which files it watches. eve 0.54 keeps the copy itself ` +
+          `inside the project, so the credential is no longer written into ` +
+          `.eve/dev-runtime/snapshots/; an older eve did copy it. attach does not fence a ` +
+          `project off from a workspace it belongs to: eve reaches the sibling packages ` +
+          `through that root. Move the secret into your own ~/.npmrc, or replace it with an ` +
+          `environment reference like \`_authToken=\${NPM_TOKEN}\`, and nothing up there is a ` +
+          `secret any more. If this project does not belong to that workspace, \`git init\` ` +
+          `here and eve will stop at the project instead.`,
       );
     }
   } else {
