@@ -13,7 +13,19 @@ export function canRunHeroScene(): boolean {
 
   try {
     const canvas = document.createElement("canvas");
-    const gl = canvas.getContext("webgl2", { failIfMajorPerformanceCaveat: true });
+    let gl = canvas.getContext("webgl2", { failIfMajorPerformanceCaveat: true });
+    /* The caveat flag is a DESKTOP guard: it is here to reject software
+       rasterisers on a laptop, where the scene would run at 5fps. iOS Safari
+       reports a major performance caveat for hardware that renders this scene
+       fine, so on a phone that flag was silently turning the hero off and
+       leaving the static poster — which is exactly what Sammy saw and read as
+       "the square animation is fully gone". Below 48rem, ask again without it;
+       the software-rasteriser check below still runs either way, and the
+       lost-context and onFailed paths still fall back to the poster if the
+       device genuinely cannot cope. */
+    if (!gl && window.matchMedia("(max-width: 47.999rem)").matches) {
+      gl = canvas.getContext("webgl2");
+    }
     if (!gl) return false;
     // Chromium no longer flags SwiftShader as a performance caveat —
     // reject known software rasterizers by renderer string.

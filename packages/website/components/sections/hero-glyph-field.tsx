@@ -346,6 +346,8 @@ export function HeroGlyphField() {
       const w = host.clientWidth;
       const h = host.clientHeight;
       if (!w || !h || !cols) return;
+      /* 1 on a desktop hero, ~0.42 on a phone. See the note at gProx below. */
+      const tight = w >= 768 ? 1 : Math.max(0.38, w / 940);
       const hostRect = host.getBoundingClientRect();
       const section = host.closest("#hero") ?? document;
       const toLocal = (el: Element | null, fw: number, fh: number) => {
@@ -422,8 +424,23 @@ export function HeroGlyphField() {
           const dCopy = distRect(x, y, copy.x0, copy.y0, copy.x1, copy.y1) + wob;
           const dSlabD = distRect(x, y, slabD.x0, slabD.y0, slabD.x1, slabD.y1) + wob;
           const dSlabG = distRect(x, y, slabG.x0, slabG.y0, slabG.x1, slabG.y1) + wob;
-          const gProx = Math.min(smoothstep(62, 188, dCopy), smoothstep(50, 148, dSlabG));
-          const dProx = Math.min(smoothstep(52, 98, dCopy), smoothstep(40, 96, dSlabD));
+          /* THE GUARD DISTANCES HAVE TO SCALE WITH THE CANVAS.
+             These were measured on a 1440px hero, where 62px of clearance
+             around the copy column is a comfortable margin. On a 393pt phone
+             the copy column is 337 of 393 wide and the stage box is wider than
+             the screen, so EVERY cell is within 62px of one or the other, gProx
+             resolves to 0 everywhere, and the field paints literally nothing —
+             measured: 0 lit pixels out of the whole canvas. That is why the
+             background animation looked deleted on a phone. It was running the
+             entire time with nowhere to draw.
+
+             `tight` scales the clearance to the canvas instead of holding a
+             desktop constant, so the field gets the margins, the corners and
+             the band under the CTAs back. Content protection is preserved —
+             the ratio between guard and ramp is unchanged, it is the absolute
+             distance that shrinks. */
+          const gProx = Math.min(smoothstep(62 * tight, 188 * tight, dCopy), smoothstep(50 * tight, 148 * tight, dSlabG));
+          const dProx = Math.min(smoothstep(52 * tight, 98 * tight, dCopy), smoothstep(40 * tight, 96 * tight, dSlabD));
           const prox = gProx * pads;
           proxG[i] = prox;
           drop[i] = hash3(c, r, 13);

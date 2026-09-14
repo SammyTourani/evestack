@@ -55,7 +55,7 @@ export function OneCommand() {
           >
             {/* Real macOS traffic lights. They were three identical grey dots,
                 which reads as a wireframe of a terminal rather than as one. */}
-            <figcaption className="flex h-12 items-center gap-2 border-b border-border-subtle px-4">
+            <figcaption className="flex h-12 items-center gap-2 border-b border-border-subtle px-4 max-md:h-9">
               <span aria-hidden className="flex gap-1.5">
                 <span className="h-2.5 w-2.5 rounded-full bg-[#FF5F57]" />
                 <span className="h-2.5 w-2.5 rounded-full bg-[#FEBC2E]" />
@@ -82,7 +82,7 @@ export function OneCommand() {
               tabIndex={0}
               role="region"
               aria-label="Terminal: creating and starting evestack"
-              className="flex flex-col gap-1.5 overflow-x-auto p-5 font-mono text-mono-13"
+              className="flex flex-col gap-1.5 overflow-x-auto p-5 font-mono text-mono-13 max-md:gap-1 max-md:p-4 max-md:text-[11px] max-md:leading-[17px]"
             >
               <p data-terminal-line data-kind="cmd">
                 <span data-term-text className="whitespace-pre">

@@ -6,7 +6,7 @@ export function Comparison() {
      <th>s use, so the phone and the desktop cannot drift apart. */
   const [, hostedCol, oursCol] = comparison.columns;
   return (
-    <Section id="compare">
+    <Section id="compare" className="max-md:hidden">
       <SectionHeading id="compare-heading" eyebrow="06 · compare" title={comparison.heading} sub={comparison.sub} />
       {/* PHONE PRESENTATION (< 48rem). The table below has a 640px floor and a
           phone gives it 353, so on an iPhone it was a sideways-scrolling strip

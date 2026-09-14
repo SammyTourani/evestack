@@ -406,9 +406,16 @@ export function DashboardDemo() {
         if (!entry.isIntersecting) return;
         io.disconnect();
         if (barRef.current) barRef.current.style.opacity = "1";
-        timer(700, null, pass);
+        timer(window.matchMedia("(max-width: 47.999rem)").matches ? 250 : 700, null, pass);
       },
-      { threshold: 0.1 },
+      /* rootMargin, not just threshold. On a phone this panel is ~650px of an
+         852px viewport, so `threshold: 0.1` alone only fires once 65px of it
+         has already scrolled past — and with the lead-in above, the thread was
+         still empty by the time a thumb had carried it up the screen. Arming
+         300px early means the first bubble is already rising as it arrives. */
+      window.matchMedia("(max-width: 47.999rem)").matches
+        ? { threshold: 0.01, rootMargin: "300px 0px 300px 0px" }
+        : { threshold: 0.1 },
     );
     io.observe(root);
     return () => {

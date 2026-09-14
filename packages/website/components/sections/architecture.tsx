@@ -46,7 +46,7 @@ export async function Architecture() {
   }
 
   return (
-    <Section id="architecture">
+    <Section id="architecture" className="max-md:hidden">
       <SectionHeading
         id="architecture-heading"
         eyebrow="05 · how it works"
