@@ -14,7 +14,7 @@
     "dashboard"
   ],
   "bin": {
-    "create-evestack": "./index.mjs"
+    "create-evestack": "index.mjs"
   },
   "exports": {
     ".": "./create.mjs",

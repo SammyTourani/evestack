@@ -52,10 +52,21 @@ They are summarised rather than itemised, deliberately.
 
 ## Unreleased
 
-**`create-evestack@0.12.0` and `evestack@0.6.0` are written and not published.** Both entries
-below are complete; the tree is ahead of the registry, which serves 0.11.2 and 0.5.2. They
-publish as a pair and in that order — `evestack` pins the scaffolder exactly, so publishing it
-first is the 404 recorded further down this section.
+Nothing is pending. `create-evestack@0.12.0` and `evestack@0.6.0` went out on 2026-09-14 and
+`latest` names both; `evestack@0.6.0` depends on `create-evestack` at exactly `0.12.0`, read
+back off the registry rather than assumed.
+
+> **A publish can sit STAGED, and it looks exactly like a failure.** Both of these answered
+> `+ create-evestack@0.12.0` and then `npm view` kept saying `0.11.2` — because npm had
+> accepted the tarball and not yet materialised it. `curl https://registry.npmjs.org/<pkg>`
+> said the same, so it was not a local cache: the registry genuinely did not have it. It
+> took 2m15s.
+>
+> **The wrong move is to publish again.** That is what produces
+> `409 Conflict — Cannot publish over previously staged version`, which reads like a
+> corrupted state and gets "fixed" by burning a version number. Nothing is broken while you
+> wait, either: `latest` still names the previous working pair the whole time. Poll the
+> registry directly and do nothing else.
 
 > **Emptied 2026-09-14, and the state it described is worth keeping in the history rather
 > than only in git.** For about half an hour `evestack`'s `latest` pointed at `0.4.1` — a
@@ -104,7 +115,7 @@ first is the 404 recorded further down this section.
 The `npm create` entry point. Carries `templates/default` inside it, so a change to the
 template ships as a change to this package.
 
-### create-evestack@0.12.0 — unreleased
+### create-evestack@0.12.0 — 2026-09-14
 
 Adds a model option and a Review option, so a minor rather than a patch. The numbered
 non-interactive answers are unchanged — `1`–`4` still mean what they meant and ChatGPT is
@@ -646,7 +657,7 @@ not correspond to any commit in this repository. Do not install it.
 The CLI — `create`, `status`, `tour`, `open`, `verify`, `attach`, `doctor`. Depends on
 `create-evestack`, so it publishes last.
 
-### evestack@0.6.0 — unreleased
+### evestack@0.6.0 — 2026-09-14
 
 Carries `create-evestack@0.12.0`, which it pins exactly. `evestack create` is that wizard, so
 everything in the 0.12.0 entry above reaches users through this release and not before it —
