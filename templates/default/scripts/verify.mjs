@@ -219,9 +219,9 @@ const model = env("EVESTACK_MODEL") || {
  * Which provider will actually be asked for EMBEDDINGS.
  *
  * Resolved the way lib/memory.ts `readEmbedProvider()` resolves it: an explicit
- * EVESTACK_EMBED_PROVIDER first, then the chat provider, and for anthropic —
- * which has no embeddings endpoint at all — OpenAI if there is a key and nothing
- * if there is not.
+ * EVESTACK_EMBED_PROVIDER first, then the chat provider, and for everything else
+ * — anthropic, openrouter, compatible and chatgpt all serve chat and no
+ * embeddings — OpenAI if there is a key and nothing if there is not.
  *
  * This used to be read INSIDE the `provider === "ollama"` branch, which left the
  * embedding pull-check unreachable for two of the three combinations. The one
@@ -298,9 +298,20 @@ if (provider === "ollama") {
 // optional and nobody should be told their install is broken because they have
 // not pulled a 274 MB model they may not use.
 if (embedProvider === null) {
+  // The provider is NAMED rather than assumed. This line read "Anthropic has no
+  // embeddings endpoint" for every provider that reaches it, which by now is
+  // four of the six — anthropic, openrouter, compatible and chatgpt — and it
+  // told a reader who never chose Anthropic that Anthropic was their problem.
+  // Caught on a real chatgpt scaffold, where it is doubly wrong: the limit is
+  // that the Codex backend serves chat only.
+  //
+  // The wording is lib/memory.ts's own, verbatim in substance, because that is
+  // the error the reader will meet if they ignore this warning and call
+  // `remember` — and two descriptions of one fact is how people conclude they
+  // have two problems.
   warn(
     "memory",
-    "Anthropic has no embeddings endpoint, so remember/recall cannot run",
+    `EVESTACK_PROVIDER=${provider} has no embeddings endpoint, so remember/recall cannot run`,
     "set EVESTACK_EMBED_PROVIDER=ollama (then `ollama pull nomic-embed-text`), or set OPENAI_API_KEY",
   );
 } else if (embedProvider !== "openai" && embedProvider !== "ollama") {

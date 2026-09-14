@@ -148,15 +148,21 @@ test("the easiest option needs no key at all", () => {
 });
 
 test("a ChatGPT plan does not fall through to the `null=` line", async () => {
-  // `echo 5 | npx create-evestack`: no terminal, so the numbered question, and
-  // stdin closes as the pipe drains. That is the exact shape that reaches
-  // settle() with `closed()` true and `keyVar` null — and the branch that
-  // handles a closed pipe writes `${keyVar}=`, which here is the literal string
-  // "null=". .env.local would carry a variable named null, .env.example would
-  // not mention it, and nothing would complain until the first model call.
+  // The numbered path, answered, with stdin closing as the answer drains.
   //
-  // Which is to say: the sign-in branch has to come FIRST in that chain, and
-  // this is the assertion that keeps it there.
+  // Honest about what this is: it is a configuration `main` cannot currently
+  // produce. `nonInteractive = args.yes || !process.stdin.isTTY`, and
+  // `makePrompter` builds no readline when that is set, so a pipe is `--yes`
+  // and the numbered question is never really asked — measured against 0.11.2
+  // and against this tree. A chatgpt pick therefore never arrives at settle()
+  // with `closed()` true, and the branch below it is unreachable today.
+  //
+  // It is pinned anyway. That branch writes `${keyVar}=`, which for a provider
+  // with `keyVar: null` is the literal line "null=" in .env.local: a variable
+  // named null, in no .env.example, complained about by nothing until the first
+  // model call. It costs one line of ordering to disarm, and it stops being
+  // theoretical the day a pipe is distinguished from `--yes` — which the
+  // numbers in PROVIDERS exist for.
   let drained = false;
   const chosen = await chooseModel({
     ask: async () => { drained = true; return "5"; },

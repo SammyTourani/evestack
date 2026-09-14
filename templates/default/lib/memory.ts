@@ -30,10 +30,11 @@ import { Pool } from "pg";
  * model saw it, and it told the user *"saved to long-term memory"* anyway.
  * A silent lie about what was persisted is worse than a crash.
  *
- * Anthropic has no embeddings endpoint at all, so an Anthropic project borrows
- * OpenAI's if a key is present and otherwise says so in one sentence naming the
- * variable that fixes it. Guessing a provider the user never configured is how
- * the original bug happened; this asks instead.
+ * Four of the six chat providers have no embeddings endpoint at all — anthropic,
+ * openrouter, compatible and chatgpt (the Codex backend serves chat only) — so
+ * such a project borrows OpenAI's if a key is present and otherwise says so in
+ * one sentence naming the variable that fixes it. Guessing a provider the user
+ * never configured is how the original bug happened; this asks instead.
  */
 const EMBED_PROVIDERS = ["openai", "ollama"] as const;
 type EmbedProvider = (typeof EMBED_PROVIDERS)[number];

@@ -75,9 +75,22 @@ export const PROVIDERS = new Map([
   ["1", { id: "openai", keyVar: "OPENAI_API_KEY", model: "gpt-5-mini", keyHint: "https://platform.openai.com/api-keys" }],
   ["2", { id: "anthropic", keyVar: "ANTHROPIC_API_KEY", model: "claude-sonnet-5", keyHint: "https://console.anthropic.com/settings/keys" }],
   // 3 stays Ollama, and 4 is appended rather than inserted, because these
-  // numbers are an interface: `echo 3 | npx create-evestack` is in people's
-  // shell history and in their CI, and renumbering would silently give them a
-  // different provider than the one that worked yesterday.
+  // numbers are a published interface and renumbering one would silently give
+  // someone a different provider than the one that worked yesterday.
+  //
+  // MEASURED 2026-09-14, because the comment here used to say
+  // "`echo 3 | npx create-evestack` is in people's shell history and in their
+  // CI" and that is not true of any published version. `main` computes
+  // `nonInteractive = args.yes || !process.stdin.isTTY`, and `makePrompter`
+  // builds no readline at all when it is set — so a pipe is treated exactly
+  // like `--yes`, every `ask` returns its fallback, and a piped `3` is read by
+  // nobody. The run says so out loud ("No answer, so this takes 1: openai
+  // gpt-5-mini"), which is the only reason this is a wrong promise rather than
+  // a silent wrong answer.
+  //
+  // The numbers are still the right shape and still must not be renumbered:
+  // they are what this table will answer with the day a pipe is distinguished
+  // from `--yes`. They are just not reachable yet.
   //
   // The model behind 3 DID change — `qwen3` (5.2 GB) to `qwen3:0.6b` (523 MB).
   // That is the point of the change rather than a side effect of it: the old
@@ -437,8 +450,19 @@ export async function chooseModel({ ask, closed, borrowStdin, nonInteractive = f
     } else if (picked.signIn) {
       // Nothing to paste and nothing to store: the ChatGPT session is a refresh
       // token in the OS secret store, put there by a browser sign-in after the
-      // install. This branch is ahead of the non-interactive one on purpose —
-      // `--yes` used to fall through to it and write the literal line `null=`.
+      // install.
+      //
+      // Ahead of the non-interactive branch deliberately. That one writes
+      // `${keyVar}=`, which for a provider with `keyVar: null` is the literal
+      // line `null=` — a variable named null in .env.local, mentioned in no
+      // .env.example, complained about by nothing until the first model call.
+      //
+      // Today no input can actually reach it here: a pipe is treated as `--yes`
+      // (see PROVIDERS above), so the numbered path only ever returns its
+      // default and a provider with no key never arrives with `closed()` true.
+      // The order is kept anyway, because the branch below is a trap that costs
+      // one line to disarm and the day pipes are honoured it stops being
+      // theoretical.
       apiKeyLine = "# ChatGPT subscription — no API key. The session lives in your OS keychain.";
       blank();
       dim("No key to find: you sign in with your ChatGPT account after the install.");

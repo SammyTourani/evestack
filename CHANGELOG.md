@@ -159,6 +159,14 @@ appended as `5`.
   backend serves chat only, so `remember`/`recall` need `OPENAI_API_KEY` or a local Ollama
   for embeddings.
 
+- **`verify` told a ChatGPT project that Anthropic was its problem.** The embeddings warning
+  was written for the one provider that had it and hardcoded that provider's name —
+  `Anthropic has no embeddings endpoint` — while the branch it sits in is reached by four of
+  the six: anthropic, openrouter, compatible and chatgpt. It names the provider that is
+  actually configured now, in `lib/memory.ts`'s own words, since that is the error a reader
+  meets if they ignore the warning and call `remember`. Caught by running a real scaffold, not
+  by a test.
+
 - **"Finish without adding" on the Review step**, which eve's own review has and this one did
   not. Someone who ticked four integrations and then thought better of it had to go back and
   untick them one at a time to get their scaffold. It writes the project, skips the installs,
