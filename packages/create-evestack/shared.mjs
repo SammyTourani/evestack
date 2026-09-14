@@ -276,6 +276,30 @@ export async function makePrompter(nonInteractive) {
     stdinClosed = true;
   });
 
+  /**
+   * Ctrl-C during a readline prompt has to QUIT, and it did not.
+   *
+   * A readline interface with `terminal: true` turns SIGINT into its own
+   * `close` event rather than killing the process. `ask` races `question()`
+   * against that close and hands back its fallback — which is correct for a
+   * pipe that ended, and completely wrong for a person pressing Ctrl-C. The
+   * wizard then walked on with DEFAULTS it was never given: pressing Ctrl-C at
+   * "Enable tool sign-in via Composio?" recorded a yes, carried on to the
+   * review screen, and finished by printing `readline was closed` — an internal
+   * message, from a run the reader had already tried to abandon.
+   *
+   * The raw-mode picker in wizard.mjs has always handled its own Ctrl-C,
+   * because raw mode stops the terminal generating SIGINT at all. This is the
+   * same exit for the other half of the wizard, so the key means one thing
+   * everywhere. 130 is the shell convention for SIGINT.
+   */
+  rl?.on("SIGINT", () => {
+    stdinClosed = true;
+    rl.close();
+    process.stdout.write("\n");
+    process.exit(130);
+  });
+
   const ask = async (q, fallback = "") => {
     if (!rl || stdinClosed) return fallback;
     // Guard the EOF case explicitly: after stdin closes, question() never
