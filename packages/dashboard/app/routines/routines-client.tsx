@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { RoutineNotificationSummary } from "@/lib/routine-notifications";
 import type { Routine, RoutineRun } from "@/lib/routines";
 
 const EXAMPLE =
@@ -48,6 +49,7 @@ export function RoutinesClient() {
     resultReviewed: false,
   });
   const [runs, setRuns] = useState<RoutineRun[]>([]);
+  const [notifications, setNotifications] = useState<RoutineNotificationSummary[]>([]);
   const [clock, setClock] = useState<Clock | null>(null);
   const [times, setTimes] = useState<{ utc: string; local: string }[]>([]);
   const [busy, setBusy] = useState(false);
@@ -90,6 +92,7 @@ export function RoutinesClient() {
         const body = await request(`/api/routines/${id}`);
         fill(body.routine);
         setRuns(body.runs);
+        setNotifications(body.notifications ?? []);
         setClock(body.clock);
       }
     })()
@@ -117,6 +120,7 @@ export function RoutinesClient() {
         .then((body) => {
           if (!stopped) {
             setRuns(body.runs);
+            setNotifications(body.notifications ?? []);
             setClock(body.clock);
             setHistoryError(null);
             setChangedElsewhere(body.routine.revision !== selected.revision);
@@ -170,6 +174,7 @@ export function RoutinesClient() {
       const body = await request(`/api/routines/${routine.id}`);
       fill(body.routine);
       setRuns(body.runs);
+      setNotifications(body.notifications ?? []);
       setClock(body.clock);
     });
   }
@@ -188,6 +193,7 @@ export function RoutinesClient() {
         setSelected(null);
         setEditor(empty());
         setRuns([]);
+        setNotifications([]);
         setNotice(
           "Routine archived. Already dispatched work keeps its task and history.",
         );
@@ -231,6 +237,7 @@ export function RoutinesClient() {
             setSelected(null);
             setEditor(empty());
             setRuns([]);
+            setNotifications([]);
             setTimes([]);
             setError(null);
             setNotice(null);
@@ -317,6 +324,7 @@ export function RoutinesClient() {
                 prompt: EXAMPLE,
               });
               setRuns([]);
+              setNotifications([]);
               setTimes([]);
             }}
           >
@@ -511,6 +519,7 @@ export function RoutinesClient() {
                 void action(async () => {
                   const body = await request(`/api/routines/${selected.id}`);
                   setRuns(body.runs);
+                  setNotifications(body.notifications ?? []);
                   setClock(body.clock);
                   setHistoryError(null);
                   setChangedElsewhere(
@@ -597,6 +606,55 @@ export function RoutinesClient() {
                     />
                   </>
                 )}
+                {notifications.some((notice) => notice.run_id === run.id) && (
+                  <details>
+                    <summary>Notification delivery</summary>
+                    <ul>
+                      {notifications
+                        .filter((notice) => notice.run_id === run.id)
+                        .map((notice) => (
+                          <li key={notice.id}>
+                            {notice.sink_kind}:{" "}
+                            {notice.state === "sent"
+                              ? "destination accepted"
+                              : notice.state}{" "}
+                            · {notice.attempts} attempts
+                            {notice.sent_at
+                              ? ` · ${new Date(notice.sent_at).toLocaleString()}`
+                              : ""}
+                            {notice.error && <p>{notice.error}</p>}
+                            {notice.state === "failed" && (
+                              <RetryNotification
+                                busy={busy}
+                                onRetry={() =>
+                                  action(async () => {
+                                    await request(
+                                      `/api/routines/${selected.id}/notifications/${notice.id}/retry`,
+                                      write("POST", {
+                                        acceptPossibleDuplicate: true,
+                                      }),
+                                    );
+                                    const body = await request(
+                                      `/api/routines/${selected.id}`,
+                                    );
+                                    setNotifications(body.notifications ?? []);
+                                    setNotice(
+                                      "Notification queued again with the same delivery ID. Inspect its destination and status; an earlier unconfirmed delivery may have arrived.",
+                                    );
+                                  })
+                                }
+                              />
+                            )}
+                          </li>
+                        ))}
+                    </ul>
+                    <p className="page-sub">
+                      A destination response confirms acceptance, not that a
+                      person read it. Retries reuse a delivery ID; receivers
+                      must deduplicate that ID to guarantee one message.
+                    </p>
+                  </details>
+                )}
                 <details>
                   <summary>Saved request &amp; dispatch ID</summary>
                   <p className="mono">{run.id}</p>
@@ -658,5 +716,35 @@ function ResolveRun({
         </button>
       </form>
     </details>
+  );
+}
+
+function RetryNotification({
+  busy,
+  onRetry,
+}: {
+  busy: boolean;
+  onRetry: () => Promise<void>;
+}) {
+  const [checked, setChecked] = useState(false);
+  return (
+    <div className="routine-form">
+      <label className="routine-check">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(event) => setChecked(event.target.checked)}
+        />
+        I checked the destination; a retry may duplicate an earlier unconfirmed
+        message.
+      </label>
+      <button
+        type="button"
+        disabled={busy || !checked}
+        onClick={() => void onRetry()}
+      >
+        Retry notification
+      </button>
+    </div>
   );
 }

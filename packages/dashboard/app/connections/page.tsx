@@ -1,4 +1,8 @@
-export default function ConnectionsPage() {
+import { deliveryStatus } from "@/lib/alert-delivery";
+import { DeliveryTest } from "@/app/monitors/delivery-test";
+export const dynamic = "force-dynamic";
+export default async function ConnectionsPage() {
+  const notifications = await deliveryStatus();
   return (
     <>
       <h1>Connections</h1>
@@ -27,8 +31,38 @@ export default function ConnectionsPage() {
         <section className="workspace-section">
           <h2>Notifications</h2>
           <p>
-            Inspect the configured notification destination and its delivery
-            health.
+            {notifications.configured
+              ? `Configured: ${notifications.sinks.join(", ")}. Routine results, failures and pending decisions use these operator-controlled destinations.`
+              : "No destination configured. Set EVESTACK_ALERT_WEBHOOK_URL in the dashboard environment to your Slack, Discord or HTTP webhook, then restart the dashboard."}
+          </p>
+          <p className="page-sub">
+            Set <code>EVESTACK_PUBLIC_URL</code> to include links back to your
+            task. Generic webhooks can verify{" "}
+            <code>EVESTACK_ALERT_WEBHOOK_SECRET</code> signatures. Keep
+            credentials in your deployment environment.
+          </p>
+          {notifications.unreadable && (
+            <p role="status">
+              Delivery history unavailable: {notifications.unreadable}
+            </p>
+          )}
+          {notifications.lastDeliveryAt && (
+            <p>
+              Last monitor/test destination response:{" "}
+              {notifications.lastDeliveryOk ? "accepted" : "failed"} ·{" "}
+              {new Date(notifications.lastDeliveryAt).toLocaleString("en", {
+                timeZone: "UTC",
+              })}{" "}
+              UTC. Routine delivery status appears in each routine's history.
+            </p>
+          )}
+          {notifications.configured && (
+            <DeliveryTest sinks={notifications.sinks} />
+          )}
+          <p className="page-sub">
+            A test sends one synthetic message to each configured destination. A
+            successful HTTP response confirms acceptance; check the channel for
+            receipt.
           </p>
           <a href="/monitors">Open delivery status</a>
         </section>

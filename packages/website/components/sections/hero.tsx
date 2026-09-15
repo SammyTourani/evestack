@@ -66,7 +66,9 @@ export function Hero() {
           visible list in every mode */}
       <p className="sr-only">{architecture.srSummary}</p>
 
-      <div data-hero-pane className="sticky top-0 flex h-svh flex-col items-center justify-center overflow-hidden">
+      {/* Clip decoration without creating a hidden scroll container. Focusing
+          a menu item must not scroll this pane away from its own controls. */}
+      <div data-hero-pane className="sticky top-0 flex h-svh flex-col items-center justify-center overflow-clip">
         {/* Ambient ASCII glyph field framing the copy + 3D stack (eve.dev
             imprint port; masked out of the center, fades on scroll) */}
         <HeroGlyphField />

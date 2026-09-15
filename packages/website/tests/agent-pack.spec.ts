@@ -164,7 +164,8 @@ test.describe("the copy control", () => {
     await caret.click();
     await expect(caret).toHaveAttribute("aria-expanded", "true");
 
-    const menu = page.getByRole("menu");
+    // Keep the same node after Escape removes it from the accessibility tree.
+    const menu = page.locator("#hero [data-agent-menu]");
     for (const item of agentPack.menu) {
       await expect(menu.getByRole("menuitem", { name: new RegExp(item.label) })).toBeVisible();
     }
@@ -192,6 +193,24 @@ test.describe("the copy control", () => {
     const viewport = page.viewportSize()!;
     expect(box!.y).toBeGreaterThanOrEqual(0);
     expect(box!.y + box!.height).toBeLessThanOrEqual(viewport.height);
+  });
+
+  test("an open hero menu remains reachable after the viewport gets shorter", async ({ page }) => {
+    await page.goto("/");
+    const root = page.locator('#hero [data-agent-pack="primary"]');
+    await root.getByRole("button", { name: agentPack.menuLabel }).click();
+    const menu = root.getByRole("menu");
+    await menu.getByRole("menuitem").last().focus();
+    await page.setViewportSize({ width: 1440, height: 700 });
+    await expect(menu).toHaveAttribute("data-drop", "up");
+    await menu.getByRole("menuitem").last().focus();
+    await expect(menu).toHaveAttribute("data-open", /.*/);
+    await expect.poll(async () => menu.evaluate(element => {
+      const rect = element.getBoundingClientRect();
+      return rect.top >= 0 && rect.bottom <= innerHeight;
+    })).toBe(true);
+    expect(await page.locator('[data-hero-pane]').evaluate(element => element.scrollTop)).toBe(0);
+    expect(await page.evaluate(() => scrollY)).toBe(0);
   });
 });
 

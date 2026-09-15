@@ -3,6 +3,11 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { PoolClient } from "pg";
 import { getPool } from "./db";
+import {
+  notificationTargetConfigured,
+  queueRoutineNotification,
+  routineNotificationHistory,
+} from "./routine-notifications";
 import type { ApproverIdentity } from "./approvals";
 import {
   nextRoutineFires,
@@ -286,7 +291,7 @@ export async function routineHistory(id: string) {
       [id],
     )
   ).rows;
-  return { routine, runs };
+  return { routine, runs, notifications: await routineNotificationHistory(id) };
 }
 
 async function insertRun(
@@ -499,6 +504,11 @@ export async function markRoutineDispatchUncertain(
         JSON.stringify({ ...routine, dispatchError: detail }),
       ],
     );
+    await queueRoutineNotification(client, {
+      ...run,
+      state: "unknown",
+      error: detail,
+    });
     return true;
   });
 }
@@ -539,5 +549,48 @@ export async function resolveUncertainRoutineRun(
     ).rows[0];
     await audit(client, updated, `resolved-dispatch:${runId}`, identity);
     return updated;
+  });
+}
+
+export async function retryRoutineNotification(
+  routineId: string,
+  notificationId: string,
+  identity: ApproverIdentity,
+) {
+  await ensureRoutines();
+  return routineTransaction(async (client) => {
+    const routine = (
+      await client.query<Routine>(
+        "SELECT * FROM evestack.routines WHERE id=$1 FOR UPDATE",
+        [routineId],
+      )
+    ).rows[0];
+    if (!routine) throw new RoutineError("Routine not found.", 404);
+    const notice = (
+      await client.query(
+        "SELECT state,sink_key FROM evestack.routine_notifications WHERE id=$1 AND routine_id=$2 FOR UPDATE",
+        [notificationId, routineId],
+      )
+    ).rows[0];
+    if (!notice || notice.state !== "failed")
+      throw new RoutineError(
+        "Only a failed notification can be retried. Refresh its delivery status.",
+        409,
+      );
+    if (!notificationTargetConfigured(notice.sink_key))
+      throw new RoutineError(
+        "This notification's destination is no longer configured. Restore it before retrying.",
+        409,
+      );
+    await client.query(
+      "UPDATE evestack.routine_notifications SET state='pending',attempts=0,next_attempt=now(),error=NULL,holder=NULL,claimed_at=NULL WHERE id=$1",
+      [notificationId],
+    );
+    await audit(
+      client,
+      routine,
+      `notification-retry:${notificationId}`,
+      identity,
+    );
   });
 }

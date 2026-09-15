@@ -20,6 +20,8 @@ test(
     const url = new URL(process.env.EVESTACK_TEST_POSTGRES_URL);
     url.pathname = `/${name}`;
     const originalUrl = process.env.WORKFLOW_POSTGRES_URL;
+    const originalSink = process.env.EVESTACK_ALERT_WEBHOOK_URL;
+    process.env.EVESTACK_ALERT_WEBHOOK_URL = "";
     process.env.WORKFLOW_POSTGRES_URL = url.href;
     const { getPool, closePool } = await import("../lib/db.ts");
     const routines = await import("../lib/routines.ts");
@@ -36,6 +38,9 @@ test(
     };
     t.after(async () => {
       await closePool();
+      if (originalSink === undefined)
+        delete process.env.EVESTACK_ALERT_WEBHOOK_URL;
+      else process.env.EVESTACK_ALERT_WEBHOOK_URL = originalSink;
       if (originalUrl === undefined) delete process.env.WORKFLOW_POSTGRES_URL;
       else process.env.WORKFLOW_POSTGRES_URL = originalUrl;
       await admin.query(`DROP DATABASE ${name} WITH (FORCE)`);
@@ -565,6 +570,147 @@ test(
         assert.ok(task.runs.some((run) => run.id === `${id}_0550`));
         assert.ok(!task.runs.some((run) => run.id === `${id}_0001`));
         assert.equal(await getTask("missing_task_fixture"), null);
+      },
+    );
+    await t.test(
+      "routine notifications deduplicate claims, retry with a stable ID, and audit manual retries",
+      async () => {
+        const notifications = await import("../lib/routine-notifications.ts");
+        let requests = [];
+        let refuse = false;
+        const receiver = createServer((req, res) => {
+          let body = "";
+          req.on("data", (chunk) => (body += chunk));
+          req.on("end", () => {
+            requests.push({
+              id: req.headers["x-evestack-notification-id"],
+              body: JSON.parse(body),
+            });
+            if (requests.length === 1) {
+              req.socket.destroy();
+              return;
+            }
+            res.writeHead(refuse ? 503 : 200).end("fixture");
+          });
+        });
+        await new Promise((resolve) =>
+          receiver.listen(0, "127.0.0.1", resolve),
+        );
+        process.env.EVESTACK_ALERT_WEBHOOK_URL = `http://127.0.0.1:${receiver.address().port}/fixture-secret`;
+        try {
+          await settle();
+          const routine = await create();
+          const run = await routines.runRoutineNow(
+            routine.id,
+            randomUUID(),
+            actor,
+          );
+          const completed = {
+            ...run,
+            state: "completed",
+            session_id: "notification-task",
+          };
+          await Promise.all([
+            routines.routineTransaction((client) =>
+              notifications.queueRoutineNotification(client, completed),
+            ),
+            routines.routineTransaction((client) =>
+              notifications.queueRoutineNotification(client, completed),
+            ),
+          ]);
+          let history = await notifications.routineNotificationHistory(
+            routine.id,
+          );
+          assert.equal(history.length, 1);
+          await Promise.all([
+            notifications.deliverRoutineNotifications(),
+            notifications.deliverRoutineNotifications(),
+          ]);
+          assert.equal(requests.length, 1);
+          history = await notifications.routineNotificationHistory(routine.id);
+          assert.equal(history[0].state, "pending");
+          await db().query(
+            "UPDATE evestack.routine_notifications SET next_attempt=now()-interval '1 second' WHERE id=$1",
+            [history[0].id],
+          );
+          await Promise.all([
+            notifications.deliverRoutineNotifications(),
+            notifications.deliverRoutineNotifications(),
+          ]);
+          await notifications.deliverRoutineNotifications();
+          assert.equal(requests.length, 2);
+          assert.equal(requests[0].id, requests[1].id);
+          assert.equal(requests[1].body.sessionId, "notification-task");
+          assert.doesNotMatch(
+            JSON.stringify(requests[1].body),
+            /fixture-secret|Report fixture state/,
+          );
+          history = await notifications.routineNotificationHistory(routine.id);
+          assert.equal(history[0].state, "sent");
+          await routines.routineTransaction(async (client) => {
+            await notifications.queueRoutineNotification(
+              client,
+              { ...run, state: "awaiting_approval" },
+              ["decision-a"],
+            );
+            await notifications.queueRoutineNotification(
+              client,
+              { ...run, state: "awaiting_approval" },
+              ["decision-a"],
+            );
+            await notifications.queueRoutineNotification(
+              client,
+              { ...run, state: "awaiting_approval" },
+              ["decision-b"],
+            );
+          });
+          history = await notifications.routineNotificationHistory(routine.id);
+          assert.equal(history.length, 3);
+          const pending = history.find((row) => row.state === "pending");
+          await db().query(
+            "UPDATE evestack.routine_notifications SET attempts=4 WHERE id=$1",
+            [pending.id],
+          );
+          refuse = true;
+          await notifications.deliverRoutineNotifications();
+          history = await notifications.routineNotificationHistory(routine.id);
+          assert.equal(
+            history.find((row) => row.id === pending.id).state,
+            "failed",
+          );
+          await routines.retryRoutineNotification(
+            routine.id,
+            pending.id,
+            actor,
+          );
+          await assert.rejects(
+            routines.retryRoutineNotification(routine.id, pending.id, actor),
+            /Only a failed notification/,
+          );
+          refuse = false;
+          await notifications.deliverRoutineNotifications();
+          history = await notifications.routineNotificationHistory(routine.id);
+          assert.equal(
+            history.find((row) => row.id === pending.id).state,
+            "sent",
+          );
+          const audit = await db().query(
+            "SELECT action FROM evestack.routine_audit WHERE routine_id=$1 AND action=$2",
+            [routine.id, `notification-retry:${pending.id}`],
+          );
+          assert.equal(audit.rows.length, 1);
+          process.env.EVESTACK_ALERT_WEBHOOK_URL = "";
+          const count = requests.length;
+          await db().query(
+            "UPDATE evestack.routine_notifications SET next_attempt=now()-interval '1 second' WHERE state='pending'",
+          );
+          await notifications.deliverRoutineNotifications();
+          assert.equal(requests.length, count);
+        } finally {
+          process.env.EVESTACK_ALERT_WEBHOOK_URL = "";
+          await new Promise((resolve) => receiver.close(resolve));
+          await settle();
+        }
       },
     );
   },

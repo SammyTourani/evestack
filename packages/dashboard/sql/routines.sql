@@ -44,3 +44,22 @@ CREATE TABLE IF NOT EXISTS evestack.routine_audit (
   snapshot jsonb NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS evestack.routine_notifications (
+  id uuid PRIMARY KEY,
+  run_id uuid NOT NULL REFERENCES evestack.routine_runs(id),
+  routine_id uuid NOT NULL REFERENCES evestack.routines(id),
+  event_key text NOT NULL,
+  sink_key text NOT NULL,
+  sink_kind text NOT NULL,
+  payload jsonb NOT NULL,
+  state text NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','sending','sent','failed','retired')),
+  attempts integer NOT NULL DEFAULT 0,
+  next_attempt timestamptz NOT NULL DEFAULT now(),
+  claimed_at timestamptz,
+  holder uuid,
+  error text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  sent_at timestamptz,
+  UNIQUE(run_id,event_key,sink_key)
+);
+CREATE INDEX IF NOT EXISTS routine_notification_pending ON evestack.routine_notifications(next_attempt) WHERE state IN ('pending','sending');

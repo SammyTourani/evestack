@@ -138,13 +138,31 @@ export function AgentPackButton({
      useEffect here renders one frame in the wrong place first. */
   useLayoutEffect(() => {
     if (!open) return;
-    const trigger = rootRef.current?.getBoundingClientRect();
-    const menu = menuRef.current?.getBoundingClientRect();
-    if (!trigger || !menu) return;
-    const GUTTER = 16;
-    const roomBelow = window.innerHeight - trigger.bottom;
-    const roomAbove = trigger.top;
-    setDropUp(roomBelow < menu.height + GUTTER && roomAbove > roomBelow);
+    const root = rootRef.current;
+    const menu = menuRef.current;
+    if (!root || !menu) return;
+    const place = () => {
+      const trigger = root.getBoundingClientRect();
+      const roomBelow = window.innerHeight - trigger.bottom;
+      const roomAbove = trigger.top;
+      // offsetHeight excludes the entrance animation's scale. Include the gap
+      // and clearance, and remeasure when fonts or the viewport change.
+      setDropUp(roomBelow < menu.offsetHeight + 24 && roomAbove > roomBelow);
+    };
+    place();
+    const observer = new ResizeObserver(place);
+    observer.observe(root);
+    observer.observe(menu);
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, { passive: true });
+    let active = true;
+    void document.fonts.ready.then(() => { if (active) place(); });
+    return () => {
+      active = false;
+      observer.disconnect();
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place);
+    };
   }, [open]);
 
   useEffect(() => {
@@ -178,20 +196,14 @@ export function AgentPackButton({
      on touch and does not exist for keyboard users. */
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  /* Hover behaviour is gated on the device ACTUALLY having a hover pointer,
+  /* Hover behaviour is gated on the actual event coming from a mouse,
      and this is not belt-and-braces: without it the control is broken on
      touch. A tap emits pointerenter, then pointerup, then pointerleave, because
      the pointer stops existing when the finger lifts. So the tap opened the
      menu and the same tap closed it 220ms later, every time. Caught on an
      iPhone 13 profile, where the menu simply never opened. */
-  const [canHover, setCanHover] = useState(false);
-  useEffect(() => {
-    const mq = window.matchMedia("(hover: hover) and (pointer: fine)");
-    const sync = () => setCanHover(mq.matches);
-    sync();
-    mq.addEventListener("change", sync);
-    return () => mq.removeEventListener("change", sync);
-  }, []);
+  // Read the actual event's pointer type. A media-query state initialized in
+  // an effect can still be false when the first mouse enter is handled.
 
   /* Set when the user explicitly dismisses (Escape, or a click outside), and
      cleared only when the pointer actually leaves the control.
@@ -213,20 +225,24 @@ export function AgentPackButton({
     suppressRef.current = true;
     setOpen(false);
   };
-  const hoverOpen = () => {
-    if (!canHover || suppressRef.current) return;
+  const hoverOpen = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType !== "mouse" || suppressRef.current) return;
     clearHoverTimer();
     void prefetch()?.catch(() => {});
     hoverTimer.current = setTimeout(() => setOpen(true), 90);
   };
-  const hoverClose = () => {
+  const hoverClose = (event: React.PointerEvent<HTMLDivElement>) => {
     /* The pointer has left, so a previous dismissal is spent: hovering back on
-       should open again. Cleared even when !canHover, so a device that gains a
+       should open again. Cleared even for touch, so a device that gains a
        mouse mid-session is not left permanently suppressed. */
     suppressRef.current = false;
-    if (!canHover) return;
+    if (event.pointerType !== "mouse") return;
+    if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
     clearHoverTimer();
-    hoverTimer.current = setTimeout(() => setOpen(false), 220);
+    hoverTimer.current = setTimeout(() => {
+      // A delayed leave must not close a menu the pointer has since entered.
+      if (!rootRef.current?.matches(":hover") && !menuRef.current?.contains(document.activeElement)) setOpen(false);
+    }, 220);
   };
   useEffect(() => clearHoverTimer, []);
 
@@ -355,6 +371,7 @@ export function AgentPackButton({
           transition again. */}
       <div
         ref={menuRef}
+        onPointerEnter={clearHoverTimer}
         role="menu"
         data-agent-menu
         data-open={open || undefined}

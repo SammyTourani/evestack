@@ -267,6 +267,14 @@ jobs:
       - run: pnpm test
         env:
           TZ: America/New_York
+      - name: retain browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: website-browser-failures
+          path: packages/website/test-results
+          if-no-files-found: ignore
+          retention-days: 7
 
   # The runtime tier: the checks that need the stack to actually be running.
   #

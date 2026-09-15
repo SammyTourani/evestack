@@ -5,8 +5,13 @@ import {
   claimDueRoutine,
   ensureRoutines,
   markRoutineDispatchUncertain,
+  routineTransaction,
   type RoutineRun,
 } from "./routines";
+import {
+  queueRoutineNotification,
+  deliverRoutineNotifications,
+} from "./routine-notifications";
 
 const state = globalThis as typeof globalThis & {
   __routineClock?: {
@@ -96,10 +101,20 @@ export async function tickRoutines() {
           outcome =
             snapshot.failedOrCancelled || failed ? "failed" : "completed";
         }
-        await getPool().query(
-          "UPDATE evestack.routine_runs SET state=$2,error=NULL,updated_at=now(),finished_at=CASE WHEN $2 IN ('completed','failed') THEN now() ELSE NULL END WHERE id=$1 AND state IN ('running','awaiting_approval')",
-          [run.id, outcome],
-        );
+        await routineTransaction(async (client) => {
+          const updated = (
+            await client.query<RoutineRun>(
+              "UPDATE evestack.routine_runs SET state=$2,error=NULL,updated_at=now(),finished_at=CASE WHEN $2 IN ('completed','failed') THEN now() ELSE NULL END WHERE id=$1 AND state IN ('running','awaiting_approval') RETURNING *",
+              [run.id, outcome],
+            )
+          ).rows[0];
+          if (updated)
+            await queueRoutineNotification(
+              client,
+              updated,
+              snapshot.pendingRequests.map((request) => request.requestId),
+            );
+        });
       } catch (error) {
         // Losing a stream probe says nothing about whether the task is still active.
         await getPool().query(
@@ -124,6 +139,7 @@ export async function tickRoutines() {
     if (!run) break;
     await dispatchRoutineRun(run);
   }
+  await deliverRoutineNotifications();
 }
 
 export function startRoutineClock() {

@@ -45,8 +45,10 @@ export default defineConfig({
     baseURL: external ?? "http://localhost:3000",
     viewport: { width: 1440, height: 900 },
     colorScheme: "dark",
+    screenshot: "only-on-failure",
+    trace: "on-first-retry",
     launchOptions: {
-      args: ["--enable-gpu", "--use-angle=metal", "--ignore-gpu-blocklist"],
+      args: process.platform === "darwin" ? ["--enable-gpu", "--use-angle=metal", "--ignore-gpu-blocklist"] : [],
     },
   },
 });

@@ -41,7 +41,7 @@ export function DecisionQueue() {
       <div className="workspace-heading">
         <h2>
           Needs your decision{" "}
-          {queue ? `(${queue.items.length} on this page)` : ""}
+          {queue ? `(${queue.items.length} confirmed on this page)` : ""}
         </h2>
         <button type="button" onClick={() => void refresh()} disabled={busy}>
           {busy ? "Checking…" : "Refresh decisions"}

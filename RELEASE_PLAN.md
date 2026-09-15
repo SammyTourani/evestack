@@ -67,7 +67,7 @@ Status: `[ ]` queued, `[-]` in progress, `[x]` verified, `[~]` implemented await
 - [~] Routine history, task/result links, error and next-action copy.
 - [x] Editable read-only brief example; test before enabling unattended work.
 - [x] Preserve code-authored schedules and heartbeat as separate execution paths.
-- [ ] Reuse configured notification delivery with deduplication; no arbitrary prompt-controlled destination.
+- [x] Reuse configured notification delivery with deduplication; no arbitrary prompt-controlled destination.
 
 ## 6. Setup, settings, spend and connections
 
@@ -80,7 +80,7 @@ Status: `[ ]` queued, `[-]` in progress, `[x]` verified, `[~]` implemented await
 - [ ] Connection flow starts from the selected task and exposes required accounts/scopes.
 - [~] Disclose Composio's hosted OAuth dependency; expose health/reconnect/revoke where supported.
 - [ ] Read-only connection test and useful first-run example.
-- [ ] Notification setup/test, delivery status and affected-task links.
+- [x] Notification setup/test, delivery status and affected-task links.
 - [ ] Inbound channel setup, allow-list guidance, test receipt and task links.
 - [ ] Heartbeat editable examples, preview, quiet delivery/quiet hours and execution-path explanation.
 - [~] Data destinations and retention shown clearly; do not claim tenant isolation or team RBAC.
@@ -177,3 +177,12 @@ These are required product learning, not claims a coding session can prove.
 - Extended browser verification passed, including a real skill-file change reopening its content review. Desktop/mobile captures confirm primary-action text is visible, safe Markdown renders, and the task-to-routine draft survives navigation. No browser script errors were recorded.
 - Added runtime-image checks for shared budget settings and routine preview, and expanded the image workflow to watch changes in its budget dependency. Their first CI execution remains pending.
 - This checkpoint is still a draft: notifications, guided setup/recovery, package version coordination, clean-install validation and final CI remain open.
+
+### Notification and browser reliability checkpoint
+
+- Routine state changes and their destination records commit in one transaction. Competing workers claim deliveries once, successful destinations are retained, and bounded retries preserve a receiver deduplication ID. Exhausted delivery needs an audited manual retry; receivers that do not deduplicate can receive a duplicate after an ambiguous response.
+- Native PostgreSQL: 14 tests pass, including concurrent notification claims, a lost acknowledgement, exhausted/manual retries and removed destinations. Dashboard: 741 tests pass and one native group runs separately; typecheck and production build pass.
+- A real local HTTP receiver accepted the dashboard's synthetic test and an explicitly retried routine notification. Browser checks verified the failed state, acknowledgement gate, stable delivery ID and refreshed accepted state, with no script errors or mobile overflow.
+- Notification payload tests cover mention suppression and credential-bearing dashboard URLs. Transport tests verify error bodies are bounded and URLs redacted before storage.
+- Website: all 32 browser tests pass after full-size menu placement, resize/font remeasurement and removal of the hero's hidden scroll container. A regression covers keyboard access after viewport resize. Escape verification now targets the same DOM node after it leaves the accessibility tree. CI retains failure screenshots/traces and uses Metal only on macOS.
+- Checkpoint `57d307f` passed the image, runtime and platform checks; its general test job failed on the website hover interaction. The next signed checkpoint must verify these fixes in CI.

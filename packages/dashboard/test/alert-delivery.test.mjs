@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
   planNotifications,
+  postNotificationBody,
   redactUrl,
   renderBody,
   renderText,
@@ -12,6 +13,32 @@ import {
   sinkKey,
   summarise,
 } from "../lib/alert-delivery.ts";
+
+test("notification transport bounds error bodies, redacts URLs and keeps its delivery identity", async () => {
+  const originalFetch = globalThis.fetch;
+  let cancelled = false;
+  let reads = 0;
+  globalThis.fetch = async (_url, init) => {
+    assert.equal(init.headers["x-evestack-notification-id"], "stable-delivery-id");
+    assert.equal(init.headers["x-evestack-alert-signature"], signBody("test-secret", init.headers["x-evestack-alert-timestamp"], init.body));
+    return new Response(new ReadableStream({
+      pull(controller) {
+        reads++;
+        controller.enqueue(new TextEncoder().encode("Rejected https://example.test/private-token?key=secret " + "x".repeat(3000)));
+      },
+      cancel() { cancelled = true; },
+    }), { status: 400 });
+  };
+  try {
+    const result = await postNotificationBody({ kind: "webhook", url: "https://example.test/hook", secret: "test-secret" }, "{}", "stable-delivery-id");
+    assert.equal(result.status, 400);
+    assert.equal(result.ok, false);
+    assert.ok(result.error.length <= 210);
+    assert.doesNotMatch(result.error, /private-token|key=secret/);
+    assert.equal(cancelled, true);
+    assert.ok(reads <= 2, "the receiver cannot stream an unlimited error into memory");
+  } finally { globalThis.fetch = originalFetch; }
+});
 
 /**
  * The rule table is the product.

@@ -45,6 +45,31 @@ The task workspace links its transcript, recorded spend, budget stop reason and 
 
 The Routines page shows the latest 50 runs per routine. Today shows up to eight scheduled or active routines, prioritizing recent run problems. Neither list claims to be a complete export.
 
+## Notifications
+
+Set `EVESTACK_ALERT_WEBHOOK_URL` on the dashboard to reuse the operator's Slack,
+Discord or generic webhook destination. **Connections → Notifications → Send a
+test** checks the transport. `EVESTACK_PUBLIC_URL` supplies absolute links back
+to the affected task. No task prompt can choose a notification destination.
+
+When a routine completes, fails, needs a decision or has an uncertain dispatch,
+the same transaction records its state and queues notifications for configured
+destinations. Each newly observed set of pending requests can notify separately.
+Events that happened before a destination was configured are not backfilled.
+
+Routine history shows the latest 50 delivery records. An accepted response is
+recorded per destination and is not sent again during normal processing. Failed
+attempts use bounded backoff and stop after five attempts. The operator can
+explicitly retry a failed delivery after checking the destination; that action
+is audited. Removing a destination retires its pending deliveries.
+
+A timeout or process crash can occur after a receiver accepted a message. Retries
+reuse the `x-evestack-notification-id` header and generic webhook
+`notificationId` field. A receiver must deduplicate that ID to guarantee a
+single message; Slack and Discord webhook retries may produce duplicates.
+An HTTP acceptance is not proof that a person received or read the message.
+The dashboard must remain running for notification delivery too.
+
 ## Storage and upgrades
 
 The dashboard creates versioned additive tables in the `evestack` schema: routines, run history and audit records. It does not alter existing workflow or developer-schedule rows. Save/edit, run-now, uncertain dispatch and operator resolution retain installation or proxy attribution. Shared dashboard credentials identify an installation, not an individual teammate.
