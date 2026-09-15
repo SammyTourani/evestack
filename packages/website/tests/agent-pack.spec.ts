@@ -113,10 +113,21 @@ test.describe("the copy control", () => {
     await expect(menu).toHaveAttribute("data-open", /.*/, { timeout: 2000 });
     await expect(menu).not.toHaveAttribute("inert", /.*/);
 
-    // Travel from the button down to the LAST row, crossing the gap.
-    await menu.locator("[data-agent-menu-item]").last().hover();
+    // Move the actual pointer across the gap. Locator.hover() first asks the
+    // browser to scroll the target into view; on Linux that centered this
+    // already visible row and scrubbed the hero away before moving the mouse.
+    // Keyboard reachability/viewport changes are checked separately below.
+    const last = menu.locator("[data-agent-menu-item]").last();
+    await expect(last).toBeVisible();
+    const box = await last.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.y).toBeGreaterThanOrEqual(0);
+    expect(box!.y + box!.height).toBeLessThanOrEqual(page.viewportSize()!.height);
+    const scrollBefore = await page.evaluate(() => scrollY);
+    await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2, { steps: 12 });
     await page.waitForTimeout(400);
     await expect(menu, "crossing the gap must not close it").toHaveAttribute("data-open", /.*/);
+    expect(await page.evaluate(() => scrollY)).toBe(scrollBefore);
 
     // Leaving closes it, and it goes inert again.
     await page.mouse.move(60, 60);
