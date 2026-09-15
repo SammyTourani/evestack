@@ -19,9 +19,11 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 
 import { dayKey, isUncapped, resolveConfig } from "../dist/config.js";
-import { principalOf } from "../dist/hook.js";
+import { budgetHook, preflightVerdict, principalOf } from "../dist/hook.js";
 import { principalDayKey } from "../dist/store.js";
 import { findPrice, formatUsd } from "../dist/pricing.js";
 
@@ -41,6 +43,8 @@ const MANAGED = [
   "EVESTACK_BUDGET_UNPRICED",
   "EVESTACK_BUDGET_MODEL",
   "EVESTACK_BUDGET_FAIL_CLOSED",
+  "EVESTACK_BUDGET_PREFLIGHT",
+  "EVESTACK_BUDGET_GUARD_TOOLS",
   "EVESTACK_PROVIDER",
   "EVESTACK_MODEL",
   "EVESTACK_PRICING",
@@ -170,15 +174,18 @@ test("dayKey still throws on a config nobody validated, which is why hook.ts gua
 /* -------------------------------------------------------------------------- */
 
 test("every provider the agent knows resolves to the model the agent would pick", () => {
-  // These three must equal DEFAULT_MODEL in templates/default/agent/agent.ts.
+  // These must equal DEFAULT_MODEL in templates/default/agent/agent.ts.
   // They had drifted on one row and that row was enough: anthropic defaulted to
   // gpt-5-mini here, so EVESTACK_PROVIDER=anthropic with EVESTACK_MODEL unset —
   // what .env.example documents — priced as "anthropic/gpt-5-mini". Nothing
   // prices that and there is no anthropic wildcard, so the caps were dead.
   assert.equal(config({ EVESTACK_PROVIDER: "openai" }).model, "openai/gpt-5-mini");
   assert.equal(config({ EVESTACK_PROVIDER: "anthropic" }).model, "anthropic/claude-sonnet-5");
-  assert.equal(config({ EVESTACK_PROVIDER: "ollama" }).model, "ollama/qwen3");
-  for (const provider of ["openai", "anthropic", "ollama"]) {
+  assert.equal(config({ EVESTACK_PROVIDER: "ollama" }).model, "ollama/qwen3:0.6b");
+  // No provider prefix: envModel passes a slash-bearing id through unchanged,
+  // because a gateway model id already names its own vendor.
+  assert.equal(config({ EVESTACK_PROVIDER: "openrouter" }).model, "qwen/qwen3.8-27b");
+  for (const provider of ["openai", "anthropic", "ollama", "openrouter"]) {
     const { model } = config({ EVESTACK_PROVIDER: provider });
     assert.notEqual(findPrice(model), null, `${model} must be priced or the cap cannot trip`);
   }
@@ -195,8 +202,8 @@ test("EVESTACK_PROVIDER is trimmed and lowercased the way agent.ts reads it", ()
   // string to "ollama", so "Anthropic" and " ollama " became providers of their
   // own and produced unpriced keys.
   assert.equal(config({ EVESTACK_PROVIDER: "Anthropic" }).model, "anthropic/claude-sonnet-5");
-  assert.equal(config({ EVESTACK_PROVIDER: " ollama " }).model, "ollama/qwen3");
-  assert.equal(config({ EVESTACK_PROVIDER: "OLLAMA" }).model, "ollama/qwen3");
+  assert.equal(config({ EVESTACK_PROVIDER: " ollama " }).model, "ollama/qwen3:0.6b");
+  assert.equal(config({ EVESTACK_PROVIDER: "OLLAMA" }).model, "ollama/qwen3:0.6b");
   assert.equal(config({ EVESTACK_PROVIDER: "" }).model, "openai/gpt-5-mini");
   assert.equal(config({ EVESTACK_PROVIDER: "  " }).model, "openai/gpt-5-mini");
 });
@@ -313,4 +320,287 @@ test("findPrice matches exactly, then by wildcard, then not at all", () => {
   assert.equal(local.output, 0);
   // A wildcard is a prefix, not a substring — "ollama-cloud/x" is not local.
   assert.equal(findPrice("ollama-cloud/qwen3"), null);
+});
+
+/* -------------------------------------------------------------------------- */
+/* the preflight — the field that decides whether a stopped cap stays stopped  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The defect these pin is an aggregate, which is why no single turn showed it.
+ *
+ * Spend was evaluated only in `step.completed` — after the model call it
+ * measures has been billed — and the process-local `stopped` flag is cleared on
+ * `turn.cancelled` and `turn.failed` so the next turn can stop again. Nothing
+ * read the durable stop table at the START of anything. So a session that had
+ * already blown its cap answered every new message with one complete, uncapped
+ * model call before failing the turn again: ten follow-up messages were ten
+ * billed calls against a budget that was already gone. Every individual turn
+ * behaved exactly as the README described; the total did not.
+ */
+
+test("the preflight is on by default and only three spellings turn it off", () => {
+  assert.equal(config().preflight, true, "enforcement that must be discovered is not enforcement");
+  for (const off of ["0", "false", "off", "OFF", " False "]) {
+    assert.equal(config({ EVESTACK_BUDGET_PREFLIGHT: off }).preflight, false, off);
+  }
+  // A blank line in a .env means unset, the same distinction every other field
+  // in config.ts draws, and anything unrecognised leaves it ON — a typo in this
+  // variable must not be what quietly restores the uncapped model call.
+  for (const on of ["", "   ", "1", "true", "yes", "no", "please"]) {
+    assert.equal(config({ EVESTACK_BUDGET_PREFLIGHT: on }).preflight, true, JSON.stringify(on));
+  }
+  assert.equal(config({}, { preflight: false }).preflight, false, "and code wins over the environment");
+});
+
+test("the hook subscribes to turn.started, which is the only event before a model call", () => {
+  // `session.started` fires once per session and `step.completed` fires after the
+  // call has billed. `turn.started` is the one that runs at the top of every
+  // message, and eve emits it inside the same preamble whose failure parks the
+  // turn without running it.
+  const events = Object.keys(budgetHook().events ?? {});
+  assert.ok(events.includes("turn.started"), `turn.started missing from [${events.join(", ")}]`);
+  assert.ok(events.includes("step.completed"), "the accumulator is still where the money is counted");
+});
+
+test("preflightVerdict stops a turn that starts against a live stop, and nothing else", () => {
+  const stop = { scope: "principal-day", reason: "Stopped by the evestack daily budget for this user." };
+  const enforcing = config();
+
+  const verdict = preflightVerdict(enforcing, stop);
+  assert.equal(verdict.exceeded, true);
+  assert.equal(verdict.scope, "principal-day", "the scope the hook recorded, not a fresh guess");
+  // Spelled out because the user is about to see this three times in a row if
+  // they keep sending messages, and "raise the cap or wait" reads like advice
+  // about a turn that ran. This one did not run.
+  assert.match(verdict.reason, /before it called the model/);
+
+  assert.equal(preflightVerdict(enforcing, null), null, "no stop row, no opinion");
+  // `observe` is defined as "record spend, stop nothing". A preflight that failed
+  // turns under it would make measuring-before-enforcing impossible, which is the
+  // entire reason that mode exists.
+  assert.equal(preflightVerdict(config({ EVESTACK_BUDGET_MODE: "observe" }), stop), null);
+  assert.equal(preflightVerdict(config({ EVESTACK_BUDGET_PREFLIGHT: "0" }), stop), null);
+});
+
+/**
+ * A stop row records that a cap was blown ONCE. It does not expire when the cap
+ * moves, and only one line in this package ever deletes one.
+ *
+ * That is why the preflight cannot refuse on the row's bare existence, and the
+ * first version of it did. `recordStop` keeps the original `limit_usd` on
+ * conflict, nothing rewrites the row when `EVESTACK_BUDGET_SESSION_USD` changes,
+ * and the only `clearStop` call site is inside `step.completed`. So a preflight
+ * that blocked on the row alone blocked forever: raising the session cap could
+ * never heal the session, because no step could complete to notice the raise,
+ * and raising the daily cap could not heal the principal until the day key
+ * rolled over at midnight. The README two sections up promises the opposite —
+ * "a cap raised under a session that already hit the old one heals on its next
+ * message" — and the promise is the reason `clearStop` exists at all.
+ *
+ * So the stop is the trigger and the live verdict is the decision.
+ */
+test("a stop written under a cap that has since been raised does not brick the session", () => {
+  const stop = { scope: "session", reason: "Stopped by the evestack session budget." };
+  const enforcing = config();
+
+  // Still over: the turn is refused before it reaches a model, which is the
+  // whole point of the preflight and must not be softened by any of this.
+  const stillOver = preflightVerdict(enforcing, stop, { exceeded: true, scope: "session" });
+  assert.equal(stillOver.exceeded, true);
+  assert.match(stillOver.reason, /before it called the model/);
+
+  // Under the cap as it reads NOW: the row is a leftover, so the turn runs and
+  // the caller lifts it. Without this branch the session is dead until the stop
+  // sweep drops the row 30 days later.
+  assert.equal(
+    preflightVerdict(enforcing, stop, { exceeded: false }),
+    null,
+    "raising the cap has to take effect, or the documented heal is unreachable",
+  );
+
+  // Omitted rather than false: a caller with no totals in hand gets the plain
+  // reading, which is what keeps the argument optional instead of a trap where
+  // forgetting it silently stops enforcing.
+  assert.ok(preflightVerdict(enforcing, stop)?.exceeded, "no live verdict, no benefit of the doubt");
+});
+
+test("a preflight that cannot reach the store lets the turn run, unless told otherwise", async () => {
+  // This handler runs on the first event of EVERY turn, so failing closed by
+  // default would turn a Postgres blip into an agent that cannot answer at all —
+  // the same trade `session.started` and `step.completed` already make, and the
+  // reason EVESTACK_BUDGET_FAIL_CLOSED exists rather than being the default.
+  //
+  // No databaseUrl is configured here, so `getPool` throws on the way in; that is
+  // the cheapest available stand-in for an unreachable database.
+  const ctx = { session: { id: "wrun_1", auth: {} } };
+  const event = { data: { turnId: "turn_0" } };
+  const quiet = console.error;
+  console.error = () => {};
+  try {
+    const openHook = budgetHook({ sessionUsd: 2, dailyUsd: 10, databaseUrl: undefined });
+    await assert.doesNotReject(() => openHook.events["turn.started"](event, ctx));
+
+    const closedHook = budgetHook({ sessionUsd: 2, dailyUsd: 10, databaseUrl: undefined, failClosed: true });
+    await assert.rejects(() => closedHook.events["turn.started"](event, ctx));
+
+    // And an uncapped hook never asks the store anything, so the unreachable
+    // database cannot surface at all — EVESTACK_BUDGET_DISABLED=1 has to mean
+    // disabled, including the new query.
+    const off = budgetHook({ sessionUsd: false, dailyUsd: false, databaseUrl: undefined, failClosed: true });
+    await assert.doesNotReject(() => off.events["turn.started"](event, ctx));
+  } finally {
+    console.error = quiet;
+  }
+});
+
+/**
+ * The wiring itself, asserted against the source.
+ *
+ * The handler needs a live session and a Postgres to exercise end to end — the
+ * same reason the header of this file gives for what it does not cover — and
+ * `pricing-and-caps.test.mjs` uses this technique for the same reason. What is
+ * pinned here is the part a refactor could quietly undo: that the stop is read
+ * from the durable table at the boundary, and that the stop is delivered by a
+ * THROW, which is the only lever a hook has. eve 0.54 wraps a throw from
+ * `turn.started` in a BoundaryHookError and parks the turn without running it
+ * (`eve/dist/src/context/hook-lifecycle.js`, `harness/tool-loop.js`); swapping
+ * the throw for a log or a cancel call would restore the billed model call with
+ * every test above still green.
+ */
+test("the preflight reads the durable stop table and stops the turn by throwing", () => {
+  const src = readFileSync(new URL("../src/hook.ts", import.meta.url), "utf8");
+  const handler = src.slice(src.indexOf('async "turn.started"'), src.indexOf('async "step.completed"'));
+  assert.ok(handler.length > 0, "there must be a turn.started handler to read");
+  assert.match(handler, /await readStop\(config, \{/, "the decision comes from the durable table");
+  assert.match(handler, /throw new BudgetExceededError\(message\)/, "and a hook can only stop a turn by throwing");
+  // And the stop is tested against the caps as they are now, not honoured on
+  // sight. `readTotals` here is what makes a raised cap reachable; the
+  // `clearStop` is what makes it reachable on THIS turn rather than the next
+  // one, since guard.ts reads the same row before every model call and would
+  // otherwise run the healing turn with its tools still shadowed.
+  assert.match(handler, /await readTotals\(config, \{/, "a stop is a reason to look, not the verdict");
+  assert.match(handler, /await clearStop\(config, \{/, "and a leftover stop is lifted, not obeyed");
+});
+
+/* -------------------------------------------------------------------------- */
+/* clearing a stop — the DELETE that could race another session                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Two sessions of one principal share the principal-day row, and the old
+ * unconditional DELETE let either one lift the other's stop.
+ *
+ * The interleaving is ordinary. Session A records a step and gets a day total of
+ * $9.80, under the $10 cap. Session B records a step, gets $10.20, and writes the
+ * principal-day stop. Session A — whose total was already stale when it read it —
+ * reaches the "I am under budget, lift any stop" branch and deletes the row B
+ * just wrote, which is exactly the row the guard exists to honour.
+ *
+ * Re-reading the totals in JavaScript would only move the race. The totals are
+ * read inside the DELETE's own statement instead, so the condition is evaluated
+ * against what is committed at delete time. Asserted against the SQL because the
+ * behaviour is the SQL, and reproducing the interleaving needs two connections to
+ * a database this suite does not have.
+ */
+test("clearing a stop re-checks the cap inside the same statement", () => {
+  const src = readFileSync(new URL("../src/store.ts", import.meta.url), "utf8");
+  const clear = src.slice(src.indexOf("export async function clearStop"), src.indexOf("export async function readStop"));
+  assert.ok(clear.length > 0);
+  assert.match(clear, /DELETE FROM evestack\.budget_stops/);
+  // The load-bearing part: each scope's delete is conditional on that scope's
+  // own current cost_usd, read from budget_usage in a subquery rather than
+  // passed in by the caller.
+  assert.match(
+    clear,
+    /scope = 'session'[\s\S]*SELECT u\.cost_usd FROM evestack\.budget_usage u[\s\S]*u\.scope = 'session'/,
+  );
+  assert.match(
+    clear,
+    /scope = 'principal-day'[\s\S]*SELECT u\.cost_usd FROM evestack\.budget_usage u[\s\S]*u\.scope = 'principal-day'/,
+  );
+  // And the hook has to actually hand over the caps, or every condition is NULL
+  // and the statement is the unconditional delete again with extra words.
+  const hook = readFileSync(new URL("../src/hook.ts", import.meta.url), "utf8");
+  assert.match(
+    hook,
+    /await clearStop\(config, \{[\s\S]*?sessionUsd: config\.sessionUsd,[\s\S]*?dailyUsd: config\.dailyUsd,[\s\S]*?\}\)/,
+  );
+});
+
+/* -------------------------------------------------------------------------- */
+/* the guard that guards nothing                                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * `budgetGuard()` with no arguments installs a resolver that can never fire.
+ *
+ * `guardTools` defaults to empty — `EVESTACK_BUDGET_GUARD_TOOLS` is unset in
+ * every `.env.example` here — and the resolver returns null on the first line
+ * when the list is empty. So the call reads in the agent's source exactly like
+ * protection and shadows nothing, with no error, no log line, and a dashboard
+ * that shows the hook's stop rows whether or not anything honours them.
+ *
+ * In a child process because the warning is once per process on purpose: a line
+ * repeated on every construction is a line nobody reads, and a test that asserts
+ * it fires cannot also be the test that proves it fires only once, in the same
+ * process, in file order.
+ */
+function guardWarnings(body) {
+  const inherited = { ...process.env };
+  for (const key of MANAGED) delete inherited[key];
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", body], {
+    cwd: import.meta.dirname,
+    encoding: "utf8",
+    env: inherited,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  return result.stderr.split("\n").filter((line) => line.includes("[evestack:budget]"));
+}
+
+test("budgetGuard says out loud when it has no tools to shadow", () => {
+  const warnings = guardWarnings(`
+    const { budgetGuard } = await import("../dist/index.js");
+    budgetGuard();
+  `);
+  assert.equal(warnings.length, 1, `expected one warning, got: ${warnings.join(" | ")}`);
+  assert.match(warnings[0], /no tools to shadow/);
+  assert.match(warnings[0], /guardTools/, "and names the thing to set");
+});
+
+test("budgetGuard is quiet when it has tools, and when there is no cap to guard", () => {
+  assert.deepEqual(
+    guardWarnings(`
+      const { budgetGuard } = await import("../dist/index.js");
+      budgetGuard({ guardTools: ["remember", "bash"] });
+    `),
+    [],
+    "the scaffolded agent/tools/budget.ts passes a real list and must not be nagged",
+  );
+  assert.deepEqual(
+    guardWarnings(`
+      const { budgetGuard } = await import("../dist/index.js");
+      budgetGuard({ sessionUsd: false, dailyUsd: false });
+    `),
+    [],
+    "no cap means no stop for a guard to honour, so there is nothing to warn about",
+  );
+  assert.deepEqual(
+    guardWarnings(`
+      const { budgetGuard } = await import("../dist/index.js");
+      budgetGuard({ mode: "observe" });
+    `),
+    [],
+    "observe is a deliberate decision to stop nothing, not a misconfiguration",
+  );
+});
+
+test("budgetGuard warns once per process, not once per call", () => {
+  const warnings = guardWarnings(`
+    const { budgetGuard } = await import("../dist/index.js");
+    budgetGuard();
+    budgetGuard();
+    budgetGuard();
+  `);
+  assert.equal(warnings.length, 1, `expected one warning, got ${warnings.length}`);
 });

@@ -32,7 +32,7 @@ npm run dev                                # the agent — holds this terminal
 The order matters: `npm run dev` is a foreground process that holds the terminal until you
 Ctrl-C it, so it goes last. The dashboard port is whichever one was free when you scaffolded,
 4000 unless something already had it; `.env.local` and `docker-compose.yml` carry the real
-number, and `npx evestack open` prints it.
+number, and `npx evestack dashboard` prints it and opens it.
 
 Either way you get a `.env.local` with a freshly generated auth password, and dependencies
 installed.
@@ -93,7 +93,12 @@ goes to whichever provider was already selected, so change them together:
 | --- | --- | --- |
 | unset, or `openai` | `OPENAI_API_KEY` | `gpt-5-mini` |
 | `anthropic` | `ANTHROPIC_API_KEY` | `claude-sonnet-5` |
-| `ollama` | none | `qwen3` |
+| `openrouter` | `OPENROUTER_API_KEY` | `qwen/qwen3.8-27b` |
+| `ollama` | none | `qwen3:0.6b` |
+| `compatible` | `EVESTACK_COMPATIBLE_API_KEY` (optional) | none — plus `EVESTACK_BASE_URL` |
+
+`openrouter` is one key for 400+ models, open weights included. `compatible` is anything else
+speaking the OpenAI wire format — LM Studio, llama.cpp, vLLM, Groq, Together.
 
 ## The dashboard
 

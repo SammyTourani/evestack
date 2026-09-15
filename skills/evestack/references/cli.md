@@ -5,9 +5,9 @@ help never writes, starts or opens anything.**
 
 ```
 evestack create [name]     scaffold an agent, a database and a dashboard
+evestack dashboard         open the dashboard in your browser, signed in
 evestack status            is it up? what do I run?
 evestack tour              a guided first run, on a stack that is already up
-evestack open              the dashboard URL and its password, in a browser
 evestack verify            check every part and name the fix for anything broken
 evestack skills            teach your coding agent this project
 evestack attach [dir]      add evestack to an eve project you already have

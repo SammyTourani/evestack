@@ -18,8 +18,11 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { createServer } from "node:http";
+
 import { main } from "../src/cli.mjs";
-import { NO_DATABASE_URL, resolveConnection } from "../src/doctor.mjs";
+import { agentEnv, NO_DATABASE_URL, resolveConnection } from "../src/doctor.mjs";
+import { agentBaseUrl, inspectSessions } from "../src/sessions.mjs";
 import { classifyConnectFailure, connectFailureMessage } from "../src/db.mjs";
 
 /** Collects what a command wrote, so nothing lands on the real terminal. */
@@ -351,4 +354,178 @@ test("a dual-stack AggregateError still says what went wrong", () => {
   const message = connectFailureMessage(TARGET, new AggregateError(both, ""));
   assert.match(message, /ECONNREFUSED ::1:5433/);
   assert.match(message, /ECONNREFUSED 127.0.0.1:5433/);
+});
+
+/* -------------------------------------------------------------------------- */
+/* which AGENT doctor looks at                                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The same bug as the database one at the top of this file, one probe over.
+ *
+ * `agentBaseUrl` read `process.env.EVESTACK_AGENT_URL` and defaulted to
+ * 127.0.0.1:2000, and nothing anywhere read the project's env files for it.
+ * Two consequences, both silent:
+ *
+ *   EVESTACK_AGENT_PORT was never consulted, and that is the variable the
+ *   scaffolder actually WRITES — EVESTACK_AGENT_URL is not in a scaffolded
+ *   .env.local at all. `eve dev` takes 2000 and auto-increments when 2000 is
+ *   busy, which is why `status`, `tour` and the template's `verify` all read
+ *   the recorded port. So on a machine with two projects, doctor probed the
+ *   FIRST project's agent about THIS project's session ids.
+ *
+ *   And the credentials were read from process.env alone, so a built server —
+ *   which from eve 0.30 requires them on loopback too — answered 401 to every
+ *   probe. `inspectSessions` stops on the first unreachable probe, so the
+ *   report said "agent unreachable" about an agent that was answering fine.
+ *
+ * No Postgres here: the candidate query is the database's half and these are
+ * about the HTTP half, which a stub can answer honestly.
+ */
+
+/** Clears the four variables an ambient shell could use to fake a pass. */
+async function withoutAgentEnv(run) {
+  const names = ["EVESTACK_AGENT_URL", "EVESTACK_AGENT_PORT", "EVESTACK_AUTH_USER", "EVESTACK_AUTH_PASSWORD"];
+  const saved = names.map((name) => [name, process.env[name]]);
+  for (const name of names) delete process.env[name];
+  try {
+    return await run();
+  } finally {
+    for (const [name, value] of saved) restore(name, value);
+  }
+}
+
+/**
+ * An agent that answers the stream route, and only with the right credentials.
+ *
+ * `x-eve-stream-tail-index: -1` is what eve sends for a stream with no events,
+ * so `readRecentEvents` returns [] without needing a body — which keeps this
+ * about auth and routing rather than about NDJSON parsing, which tour.test.mjs
+ * already covers in depth.
+ */
+async function stubAgent({ user, password } = {}) {
+  const seen = { paths: [], authorizations: [] };
+  const expected = user && password ? `Basic ${Buffer.from(`${user}:${password}`).toString("base64")}` : null;
+  const server = createServer((req, res) => {
+    seen.paths.push(req.url.split("?")[0]);
+    seen.authorizations.push(req.headers.authorization ?? null);
+    if (expected && req.headers.authorization !== expected) {
+      res.writeHead(401).end();
+      return;
+    }
+    res.writeHead(200, { "content-type": "application/x-ndjson", "x-eve-stream-tail-index": "-1" }).end();
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return { port: server.address().port, seen, close: () => new Promise((r) => server.close(r)) };
+}
+
+const CANDIDATE = { sessionId: "s-1", title: null, trigger: null, createdAt: new Date(), idleMs: 60_000 };
+
+test("the port this project recorded is the port doctor probes", async () => {
+  await withoutAgentEnv(async () => {
+    const dir = project({ ".env.local": "EVESTACK_AGENT_PORT=2043\n" });
+    await inDirectory(dir, () => {
+      assert.equal(agentBaseUrl(undefined, agentEnv()), "http://127.0.0.1:2043");
+    });
+    // Without a project, and without the variable, the old default still holds:
+    // this widens where the answer comes from, it does not change the answer
+    // for anyone who had one.
+    assert.equal(agentBaseUrl(undefined, () => undefined), "http://127.0.0.1:2000");
+    // And --agent-url still wins over everything, which is what an operator
+    // pointing this at a remote agent expects.
+    assert.equal(
+      agentBaseUrl("http://10.0.0.4:9000/", (key) => (key === "EVESTACK_AGENT_PORT" ? "2043" : undefined)),
+      "http://10.0.0.4:9000",
+    );
+  });
+});
+
+test("an EVESTACK_AGENT_URL in the project's env file is read at all", async () => {
+  await withoutAgentEnv(async () => {
+    const dir = project({ ".env.local": "EVESTACK_AGENT_URL=http://127.0.0.1:2111\nEVESTACK_AGENT_PORT=2043\n" });
+    await inDirectory(dir, () => {
+      // The URL wins over the port, matching status.mjs and tour.mjs. Before
+      // this, neither line in the file was read: only an exported variable was.
+      assert.equal(agentBaseUrl(undefined, agentEnv()), "http://127.0.0.1:2111");
+    });
+  });
+});
+
+test("the project's .env is read too, which is what an attached project has", async () => {
+  await withoutAgentEnv(async () => {
+    // `attach` writes to `.env` when the project already has one, so an attached
+    // project can have no .env.local at all — the same case findProjectEnv's own
+    // docblock records, and the reason a bare `.env` needs a package.json
+    // depending on eve beside it.
+    const dir = project({ ".env": "EVESTACK_AGENT_PORT=2077\n", "package.json": ATTACHED });
+    await inDirectory(dir, () => {
+      assert.equal(agentBaseUrl(undefined, agentEnv()), "http://127.0.0.1:2077");
+    });
+  });
+});
+
+test("credentials from the project file reach the agent, so a built server is not 'unreachable'", async () => {
+  const agent = await stubAgent({ user: "evestack", password: "s3cr3t" });
+  try {
+    await withoutAgentEnv(async () => {
+      const dir = project({
+        ".env.local": `EVESTACK_AGENT_PORT=${agent.port}\nEVESTACK_AUTH_USER=evestack\nEVESTACK_AUTH_PASSWORD=s3cr3t\n`,
+      });
+      await inDirectory(dir, async () => {
+        const env = agentEnv();
+        const baseUrl = agentBaseUrl(undefined, env);
+        const probe = await inspectSessions([CANDIDATE], { baseUrl, timeoutMs: 5000, env });
+
+        assert.equal(probe.agentReachable, true, `the probe failed: ${probe.agentError?.message}`);
+        assert.equal(probe.probed, 1);
+        assert.equal(probe.entries[0].health, "active");
+        assert.match(agent.seen.paths[0], /^\/eve\/v1\/session\/s-1\/stream$/);
+        assert.ok(agent.seen.authorizations[0]?.startsWith("Basic "), "no credentials were sent at all");
+      });
+    });
+  } finally {
+    await agent.close();
+  }
+});
+
+test("without them the same agent is a 401, which is the report that used to be printed", async () => {
+  // The negative half, and the proof the test above is not vacuous: the stub is
+  // identical, the project file simply does not carry the password. Against the
+  // old code this is what EVERY built server looked like, because process.env
+  // was the only place credentials were read from.
+  const agent = await stubAgent({ user: "evestack", password: "s3cr3t" });
+  try {
+    await withoutAgentEnv(async () => {
+      const dir = project({ ".env.local": `EVESTACK_AGENT_PORT=${agent.port}\n` });
+      await inDirectory(dir, async () => {
+        const env = agentEnv();
+        const probe = await inspectSessions([CANDIDATE], { baseUrl: agentBaseUrl(undefined, env), timeoutMs: 5000, env });
+        assert.equal(probe.agentReachable, false);
+        assert.match(probe.agentError.message, /401/);
+      });
+    });
+  } finally {
+    await agent.close();
+  }
+});
+
+test("agentEnv is independent of where the database URL came from", async () => {
+  // resolveConnection returns `project: null` whenever the connection string
+  // came from --url or the environment, because its caller uses that to tell
+  // "outside a project" from "inside one with no URL configured". Reusing it
+  // for the agent would couple two unrelated questions: `WORKFLOW_POSTGRES_URL=…
+  // evestack doctor`, run inside a project, would stop reading that project's
+  // files for the AGENT as well.
+  await withoutAgentEnv(async () => {
+    const dir = project({ ".env.local": `WORKFLOW_POSTGRES_URL=${URL_IN_FILE}\nEVESTACK_AGENT_PORT=2043\n` });
+    await inDirectory(dir, () => {
+      process.env.WORKFLOW_POSTGRES_URL = "postgres://elsewhere/db";
+      try {
+        assert.equal(resolveConnection(null).project, null, "fixture is wrong: the env var did not win");
+        assert.equal(agentBaseUrl(undefined, agentEnv()), "http://127.0.0.1:2043");
+      } finally {
+        delete process.env.WORKFLOW_POSTGRES_URL;
+      }
+    });
+  });
 });

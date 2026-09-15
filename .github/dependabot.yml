@@ -1,0 +1,111 @@
+# Dependabot, and the two things it is here to do.
+#
+# ── 1. github-actions, which had no updater at all ───────────────────────────
+#
+# Every `uses:` in .github/workflows/ is now pinned to a full commit SHA rather
+# than a floating major, because a floating major is a live, silently-mutable
+# execution primitive: `actions/checkout@v4` is a TAG, the tag owner can move it
+# at any time, and the next scheduled run would then execute different code with
+# the same token. Pinning removes that.
+#
+# The obvious cost of pinning is that a pin goes stale, and a stale pin is how a
+# repository ends up running a two-year-old action with a known advisory in it.
+# This file is the other half of the pin: Dependabot understands the
+# `<sha> # <version>` form and opens a PR that moves BOTH the SHA and the
+# trailing comment. Without this file, pinning would be a straight trade of one
+# risk for another. With it, the SHA is the thing that executes and the comment
+# is the thing a human reads, and both stay current.
+#
+# ── 2. npm, where the actual supply chain is ─────────────────────────────────
+#
+# eve itself is deliberately NOT Dependabot's job — .github/workflows/eve-watch.yml
+# owns that bump, because an eve release needs the contract suite, the runtime
+# probes and a human reading the changelog, none of which a Dependabot PR
+# carries. What Dependabot covers is everything else in the tree: the ~hundreds
+# of transitive packages that no workflow watches, where the realistic failure is
+# not a breaking API change but a published advisory nobody noticed.
+#
+# ── The cooldown, and why it is not zero ─────────────────────────────────────
+#
+# Same reasoning, and the same number, as the COOLDOWN_HOURS constant in
+# eve-watch.yml: the npm registry is where supply-chain compromises are
+# delivered, and the window that matters is hours. Both major 2026 incidents
+# were unpublished within roughly 2.5 and 12 hours of going live. A cooldown
+# costs a few days of latency on a release nobody is waiting for; it buys the
+# time in which a compromised version is usually pulled. Patches move fastest
+# because a patch is most often the security fix itself.
+#
+# Nothing here auto-merges, and nothing should. These are PRs.
+version: 2
+
+updates:
+  # A single entry at the repository root, not one per package. pnpm workspaces
+  # resolve through the root `pnpm-lock.yaml`, and that one lockfile is what
+  # Dependabot has to rewrite for any package in `packages/*` or `templates/*` —
+  # so per-directory entries would open several PRs that all edit the same file
+  # and conflict with each other by construction.
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      # Monday morning, deliberately away from the 06:17 UTC eve-watch run and
+      # the 07:43 UTC evals run. All three would otherwise queue behind the same
+      # concurrency-free runner minutes, and a dependency PR arriving in the
+      # middle of an eve upgrade is the one most likely to be reviewed by
+      # nobody.
+      day: monday
+      time: "13:00"
+      timezone: Etc/UTC
+    cooldown:
+      default-days: 3
+      semver-major-days: 7
+      semver-patch-days: 1
+    # eve is eve-watch.yml's, and a second updater bumping it would produce a PR
+    # with none of the contract evidence the nightly attaches — which is exactly
+    # the PR someone merges because it looks like all the others.
+    ignore:
+      - dependency-name: eve
+    # One PR for the routine noise, separate PRs for anything else. A batch of
+    # twelve patch bumps is a single review; twelve PRs is a thing people stop
+    # reading in week two, and an unread queue is where a real advisory hides.
+    groups:
+      npm-patch-and-minor:
+        update-types:
+          - minor
+          - patch
+    open-pull-requests-limit: 5
+    # No `labels:` here on purpose. Dependabot applies its own `dependencies`
+    # label (and an ecosystem label) without being asked, and it will NOT create
+    # a custom label that does not already exist in the repository — it drops it
+    # and warns. `gh label list` on this repository returns bug, documentation,
+    # duplicate, enhancement, good first issue, help wanted, invalid, question,
+    # wontfix, eve-upgrade, eval-run: no `dependencies`, no `ci`. Naming either
+    # here would produce a warning on every run and label nothing. If a label is
+    # wanted, create it first, then add it here.
+    commit-message:
+      prefix: "chore(deps)"
+      include: scope
+
+  # Scans .github/workflows/ from the repository root — `directory: "/"` is the
+  # documented value for this ecosystem and does NOT mean ".github/workflows".
+  # Writing the workflows path here is the common mistake and it produces an
+  # updater that silently finds nothing.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "13:00"
+      timezone: Etc/UTC
+    cooldown:
+      default-days: 3
+    # Actions move rarely enough that one combined PR is almost always the whole
+    # week's news, and reviewing eight SHA changes together is how you notice
+    # that one of them came from a repository that changed hands.
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "ci(deps)"

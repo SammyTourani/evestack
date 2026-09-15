@@ -49,7 +49,24 @@ on:
   # already existed. Same checks; nothing is skipped for a manual run — except
   # the GitHub release, which needs a tag to attach to and is therefore gated on
   # `github.ref_type == 'tag'` rather than on the event.
+  #
+  # workflow_dispatch accepts ANY ref, which is the property that makes the two
+  # gates in `merge` necessary — see the long note on that job.
   workflow_dispatch:
+    inputs:
+      overwrite:
+        description: "Re-tag a version that is already published with DIFFERENT contents. Almost always wrong; read the gate in the merge job before setting it."
+        required: false
+        default: false
+        type: boolean
+
+# Stated rather than inherited, so that a repository whose default is "Read and
+# write permissions" does not silently hand a push-to-main token to a job that
+# only needs to read the tree. Every job below narrows this further; the two
+# that publish say `packages: write` and the one that cuts the release says
+# `contents: write`, and nothing else can write anything.
+permissions:
+  contents: read
 
 concurrency:
   group: publish-dashboard-${{ github.ref }}
@@ -64,10 +81,23 @@ jobs:
   # ---------------------------------------------------------------------------
   version:
     runs-on: ubuntu-latest
+    # This job was the only one here without a block of its own, which meant it
+    # ran on whatever the workflow or repository default was. It reads
+    # package.json, greps the tree and reads CHANGELOG.md; `contents: read` is
+    # the whole of what that needs.
+    permissions:
+      contents: read
     outputs:
       version: ${{ steps.read.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      # Pinned to a commit rather than a tag, and the token not left behind in
+      # `.git/config` — ci.yml's first checkout carries the full reasoning for
+      # both. Nothing in this workflow talks to the git remote: `gh release`
+      # uses GH_TOKEN from the environment, not git credentials, and the `git
+      # grep` below reads the checkout that is already on disk.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - id: read
         run: |
           set -euo pipefail
@@ -272,11 +302,13 @@ jobs:
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -286,7 +318,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           # The repository ROOT. packages/dashboard/Dockerfile explains at
           # length why: `@evestack/schedules` is a `workspace:*` dependency that
@@ -325,7 +357,7 @@ jobs:
           touch "/tmp/digests/${DIGEST#sha256:}"
           ls -l /tmp/digests
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: digest-${{ strategy.job-index }}
           path: /tmp/digests/*
@@ -341,34 +373,216 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      # Whether `:latest` actually moved. `release` writes a line into the
+      # release notes about it and used to state it unconditionally; see the
+      # note there.
+      latest: ${{ steps.gate.outputs.latest }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: /tmp/digests
           pattern: digest-*
           merge-multiple: true
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Two tags, and the difference matters. The version tag is what every
-      # scaffolded docker-compose.yml pins, so it is immutable in practice —
-      # someone's project must keep resolving to the image it was tested with.
-      # `latest` is the opt-in for people who would rather track the newest, and
-      # it is the only tag that moves.
-      - name: assemble the multi-arch tag
+      # ---------------------------------------------------------------------
+      # THE TWO THINGS THIS STEP REFUSES TO DO
+      # ---------------------------------------------------------------------
+      #
+      # The step below used to read, in full:
+      #
+      #   docker buildx imagetools create --tag "${IMAGE}:${version}" \
+      #                                   --tag "${IMAGE}:latest" ...
+      #
+      # Both tags, always, whatever ref the run was started from. Combined with
+      # a `workflow_dispatch` that accepts ANY ref, that is two distinct ways to
+      # damage a published image with no error anywhere:
+      #
+      #   1. OVERWRITING A VERSION. The comment on the old step said the version
+      #      tag "is immutable in practice", and that was a description of how
+      #      people behave, not a property the workflow had. Dispatching on an
+      #      old release tag rebuilds that version from TODAY's tree and pushes
+      #      it over the published one. Every scaffolded docker-compose.yml pins
+      #      a version tag, so the projects that pinned it get different code on
+      #      their next pull with no version change to explain it. The failure
+      #      is silent by construction: the run is green and the tag still
+      #      exists.
+      #
+      #   2. MOVING :latest BACKWARDS, OR ONTO A BRANCH. `:latest` is the opt-in
+      #      for people who track the newest, so it carries one promise —
+      #      newest. A dispatch on an old tag pointed it at an old release; a
+      #      dispatch on a feature branch published that BRANCH's
+      #      packages/dashboard/package.json version as `:latest`, which is how
+      #      an unreviewed branch becomes what `docker pull` hands a stranger.
+      #
+      # WHY THE CHECK IS HERE AND NOT IN `version`. This file's own doctrine is
+      # that a gate belongs before anything is published — that is the whole
+      # reason the CHANGELOG check moved up into `version`. This one cannot: it
+      # has to ask the registry what is already there, and that needs the login
+      # that only this job holds. The doctrine is still satisfied, because
+      # between `version` and this line NOTHING PUBLISHED A TAG. `build` pushes
+      # by digest with no tag at all; an unreferenced digest is invisible to
+      # `docker pull` and is garbage-collected. The very next command is the
+      # first and only mutation, so refusing here refuses before publication.
+      #
+      # WHAT COUNTS AS AN OVERWRITE. Not "the tag exists" — "the tag exists AND
+      # would change". If a re-run yields the same child digests, the write is a
+      # no-op. Builds are not guaranteed reproducible; changed child digests
+      # require explicit overwrite authorization. The
+      # published index's child digests are compared against the digests this
+      # run is about to assemble, and only a genuine difference is refused. When
+      # it IS refused, `overwrite: true` on a manual dispatch is the deliberate
+      # way through, and the error says so.
+      - name: refuse to overwrite a published version; decide whether :latest may move
+        id: gate
         working-directory: /tmp/digests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+          # Empty string on a `push:` event — workflow inputs do not exist
+          # there — which is the correct reading: a tag push never overwrites.
+          OVERWRITE: ${{ inputs.overwrite }}
+          REF_TYPE: ${{ github.ref_type }}
+          OWNER: ${{ github.repository_owner }}
         run: |
           set -euo pipefail
-          version='${{ needs.version.outputs.version }}'
+
+          # The digests this run would publish, as a sorted space-separated
+          # string. The filenames in /tmp/digests ARE the digests, minus the
+          # `sha256:` prefix the build job stripped.
+          incoming="$(printf 'sha256:%s\n' * | sort | tr '\n' ' ')"
+          echo "incoming: $incoming"
+
+          # `--raw` returns the manifest list itself rather than buildx's
+          # rendering of it, so the child digests can be read out directly. A
+          # tag that does not exist exits non-zero and leaves this empty.
+          published_raw="$(docker buildx imagetools inspect --raw "${IMAGE}:${VERSION}" 2>/dev/null || true)"
+
+          if [ -n "$published_raw" ]; then
+            # `.manifests` is absent on a single-platform image, in which case
+            # this yields an empty string and the comparison below reports a
+            # difference — the safe direction, since a single-platform image
+            # under this tag is itself something a human should look at.
+            published="$(printf '%s' "$published_raw" | node -e '
+              let raw = "";
+              process.stdin.on("data", (c) => (raw += c));
+              process.stdin.on("end", () => {
+                try {
+                  const index = JSON.parse(raw);
+                  const digests = (index.manifests ?? []).map((m) => m.digest).sort();
+                  process.stdout.write(digests.length ? digests.join(" ") + " " : "");
+                } catch { process.stdout.write(""); }
+              });
+            ')"
+            echo "published: $published"
+
+            if [ "$published" = "$incoming" ]; then
+              echo "${IMAGE}:${VERSION} is already published and points at exactly these digests — re-tagging is a no-op."
+            elif [ "$OVERWRITE" = "true" ]; then
+              echo "::warning::${IMAGE}:${VERSION} is already published with DIFFERENT contents and is being overwritten because overwrite=true was set. Every project pinning this tag will get different code on its next pull."
+            else
+              echo "::error::${IMAGE}:${VERSION} is already published and this run would change it. Version tags are what every scaffolded docker-compose.yml pins, so overwriting one silently changes code under projects that pinned it. Bump packages/dashboard/package.json and tag the new version, or — if you are deliberately replacing a bad publish — re-run this workflow from the Actions tab with overwrite=true."
+              exit 1
+            fi
+          else
+            echo "${IMAGE}:${VERSION} is not published yet."
+          fi
+
+          # ── may :latest move onto this version? ──────────────────────────
+          #
+          # Three conditions, all required. Ref must be a tag (a branch is not a
+          # release). Version must be a plain x.y.z (a prerelease is not what
+          # `:latest` promises). And it must be the highest version published —
+          # equal counts, so the re-run path above still refreshes `:latest`
+          # rather than leaving it behind.
+          #
+          # Use git release tags as a conservative upper bound. A newer tag
+          # whose image failed also blocks a rollback of :latest. Failure to
+          # fetch tags aborts the gate before any tag is published.
+          latest=false
+          if [ "$REF_TYPE" != "tag" ]; then
+            echo "::warning::ref_type is '${REF_TYPE}', not a tag — publishing ${IMAGE}:${VERSION} but NOT moving :latest. A branch build is not a release."
+          elif ! printf '%s' "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::warning::${VERSION} is not a plain x.y.z version — publishing the tag but not moving :latest onto a prerelease."
+          else
+            # Git release tags are conservative: a newer tag whose image failed
+            # still prevents an older release from taking over :latest. No
+            # packages-list API scope is needed. Fail closed on fetch errors.
+            tags="$(git ls-remote --tags "https://github.com/${GITHUB_REPOSITORY}.git" | awk '{print $2}' | sed -nE 's#^refs/tags/(@evestack/dashboard@|dashboard-v)([0-9]+\.[0-9]+\.[0-9]+)$#\2#p')"
+            if [ -n "$tags" ]; then
+              highest="$(printf '%s\n' "$tags" | node -e '
+                let raw = "";
+                process.stdin.on("data", (c) => (raw += c));
+                process.stdin.on("end", () => {
+                  // Only plain x.y.z tags are version claims. `latest` itself,
+                  // and any prerelease, are excluded: comparing against them is
+                  // how a release candidate would win the comparison and pin
+                  // `:latest` to something nobody meant to ship.
+                  const versions = raw.split("\n")
+                    .map((t) => t.trim())
+                    .filter((t) => /^[0-9]+\.[0-9]+\.[0-9]+$/.test(t))
+                    .map((t) => t.split(".").map(Number));
+                  if (versions.length === 0) { process.stdout.write(""); return; }
+                  versions.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
+                  process.stdout.write(versions.at(-1).join("."));
+                });
+              ')"
+
+              if [ -z "$highest" ]; then
+                echo "no plain x.y.z tag is published yet — ${VERSION} becomes :latest"
+                latest=true
+              else
+                # Numeric field-by-field, in node, because sort -V is not
+                # guaranteed and a string compare makes 0.10.0 lose to 0.9.0.
+                if node -e '
+                  const cmp = (s) => s.split(".").map(Number);
+                  const [a, b] = [cmp(process.argv[1]), cmp(process.argv[2])];
+                  const ge = a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+                  process.exit(ge >= 0 ? 0 : 1);
+                ' "$VERSION" "$highest"; then
+                  echo "${VERSION} >= highest published (${highest}) — :latest moves"
+                  latest=true
+                else
+                  echo "::warning::${VERSION} is older than the highest published version (${highest}). Publishing ${IMAGE}:${VERSION} but NOT moving :latest, which would otherwise point people at an older release than the one they have."
+                fi
+              fi
+            else
+              echo "::warning::No dashboard release tags found; leaving :latest unchanged."
+            fi
+          fi
+
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          echo "move :latest = $latest"
+
+      # Two tags, and the difference matters. The version tag is what every
+      # scaffolded docker-compose.yml pins, so it must keep resolving to the
+      # image it was tested with — the gate above is what now makes that true
+      # rather than merely intended. `latest` is the opt-in for people who would
+      # rather track the newest, and it is the only tag that moves, which is why
+      # it is conditional: see the gate's second half.
+      - name: assemble the multi-arch tag
+        working-directory: /tmp/digests
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          MOVE_LATEST: ${{ steps.gate.outputs.latest }}
+        run: |
+          set -euo pipefail
+          # An array, not a string, so that adding a conditional flag does not
+          # depend on word splitting to be correct.
+          tags=(--tag "${IMAGE}:${VERSION}")
+          if [ "$MOVE_LATEST" = "true" ]; then
+            tags+=(--tag "${IMAGE}:latest")
+          fi
           docker buildx imagetools create \
-            --tag "${IMAGE}:${version}" \
-            --tag "${IMAGE}:latest" \
+            "${tags[@]}" \
             $(printf "${IMAGE}@sha256:%s " *)
 
       - name: prove it pulls
@@ -419,13 +633,23 @@ jobs:
       # it writes is a release.
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: cut the GitHub release from CHANGELOG.md
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.version.outputs.version }}
           TAG: ${{ github.ref_name }}
+          # Whether `merge` actually moved `:latest`. The footer below used to
+          # assert it unconditionally, and once `:latest` became conditional
+          # that sentence would have been the same class of defect this file
+          # already has a paragraph about: a comment in a workflow stating
+          # something about another job that is simply not true. The release
+          # page is read by people deciding what to pull, so it has to say what
+          # happened, not what usually happens.
+          MOVED_LATEST: ${{ needs.merge.outputs.latest }}
         run: |
           set -euo pipefail
 
@@ -471,7 +695,12 @@ jobs:
             echo "docker pull ${IMAGE}:${VERSION}"
             echo "\`\`\`"
             echo
-            echo "Multi-arch: \`linux/amd64\` and \`linux/arm64\`. Also tagged \`:latest\`."
+            if [ "$MOVED_LATEST" = "true" ]; then
+              echo "Multi-arch: \`linux/amd64\` and \`linux/arm64\`. Also tagged \`:latest\`."
+            else
+              echo "Multi-arch: \`linux/amd64\` and \`linux/arm64\`. **\`:latest\` was not moved onto this release** —"
+              echo "it still points wherever it did before. Pull the version tag above."
+            fi
           } >> "${RUNNER_TEMP}/notes.md"
 
           # Idempotent, because a re-run of a failed publish must not fail here

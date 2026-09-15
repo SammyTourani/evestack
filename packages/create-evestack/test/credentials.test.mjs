@@ -33,6 +33,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { signInLine } from "../create.mjs";
 import { SECRET_FILE_MODE, writeSecretFile } from "../shared.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -159,4 +160,88 @@ test("a failed write still throws — only the chmod is forgiving", () => {
   const dir = mkdtempSync(join(tmpdir(), "evestack-secret-file-"));
   mkdirSync(join(dir, "collision"));
   assert.throws(() => writeSecretFile(join(dir, "collision"), "X=1\n"), /EISDIR/);
+});
+
+/* -------------------------------------------------------------------------- */
+/* the other place a credential lands: stdout                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The file this whole suite is about is 0600, and then the same value was
+ * printed to stdout with nothing asking who was reading.
+ *
+ * On a terminal that is right and it is the point: the wizard generated the
+ * password, nobody chose it, and the alternative is sending a first-time reader
+ * to guess which key in a dotfile is the sign-in. Every OTHER destination is a
+ * recording. `npx create-evestack my-agent | tee setup.log`, a CI job archiving
+ * output, a wrapper capturing stdout, a screen-share — each turns one line of a
+ * finish screen into a credential at rest, for a dashboard that starts agent
+ * runs and approves gated shell commands. A 0600 file and a world-readable log
+ * of its contents are the same secret with different permissions.
+ *
+ * `verify --json` had always omitted it, so the intent existed; the human path
+ * just had no gate. The gate is `process.stdout.isTTY`, which is the same
+ * question the scaffolder already asks before it offers to open a browser.
+ */
+test("the generated password is not printed when stdout is not a terminal", () => {
+  const { dir, result } = scaffold();
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+
+  // The real value, read out of the file it is supposed to stay in. Matching on
+  // the actual password rather than on a shape means this cannot pass because
+  // the wording of the line changed.
+  const password = /^EVESTACK_AUTH_PASSWORD=(.+)$/m.exec(readFileSync(join(dir, ".env.local"), "utf8"))?.[1];
+  assert.ok(password && password.length > 12, "fixture is wrong: no generated password to look for");
+
+  // spawnSync pipes stdout, so the child sees no TTY — which is exactly the
+  // captured-output case this is about, arrived at by construction rather than
+  // by faking a flag.
+  assert.equal(
+    result.stdout.includes(password),
+    false,
+    `the finish screen printed the dashboard password into a pipe:\n${result.stdout}`,
+  );
+  // Withheld, not hidden: the reader is told where it is.
+  assert.match(result.stdout, /EVESTACK_AUTH_PASSWORD/);
+  assert.match(result.stdout, /\.env\.local/);
+});
+
+test("on a terminal the password is printed, because that is the whole point", () => {
+  // The positive half. A gate that withheld it everywhere would "pass" the test
+  // above and break the product: the scaffolder is the only thing that ever
+  // knows this value at the moment it is generated.
+  assert.match(signInLine("s3cr3t-not-a-real-one", { show: true }), /s3cr3t-not-a-real-one/);
+  const piped = signInLine("s3cr3t-not-a-real-one", { show: false });
+  assert.doesNotMatch(piped, /s3cr3t-not-a-real-one/);
+  assert.match(piped, /EVESTACK_AUTH_PASSWORD in \.env\.local/);
+  // The user name is not a secret and stays on both, so the line still says who
+  // to sign in as.
+  assert.match(piped, /evestack/);
+});
+
+/**
+ * The way back, for the one legitimate case.
+ *
+ * An automated setup that genuinely wants the generated password out of stdout
+ * — and has somewhere to put it — says so once, on purpose. That is the whole
+ * difference between this and a value that lands in a log because nobody chose
+ * anything.
+ */
+test("EVESTACK_PRINT_SECRETS puts the old behaviour back", () => {
+  const parent = mkdtempSync(join(tmpdir(), "evestack-credentials-"));
+  const result = spawnSync(process.execPath, [ENTRY, "proj", "--yes"], {
+    cwd: parent,
+    encoding: "utf8",
+    env: { ...process.env, PATH: shimPath(), EVESTACK_PRINT_SECRETS: "1" },
+  });
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+
+  const password = /^EVESTACK_AUTH_PASSWORD=(.+)$/m.exec(
+    readFileSync(join(parent, "proj", ".env.local"), "utf8"),
+  )?.[1];
+  assert.ok(password, "fixture is wrong: no generated password to look for");
+  assert.ok(
+    result.stdout.includes(password),
+    `the override did not restore the printed password:\n${result.stdout}`,
+  );
 });

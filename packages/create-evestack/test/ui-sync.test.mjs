@@ -18,7 +18,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_COPY = join(HERE, "..", "ui.mjs");
@@ -46,9 +46,14 @@ test("ui.mjs emits no escapes when colour is off", async () => {
   // clean environment — it is decided once, at import, on purpose.
   const { execFileSync } = await import("node:child_process");
   const script = `
-    const ui = await import(${JSON.stringify(PACKAGE_COPY)});
+    const ui = await import(${JSON.stringify(pathToFileURL(PACKAGE_COPY).href)});
     process.stdout.write(String(ui.color) + "\\n");
     process.stdout.write(ui.c.red("red") + ui.c.brand("brand") + ui.g.OK + "\\n");
+    // chip() writes its escapes by hand rather than through wrap(), which is
+    // exactly the shape that forgets to check \`color\`. It is the step header's
+    // "you are here" highlight, so a leaked escape here lands in every piped
+    // transcript of every run.
+    process.stdout.write(ui.chip(" Channels ") + "\\n");
   `;
   const out = execFileSync(process.execPath, ["--input-type=module", "-e", script], {
     env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: undefined },

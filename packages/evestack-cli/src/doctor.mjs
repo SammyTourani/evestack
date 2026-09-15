@@ -82,6 +82,32 @@ export function resolveConnection(explicit, { from = process.cwd() } = {}) {
 }
 
 /**
+ * Everything the AGENT probe needs to read, resolved the way `status` and `tour`
+ * resolve it.
+ *
+ * Separate from `resolveConnection` on purpose, and the reason is the bug. That
+ * function returns `project: null` whenever the connection string came from
+ * `--url` or from the environment, because its caller uses `project` to tell
+ * "outside a project" apart from "inside one with no URL". Reusing that answer
+ * here would mean `WORKFLOW_POSTGRES_URL=... evestack doctor`, run inside a
+ * project, stopped reading the project's files for the AGENT as well — two
+ * unrelated questions coupled through one return value.
+ *
+ * So the project is located independently, and the merge is `projectEnv`'s:
+ * `.env` then `.env.local`, with the real environment winning over both. That
+ * is eve's own load order and the one `status`, `tour` and `open` already use,
+ * which is the whole point — "which agent" must not mean one thing to
+ * `evestack status` and another one line below it in `evestack doctor`.
+ *
+ * Falls back to the process environment alone outside a project, which is where
+ * a container deployment reads these from anyway.
+ */
+export function agentEnv({ from = process.cwd() } = {}) {
+  const found = findProjectEnv(from);
+  return found ? projectEnv(found) : (key) => process.env[key];
+}
+
+/**
  * Standing in a project that configures no database at all. Rare, and worth its
  * own sentence: the fix is a line in a file, not a container.
  */
@@ -187,7 +213,14 @@ export async function diagnose(options = {}) {
         idleMs,
         limit: probeLimit,
       });
-      const baseUrl = agentBaseUrl(options.agentUrl);
+      // The project's own files, not `process.env` alone. Before this, doctor was
+      // the one command that did not read them for the agent: it probed
+      // 127.0.0.1:2000 regardless of the EVESTACK_AGENT_PORT this project
+      // recorded, and sent no Basic credentials to a built server that requires
+      // them. See agentBaseUrl/authHeader in sessions.mjs for what each of those
+      // produced in a report.
+      const env = agentEnv();
+      const baseUrl = agentBaseUrl(options.agentUrl, env);
       /*
        * `null`, not `true`. Nothing contacted the agent on this branch, and
        * `agentReachable: true` is a claim about a request that was never made —
@@ -198,7 +231,7 @@ export async function diagnose(options = {}) {
       const probe =
         candidates.length === 0
           ? { entries: [], agentReachable: null, agentError: null, probed: 0 }
-          : await inspectSessions(candidates, { baseUrl, timeoutMs });
+          : await inspectSessions(candidates, { baseUrl, timeoutMs, env });
       report.sessions = { ...probe, candidates, unchecked, idleMs, agentUrl: baseUrl };
     }
 

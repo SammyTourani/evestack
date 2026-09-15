@@ -4,17 +4,20 @@ What the agent should check when it wakes up on its own. Edit this file freely �
 it is read at every fire, so a change takes effect on the next wake-up with no
 restart and no redeploy.
 
-The rule that is meant to make this liveable: **the agent only messages you when
-something here produces news.** If every check comes back boring it replies with an
-acknowledgement token.
+The rule that makes this liveable: **the agent only messages you when something here
+produces news.** When every check comes back boring it replies with exactly
+`<eve-empty-delivery/>`, which is eve's marker for "I am finished, deliver nothing". eve
+turns that into a completed turn carrying no message, and no channel posts a message that
+is not there. A quiet hour is genuinely silent — nothing on Telegram, Slack or Discord, and
+nothing added to the conversation's history either.
 
-> **That token is currently delivered to you.** Nothing filters it, and no filter
-> ships in `agent/schedules/heartbeat.ts` either — eve posts the reply itself, so
-> nothing in this project ever sees the text to filter. So an hourly heartbeat with
-> nothing to report sends you `HEARTBEAT_OK` every hour. The rule a filter would
-> apply, and the two ways it could actually be wired, are written out at the top of
-> that file: read it before turning this on. An hourly heartbeat that always sends
-> something is an hourly notification, and you will mute it within a day.
+> **The marker has to be the whole reply.** eve suppresses a response only when the marker
+> is the entire thing apart from surrounding whitespace — on purpose, so that a reply which
+> quotes or explains the marker still reaches you. `<eve-empty-delivery/>, nothing to
+> report` is a message, and it will ping you. If an hourly heartbeat starts sending you
+> something that reads like an acknowledgement, that is what is happening: tighten the
+> ground rules below. There is nothing in this project that could filter it instead — eve
+> posts the reply itself, so your code never sees the text.
 
 Delete the examples below and write your own.
 

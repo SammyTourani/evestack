@@ -8,6 +8,7 @@ import {
   safeNextPath,
   verifyCredentials,
 } from "@/lib/auth";
+import { isResponse, readBoundedBody } from "../../control/_http";
 
 export const dynamic = "force-dynamic";
 
@@ -39,6 +40,26 @@ export const dynamic = "force-dynamic";
  * is the whole of what protects a short one.
  */
 
+/**
+ * The ceiling on a sign-in body.
+ *
+ * This is the one route in the dashboard that answers a caller who has proved
+ * nothing — proxy.ts lets the sign-in tier through before it asks for a
+ * credential, because there is no credential yet — and it read the body with
+ * `request.json()` / `request.formData()`, neither of which stops. Anyone who
+ * could open the port could therefore hold a chunked POST open and stream as
+ * much as they liked into this process before the first password comparison
+ * ran. Of everything reachable here that is the worst place for an unbounded
+ * read, because it is the only one that needs no account.
+ *
+ * 16 KB, which is about fifty times what a sign-in carries: a username, a
+ * password and a `next` path. Deliberately NOT tunable — unlike
+ * EVESTACK_MAX_JSON_BODY_BYTES on the control tier there is no legitimate body
+ * shape here that grows, so a knob could only ever be used to take the limit
+ * off the one unauthenticated route in the building.
+ */
+const MAX_SIGN_IN_BODY_BYTES = 16 * 1024;
+
 const BASE_FAILURE_DELAY_MS = 150;
 const MAX_FAILURE_DELAY_MS = 2000;
 /** Consecutive failures decay after this long, so a burst of typos this morning
@@ -68,25 +89,59 @@ export async function POST(request: Request): Promise<Response> {
       : back(request, "/signin", "unconfigured", "/");
   }
 
+  // The body is read once, bounded, before either parser sees it — and before
+  // penalize() can be reached, so an oversized body costs the sender the refusal
+  // rather than costing this process the memory. See MAX_SIGN_IN_BODY_BYTES.
+  const bytes = await readBoundedBody(request, MAX_SIGN_IN_BODY_BYTES);
+  if (isResponse(bytes)) return bytes;
+
   let user = "";
   let password = "";
   let next = "/";
 
   if (wantsJson) {
-    let body: Record<string, unknown>;
+    let parsed: unknown;
     try {
-      body = (await request.json()) as Record<string, unknown>;
+      parsed = JSON.parse(new TextDecoder().decode(bytes));
     } catch {
       return NextResponse.json(
         { ok: false, error: "Invalid JSON body.", code: "bad_request" },
         { status: 400, headers: { "cache-control": "no-store" } },
       );
     }
+    // Guarded rather than cast. `request.json()` returned whatever the JSON
+    // held, and `body.user` on the literal body `null` — four bytes, and valid
+    // JSON — threw a TypeError out of this handler, so the answer to the
+    // shortest hostile request there is was a 500. Anything that is not an
+    // object is now the same "both fields are required" 400 an object missing
+    // them gets.
+    const body: Record<string, unknown> =
+      typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : {};
     user = typeof body.user === "string" ? body.user : "";
     password = typeof body.password === "string" ? body.password : "";
     next = safeNextPath(typeof body.next === "string" ? body.next : "/");
   } else {
-    const form = await request.formData();
+    // Re-wrapped rather than `request.formData()`, because the body has already
+    // been read by the bounded reader above and a Request body can only be read
+    // once. Handing the bytes back with the caller's own content-type keeps the
+    // boundary parameter intact, so urlencoded and multipart both parse exactly
+    // as they did — and as bytes, not text, nothing is mangled by a decode.
+    let form: FormData;
+    try {
+      form = await new Response(bytes, {
+        headers: { "content-type": request.headers.get("content-type") ?? "" },
+      }).formData();
+    } catch {
+      // A body that is neither JSON nor a parseable form is not a browser
+      // submitting the sign-in page. This used to throw out of the handler as a
+      // 500; it is a 400 now, and still says nothing about credentials.
+      return NextResponse.json(
+        { ok: false, error: "Invalid form body.", code: "bad_request" },
+        { status: 400, headers: { "cache-control": "no-store" } },
+      );
+    }
     user = String(form.get("user") ?? "");
     password = String(form.get("password") ?? "");
     next = safeNextPath(String(form.get("next") ?? "/"));

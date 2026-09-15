@@ -21,7 +21,7 @@
  */
 import { mkdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import nodePath, { dirname, isAbsolute, join, resolve } from "node:path";
 
 import { c, fixLine, forStream, g, headingLine, rowLine } from "create-evestack/ui";
 
@@ -118,10 +118,48 @@ async function fetchPack() {
   return pack;
 }
 
-/** Never let a served path escape the target directory. */
-function safeJoin(root, relative) {
-  const full = resolve(root, relative);
-  if (full !== root && !full.startsWith(root + "/")) {
+/**
+ * Never let a served path escape the target directory.
+ *
+ * THE PREVIOUS VERSION WAS A STRING COMPARISON, and it was wrong twice.
+ *
+ *   `full.startsWith(root + "/")` — a hardcoded forward slash against a path
+ *   that `resolve()` had just built with the PLATFORM separator. On Windows
+ *   `resolve("C:\u\.claude\skills\evestack", "SKILL.md")` is
+ *   `C:\u\.claude\skills\evestack\SKILL.md`, which does not start with
+ *   `C:\u\.claude\skills\evestack/`. So every file was refused, for every
+ *   path, and `evestack skills` could not write anything at all on native
+ *   Windows — a total failure of the command reported as a security refusal,
+ *   which is the message least likely to make anyone suspect a bug.
+ *
+ *   And `--dir=/tmp/x/` — a trailing slash, which is what tab completion
+ *   produces. `root + "/"` becomes `/tmp/x//`, nothing starts with that, and the
+ *   same false refusal appears on POSIX too.
+ *
+ * `relative()` answers the real question instead of approximating it: it
+ * normalises both sides, uses the platform separator, and returns the path FROM
+ * root TO the resolved file. That path is inside root exactly when it neither
+ * climbs (`..` as a whole first segment) nor restarts from a root of its own.
+ *
+ * Both checks are needed, and the second is not theoretical. On Windows a
+ * served path of `D:\evil.md` under a root on `C:` gives a relative of
+ * `D:\evil.md` — absolute, no `..` anywhere in it, and outside the target.
+ * `isAbsolute` is the only thing that catches a different drive.
+ *
+ * The `..` test is on SEGMENTS rather than a `startsWith("..")`, which would
+ * also reject a legitimate `..config.md`. Split on both separators because a
+ * pack may serve `a/b` and Windows `relative()` returns `a\b`; accepting either
+ * costs nothing and assuming one is how the bug above happened.
+ *
+ * `path` is a parameter defaulting to the platform's own module, so the Windows
+ * behaviour is testable with `path.win32` from a machine that is not Windows.
+ * That is the only reason it exists — no caller passes it.
+ */
+export function safeJoin(root, relative, path = nodePath) {
+  const full = path.resolve(root, relative);
+  const inside = path.relative(path.resolve(root), full);
+  const climbs = inside.split(/[\\/]/).includes("..");
+  if (climbs || path.isAbsolute(inside)) {
     throw new Error(`Refusing to write outside the target directory: ${relative}`);
   }
   return full;

@@ -7,9 +7,9 @@ description: The eight `evestack` commands, and the scaffolder under both of its
 
 ```bash
 evestack create [name]        scaffold an agent, a database and a dashboard
+evestack dashboard            open the dashboard in your browser, signed in
 evestack status               is it up? what do I run?
 evestack tour                 a guided first run, on a stack that is already up
-evestack open                 the dashboard URL and its password, in a browser
 evestack verify               check every part and name the fix for anything broken
 evestack skills               teach your coding agent this project
 evestack attach [dir]         add evestack to an eve project you already have
@@ -183,10 +183,10 @@ globally installed CLI cannot report problems against rules your project does no
 made by `attach` has no `scripts/` of its own, and there it falls back to the copy inside
 `create-evestack`.
 
-## `evestack open`
+## `evestack dashboard`
 
 ```bash
-evestack open [--no-open]
+evestack dashboard [--no-open]
 ```
 
 Prints the dashboard URL, the username and the password, says whether anything is answering there,
@@ -197,6 +197,13 @@ the password.
 The port comes from `EVESTACK_DASHBOARD_URL`, which is where the chosen dashboard port is
 recorded — the scaffolder does not assume 4000. `--no-open` prints and stops. Exit `1` means
 nothing is answering yet.
+
+<Note>
+  `evestack open` is this command's first name and still works. It was renamed because
+  `dashboard` is the word someone reaches for when they want the dashboard and have not read
+  anything — and there are now four other ways to the same page, so the name had to be the
+  guessable one. See [The dashboard](/docs/dashboard#five-ways-in).
+</Note>
 
 ## `evestack skills`
 

@@ -37,7 +37,7 @@ Verified end to end against a stock `eve init` project: `eve add @evestack/memor
 (the build script inlines from the real, tested source rather than a maintained copy), and
 `tsc --noEmit` passes with **no edits to `package.json` or `tsconfig.json`**.
 
-That verification was run against eve 0.29.5. `templates/default` now pins `^0.30.8`, and
+That verification was run against eve 0.29.5. `templates/default` now pins `^0.54.3`, and
 `@evestack/basic-auth` requires `>=0.30`, so the recorded run is older than the code it
 describes. The CI gate below keeps the *content* honest; nobody has re-run the end-to-end
 install since.

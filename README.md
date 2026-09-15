@@ -60,9 +60,18 @@ broken. All three work from anywhere inside the project.
 on your PATH. `npm i -g evestack` drops the `npx ` from every line above, and is worth it if you
 run more than one of these.
 
-The scaffolder generates your credentials and prints them once; `evestack open` prints them
-again and opens the dashboard. Every route is behind that credential — the dashboard starts runs
-and approves shell commands, so it fails closed.
+When the scaffolder brings the stack up it **opens the dashboard for you**, signed in. After that
+there are four more ways back to it, because it is the screen that makes the rest of this legible:
+
+```bash
+npx evestack dashboard     # from any terminal, anywhere in the project
+npm run dashboard          # from inside the project, offline, no npx fetch
+/dashboard                 # typed at the agent, inside `npm run dev`
+```
+
+The fifth is the URL and password the scaffolder prints. Every route is behind that credential —
+the dashboard starts runs and approves shell commands, so it fails closed. `--no-open` at scaffold
+time declines the browser.
 
 The dashboard step is a **pull**, not a build: `ghcr.io/sammytourani/evestack-dashboard` is
 published for `linux/amd64` and `linux/arm64`, ~230 MB compressed per platform, at the tag the

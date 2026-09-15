@@ -160,9 +160,9 @@ Exit codes
   2  could not look — not an evestack project, or no checker to run
 `;
 
-export const OPEN_USAGE = `evestack open — print the dashboard URL and sign-in, and open it
+export const DASHBOARD_USAGE = `evestack dashboard — open the dashboard in your browser, signed in
 
-  evestack open [--no-open]
+  evestack dashboard [--no-open]
 
 The scaffolder prints the dashboard credentials once, in a terminal that then
 scrolls. This prints them again, checks whether the dashboard is answering, and
@@ -172,11 +172,17 @@ Options
   --no-open       print the URL and sign-in, and do not launch a browser
   -h, --help      this
 
+\`evestack open\` is the same command under its old name, and keeps working.
+
 Exit codes
   0  the dashboard is answering
   1  nothing is answering there yet
   2  not an evestack project
 `;
+
+/** The name this command shipped under first. Kept so muscle memory and every
+ *  README written before the rename still resolve. */
+export const OPEN_USAGE = DASHBOARD_USAGE;
 
 /**
  * Every value this project configures, merged in eve's own load order.
@@ -261,12 +267,36 @@ export async function verify(argv, { stdout = process.stdout, stderr = process.s
  * recovery path was "go and read .env.local", which assumes the reader knows
  * that file exists and which of its keys is the password.
  */
-export async function open(argv, { stdout = process.stdout, stderr = process.stderr } = {}) {
+/**
+ * Is anyone actually reading this stream?
+ *
+ * The dashboard password is printed so you can sign in, and that is right at a
+ * terminal and wrong in a pipe. `evestack dashboard | tee setup.log` put the
+ * credential of a control plane that starts agent runs and approves shell
+ * commands into a file, and `evestack status` is run from scripts. So the value
+ * is printed only to a TTY; everywhere else the line says where to find it.
+ *
+ * EVESTACK_PRINT_SECRETS restores the old behaviour for an automated setup that
+ * genuinely needs the value on stdout.
+ *
+ * Exported from here rather than from tour.mjs, which had the first copy, for
+ * one hard reason: tour.mjs already imports from this module, so the dependency
+ * can only run this way without a cycle. The template's scripts/checks.mjs keeps
+ * its own copy because a scaffolded project is standalone and cannot import from
+ * this package at all; the variable name is the contract that keeps the two
+ * honest.
+ */
+export function showSecrets(stream) {
+  if (process.env.EVESTACK_PRINT_SECRETS) return true;
+  return Boolean(stream?.isTTY);
+}
+
+export async function dashboard(argv, { stdout = process.stdout, stderr = process.stderr } = {}) {
   // Before the probe and before the browser. `evestack open --help` checked only
   // for --no-open, so it went on to fetch /api/health and then LAUNCH A BROWSER —
   // help is a question, and the answer to it is not a new window.
   if (wantsHelp(argv)) {
-    stdout.write(OPEN_USAGE);
+    stdout.write(DASHBOARD_USAGE);
     return 0;
   }
 
@@ -316,7 +346,10 @@ export async function open(argv, { stdout = process.stdout, stderr = process.std
   stdout.write("\n");
   stdout.write(`      ${c.brandBold(url)}\n`);
   if (password) {
-    stdout.write(`      ${c.dim("sign in")}  ${c.bold(user)} ${c.dim("/")} ${c.bold(password)}\n`);
+    const shown = showSecrets(stdout)
+      ? c.bold(password)
+      : c.dim("(not printed to a pipe; it is EVESTACK_AUTH_PASSWORD in .env.local)");
+    stdout.write(`      ${c.dim("sign in")}  ${c.bold(user)} ${c.dim("/")} ${shown}\n`);
   } else {
     stdout.write(
       `      ${c.yellow("EVESTACK_AUTH_PASSWORD is not set")}${c.dim(", so the dashboard 503s")}\n`,
@@ -330,7 +363,7 @@ export async function open(argv, { stdout = process.stdout, stderr = process.std
   if (!healthy) {
     stdout.write(`  ${c.dim(`${g.arrow} `)}${c.bold("docker compose --profile dashboard up -d")}\n\n`);
     stdout.write(
-      `  ${c.dim("Then `evestack open` again. `evestack status` says what else is down.")}\n\n`,
+      `  ${c.dim("Then `evestack dashboard` again. `evestack status` says what else is down.")}\n\n`,
     );
     return 1;
   }
@@ -343,7 +376,7 @@ export async function open(argv, { stdout = process.stdout, stderr = process.std
   // stopped, which reads like it was cut off. Both branches now end in a
   // sentence about the state of the world.
   if (argv.includes("--no-open")) {
-    stdout.write(`  ${c.green("Answering.")}${c.dim(" Run `evestack open` without --no-open to launch it.")}\n\n`);
+    stdout.write(`  ${c.green("Answering.")}${c.dim(" Run `evestack dashboard` without --no-open to launch it.")}\n\n`);
     return 0;
   }
   stdout.write(`  ${c.green("Answering.")}${c.dim(" Opening it now…")}\n\n`);
@@ -371,3 +404,14 @@ function launchBrowser(url) {
     // Already printed above.
   }
 }
+
+/**
+ * `evestack open`, the name this command shipped under.
+ *
+ * Aliased rather than removed. It is in the scaffolder's finish screen, in the
+ * README, in docs written months ago, and in people's shell history; a rename
+ * that breaks all of those to gain a better word is a bad trade. `dashboard` is
+ * the name that gets printed from here on, because it is the one someone guesses
+ * when they want the dashboard and have not read anything.
+ */
+export const open = dashboard;

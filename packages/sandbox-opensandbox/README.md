@@ -63,7 +63,12 @@ every command ran in `/workspace` no matter what was asked for.
   persisted and reused. A server restart lands back in the same filesystem instead of silently
   handing the agent an empty one. If the sandbox was reaped upstream, a fresh one is created.
 - **`shutdown()` pauses rather than kills.** eve reattaches on the next turn; killing would
-  discard a `/workspace` the session still owns. It falls back to `kill()` if pause fails.
+  discard a `/workspace` the session still owns. It falls back to `kill()` if pause fails,
+  and reports an error if both provider operations fail.
+- **`stop()` preserves state; `delete()` removes it.** Eve's authored stop boundary pauses
+  compute and rejects provider errors without deleting the filesystem. Explicit deletion
+  kills the sandbox, honors an already-aborted signal before sending the request, and
+  reports provider failures. The OpenSandbox SDK cannot cancel a kill already in flight.
 - **A null exit code is reported as failure**, not success — `137`, the conventional
   "killed" code. OpenSandbox reports no exit code when a command did not complete (a
   server-side timeout kill, an OOM, a stream that just ends), and telling the model a killed

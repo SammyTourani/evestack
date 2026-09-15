@@ -18,46 +18,72 @@ import { join } from "node:path";
  *     for a recurring check belong in a file you can open, not in a prompt
  *     buried in TypeScript that needs a redeploy to change.
  *
- *  2. An acknowledgement token. The agent is told to reply with HEARTBEAT_OK
- *     when there is nothing worth reporting.
+ *  2. An acknowledgement token — and eve, not evestack, is what drops it. The
+ *     agent is told to reply with exactly `<eve-empty-delivery/>` when there is
+ *     nothing worth reporting. That string is not something this file invented:
+ *     it is eve's own EMPTY_DELIVERY_SENTINEL.
  *
- *     ── AND NOTHING DROPS IT. READ THIS BEFORE ENABLING THE HEARTBEAT. ──
+ *     WHAT THIS BLOCK USED TO SAY, AND WHY IT IS GONE. It said the token (then
+ *     the literal `HEARTBEAT_OK`) reached your channel because nothing could
+ *     filter it: this handler hands the turn to eve, eve posts the reply itself,
+ *     and evestack never sees the text. Every one of those mechanics is still
+ *     true. The conclusion is not, because eve now drops the reply on its own.
+ *     Read out of the copy this template pins — node_modules/eve, 0.54.3 — not
+ *     inferred from a release note:
  *
- *     This block used to say "the wrapper drops the message". It does not, and
- *     there is no filter in this file that would. There used to be one — an
- *     exported `isWorthDelivering(reply)` predicate — called from nowhere, with
- *     a comment saying so. It has been deleted rather than left in a template
- *     people read and edit: a function that is exported, named after the thing
- *     it would do, and wired to nothing reads as a working feature whatever the
- *     comment above it says. The rule it encoded is one line, and is recorded
- *     here instead so that whoever wires it does not have to rediscover it: a
- *     reply is worth delivering if it still has 300 or more characters once the
- *     token is stripped out. ("HEARTBEAT_OK, nothing to report" is still nothing
- *     to report.) The threshold is borrowed from OpenClaw, where it is what
- *     stopped the same feature becoming spam.
+ *       dist/src/shared/empty-delivery.js declares the sentinel and
+ *       `hasEmptyDeliverySentinel(text)`, which trims and accepts exactly
+ *       `<eve-empty-delivery/>` or its HTML-escaped twin
+ *       `&lt;eve-empty-delivery/&gt;`. Nothing else, and nothing merely
+ *       CONTAINING one.
  *
- *     Why no such filter can simply be called from here: this handler hands the
- *     turn to eve with `receive()`, and eve posts the reply itself:
+ *       dist/src/harness/emission.js runs that predicate on the completed
+ *       message of every turn, unconditionally — no flag, no policy, no opt-in
+ *       above it. When it matches, and the step is neither a tool-call step nor
+ *       a content filter, the event emitted is `message.completed` with
+ *       `message: null`.
  *
- *         "message.completed"(e, t) {
- *           e.finishReason === `tool-calls` || !e.message || await t.telegram.post(e.message)
- *         }
+ *       dist/src/harness/tool-loop.js (handleStepResult) applies the same test to
+ *       what gets written down: the assistant message is recorded as null and its
+ *       step messages are dropped, so a quiet hour does not accumulate in the
+ *       conversation's history either.
  *
- *     (eve/dist/src/public/channels/telegram/defaults.js). evestack never sees
- *     the reply text, so it cannot filter it. Enable the heartbeat as it stands
- *     and a quiet hour delivers the literal string "HEARTBEAT_OK" to your
- *     channel — which is the hourly notification this design exists to prevent.
+ *       and every channel's default `message.completed` handler declines to post
+ *       a null message. Telegram and Discord: `e.finishReason !== "tool-calls" &&
+ *       e.message && post(e.message)`. Slack: `if (!e.message) { startTyping();
+ *       return }`. (dist/src/public/channels/{telegram,discord,slack}/defaults.js
+ *       — the same three channels loadChannel() below accepts, which is not a
+ *       coincidence: a fourth would need this checked again.)
  *
- *     Two ways out, neither of them a one-liner, which is why this is written
- *     down rather than quietly patched:
- *       - Ask for an EMPTY reply instead of a token. eve's own `!e.message`
- *         check then drops it, with no override anywhere. Cheap, but it rests on
- *         the model returning nothing rather than a space.
- *       - Override `message.completed` on the channel via TelegramChannelEvents
- *         and apply the 300-character rule there. Correct, but it must first
- *         distinguish a heartbeat turn from a chat turn: applied to both, it
- *         would swallow a user's real one-word answer, which is worse than the
- *         spam it fixes.
+ *     So a quiet hour now sends nothing at all, and the 300-character rule this
+ *     block used to record for whoever wired the missing filter is moot. There is
+ *     no filter left to wire, and the deleted `isWorthDelivering` predicate is
+ *     not coming back.
+ *
+ *     TWO EDGES WORTH KNOWING BEFORE YOU TRUST IT.
+ *
+ *     The sentinel must be the WHOLE reply. eve narrowed the check to "the entire
+ *     response, apart from surrounding whitespace" on purpose (CHANGELOG b3ce510,
+ *     0.52.4) so that a reply which quotes or explains the marker is still
+ *     delivered. `<eve-empty-delivery/>, nothing to report` is therefore a
+ *     message, exactly as `HEARTBEAT_OK, nothing to report` was. A model that
+ *     decorates its acknowledgement still interrupts you; the prompt below asks
+ *     for the marker alone in as many words.
+ *
+ *     And eve's own nudge toward the marker does not always reach this turn.
+ *     `resolveDeliveryPolicy` (dist/src/tasks/delivery-policy.js) attaches
+ *     CONDITIONAL_DELIVERY_INSTRUCTION only for the FIRST turn of a session
+ *     carrying schedule provenance — provenance this dispatch does have, since
+ *     dist/src/channel/schedule.js runs the handler inside a context holding
+ *     ScheduleIdKey and dist/src/execution/runtime-context.js copies it onto the
+ *     session. But a heartbeat aimed at a chat you already talk in CONTINUES that
+ *     conversation instead of opening a session (eve's own docs/schedules.mdx,
+ *     "Session continuity": handler schedules start a new session on every fire
+ *     "unless they send to an existing conversation"), and turn 200 of a Telegram
+ *     DM is not turn 0. That is why the instruction is spelled out in the prompt
+ *     below rather than left to the policy: the policy is a bonus on the fires
+ *     that do open a session, and the unconditional drop in emission.js is what
+ *     this feature actually rests on.
  *
  *  3. A cheap turn — INTENDED, NOT IMPLEMENTED. This block used to credit
  *     `isolatedSession` for keeping each wake-up out of the main conversation's
@@ -73,9 +99,19 @@ import { join } from "node:path";
  * pleasant surprise. Set EVESTACK_HEARTBEAT_CHANNEL to turn it on.
  */
 
-/** The token the agent is asked to reply with when there is no news. Nothing
- *  strips it — see the note above on why no filter can run here. */
-const ACK = "HEARTBEAT_OK";
+/**
+ * The reply the agent is asked to give when there is no news, and the whole of
+ * the "it only speaks when there is something to say" promise.
+ *
+ * Spelled as a literal rather than imported. eve declares it as
+ * EMPTY_DELIVERY_SENTINEL in dist/src/shared/empty-delivery.js, but its
+ * `exports` map has no subpath that reaches that module (74 entries, none of
+ * them `./shared`), so an import would have to dig into the package's build
+ * output — which moves between releases with no type error to warn you. A
+ * literal that eve's own predicate is tested against (test/heartbeat.test.mjs)
+ * fails loudly instead. If eve ever exports it, import it and delete this.
+ */
+const ACK = "<eve-empty-delivery/>";
 
 const CRON = process.env.EVESTACK_HEARTBEAT_CRON?.trim() || "0 * * * *";
 
@@ -131,7 +167,7 @@ async function readTasks(): Promise<string | null> {
 
 async function fire(
   channelName: string,
-  { receive, waitUntil, appAuth }: ScheduleHandlerArgs,
+  { to, waitUntil, appAuth }: ScheduleHandlerArgs,
 ): Promise<void> {
   // Which conversation to speak into. Every channel's target has a different
   // shape — Telegram wants a chatId, Slack a channelId — so this is JSON rather
@@ -150,16 +186,18 @@ async function fire(
 
   const channel = loadChannel(channelName);
 
-  const dispatch = receive(channel as never, {
-    target: target as never,
-    message:
-      `${tasks}\n\n---\n` +
+  // eve 0.54 split the old single-call `receive(channel, {target, message, auth})`
+  // into addressing and sending: `to(channel, target)` returns a handle whose
+  // `send(message, {auth})` does the dispatch. Same two arguments, one more hop.
+  const dispatch = to(channel as never, target as never).send(
+    `${tasks}\n\n---\n` +
       `You are running as a scheduled heartbeat, not in a conversation. Work through the ` +
       `checks above. If nothing needs the user's attention, reply with exactly ${ACK} and ` +
-      `nothing else. Only write a real message when there is something they would want to ` +
-      `be interrupted for.`,
-    auth: appAuth,
-  });
+      `nothing else at all — no greeting, no explanation, nothing before or after it, because ` +
+      `eve only suppresses a reply that is that marker and nothing else. Only write a real ` +
+      `message when there is something they would want to be interrupted for.`,
+    { auth: appAuth },
+  );
 
   // `waitUntil(p)` WITHOUT awaiting `p` is what made every heartbeat record
   // itself `completed` in a handful of milliseconds, whatever happened.

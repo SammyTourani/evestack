@@ -13,11 +13,22 @@ to whichever provider is already selected.
 | --- | --- | --- |
 | unset, or `openai` | `OPENAI_API_KEY` | `gpt-5-mini` |
 | `anthropic` | `ANTHROPIC_API_KEY` | `claude-sonnet-5` |
-| `ollama` | none | `qwen3` |
+| `openrouter` | `OPENROUTER_API_KEY` | `qwen/qwen3.8-27b` |
+| `ollama` | none | `qwen3:0.6b` |
+| `compatible` | `EVESTACK_COMPATIBLE_API_KEY` (optional) | none — set it yourself |
 
-`create-evestack` asks which one you want and writes both lines. Anything other than those three
+`create-evestack` asks which one you want and writes both lines. Anything other than those five
 values is rejected at boot with the list above rather than silently treated as OpenAI — a
 misspelled provider is a mistake, not a preference.
+
+**`openrouter`** is one key for 400+ models behind a single OpenAI-shaped API, including the
+open-weight catalogue and some `:free` variants. Changing model afterwards is one line of
+`.env.local`; there is no provider package to install.
+
+**`compatible`** is anything else that speaks the OpenAI wire format — LM Studio, llama.cpp's
+server, vLLM, Groq, Together, an internal gateway. It **requires** `EVESTACK_BASE_URL`, and that
+is never defaulted: falling back to OpenAI's URL would send a request meant for your own network
+to a third party, with whatever key happened to be set.
 
 One thing that table does not cover, and it decides whether long-term memory works: **embeddings**.
 `openai` has an embeddings endpoint on the same key. `ollama` has one, but it is a **second pull**
@@ -28,10 +39,47 @@ are in [long-term memory](/docs/memory).
 
 ## Ollama
 
+### The model has to be able to call tools
+
+This is the first thing to get right, and it is not obvious. evestack is an agent, and almost
+everything it does is a tool call: `remember` and `recall`, approvals, schedules, the Docker
+sandbox, and every Composio toolkit. A model that cannot emit a tool call does not run slower —
+it answers in prose and does nothing, and it will describe work it did not do.
+
+Google's Gemma 3 is the model people most often hit this with. It is genuinely excellent for its
+size, and it **cannot call tools** at any size: its Ollama template references no `.Tools`, and a
+pulled `gemma3:1b` reports `capabilities: ["completion"]`. Check any model before committing to it:
+
+```bash
+ollama show gemma3:1b | grep -A5 Capabilities
+```
+
+If you want Gemma *and* tools, reach it through `openrouter` instead — `google/gemma-4-26b-a4b-it:free`
+is both free and tool-capable there.
+
+### Which local model
+
+Small is much smaller than people expect. Every model below can call tools except where marked,
+and sizes are what `ollama pull` reports:
+
+| Model | Download | Tools | Notes |
+| --- | --- | --- | --- |
+| `granite4:350m-h` | 366 MB | yes | the smallest thing that can still drive this agent |
+| `qwen3:0.6b` | 523 MB | yes | **the wizard's default** — tiny and reliable at tool calls |
+| `llama3.2:1b` | 1.3 GB | yes | a good fallback if 0.6b struggles |
+| `qwen3:1.7b` | 1.4 GB | yes | noticeably better reasoning, still small |
+| `qwen3:4b` | 2.5 GB | yes | the sweet spot on a 16 GB machine |
+| `qwen3` | 5.2 GB | yes | the old default; needs real headroom |
+| `gemma3:270m` | 292 MB | **no** | chat only |
+| `gemma3:1b` | 815 MB | **no** | chat only |
+
+Budget the model's download **plus about 4 GB** for Docker, Postgres, the dashboard and the agent.
+On an 8 GB laptop that rules out `qwen3` and leaves everything above it comfortable.
+
 For zero cost, total:
 
 ```bash
-ollama pull qwen3                # the chat model
+ollama pull qwen3:0.6b           # the chat model — 523 MB
 ollama pull nomic-embed-text     # embeddings — a separate model, and `remember` needs it
 ```
 
@@ -39,7 +87,7 @@ Then set **both** of these in `.env.local`:
 
 ```bash
 EVESTACK_PROVIDER=ollama
-EVESTACK_MODEL=qwen3
+EVESTACK_MODEL=qwen3:0.6b
 ```
 
 `EVESTACK_PROVIDER` is the one that selects the local path. The model name on its own is handed
@@ -66,16 +114,18 @@ Raise it for a model with a bigger window; set it too high and compaction fires 
 save the turn. Both are ignored on the hosted providers, whose models the catalog does know.
 
 <Warning>
-  **Check your free RAM first.** qwen3 is 5.2 GB, and it loads on top of Docker, Postgres, the
-  dashboard and the agent — plus the 274 MB embedding model once memory is used. On a machine
-  without roughly *both model sizes + 4 GB* to spare, this does not degrade gracefully — it can
-  take minutes to answer a one-word prompt and can take the host down. On a laptop already
-  running the rest of the stack, a hosted key is the practical choice.
+  **Check your free RAM first.** Whatever you pull loads on top of Docker, Postgres, the dashboard
+  and the agent — plus the 274 MB embedding model once memory is used. Without roughly *the model
+  size + 4 GB* to spare this does not degrade gracefully: it can take minutes to answer a one-word
+  prompt, and it can take the host down. That is what rules out the old 5.2 GB `qwen3` default on
+  an 8 GB laptop, and why `qwen3:0.6b` at 523 MB is the default now. The wizard marks anything too
+  large for the machine it is running on *before* you pick it.
 </Warning>
 
 <Note>
-  Local models generally have weaker tool-calling than gpt-5-mini or Claude. That's the honest
-  tradeoff for $0 total cost — try it, and switch to a cloud key if tool use feels unreliable.
+  Local models generally have weaker tool-calling than gpt-5-mini or Claude, and the small ones
+  more so. That's the honest tradeoff for $0 total cost — try it, and switch to a larger local
+  model, an OpenRouter key, or a cloud key if tool use feels unreliable.
 </Note>
 
 ## What it costs on disk
@@ -88,10 +138,14 @@ Measured on macOS with Colima, one project, clean Docker:
 | Docker images | ~2.0 GB | ~2.0 GB |
 | Postgres volume | ~70 MB | ~70 MB |
 | Project directory | ~300 MB | ~300 MB |
-| `qwen3` + `nomic-embed-text` | not pulled | 5.5 GB |
-| **Total** | **≈ 2.4 GB** | **≈ 7.9 GB** |
+| `qwen3:0.6b` + `nomic-embed-text` | not pulled | 0.8 GB |
+| **Total** | **≈ 2.4 GB** | **≈ 3.2 GB** |
 
-**Budget 10 GB free on the local-model path, 4 GB with an API key.** That leaves room to grow;
+The old default, `qwen3` at 5.2 GB, made that last row 5.5 GB and the total ≈ 7.9 GB. Swapping the
+default for a model a tenth of the size is most of the reason this table changed.
+
+**Budget 5 GB free on the local-model path, 4 GB with an API key** — more if you pull a larger
+model from the table above. That leaves room to grow;
 the flat totals do not.
 
 The image figure is `pgvector/pgvector:pg17` at 646 MB, the dashboard at 1.05 GB unpacked from a
@@ -156,7 +210,7 @@ not survive a container rebuild the way Postgres does.
 **`@workflow/world-postgres` fails at boot with a protocol or spec version error.**
 It is not pinned to an exact version somewhere. `eve` needs the `5.0.0-beta` line, so npm's
 `latest` (the 4.x line) is wrong — and so is the `beta` dist-tag, which now resolves past the
-release eve 0.30.8 can talk to. Pin `5.0.0-beta.32` exactly; see
+release eve 0.54.3 can talk to. Pin `5.0.0-beta.42` exactly; see
 [Troubleshooting](/docs/troubleshooting) for the spec-version message.
 
 **The dashboard can't reach the database.**

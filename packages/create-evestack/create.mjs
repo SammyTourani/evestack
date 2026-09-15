@@ -26,11 +26,20 @@ import {
   cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   basename, C, DASHBOARD_IMAGE, detectPm, dim, freePort, makePrompter, ok,
   packageVersion, REPO, say, shellQuote, step, templateDir, warn, writeSecretFile,
 } from "./shared.mjs";
-import { blank, box, c, color, g, row, rule, shortPath, task, wordmark } from "./ui.mjs";
+import {
+  EMBED_MODEL, LOCAL, NO_TOOLS_COST, REMOTE, fits, humanSize, localBadge, probeLocalModel,
+  recommendedLocal, totalGb,
+} from "./models.mjs";
+import {
+  CATALOG_HINT, gated, loadCatalog, needsBadge, summarise,
+} from "./catalog.mjs";
+import { BACK, CANCEL, ask as pick, group, option, runSteps } from "./wizard.mjs";
+import { blank, box, c, color, g, pad, row, rule, shortPath, task, wordmark } from "./ui.mjs";
 
 /** One finished thing, in the aligned two-column shape every command uses. */
 const done = (label, detail) => row(g.OK, label, c.dim(detail), "", { labelWidth: 13 });
@@ -38,22 +47,6 @@ const done = (label, detail) => row(g.OK, label, c.dim(detail), "", { labelWidth
 /* -------------------------------------------------------------------------- */
 /* the wizard's shape                                                          */
 /* -------------------------------------------------------------------------- */
-
-/**
- * How many questions are left.
- *
- * The wizard asked four things with no indication of how many were coming, so
- * every prompt was potentially the last one or the first of twenty — which is
- * the difference between answering and abandoning. Naming the step also gives
- * the Ollama RAM warning and the Composio explanation somewhere to sit that is
- * not the middle of a question.
- */
-const STEPS = 4;
-function stepHeader(n, title) {
-  blank();
-  say(`  ${g.MARK} ${c.bold(title)}  ${c.dim(`· step ${n} of ${STEPS}`)}`);
-  blank();
-}
 
 /** padEnd against printable width, for the provider table. */
 function padTo(s, n) {
@@ -81,13 +74,47 @@ function padTo(s, n) {
 export const PROVIDERS = new Map([
   ["1", { id: "openai", keyVar: "OPENAI_API_KEY", model: "gpt-5-mini", keyHint: "https://platform.openai.com/api-keys" }],
   ["2", { id: "anthropic", keyVar: "ANTHROPIC_API_KEY", model: "claude-sonnet-5", keyHint: "https://console.anthropic.com/settings/keys" }],
-  ["3", { id: "ollama", keyVar: null, model: "qwen3", keyHint: null }],
+  // 3 stays Ollama, and 4 is appended rather than inserted, because these
+  // numbers are a published interface and renumbering one would silently give
+  // someone a different provider than the one that worked yesterday.
+  //
+  // MEASURED 2026-09-14, because the comment here used to say
+  // "`echo 3 | npx create-evestack` is in people's shell history and in their
+  // CI" and that is not true of any published version. `main` computes
+  // `nonInteractive = args.yes || !process.stdin.isTTY`, and `makePrompter`
+  // builds no readline at all when it is set — so a pipe is treated exactly
+  // like `--yes`, every `ask` returns its fallback, and a piped `3` is read by
+  // nobody. The run says so out loud ("No answer, so this takes 1: openai
+  // gpt-5-mini"), which is the only reason this is a wrong promise rather than
+  // a silent wrong answer.
+  //
+  // The numbers are still the right shape and still must not be renumbered:
+  // they are what this table will answer with the day a pipe is distinguished
+  // from `--yes`. They are just not reachable yet.
+  //
+  // The model behind 3 DID change — `qwen3` (5.2 GB) to `qwen3:0.6b` (523 MB).
+  // That is the point of the change rather than a side effect of it: the old
+  // default was the largest local model on the list, picked for a laptop that
+  // then had to run it beside Docker, Postgres, the dashboard and the agent.
+  ["3", { id: "ollama", keyVar: null, model: "qwen3:0.6b", keyHint: null }],
+  ["4", { id: "openrouter", keyVar: "OPENROUTER_API_KEY", model: "qwen/qwen3.8-27b", keyHint: "https://openrouter.ai/keys" }],
+  // Appended for the same reason 4 was. It is last here and FIRST in the TTY
+  // list, which is not a contradiction: this path exists for `--yes` and CI,
+  // where a browser sign-in cannot happen and so the friendliest option is the
+  // least useful one.
+  ["5", { id: "chatgpt", keyVar: null, model: "gpt-5.6-sol", keyHint: null, signIn: true }],
 ]);
+
+/** "1, 2 or 3" — derived, so adding a provider cannot leave the prose behind. */
+function choiceList() {
+  const keys = [...PROVIDERS.keys()];
+  return `${keys.slice(0, -1).join(", ")} or ${keys.at(-1)}`;
+}
 
 /** Taken only when there is nobody to ask: `--yes`, CI, a heredoc, a dead pipe. */
 export const DEFAULT_PROVIDER = "1";
 
-export const PROVIDER_QUESTION = "Choose 1, 2 or 3:";
+export const PROVIDER_QUESTION = "Which provider?";
 
 /**
  * A bound on the loop below, and the reason there is one.
@@ -128,11 +155,561 @@ export async function chooseProvider({ ask, closed = () => false, nonInteractive
     if (closed()) break;
     complain(
       answer === ""
-        ? "This one decides the provider, so it is not guessed. Type 1, 2 or 3."
-        : `${JSON.stringify(printable(answer))} is not one of them. Type 1, 2 or 3.`,
+        ? `This one decides the provider, so it is not guessed. Type ${choiceList()}.`
+        : `${JSON.stringify(printable(answer))} is not one of them. Type ${choiceList()}.`,
     );
   }
   return { provider: PROVIDERS.get(DEFAULT_PROVIDER), defaulted: true };
+}
+
+/**
+ * What is wrong with this path, said in one line, or null if nothing is.
+ *
+ * Split from the asking so the wizard can re-ask and `--yes` can still fail
+ * hard with the same words.
+ */
+export function targetProblem(target, existing) {
+  if (existing.kind === "file") {
+    return { short: `${shortPath(target)} is a file, not a directory.`, why: "create makes a new directory and fills it." };
+  }
+  if (existing.kind === "unreadable") {
+    return {
+      short: `${shortPath(target)} cannot be read — ${existing.code}.`,
+      why:
+        existing.code === "EACCES" || existing.code === "EPERM"
+          ? "This user does not have permission to look inside it."
+          : "The filesystem refused the lookup.",
+    };
+  }
+  if (existing.kind === "directory" && existing.entries.length > 0) {
+    const n = existing.entries.length;
+    // Naming what is in there is usually the whole explanation: almost every
+    // collision is an earlier scaffold the reader forgot about.
+    const looksScaffolded = existing.entries.includes("package.json");
+    return {
+      short: `${shortPath(target)} already exists and is not empty.`,
+      why: looksScaffolded
+        ? `It holds ${n} ${n === 1 ? "entry" : "entries"} including package.json — probably an earlier project.`
+        : `It holds ${n} ${n === 1 ? "entry" : "entries"}.`,
+    };
+  }
+  return null;
+}
+
+/**
+ * The nearest name that is free: `my-agent`, then `my-agent-2`, `my-agent-3`.
+ *
+ * Offered as the default on the re-ask, so recovering from a collision is one
+ * keystroke rather than a decision.
+ */
+export function freeNameNear(name, exists = (p) => existsSync(p), cwd = process.cwd()) {
+  const full = (n) => (isAbsolute(n) ? n : resolve(cwd, n));
+  if (!exists(full(name))) return name;
+  for (let n = 2; n < 100; n += 1) {
+    const candidate = `${name}-${n}`;
+    if (!exists(full(candidate))) return candidate;
+  }
+  return `${name}-${Date.now()}`;
+}
+
+/* -------------------------------------------------------------------------- */
+/* the door for someone who has never seen this before                         */
+/* -------------------------------------------------------------------------- */
+
+/** Where someone who answers "I have no idea" is sent. */
+export const QUICKSTART_URL = "https://evestack.vercel.app/docs/quickstart";
+
+/**
+ * A tutorial video, when there is one.
+ *
+ * Deliberately a named constant sitting empty rather than a URL invented here.
+ * The wizard offers whichever of these exists, so filling this in is the whole
+ * change — no branch to add, no copy to rewrite.
+ */
+export const TUTORIAL_URL = "";
+
+export const ORIENT = { SETUP: "setup", DOCS: "docs", GUIDED: "guided" };
+
+/**
+ * How to hand a URL to the desktop, per platform.
+ *
+ * Exported because the only part worth testing is this mapping; actually
+ * spawning a browser in a test suite is how a CI run ends up with 400 tabs.
+ */
+export function browserCommand(platform = process.platform) {
+  if (platform === "darwin") return { command: "open", args: [] };
+  // The empty string is the window TITLE argument. Without it `start` treats a
+  // quoted URL as the title and opens nothing, which is the classic Windows
+  // bug in this three-line function.
+  if (platform === "win32") return { command: "cmd", args: ["/c", "start", ""] };
+  return { command: "xdg-open", args: [] };
+}
+
+/**
+ * Open a URL, and never let that failure become the wizard's failure.
+ *
+ * Detached and fully ignored: a browser launched from here outlives the
+ * scaffolder, and an inherited stdio would let Chrome's startup chatter land in
+ * the middle of the next question. `unref` so Node does not wait on it at exit.
+ *
+ * The URL is ALSO printed, every time, whether or not this works. Over SSH, in
+ * a container, in WSL without an X server and on a headless CI box there is no
+ * browser to open, and the failure mode of the spawn is silence — so the
+ * printed line is the real deliverable and the spawn is the convenience.
+ */
+function openInBrowser(url) {
+  try {
+    const { command, args } = browserCommand();
+    const child = spawn(command, [...args, url], { stdio: "ignore", detached: true });
+    child.on("error", () => {});
+    child.unref();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Open the dashboard the moment the stack is up.
+ *
+ * WHY THIS IS AUTOMATIC. Every route to the dashboard used to be a command the
+ * reader had to notice, in a terminal that was about to scroll, describing a
+ * thing they had not seen yet. The dashboard is what makes the rest of this
+ * legible — it is where the sessions, the cost, the approvals and the traces
+ * are — and asking someone to type a command to discover the product's best
+ * screen is asking most of them not to.
+ *
+ * Three gates, all of them real:
+ *
+ *   --no-open   the explicit opt-out, for anyone who does not want a window.
+ *   no TTY      CI, a heredoc, a Dockerfile. Opening a browser on a build agent
+ *               is at best noise. (`--yes` never reaches here: it declines to
+ *               start containers, so `up` is false and this is not called.)
+ *   not healthy the container is started but the app inside it may still be
+ *               booting, and a tab that lands on ECONNREFUSED is worse than no
+ *               tab — the reader's first impression of the dashboard would be a
+ *               browser error page.
+ *
+ * Returns whether a window was actually opened, because the line printed under
+ * this has to say something different in each case and must never claim a
+ * browser that did not open.
+ */
+async function autoOpenDashboard(url, { suppressed = false } = {}) {
+  if (suppressed) return false;
+  if (!process.stdout.isTTY) return false;
+  try {
+    const response = await fetch(new URL("/api/health", url), {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!response.ok) return false;
+  } catch {
+    return false;
+  }
+  return openInBrowser(url);
+}
+
+/**
+ * The question before the questions.
+ *
+ * The old wizard opened on "Project name?", which assumes the reader already
+ * decided to have a project. Someone who ran this to find out what it is had
+ * four prompts and no way out except Ctrl-C, and the docs were never mentioned.
+ *
+ * Returns one of ORIENT. The docs answer is not an exit: it opens the page and
+ * keeps going in guided mode, because they already typed the command and
+ * throwing them back to a shell prompt to re-run it is a worse ending than
+ * reading with the wizard still open.
+ */
+export async function orient({ ask, borrowStdin, nonInteractive = false }) {
+  const items = [
+    option("Set it up", ORIENT.SETUP, {
+      badge: "~2 min", note: "four questions, sensible defaults",
+    }),
+    option(TUTORIAL_URL ? "Watch the tutorial first" : "Read the quickstart first", ORIENT.DOCS, {
+      note: "opens in your browser, then comes back here",
+    }),
+    option("Explain as we go", ORIENT.GUIDED, {
+      note: "the same questions, with what each one means",
+    }),
+  ];
+  const { value: answer } = await pick({
+    question: "First time with evestack?",
+    items, borrowStdin, nonInteractive, fallbackAsk: ask, canBack: false, canForward: false,
+  });
+  if (answer !== ORIENT.DOCS) return answer ?? ORIENT.SETUP;
+
+  const url = TUTORIAL_URL || QUICKSTART_URL;
+  openInBrowser(url);
+  say(`    ${c.dim(`${g.arrow} ${url}`)}`);
+  dim("Opened in your browser. This wizard is still here — carry on when you are ready.");
+  blank();
+  return ORIENT.GUIDED;
+}
+
+/**
+ * A paragraph that only a reader who asked for it has to scroll past.
+ *
+ * Guided mode is the whole reason the orientation question is worth asking: it
+ * lets the default path stay short for people who know what they want, without
+ * leaving everyone else to infer what a "World" or a "toolkit" is from a prompt.
+ */
+function explain(guided, lines) {
+  if (!guided) return;
+  for (const line of lines) say(`    ${c.dim(line)}`);
+  blank();
+}
+
+/* -------------------------------------------------------------------------- */
+/* which model                                                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The list, grouped, with the facts attached that the old three-line table had
+ * nowhere to put.
+ *
+ * Sizes are marked against THIS machine, not against an abstract one. On 8 GB
+ * the 5.2 GB model is flagged before it is chosen, which is the difference
+ * between a warning and a working wizard: the old one printed the same fact one
+ * question later, after the answer was already in.
+ */
+function modelItems(ram) {
+  const remote = (badge) => REMOTE.filter((r) => r.badge === badge);
+  const toOption = (r) => option(r.label, { kind: "remote", spec: r }, { badge: r.model, note: r.note });
+  return [
+    // First, because it is the shortest path from this prompt to a working
+    // agent: no key to go and find, no card, no download. Everything below it
+    // asks the reader to leave and come back with something.
+    group(`Subscription ${g.sep} no API key, no download`),
+    ...remote("subscription").map(toOption),
+    group(""),
+    group(`Hosted ${g.sep} you bring an API key`),
+    ...remote("hosted").map(toOption),
+    group(""),
+    group(`Gateway ${g.sep} one key, hundreds of models`),
+    ...remote("gateway").map(toOption),
+    group(""),
+    group(`Local ${g.sep} free, private, nothing leaves this machine`),
+    ...LOCAL.map((m) => {
+      const badge = localBadge(m, ram);
+      return option(m.label, { kind: "local", spec: m }, {
+        badge: badge.text, badgeColor: badge.color, note: m.note,
+      });
+    }),
+    group(""),
+    group("Other"),
+    ...remote("custom").map((r) => option(r.label, { kind: "remote", spec: r }, { note: r.note })),
+  ];
+}
+
+/**
+ * Ask which model, the way a list should be asked.
+ *
+ * Non-interactive still goes through `chooseProvider` — the numbered path, its
+ * five-attempt bound and its EOF handling are unchanged and still the only
+ * thing `--yes`, CI and every existing test touch. This function is the TTY
+ * path layered over it, not a replacement for it.
+ */
+export async function chooseModel({ ask, closed, borrowStdin, nonInteractive = false, guided = false, canBack = true, ram = totalGb() }) {
+  if (nonInteractive || !process.stdin.isTTY) {
+    const { provider, defaulted } = await chooseProvider({ ask, closed, nonInteractive });
+    if (defaulted) dim(`No answer, so this takes ${DEFAULT_PROVIDER}: ${provider.id} ${provider.model}.`);
+    return settle({ ...provider, isLocal: provider.id === "ollama", defaulted });
+  }
+
+  explain(guided, [
+    "The agent needs a model that can CALL TOOLS — that is how it reaches memory,",
+    "your Composio toolkits, the sandbox and approvals. A model without them will",
+    "answer in prose and quietly do nothing, so anything that cannot is marked.",
+  ]);
+
+  const answer = await pick({
+    question: "Which model should the agent use?",
+    hint: "Tool calling is the one property that matters — anything without it is marked.",
+    items: modelItems(ram), borrowStdin, fallbackAsk: ask, canBack, initial: 0,
+  });
+  if (answer.back) return BACK;
+  if (answer.cancelled) return CANCEL;
+  const chosen = answer.value;
+
+  if (chosen.kind === "local") {
+    const m = chosen.spec;
+    return settle({ id: "ollama", model: m.model, keyVar: null, keyHint: null, keyShape: null,
+      isLocal: true, ctx: m.ctx, expectsTools: m.tools, defaulted: false });
+  }
+
+  const spec = chosen.spec;
+  if (!spec.needsBaseUrl) return settle({ ...spec, isLocal: false, defaulted: false });
+
+  // An OpenAI-compatible endpoint is two more facts, and neither has a default
+  // worth guessing: the URL is whatever they are running, and the model id is
+  // that server's own name for it. LM Studio's port is offered because it is by
+  // far the most common answer and typing it is the only friction here.
+  blank();
+  dim("Anything that speaks the OpenAI API: LM Studio, llama.cpp, vLLM, Groq, Together.");
+  const baseUrl = await ask("Base URL:", "http://127.0.0.1:1234/v1");
+  const model = await ask("Model id:", "local-model");
+  return settle({ ...spec, model, baseUrl, isLocal: isLoopback(baseUrl), defaulted: false });
+
+  /**
+   * Everything that follows from the choice, done here rather than by the
+   * caller.
+   *
+   * The .env.local lines, the key prompt, the Ollama probes and the RAM check
+   * all depend on which model was picked and on nothing else, so they belong
+   * with the picking. Leaving them in `main` is what made this step impossible
+   * to re-enter: coming back to change the model has to re-ask for the matching
+   * key, and a caller holding half the state cannot do that.
+   */
+  async function settle(picked) {
+    let ollamaBaseUrl = null;
+    let apiKeyLine = "";
+    let modelLine = `EVESTACK_PROVIDER=${picked.id}\nEVESTACK_MODEL=${picked.model}`;
+    // Only the OpenAI-compatible path carries one, and agent.ts refuses to start
+    // without it rather than silently calling api.openai.com.
+    if (picked.baseUrl) modelLine += `\nEVESTACK_BASE_URL=${picked.baseUrl}`;
+    // A local model's context window has to be declared: eve sizes compaction
+    // from the AI Gateway catalog, which has never heard of qwen3:0.6b.
+    if (picked.id === "ollama" && picked.ctx) modelLine += `\nEVESTACK_CONTEXT_WINDOW=${picked.ctx}`;
+
+    if (picked.id === "ollama") {
+      const ollama = await checkLocalModel(picked.model);
+      ollamaBaseUrl = ollama.baseUrl;
+      // The RAM warning fires only when it is TRUE of this machine and this
+      // model. It used to be unconditional prose about a 5.2 GB download,
+      // printed even to someone who had been given no other local option.
+      const spec2 = LOCAL.find((m) => m.model === picked.model);
+      if (spec2 && !fits(spec2, ram)) {
+        const safe = recommendedLocal(ram);
+        blank();
+        warn(`${picked.model} is ${humanSize(spec2.mb)}, and this machine has ${Math.round(ram)} GB.`);
+        warn("Beside Docker, Postgres, the dashboard and the agent that is tight enough to hang it.");
+        dim(`${safe.label} (${humanSize(safe.mb)}) is the largest one that comfortably fits here.`);
+      }
+      apiKeyLine = "# Local models need no API key.";
+    } else if (picked.signIn) {
+      // Nothing to paste and nothing to store: the ChatGPT session is a refresh
+      // token in the OS secret store, put there by a browser sign-in after the
+      // install.
+      //
+      // Ahead of the non-interactive branch deliberately. That one writes
+      // `${keyVar}=`, which for a provider with `keyVar: null` is the literal
+      // line `null=` — a variable named null in .env.local, mentioned in no
+      // .env.example, complained about by nothing until the first model call.
+      //
+      // Today no input can actually reach it here: a pipe is treated as `--yes`
+      // (see PROVIDERS above), so the numbered path only ever returns its
+      // default and a provider with no key never arrives with `closed()` true.
+      // The order is kept anyway, because the branch below is a trap that costs
+      // one line to disarm and the day pipes are honoured it stops being
+      // theoretical.
+      apiKeyLine = "# ChatGPT subscription — no API key. The session lives in your OS keychain.";
+      blank();
+      dim("No key to find: you sign in with your ChatGPT account after the install.");
+      // The two things this option cannot do, said at the moment of choosing
+      // rather than discovered later — the reader can still press ← and take
+      // something else. Both are real and neither is obvious from the name.
+      //
+      // The second one is the sharper of the two: the Codex backend serves chat
+      // and nothing else, so `remember` and `recall` have no embeddings model.
+      // lib/memory.ts throws with the same two fixes named here, but it throws
+      // at the first `remember` — inside a tool call, days later, where nothing
+      // on screen connects back to this prompt.
+      dim("Runs where you can sign in; a container or remote host needs a key instead.");
+      dim("Memory needs embeddings; add OPENAI_API_KEY later, or serve them from Ollama.");
+    } else if (nonInteractive || closed()) {
+      // `--yes`, CI, a heredoc. There is nobody to paste a key, and askKey would
+      // spend its three attempts talking to a closed pipe before giving up — so
+      // the line is written empty and the finish screen's "add your key before
+      // you start" branch picks it up, exactly as it did before this step
+      // learned to prompt.
+      apiKeyLine = `${picked.keyVar}=`;
+    } else if (picked.keyVar && !(picked.id === "compatible" && picked.isLocal)) {
+      say();
+      explain(guided, [
+        "The key is written to .env.local, which is git-ignored and read by nothing",
+        "but this project. Leave it blank and the scaffold still completes — the",
+        "agent just will not answer until you add it.",
+      ]);
+      if (picked.keyHint) dim(`Paste a key now, or press Enter to skip — ${picked.keyHint}`);
+      const { key } = await askKey({ ask, closed, label: picked.keyVar, shape: picked.keyShape });
+      apiKeyLine = `${picked.keyVar}=${key}`;
+    } else {
+      // A loopback OpenAI-compatible server (LM Studio, llama.cpp) authenticates
+      // nobody. Asking for a key there is asking a question with no right answer.
+      apiKeyLine = `# ${picked.model} on ${picked.baseUrl ?? "this machine"} needs no API key.`;
+    }
+    return { ...picked, ollamaBaseUrl, apiKeyLine, modelLine };
+  }
+}
+
+/**
+ * Everything that has to be true before a local model can actually answer.
+ *
+ * Four separate things can be wrong and each has a different fix, which is why
+ * this reports rather than throws: a scaffold with a missing model pull is
+ * still a good scaffold, it just has one command left to run.
+ *
+ * The capability probe is the one that did not exist before. A table in a
+ * scaffolder cannot know that someone re-quantised a tag or renamed a model,
+ * and "can this thing call tools" is the single question that decides whether
+ * evestack works at all — so it is asked of the running Ollama, about the exact
+ * model chosen, rather than assumed from the name.
+ */
+async function checkLocalModel(model) {
+  const ollama = await inspectOllama(model);
+  if (!ollama.installed) {
+    warn("Ollama is not on PATH. Install it from https://ollama.com, then:");
+    warn(`  ollama pull ${model} && ollama pull ${EMBED_MODEL}`);
+    return ollama;
+  }
+  if (!ollama.running) {
+    warn(`Ollama is installed but not answering on ${ollama.baseUrl}. Start it, then:`);
+    warn(`  ollama pull ${model} && ollama pull ${EMBED_MODEL}`);
+    return ollama;
+  }
+  if (!ollama.hasChatModel) {
+    warn(`Ollama does not have "${model}" yet. Before your first message:`);
+    warn(`  ollama pull ${model}`);
+  } else {
+    const probe = await probeLocalModel(ollama.baseUrl, model);
+    if (probe.known && probe.tools === false) {
+      blank();
+      warn(`${model} cannot call tools — your Ollama reports: ${probe.capabilities.join(", ")}.`);
+      warn("The agent will start, answer normally, and silently do none of this:");
+      for (const lost of NO_TOOLS_COST) warn(`  ${g.skip} ${lost}`);
+      dim("Pick a different model at step 2 if you want any of it. Everything else still works.");
+      blank();
+    }
+  }
+  // A SECOND, SEPARATE model. The chat model cannot produce embeddings, so
+  // `remember` and `recall` fail without this one — and they fail inside a tool
+  // call, where the model tends to report success anyway.
+  if (!ollama.hasEmbedModel) {
+    warn("Long-term memory needs a local embedding model, which is a separate pull:");
+    warn(`  ollama pull ${EMBED_MODEL}`);
+    dim("Skip it if you do not want the remember/recall tools; nothing else uses it.");
+  }
+  return ollama;
+}
+
+/* -------------------------------------------------------------------------- */
+/* credentials                                                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Three tries, then move on.
+ *
+ * The old behaviour was one prompt whose answer was written to .env.local
+ * unexamined. Paste a key with a newline in it, paste the wrong key, paste
+ * nothing because you wanted to find the page first — all three produced a
+ * clean-looking scaffold and a failure much later, at the first model call or
+ * the first toolkit, where nothing on screen connects back to this moment.
+ *
+ * Three is from the shape of the mistake rather than from a convention: the
+ * realistic recovery is "oh, wrong tab" and that takes one retry, sometimes
+ * two. A fourth prompt is no longer helping, it is refusing to let someone
+ * leave — so the exit is automatic and it is announced.
+ *
+ * `shape` only ever rejects a key that CANNOT be right (an OpenAI key not
+ * starting `sk-`). It deliberately does not try to judge length or charset:
+ * this runs offline, prefixes are stable and published, and a validator that
+ * guesses is a validator that eventually rejects a real key.
+ */
+export const KEY_ATTEMPTS = 3;
+
+/** A bound on the name loop, for the same reason CHOICE_ATTEMPTS has one. */
+const NAME_ATTEMPTS = 6;
+
+export async function askKey(
+  { ask, closed = () => false, label, shape = null, attempts = KEY_ATTEMPTS, complain = warn, note = dim },
+) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const answer = (await ask(`${label}:`, "")).trim();
+    if (closed()) return { key: "", skipped: true, reason: "eof" };
+    if (answer && (!shape || shape.test(answer))) return { key: answer, skipped: false };
+
+    const left = attempts - attempt;
+    if (left === 0) break;
+    // "1 tries left" and "a OPENROUTER_API_KEY" both shipped in the first draft.
+    // Copy assembled from a count and a variable name has to handle both, or the
+    // retry prompt — the one screen whose entire job is to sound patient — reads
+    // like it is itself broken.
+    const tries = `${left} ${left === 1 ? "try" : "tries"} left`;
+    const article = /^[AEIOU]/.test(label) ? "an" : "a";
+    complain(
+      answer === ""
+        ? `Nothing pasted — ${tries}. Keep pressing Enter to skip it.`
+        : `That is not ${article} ${label} (they start "${shape.source.replace(/[\^]/g, "")}") — ${tries}.`,
+    );
+  }
+  note(`Skipping ${label}. Add it to .env.local later and restart; nothing else here depends on it.`);
+  return { key: "", skipped: true, reason: "attempts" };
+}
+
+/**
+ * Where eve keeps the ChatGPT sign-in, inside the project's own node_modules.
+ *
+ * Not a public export, and named here in ONE place so that when eve moves it
+ * there is a single line to change and a test that fails the day it moves
+ * (`test/chatgpt-signin.test.mjs`) rather than a scaffold that quietly stops
+ * offering the easiest option.
+ *
+ * Importing eve's module by path rather than reimplementing its OAuth is a
+ * deliberate trade. The flow is PKCE against auth.openai.com with a fixed
+ * client id, a loopback listener on :1455, a device-code fallback for SSH, and
+ * a refresh token written to the OS secret store under service `eve`. Every one
+ * of those is a detail eve owns and can change; a copy of them here would look
+ * right and rot silently. A path that stops resolving is the loud failure, and
+ * it costs the user one printed sentence.
+ */
+const CHATGPT_AUTH_PATH = "node_modules/eve/dist/src/setup/flows/chatgpt-auth.js";
+
+/**
+ * Sign in to ChatGPT, the way eve itself does.
+ *
+ * Runs AFTER the dependency install, because the module above does not exist
+ * until then. Never fatal, and never silent: the three endings are `ready`
+ * (this account can now answer), `skipped` (nobody is at the keyboard), and
+ * `failed` — and all three carry the same one-line recovery, because `/model`
+ * inside `eve dev` is the answer to every one of them.
+ *
+ * That recovery only exists because of how the template asks for this model.
+ * Every other evestack provider builds a `LanguageModel` in agent.ts, which eve
+ * reads as source-owned and responds to by DISABLING its own model picker. The
+ * ChatGPT route is the exception eve carved out for itself — it classifies as
+ * `provider === "codex"` and keeps the picker live — so a sign-in that fails
+ * here is recoverable inside the running agent instead of being a dead end.
+ */
+export async function signInToChatGpt({ target, nonInteractive = false, importer = (url) => import(url) }) {
+  const recovery = "npm run dev, then /model → ChatGPT subscription";
+  if (nonInteractive) {
+    return { state: "skipped", why: "no browser to open in --yes mode", command: recovery };
+  }
+
+  let ensureChatGptAuth;
+  try {
+    ({ ensureChatGptAuth } = await importer(pathToFileURL(join(target, CHATGPT_AUTH_PATH)).href));
+    if (typeof ensureChatGptAuth !== "function") throw new TypeError("not a function");
+  } catch {
+    return { state: "skipped", why: "this eve keeps its sign-in somewhere else", command: recovery };
+  }
+
+  blank();
+  say(`  ${c.bold("Sign in to ChatGPT")}`);
+  // Said before the browser opens rather than after, because a tab appearing on
+  // its own is alarming in a way that a tab you were told about is not. The
+  // second line is the fact people actually want: this is not another key that
+  // ends up in a file in this directory.
+  dim("Opening your browser. Already signed in through eve? This finishes instantly.");
+  dim("The session is stored in your OS keychain — nothing is written to this project.");
+  try {
+    // eve prints the URL, the device code and its own "waiting" line through
+    // this log; `dim` keeps them in the wizard's voice instead of bare stdout.
+    await ensureChatGptAuth({ log: (line) => { for (const l of String(line).split("\n")) dim(`  ${l}`); } });
+    return { state: "ready" };
+  } catch (error) {
+    return { state: "failed", why: error?.message ?? "sign-in did not finish", command: recovery };
+  }
 }
 
 /**
@@ -167,15 +744,31 @@ function printable(answer) {
  * with its own output withheld is strictly worse than noise. `--verbose` puts
  * the raw stream back for anyone debugging the commands themselves.
  *
- * `shell` on Windows only, and not for cosmetic consistency: `npm`, `pnpm`,
- * `yarn` and `bun` are installed there as `.cmd` shims, which CreateProcess
- * cannot execute, so a bare spawn fails with ENOENT before the package manager
- * runs at all. templates/default/scripts/dev.mjs and start.mjs already pass
- * exactly this for exactly this reason. Every argument this file passes is a
- * literal without spaces, which is what makes the shell safe to use here.
+ * WINDOWS GOES THROUGH cmd.exe, and this file no longer asks `shell: true` to
+ * arrange that. See `spawnTarget` below for the whole mechanism; the short
+ * version is that `shell: true` builds the command line by joining argv with
+ * single spaces and escaping nothing, which is safe only if every argument is
+ * a literal — and this file's arguments are not.
  *
- * NOT VERIFIED ON WINDOWS — there is no Windows machine in this loop. The claim
- * being matched is the one the template's own scripts already make.
+ * THE CLAIM THAT USED TO BE HERE WAS FALSE, and it is worth recording rather
+ * than quietly deleting, because it read like a security argument. It said
+ * "Every argument this file passes is a literal without spaces, which is what
+ * makes the shell safe to use here." Two of them are not literals: `addOne`
+ * passes `item.id`, which comes off the live registry at eve.dev and was
+ * type-checked and nothing more, and it passes every `--answer` string, which is
+ * built from that registry item's own NDJSON output. Under `shell: true` a name
+ * containing `&` runs whatever follows it, on the machine of someone who ticked
+ * a row in a picker that does not display ids at all.
+ *
+ * Both ends are now closed: catalog.mjs refuses an id that is not shaped like an
+ * id (see `isRegistryId` there), and `spawnTarget` escapes what it spawns so
+ * that correctness does not depend on the first gate holding.
+ *
+ * NOT VERIFIED ON WINDOWS — there is no Windows machine in this loop. What
+ * `spawnTarget` emits is deliberately the same thing Node's own `shell: true`
+ * emits — same cmd.exe, same `/d /s /c`, same outer quotes, same
+ * `windowsVerbatimArguments` — with the tokens escaped instead of bare, so the
+ * behaviour being relied on is the one that was already being relied on.
  *
  * ASYNC, and that part is load-bearing rather than a style choice. The first
  * version of this used `spawnSync`, which blocks the event loop for the whole
@@ -222,13 +815,108 @@ export function childEnv() {
   return env;
 }
 
+/**
+ * One token, escaped so that cmd.exe hands it to the child unchanged.
+ *
+ * Two parsers see this string in sequence and they are not the same parser, so
+ * it is escaped twice, in that order:
+ *
+ *   1. The C runtime's argv splitter, which is what the child program itself
+ *      uses to turn one command line back into an argument vector. Its rule is
+ *      the awkward one: backslashes are literal EXCEPT immediately before a
+ *      double quote, where each pair collapses to one and an odd one escapes
+ *      the quote. So a run of backslashes before a quote — and before the
+ *      closing quote we are about to add — has to be doubled first.
+ *
+ *   2. cmd.exe, which scans the line BEFORE any of that and acts on
+ *      `& | < > ( ) %` and friends. Its escape is the caret, and the caret is
+ *      only honoured OUTSIDE a quoted region — inside one it is passed through
+ *      as a literal character. That is the trap, and it is why the quotes added
+ *      in step 1 are themselves caret-escaped: the whole token reaches cmd as
+ *      an unquoted run of caret-escaped characters, cmd strips every caret, and
+ *      what is left is the properly quoted string step 1 built.
+ *
+ * The metacharacter set is deliberately wider than cmd's own. Escaping a
+ * character cmd would have passed through costs nothing — `^x` outside quotes
+ * is just `x` — while missing one costs everything, so the list errs long.
+ *
+ * The algorithm is the one documented at qntm.org/cmd and implemented by
+ * `cross-spawn`, which is the de-facto answer for this on npm. It is reproduced
+ * here rather than depended on because this package is deliberately
+ * dependency-free (see the header): a scaffolder that installs a package before
+ * it can spawn one is the thing that header refuses.
+ */
+export function quoteForCmd(token) {
+  let text = String(token);
+  // A run of backslashes followed by a quote: double the run, escape the quote.
+  text = text.replace(/(\\*)"/g, '$1$1\\"');
+  // A run of backslashes at the end, which is about to be followed by the
+  // closing quote: double it for the same reason.
+  text = text.replace(/(\\*)$/, "$1$1");
+  text = `"${text}"`;
+  // Now cmd's pass, over the whole thing including the quotes just added.
+  return text.replace(/([()\][%!^"`<>&|;, *?])/g, "^$1");
+}
+
+/**
+ * The command line cmd.exe is given after `/d /s /c`.
+ *
+ * Wrapped in one outer pair of quotes because that is what `/s` consumes: with
+ * `/s /c`, cmd strips the first and last character of the argument when they are
+ * both quotes and treats the remainder verbatim. Node does exactly this under
+ * `shell: true`; the difference is what goes between the quotes.
+ */
+export function windowsCommandLine(command, args) {
+  return `"${[command, ...args].map(quoteForCmd).join(" ")}"`;
+}
+
+/**
+ * What to actually hand `spawn`, per platform.
+ *
+ * POSIX is the identity case: no shell, no quoting, argv goes straight to
+ * execve, and nothing a registry says can become a command.
+ *
+ * Windows cannot be the identity case, and the reason is narrow and real. `npm`,
+ * `pnpm`, `yarn`, `bun` and every `node_modules/.bin` entry are `.cmd` shims
+ * there; CreateProcess cannot execute a batch file, and since the fix for
+ * CVE-2024-27980 Node refuses to try — a `.cmd` spawned without a shell throws
+ * EINVAL. Something has to run cmd.exe. The question is only who builds the
+ * command line, and `shell: true` builds it by joining argv with spaces:
+ *
+ *     [file, ...args].join(' ')        // node:child_process, normalizeSpawnArguments
+ *
+ * with no escaping and no quoting of any kind. So this returns the same spawn
+ * `shell: true` would have produced — comspec, `/d /s /c`, one quoted command
+ * line, `windowsVerbatimArguments` — with `quoteForCmd` applied to each token.
+ *
+ * `platform` is a parameter so the Windows branch is testable on a machine that
+ * is not Windows, which is every machine this repository is developed on.
+ */
+export function spawnTarget(command, args, platform = process.platform) {
+  if (platform !== "win32") {
+    return { file: command, args, windowsVerbatimArguments: false };
+  }
+  return {
+    // The same lookup Node does for `shell: true`. ComSpec is normally an
+    // absolute path to cmd.exe; the literal is the fallback for an environment
+    // that has lost it.
+    file: process.env.ComSpec || "cmd.exe",
+    args: ["/d", "/s", "/c", windowsCommandLine(command, args)],
+    windowsVerbatimArguments: true,
+  };
+}
+
 function run(cwd, command, args, { verbose = false } = {}) {
   return new Promise((resolve) => {
-    const child = spawn(command, args, {
+    const launch = spawnTarget(command, args);
+    const child = spawn(launch.file, launch.args, {
       cwd,
       env: childEnv(),
       stdio: verbose ? "inherit" : ["ignore", "pipe", "pipe"],
-      shell: process.platform === "win32",
+      // `shell` is deliberately absent. On POSIX `launch` is the command and its
+      // argv unchanged; on Windows it is cmd.exe with a command line this file
+      // escaped, which is the whole point of `spawnTarget`.
+      windowsVerbatimArguments: launch.windowsVerbatimArguments,
     });
     let output = "";
     const collect = (chunk) => {
@@ -348,10 +1036,16 @@ function readRegistry(pm) {
     // A `timeout` rather than a Promise.race: a race leaves the child running,
     // and an orphan holding a pipe keeps the event loop alive past the point
     // where the scaffold has finished and should have exited.
-    const child = spawn(pm, ["config", "get", "registry"], {
+    // Through `spawnTarget` for the same reason `run` is, even though `pm` here
+    // is one of four literals from `detectPm()` and the arguments are constants:
+    // two spawn shapes in one file is how the escaped one stops being the one
+    // everybody copies. The `timeout` still kills cmd.exe rather than the
+    // package manager under it, exactly as it did under `shell: true`.
+    const launch = spawnTarget(pm, ["config", "get", "registry"]);
+    const child = spawn(launch.file, launch.args, {
       env: childEnv(),
       stdio: ["ignore", "pipe", "ignore"],
-      shell: process.platform === "win32",
+      windowsVerbatimArguments: launch.windowsVerbatimArguments,
       timeout: 5_000,
     });
     child.stdout?.setEncoding("utf8").on("data", (chunk) => {
@@ -427,6 +1121,482 @@ export function looksLikeANetworkFailure(output) {
  * that never started produces a second, more confusing error on top of the
  * first.
  */
+/**
+ * What landed, and what is still owed — printed once, at the end, where it can
+ * be acted on.
+ *
+ * Split three ways on purpose. Installed-and-ready needs no words. Installed-
+ * but-gated is the interesting row: the files are there and one credential is
+ * missing, so the useful thing is the exact line that finishes it. Not-installed
+ * is a failure and says so.
+ *
+ * This exists because the alternative is a wizard that quietly leaves three of
+ * your five channels half-configured and lets you discover it one message at a
+ * time.
+ */
+function reportPicked({ ready, pending, failed, moved = [], broke = null, missingEnv = [], deferred = [], pm }) {
+  // Chosen and deliberately not installed. Printed as commands rather than as a
+  // list of names, because the only thing anyone wants from this paragraph is
+  // the ability to paste it later — and printed even though nothing went wrong,
+  // because a choice with no trace on the finish screen reads as a choice that
+  // was ignored.
+  if (deferred.length > 0) {
+    blank();
+    say(`  ${c.bold(`${deferred.length} left for later, as you asked:`)}`);
+    for (const item of deferred) {
+      say(`      ${c.dim(g.branch)} ${c.bold(item.title)} ${c.dim(g.sep)} ${c.dim(`${pm} exec eve add ${item.id}`)}`);
+    }
+    dim("Run them from inside the project, in any order, whenever you want them.");
+  }
+  if (ready.length === 0 && pending.length === 0 && failed.length === 0) return;
+
+  blank();
+  if (ready.length > 0) {
+    say(`  ${c.green(g.ok)} ${c.bold(`${ready.length} ready`)} ${c.dim(g.sep)} ${c.dim(ready.map((i) => i.title).join(", "))}`);
+  }
+  if (pending.length > 0) {
+    say(`  ${c.yellow(g.warn)} ${c.bold(`${pending.length} installed, setup unfinished`)}`);
+    for (const item of pending) {
+      say(`      ${c.dim(g.branch)} ${c.bold(item.title)} ${c.dim(g.sep)} ${c.dim(item.why)}`);
+      say(`        ${c.dim(`${pm} exec ${item.command}`)}`);
+    }
+  }
+  if (failed.length > 0) {
+    say(`  ${c.red(g.fail)} ${c.bold(`${failed.length} did not install`)}`);
+    for (const item of failed) {
+      say(`      ${c.dim(g.branch)} ${c.bold(item.title)} ${c.dim(g.sep)} ${c.dim(`${pm} exec eve add ${item.id}`)}`);
+    }
+  }
+  if (moved.length > 0) {
+    blank();
+    say(`  ${c.dim("The web channel wanted these script names. Yours were kept; its versions moved:")}`);
+    for (const script of moved) {
+      say(`      ${c.dim(g.branch)} ${c.bold(`${pm} run ${script.parked}`)} ${c.dim(g.sep)} ${c.dim(script.command)}`);
+    }
+  }
+  if (missingEnv.length > 0) {
+    blank();
+    say(`  ${c.yellow(g.warn)} ${c.bold("Add these to .env.local, or the agent will not start:")}`);
+    for (const item of missingEnv) {
+      say(`      ${c.dim(g.branch)} ${c.bold(`${item.name}=`)} ${c.dim(`${g.sep} required by ${item.file}`)}`);
+    }
+    dim("These are asserted with `!` in the file the install wrote, which means unset is a");
+    dim("hard failure at boot rather than a warning — `Invalid extension config` names the");
+    dim("zod field and never the variable, so it is spelled out here instead.");
+  }
+  // Last, loudest, and unconditional: an agent that will not compile is not a
+  // finished scaffold, whatever the rows above say.
+  if (broke) {
+    blank();
+    const name = broke.culprit?.title ?? "One of these";
+    say(`  ${c.redBold(`${g.fail} ${name} stops the agent from building.`)}`);
+    if (broke.cause) dim(broke.cause);
+    else if (broke.modulePath) dim(broke.modulePath);
+    blank();
+    say(`  ${c.bold("Until that is undone, `" + pm + " run dev` will not start.")}`);
+    if (broke.culprit) {
+      const file = `agent/extensions/${broke.culprit.id.split("/").pop()}.ts`;
+      say(`    ${c.bold(`rm ${file}`)}`);
+      say(`    ${c.bold(`${pm} uninstall`)} ${c.dim("the package it added, listed in package.json")}`);
+    }
+    dim("A registry item is third-party code, and it can disagree with the versions this");
+    dim("template pins. Removing the item is always the quick way back to a working agent.");
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* installing what was picked                                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Which environment variables the newly-installed files insist on.
+ *
+ * eve's generated wiring says what it needs, in TypeScript, with a non-null
+ * assertion: `agent/extensions/browserbase.ts` is
+
+ *     export default browserbase({ apiKey: process.env.BROWSERBASE_API_KEY! });
+ *
+ * The `!` is the whole signal. An optional setting is written `?? ""` or `?.`;
+ * an asserted one is a promise that the variable is there, and when it is not
+ * the agent does not warn — it refuses to start, with
+ * `Invalid extension config: apiKey: Too small`. That message names a zod field,
+ * not a variable, and nothing on screen connects it back to the thing that was
+ * just installed.
+ *
+ * So the files are read and the assertions are collected. It is a regex over
+ * generated code rather than a parse, which is the right size for the job: the
+ * generator writes this one shape, and a miss costs a hint rather than
+ * producing a wrong one.
+ */
+export function requiredEnvFrom(target, files) {
+  const needed = new Map();
+  for (const file of files) {
+    let source;
+    try {
+      source = readFileSync(join(target, file), "utf8");
+    } catch {
+      continue;
+    }
+    for (const match of source.matchAll(/process\.env\.([A-Z][A-Z0-9_]*)\s*!/g)) {
+      const name = match[1];
+      if (!needed.has(name)) needed.set(name, file);
+    }
+  }
+  return needed;
+}
+
+/** Names already set to something non-empty in the generated .env.local. */
+export function envAlreadySet(target) {
+  const set = new Set();
+  try {
+    for (const line of readFileSync(join(target, ".env.local"), "utf8").split("\n")) {
+      const match = /^\s*([A-Z][A-Z0-9_]*)\s*=\s*(.*)$/.exec(line);
+      if (match && match[2].trim() !== "") set.add(match[1]);
+    }
+  } catch {
+    /* no .env.local is the same as nothing set */
+  }
+  return set;
+}
+
+/** Every file under agent/, relative to the project, for before/after diffing. */
+function agentFiles(target) {
+  const root = join(target, "agent");
+  const found = [];
+  const walk = (dir, prefix) => {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const rel = `${prefix}${entry.name}`;
+      if (entry.isDirectory()) walk(join(dir, entry.name), `${rel}/`);
+      else found.push(`agent/${rel}`);
+    }
+  };
+  walk(root, "");
+  return found;
+}
+
+/**
+ * Prove the agent still compiles after the installs, and name what broke it.
+ *
+ * WHY THIS IS WORTH 1.5 SECONDS. `eve add extension/browserbase` reports a
+ * clean, completed install and then the agent will not start at all:
+ * `@browserbasehq/eve` imports `experimental_generateImage` from `ai`, which
+ * AI SDK v7 no longer exports. Nothing in the install says so. The first sign
+ * is `npm run dev` dying on a module path inside `node_modules`, in a project
+ * the reader has never run before and has no reason to suspect.
+ *
+ * A registry item is third-party code being dropped into a template that pins
+ * its own `ai` version, so this class of mismatch is structural rather than a
+ * one-off — it will happen again with a different package. `eve build` is the
+ * cheapest possible check for it (measured at 1.5s on the failing project) and
+ * it prints both the module and the cause.
+ *
+ * Reported, never undone. The reader chose the item; silently removing it would
+ * be a surprise of a different kind. What they get is the fact, the cause, and
+ * the two commands that reverse it.
+ */
+async function verifyStillBuilds({ target, runner, installed }) {
+  const result = await run(target, runner.command, [...runner.prefix, "build"], { verbose: false });
+  if (result.ok) return null;
+  return explainBuildFailure(result.output, installed);
+}
+
+/**
+ * Read a failed `eve build` and say which installed item caused it.
+ *
+ * Split out from the command so the interesting half is testable without
+ * building anything: the join between a failing module PATH
+ * (`node_modules/@browserbasehq/eve/dist/…`) and a registry ID
+ * (`extension/browserbase`) is a slug match, and slug matches are exactly the
+ * kind of thing that quietly stops working.
+ */
+export function explainBuildFailure(output, installed = []) {
+  const text = String(output ?? "");
+  const modulePath = /Failed to evaluate authored module:\s*\n?\s*(\S+)/.exec(text)?.[1] ?? "";
+  const cause = /Caused by:\s*(.+)/.exec(text)?.[1]?.trim() ?? "";
+  // The path is a package directory and the id is a registry slug, so the join
+  // is the slug appearing in the path. Three characters is the floor: `web`
+  // and `x` would match half of node_modules.
+  const culprit = installed.find((item) => {
+    const slug = String(item.id).split("/").pop().replace(/[^a-z0-9]/gi, "").toLowerCase();
+    return slug.length > 3 && modulePath.toLowerCase().includes(slug);
+  });
+  return { modulePath, cause, culprit };
+}
+
+/**
+ * Install the chosen channels and integrations with eve's own installer.
+ *
+ * `eve add` and not a reimplementation: an evestack project IS an eve project,
+ * the registry is eve's, and the install writes eve's files into eve's layout.
+ * A second installer here would be a second thing to keep current against a
+ * catalogue somebody else publishes.
+ *
+ * `--non-interactive` is the flag that makes this safe to run unattended, and it
+ * was measured rather than assumed: `channel/web` and `channel/telegram` both
+ * complete with exit 0 and a `{"type":"completed"}` line, including on a machine
+ * with no Vercel account, where the setup prints "choose Vercel Connect or
+ * portable credentials" and carries on. Without it, a credential prompt inside a
+ * sub-process would hang the wizard with no way to answer and no way out.
+ *
+ * Failures do not stop the run. Nine installs where the fourth needs an account
+ * you do not have should leave you with eight, not with a dead scaffold — so
+ * each one is reported on its own row and the command to finish it is printed at
+ * the end.
+ */
+/**
+ * Put back any npm script a registry item overwrote, and re-home its version.
+ *
+ * MEASURED, not hypothetical. `eve add channel/web` rewrites the scaffold's
+ * `package.json` scripts to run Next:
+ *
+ *     "dev":   "node --env-file-if-exists=.env.local scripts/dev.mjs"  ->  "next dev"
+ *     "build": "eve build"                                             ->  "next build"
+ *     "start": "node --env-file-if-exists=.env.local scripts/start.mjs" -> "next start"
+ *
+ * For a bare eve project that is right — the Next app IS the app. For an
+ * evestack project it is not: `scripts/dev.mjs` is the wrapper that loads
+ * `.env.local`, points the agent at Postgres and verifies the trace exporter,
+ * and the finish screen this wizard prints ends with `npm run dev   # the
+ * agent`. After the rewrite that command starts a web server instead, and
+ * nothing on screen says so.
+ *
+ * So: every script that existed before the install and changed during it is
+ * restored, and the installer's version is parked under `<name>:web` where it
+ * is still one command away. Scripts the item ADDED are left exactly as they
+ * are — this only ever undoes a collision, never an addition.
+ */
+export function restoreScripts(target, before) {
+  const path = join(target, "package.json");
+  let pkg;
+  try {
+    pkg = JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    return [];
+  }
+  const after = pkg.scripts ?? {};
+  const moved = [];
+  for (const [name, original] of Object.entries(before)) {
+    const now = after[name];
+    if (now === undefined || now === original) continue;
+    // Park the installer's version rather than dropping it: the Next app it
+    // just scaffolded has to be runnable, or installing the channel was
+    // pointless.
+    const parked = `${name}:web`;
+    if (after[parked] === undefined) after[parked] = now;
+    after[name] = original;
+    moved.push({ name, parked, command: now });
+  }
+  if (moved.length === 0) return [];
+  pkg.scripts = after;
+  writeFileSync(path, `${JSON.stringify(pkg, null, 2)}\n`);
+  return moved;
+}
+
+/**
+ * The last NDJSON object eve printed, which is the one that says how it ended.
+ *
+ * eve narrates `eve add --non-interactive` as one JSON object per line and the
+ * final one carries the verdict. Parsed leniently — a line that is not JSON is
+ * ordinary human output from a setup script, not an error.
+ */
+export function lastJsonLine(output) {
+  let found = null;
+  for (const line of String(output ?? "").split("\n")) {
+    const text = line.trim();
+    if (!text.startsWith("{") || !text.endsWith("}")) continue;
+    try {
+      found = JSON.parse(text);
+    } catch {
+      /* a brace-wrapped line that is not JSON is just output */
+    }
+  }
+  return found;
+}
+
+/**
+ * The answer eve itself recommends, in the `--answer key=<JSON>` shape.
+ *
+ * Taking it is exactly what `eve add -y` means — "run setup and accept its
+ * recommended defaults" — so this is not the wizard inventing a preference, it
+ * is the wizard not stopping to ask a question upstream has already answered.
+ * Returns null when there is no recommendation, because guessing one would be
+ * a different thing entirely.
+ */
+export function recommendedAnswer(question) {
+  if (!question?.key) return null;
+  const value = question.recommended ?? question.default;
+  if (value === undefined || value === null) return null;
+  if (Array.isArray(value) && value.length === 0) return null;
+  return `${question.key}=${JSON.stringify(value)}`;
+}
+
+/** At most this many setup questions are auto-answered before giving up. */
+const SETUP_ROUNDS = 4;
+
+/**
+ * Install one registry item, answering what can be answered.
+ *
+ * Three endings, and they are genuinely different things:
+ *
+ *   ready     — installed and set up. Nothing left to do.
+ *   pending   — installed, and setup stopped on something this wizard cannot
+ *               supply: a credential, or a prerequisite like a linked Vercel
+ *               project. The FILES ARE THERE; only the last mile is missing.
+ *   failed    — the install itself did not happen.
+ *
+ * Collapsing `pending` into `failed` is what the first version did, and it told
+ * someone their GitHub channel "did not install" when in fact it had installed
+ * and was one `eve link` away from working. That is a worse lie than silence.
+ */
+async function addOne({ target, runner, item, verbose }) {
+  const answers = [];
+  for (let round = 0; round < SETUP_ROUNDS; round += 1) {
+    const result = await run(
+      target,
+      runner.command,
+      [
+        ...runner.prefix, "add", item.id, "--non-interactive",
+        // Only the first pass installs; the later ones are answering questions
+        // about files that are already on disk.
+        ...(round > 0 ? ["--skip-install"] : []),
+        ...answers.flatMap((answer) => ["--answer", answer]),
+      ],
+      { verbose },
+    );
+    const last = lastJsonLine(result.output);
+
+    if (last?.type === "completed") return { state: "ready" };
+
+    if (last?.type === "blocked" && last.status === "input_required") {
+      const answer = recommendedAnswer(last.question);
+      if (answer) {
+        answers.push(answer);
+        continue;
+      }
+      return {
+        state: "pending",
+        why: last.question?.message ?? "setup needs an answer",
+        command: `eve add ${item.id}`,
+      };
+    }
+
+    if (last?.type === "blocked" && last.status === "prerequisite_required") {
+      return {
+        state: "pending",
+        why: last.prerequisite?.message ?? "setup needs something else first",
+        command: last.prerequisite?.command ?? `eve add ${item.id}`,
+      };
+    }
+
+    if (last?.installed) {
+      return { state: "pending", why: "setup did not finish", command: `eve add ${item.id}` };
+    }
+    return { state: "failed", why: result.ok ? "the installer reported nothing" : "the installer failed" };
+  }
+  return { state: "pending", why: "setup asked more than this wizard can answer", command: `eve add ${item.id}` };
+}
+
+/**
+ * This project's own `eve`, by the name the platform can actually execute.
+ *
+ * On POSIX `node_modules/.bin/eve` is a symlink to the package's bin and there
+ * is nothing to choose. On Windows npm writes THREE files for one bin — `eve`
+ * (a Cygwin-style sh script), `eve.ps1`, and `eve.cmd` — and only the last of
+ * those is something cmd.exe can run. The extensionless one exists, so
+ * `existsSync(eveBin)` said yes and the runner then handed cmd.exe a path to a
+ * shell script; whether that resolves at all depends on cmd's PATHEXT probing
+ * of an already-qualified name, which is not a thing worth depending on.
+ * Naming the shim removes the question.
+ *
+ * `null` rather than a path when nothing is there, so the caller's fallback to
+ * `npx --yes eve` reads as the decision it is.
+ *
+ * `platform` is a parameter for the same reason it is one on `spawnTarget`:
+ * the Windows branch is only ever exercised from a machine that is not Windows.
+ */
+export function localEveBinary(target, platform = process.platform) {
+  const bin = join(target, "node_modules", ".bin", "eve");
+  if (platform === "win32" && existsSync(`${bin}.cmd`)) return `${bin}.cmd`;
+  return existsSync(bin) ? bin : null;
+}
+
+/**
+ * Install the chosen channels and integrations with eve's own installer.
+ *
+ * `eve add` and not a reimplementation: an evestack project IS an eve project,
+ * the registry is eve's, and the install writes eve's files into eve's layout.
+ * A second installer here would be a second thing to keep current against a
+ * catalogue somebody else publishes.
+ *
+ * `--non-interactive` is what makes this safe to run unattended, and it was
+ * measured rather than assumed: it never prompts, and it reports what it needs
+ * as structured JSON instead. Without it a credential prompt inside a
+ * sub-process would hang the wizard with no way to answer and no way out.
+ *
+ * Failures do not stop the run. Nine installs where the fourth needs an account
+ * you do not have should leave you with eight, not with a dead scaffold.
+ */
+async function addRegistryItems({ target, items, verbose }) {
+  if (items.length === 0) return { ready: [], pending: [], failed: [] };
+  const ready = [];
+  const pending = [];
+  const failed = [];
+  // The project's own eve, not a global one and not npx: the scaffold pins a
+  // version, and the installer has to be that version or it writes files the
+  // pinned runtime does not understand.
+  const eveBin = localEveBinary(target);
+  const runner = eveBin ? { command: eveBin, prefix: [] } : { command: "npx", prefix: ["--yes", "eve"] };
+
+  blank();
+  rule();
+  blank();
+
+  // Snapshot before anything runs, so a collision can be told from an addition,
+  // and a newly-written file from one that was always there.
+  const filesBefore = new Set(agentFiles(target));
+  const scriptsBefore = (() => {
+    try {
+      return { ...JSON.parse(readFileSync(join(target, "package.json"), "utf8")).scripts };
+    } catch {
+      return {};
+    }
+  })();
+
+  for (const [index, item] of items.entries()) {
+    const counter = `${index + 1} of ${items.length}`;
+    const row = verbose ? null : task("add", `${item.title} ${c.dim(g.sep)} ${counter}`, { labelWidth: 13 });
+    if (verbose) say(`  ${g.MARK} ${c.bold("add")} ${c.dim(`${item.id}  ${counter}`)}`);
+    const outcome = await addOne({ target, runner, item, verbose });
+    if (outcome.state === "ready") {
+      ready.push(item);
+      row ? row.done(`${item.title} added`) : ok(`${item.title} added`);
+    } else if (outcome.state === "pending") {
+      pending.push({ ...item, ...outcome });
+      row ? row.done(`${item.title} installed ${c.dim("— setup unfinished")}`) : ok(`${item.title} installed`);
+    } else {
+      failed.push({ ...item, ...outcome });
+      row ? row.fail(`${item.title} — ${outcome.why}`) : warn(`${item.title} — ${outcome.why}`);
+    }
+  }
+  const moved = restoreScripts(target, scriptsBefore);
+  // Only worth asking if something actually landed.
+  const broke = ready.length + pending.length > 0
+    ? await verifyStillBuilds({ target, runner, installed: [...ready, ...pending] })
+    : null;
+  const added = agentFiles(target).filter((file) => !filesBefore.has(file));
+  const set = envAlreadySet(target);
+  const missingEnv = [...requiredEnvFrom(target, added)]
+    .filter(([name]) => !set.has(name))
+    .map(([name, file]) => ({ name, file }));
+  return { ready, pending, failed, moved, broke, missingEnv };
+}
+
 async function runStep({ cwd, label, doing, done, command, args, verbose, whenFailed, explain }) {
   if (verbose) say(`  ${g.MARK} ${c.bold(label)} ${c.dim(doing)}`);
   const t = verbose ? null : task(label, doing);
@@ -690,162 +1860,332 @@ export async function create(argv) {
   const nonInteractive = args.yes || !process.stdin.isTTY;
   const positional = args.positional;
 
-  const { ask, confirm, closed, close } = await makePrompter(nonInteractive);
+  const { ask, confirm, borrowStdin, closed, close } = await makePrompter(nonInteractive);
 
-  wordmark({ big: true });
-
-  // ---- name & directory -----------------------------------------------------
-  stepHeader(1, "Where");
-  const name = positional[0] ?? (await ask("Project name?", "my-agent"));
-  const target = isAbsolute(name) ? name : resolve(process.cwd(), name);
-  const existing = inspectTarget(target);
-  if (existing.kind === "file") {
-    close();
-    console.error(
-      `\n${C.red}${target} is a file, not a directory.${C.reset}\n` +
-        `  create makes a new directory and fills it. Give it a name that is free:\n` +
-        `    npx create-evestack ${shellQuote(`${basename(target)}-agent`)}`,
-    );
-    return 1;
-  }
-  if (existing.kind === "unreadable") {
-    close();
-    console.error(
-      `\n${C.red}${target} cannot be read — ${existing.code}.${C.reset}\n` +
-        `  ${existing.code === "EACCES" || existing.code === "EPERM"
-          ? "This user does not have permission to look inside it."
-          : "The filesystem refused the lookup."}\n` +
-        `  Scaffold somewhere you own instead, e.g. ${shellQuote(join(process.cwd(), basename(target)))}.`,
-    );
-    return 1;
-  }
-  if (existing.kind === "directory" && existing.entries.length > 0) {
-    close();
-    console.error(`\n${C.red}${target} already exists and is not empty.${C.reset}`);
-    return 1;
-  }
-
-  say(`    ${c.dim(`${g.arrow} ${shortPath(target)}`)}`);
-
-  // ---- model ----------------------------------------------------------------
-  stepHeader(2, "Model");
-  say(`      ${c.bold("1")}  ${padTo("OpenAI", 11)}${padTo("gpt-5-mini", 18)}${c.dim("best tool-calling per dollar")}`);
-  say(`      ${c.bold("2")}  ${padTo("Anthropic", 11)}${padTo("claude-sonnet-5", 18)}${c.dim("strong tool-calling")}`);
-  say(`      ${c.bold("3")}  ${padTo("Ollama", 11)}${padTo("qwen3", 18)}${c.dim("local, $0, needs RAM headroom")}`);
+  wordmark({ big: true, version: packageVersion() });
   blank();
-  const { provider: chosen, defaulted } = await chooseProvider({ ask, closed, nonInteractive });
-  // The default is still reachable — `--yes`, CI, a closed pipe — but it is no
-  // longer silent. Naming what was taken is the difference between a scaffold
-  // you can trust and one you have to open .env.local to understand.
-  if (defaulted) dim(`No answer, so this takes ${DEFAULT_PROVIDER}: ${chosen.id} ${chosen.model}.`);
-  const useOllama = chosen.id === "ollama";
 
-  // Kept for the finish diagram: whether anything leaves the machine on the
-  // Ollama path depends on this URL, and inspectOllama is out of scope by then.
-  let ollamaBaseUrl = null;
-  let apiKeyLine = "";
-  let modelLine = `EVESTACK_PROVIDER=${chosen.id}\nEVESTACK_MODEL=${chosen.model}`;
-  if (useOllama) {
-    // Three separate things can be missing, and each has a different fix. The
-    // wizard used to check only the first, so someone with Ollama installed but
-    // no model pulled got a clean scaffold, a clean install, and then an opaque
-    // failure on their first message — the point at which they have the least
-    // context for debugging it.
-    const ollama = await inspectOllama(chosen.model);
-    ollamaBaseUrl = ollama.baseUrl;
-    if (!ollama.installed) {
-      warn("Ollama is not on PATH. Install it from https://ollama.com, then:");
-      warn(`  ollama pull ${chosen.model} && ollama pull nomic-embed-text`);
-    } else if (!ollama.running) {
-      warn("Ollama is installed but not answering on " + ollama.baseUrl + ". Start it, then:");
-      warn(`  ollama pull ${chosen.model} && ollama pull nomic-embed-text`);
-    } else {
-      // Pull the models now rather than at first message. `ollama pull` of a
-      // model already present is a no-op that prints one line, so naming both
-      // unconditionally is cheaper than explaining when each is needed.
-      if (!ollama.hasChatModel) {
-        warn(`Ollama has no "${chosen.model}" yet. Before your first message:`);
-        warn(`  ollama pull ${chosen.model}`);
-      }
-      // A SECOND, SEPARATE model. The chat model cannot produce embeddings, so
-      // `remember` and `recall` fail without this one — and they fail inside a
-      // tool call, where the model tends to report success anyway.
-      if (!ollama.hasEmbedModel) {
-        warn("Long-term memory needs a local embedding model, which is a separate pull:");
-        warn("  ollama pull nomic-embed-text");
-        dim("Skip it if you do not want the remember/recall tools; nothing else uses it.");
-      }
-    }
-    // The wizard is where this warning has to land. By the time someone reads
-    // the README section on local models they have usually already run the
-    // stack — and on a machine short of memory the failure is not a slow reply,
-    // it is the whole host going down. qwen3 is 5.2 GB on top of Docker,
-    // Postgres, the dashboard and the agent.
-    warn("qwen3 is 5.2 GB. Budget both model sizes + 4 GB free RAM on top of Docker, Postgres");
-    warn("and the dashboard, or the machine can hang. A hosted key is safer on a laptop.");
-    apiKeyLine = "# Local models need no API key.";
-  } else {
-    say();
-    dim(`Paste a key now, or leave blank and add it later — ${chosen.keyHint}`);
-    const key = await ask(`${chosen.keyVar}:`, "");
-    apiKeyLine = `${chosen.keyVar}=${key}`;
-  }
+  // Asked before the steps, and outside them, because it is not one of the
+  // things the wizard needs to know — it is the question of whether the reader
+  // wants to be asked them at all.
+  const route = positional[0] ? ORIENT.SETUP : await orient({ ask, borrowStdin, nonInteractive });
+  const guided = route === ORIENT.GUIDED;
 
-  // ---- integrations ---------------------------------------------------------
-  stepHeader(3, "Tools");
-  const wantComposio = await confirm(
-    `Enable tool sign-in via Composio? 1,000+ toolkits, the managed ones one click ${C.dim}(Gmail, Slack, Notion, Linear…)${C.reset}`,
-    true,
-  );
-  let composioLine = "# COMPOSIO_API_KEY=ak_...";
-  if (wantComposio) {
-    dim("Get a key at https://app.composio.dev — or leave blank and add it later.");
-    const ck = await ask("COMPOSIO_API_KEY:", "");
-    composioLine = ck ? `COMPOSIO_API_KEY=${ck}` : "COMPOSIO_API_KEY=";
-  }
+  // Fetched once, up front, so the Channels step opens on a list instead of on
+  // a spinner. Two seconds here is invisible; two seconds between a keypress
+  // and a list is the whole feel of the thing.
+  const catalog = await loadCatalog({ offline: nonInteractive });
 
-  // ---- bring it up? ---------------------------------------------------------
-  //
-  // Asked HERE, with the other questions, rather than after the install where it
-  // used to live. Four questions up front and then a wait you can walk away from
-  // beats three questions, a two-minute install, and then a fourth question that
-  // needs you back at the keyboard.
-  stepHeader(4, "Bring it up");
-  const docker = dockerState();
-  const dockerUp = docker === "running";
-  let wantStart = false;
-  if (!dockerUp) {
-    // Two different sentences, because they are two different problems and the
-    // fix for one is not the fix for the other.
-    if (docker === "absent") {
-      warn("No `docker` command found, so this step is skipped — Postgres and the sandbox need it.");
-      dim("Install Docker Engine, Docker Desktop, Colima or OrbStack, then run the commands printed at the end.");
-    } else {
-      warn("Docker is installed but its daemon is not answering, so this step is skipped.");
-      dim("Start it (Docker Desktop, `colima start`, or `sudo systemctl start docker`) — or, if it IS running, check you can reach its socket: `docker version` says which half failed.");
-    }
-  } else if (nonInteractive || !process.stdout.isTTY) {
-    // In CI, in a heredoc, or under --yes, "shall I pull 230 MB" has nobody to
-    // answer it, and a scaffolder that does it anyway is one people stop running
-    // unattended.
-    dim("Skipped: not an interactive terminal. The commands are printed at the end.");
-  } else {
-    wantStart = await confirm(
-      `Start Postgres, create the schema and pull the dashboard? ${C.dim}(~230 MB)${C.reset}`,
-      true,
-    );
-    // The same reasoning as the branch above, one step later. If stdin died
-    // while the question was on screen — a terminal that closed, a harness that
-    // fed its input and left — `confirm` hands back its default, and the default
-    // here starts containers and pulls 200 MB on behalf of nobody. Observed
-    // doing exactly that under a pty whose input had already ended.
-    if (closed()) {
-      wantStart = false;
-      dim("Skipped: stdin closed before this was answered.");
-    }
-  }
+  const ram = totalGb();
+  const ctx = {
+    name: positional[0] ?? null,
+    target: null,
+    model: null,
+    channels: [],
+    integrations: [],
+    wantComposio: false,
+    composioKey: "",
+    wantStart: false,
+    // Set by the Review step's third door. Declared here, with everything else
+    // a step can decide, because a step reaching back into `main` for a field
+    // that exists only after someone chose it is how a re-entered wizard ends
+    // up carrying an answer from a run it already abandoned.
+    skipAdds: false,
+    fatal: null,
+    cancelled: false,
+  };
 
+  const byId = new Map([...catalog.channels, ...catalog.integrations].map((item) => [item.id, item]));
+  const chosenChannels = () => ctx.channels.map((id) => byId.get(id)).filter(Boolean);
+  const chosenIntegrations = () => ctx.integrations.map((id) => byId.get(id)).filter(Boolean);
+
+  /** A registry row as a list option: what it is, and what it will ask you for. */
+  const registryItems = (rows) =>
+    rows.map((row) => {
+      const badge = needsBadge(row);
+      return option(row.title, row.id, { badge: badge.text, badgeColor: badge.color, note: row.note });
+    });
+
+  const steps = [
+    {
+      title: "Where",
+      run: async () => {
+        explain(guided, [
+          "A new directory with the agent, a docker-compose.yml and the scripts that",
+          "drive them. Nothing outside it is touched, and it is a git repo from the",
+          "start — which is also the boundary of what eve copies into the sandbox.",
+        ]);
+
+        // A COLLISION IS NOT FATAL HERE, AND USED TO BE.
+        //
+        // `npx evestack create my-agent` against an existing directory printed
+        // the wordmark, printed this step's header, then exited on a bare line:
+        //
+        //     /Users/…/my-agent already exists and is not empty.
+        //
+        // A wizard that has just drawn its first screen and has a prompter open
+        // does not need to quit over a name. It asks for another one — and
+        // offers a free one as the default, so recovering is one keystroke.
+        //
+        // The hard exit survives for the case that genuinely cannot be asked:
+        // `--yes`, CI, a closed pipe. Same words, different ending.
+        //
+        // EXACTLY ONE `ask` PER PASS. The first draft asked at the top of the
+        // loop and again at the bottom, so a rejected name prompted twice and
+        // the second prompt discarded the first answer.
+        let taken = ctx.name;
+        let suggestion = freeNameNear("my-agent");
+        for (let attempt = 0; attempt < NAME_ATTEMPTS; attempt += 1) {
+          const answer = taken ?? (await ask(`Project name? ${c.dim(`(${suggestion})`)}`, suggestion));
+          taken = null;
+          if (!answer || (closed() && !answer)) return CANCEL;
+
+          const target = isAbsolute(answer) ? answer : resolve(process.cwd(), answer);
+          const problem = targetProblem(target, inspectTarget(target));
+          if (!problem) {
+            ctx.name = answer;
+            ctx.target = target;
+            say(`    ${c.dim(`${g.arrow} ${shortPath(target)}`)}`);
+            return undefined;
+          }
+
+          // Nobody to ask: `--yes`, CI, a pipe that closed. Fail with the words.
+          if (nonInteractive || closed()) {
+            ctx.fatal = `${problem.short}\n  ${problem.why}`;
+            return CANCEL;
+          }
+
+          blank();
+          warn(problem.short);
+          dim(problem.why);
+          suggestion = freeNameNear(basename(answer));
+          dim(`${shortPath(resolve(process.cwd(), suggestion))} is free — press Enter to take it.`);
+          blank();
+        }
+        ctx.fatal = "Too many names in a row were already taken.";
+        return CANCEL;
+      },
+    },
+    {
+      title: "Model",
+      run: async (_ctx, { first }) => {
+        const model = await chooseModel({
+          ask, closed, borrowStdin, nonInteractive, guided, ram, canBack: !first,
+        });
+        if (model === BACK) return BACK;
+        if (model === CANCEL) return CANCEL;
+        ctx.model = model;
+        return undefined;
+      },
+    },
+    {
+      title: "Channels",
+      get count() {
+        return ctx.channels.length;
+      },
+      run: async () => {
+        explain(guided, [
+          "A channel is a way in: somewhere a person says something and the agent",
+          "answers. Web Chat is self-contained; the rest connect an account you",
+          "already have. Everything here is installed with `eve add`.",
+        ]);
+        const answer = await pick({
+          question: "Where should people reach your agent?",
+          hint: `Pick any number, or none. ${CATALOG_HINT}.`,
+          items: registryItems(catalog.channels),
+          multi: true,
+          selected: new Set(ctx.channels),
+          borrowStdin,
+          nonInteractive,
+          fallbackAsk: ask,
+        });
+        if (answer.back) return BACK;
+        if (answer.cancelled) return CANCEL;
+        ctx.channels = answer.values ?? [];
+        return undefined;
+      },
+    },
+    {
+      title: "Integrations",
+      get count() {
+        return ctx.integrations.length;
+      },
+      run: async () => {
+        explain(guided, [
+          "Tools the agent can call: memory backends, a browser, a code host, a",
+          "task tracker. These are the verbs — the channels above are the doors.",
+        ]);
+        const answer = await pick({
+          question: "What should your agent be able to work with?",
+          hint: `Optional. ${CATALOG_HINT}.`,
+          items: registryItems(catalog.integrations),
+          multi: true,
+          selected: new Set(ctx.integrations),
+          borrowStdin,
+          nonInteractive,
+          fallbackAsk: ask,
+        });
+        if (answer.back) return BACK;
+        if (answer.cancelled) return CANCEL;
+        ctx.integrations = answer.values ?? [];
+        return undefined;
+      },
+    },
+    {
+      title: "Services",
+      run: async () => {
+        explain(guided, [
+          "Postgres holds every session, memory and trace, so the agent survives a",
+          "restart. The dashboard is a container that reads it and can drive the agent.",
+          "Composio is one key for 1,000+ third-party toolkits.",
+        ]);
+        ctx.wantComposio = await confirm(
+          `Enable tool sign-in via Composio? 1,000+ toolkits, the managed ones one click ${C.dim}(Gmail, Slack, Notion, Linear…)${C.reset}`,
+          ctx.wantComposio || true,
+        );
+        if (ctx.wantComposio) {
+          dim("Get a key at https://app.composio.dev — or press Enter to skip.");
+          // Three tries and then on with the scaffold. This prompt was the one
+          // place someone reliably stalled: the key lives behind a sign-up, so
+          // the honest first answer is an empty line, and the old wizard took
+          // that as final and wrote `COMPOSIO_API_KEY=` — a setting that looks
+          // configured and is not.
+          const { key } = await askKey({ ask, closed, label: "COMPOSIO_API_KEY", shape: /^ak_/ });
+          ctx.composioKey = key;
+        }
+
+        const docker = dockerState();
+        if (docker !== "running") {
+          // Two different sentences, because they are two different problems and
+          // the fix for one is not the fix for the other.
+          if (docker === "absent") {
+            warn("No `docker` command found, so this step is skipped — Postgres and the sandbox need it.");
+            dim("Install Docker Engine, Docker Desktop, Colima or OrbStack, then run the commands printed at the end.");
+          } else {
+            warn("Docker is installed but its daemon is not answering, so this step is skipped.");
+            dim("Start it (Docker Desktop, `colima start`, or `sudo systemctl start docker`) — or, if it IS running, check you can reach its socket: `docker version` says which half failed.");
+          }
+          ctx.wantStart = false;
+        } else if (nonInteractive || !process.stdout.isTTY) {
+          // In CI, in a heredoc, or under --yes, "shall I pull 230 MB" has
+          // nobody to answer it, and a scaffolder that does it anyway is one
+          // people stop running unattended.
+          dim("Skipped: not an interactive terminal. The commands are printed at the end.");
+          ctx.wantStart = false;
+        } else {
+          ctx.wantStart = await confirm(
+            `Start Postgres, create the schema and pull the dashboard? ${C.dim}(~230 MB)${C.reset}`,
+            true,
+          );
+          // If stdin died while the question was on screen — a terminal that
+          // closed, a harness that fed its input and left — `confirm` hands back
+          // its default, and the default here starts containers and pulls
+          // 200 MB on behalf of nobody.
+          if (closed()) {
+            ctx.wantStart = false;
+            dim("Skipped: stdin closed before this was answered.");
+          }
+        }
+        return undefined;
+      },
+    },
+    {
+      title: "Review",
+      run: async (_ctx, { last }) => {
+        const channels = chosenChannels();
+        const integrations = chosenIntegrations();
+        const model = ctx.model;
+        say(`  ${c.bold("Review your agent")}`);
+        blank();
+        const line = (label, value) => say(`    ${c.dim(pad(label, 14))}${value}`);
+        line("Directory", shortPath(ctx.target));
+        line("Model", `${model.model || model.id} ${c.dim(`(${model.id})`)}`);
+        line("Channels", summarise(channels));
+        line("Integrations", summarise(integrations));
+        line("Composio", ctx.composioKey ? c.green("key set") : ctx.wantComposio ? c.yellow("enabled, no key yet") : c.dim("off"));
+        line("Services", ctx.wantStart ? "Postgres, schema and dashboard, started now" : c.dim("not started — commands printed at the end"));
+
+        // What will stop and ask for something, said BEFORE the install rather
+        // than discovered during it. This is the whole reason `needs` is carried
+        // through the catalogue.
+        const asks = [...gated(channels), ...gated(integrations)];
+        if (asks.length > 0) {
+          blank();
+          warn(`${asks.length} of these will ask for a credential: ${asks.map((a) => a.title).join(", ")}.`);
+          dim("Anything that cannot be answered now is left for you, with the command to finish it.");
+        }
+        blank();
+
+        const picks = channels.length + integrations.length;
+        const answer = await pick({
+          question: "Ready?",
+          items: [
+            option("Install and finish setup", "go", { note: "writes the project, then installs what you picked" }),
+            // eve's own review offers this third door, and it earns its place
+            // here for a reason eve's does not have: eve is asking inside a
+            // running agent, where "finish without adding" costs nothing to
+            // redo. Here it is the difference between a project you have and a
+            // project you do not. Someone who ticked four integrations and then
+            // remembered the plane wifi should not have to go back and untick
+            // them one at a time to get their scaffold.
+            //
+            // Hidden when nothing is ticked, because then it is the same door
+            // as the one above it wearing a different name.
+            ...(picks > 0
+              // Short enough to survive the note column at 100 columns: the
+              // longer first draft was cut mid-word at "the commands ar…",
+              // which is the one clause a reader needs from it.
+              ? [option("Finish without adding", "bare", {
+                  note: `writes the project, skips all ${picks} — commands printed`,
+                })]
+              : []),
+            option("Back", "back", { note: "change any answer above" }),
+          ],
+          borrowStdin,
+          nonInteractive,
+          fallbackAsk: ask,
+          canBack: true,
+          canForward: false,
+        });
+        if (answer.cancelled) return CANCEL;
+        if (answer.back || answer.value === "back") return BACK;
+        ctx.skipAdds = answer.value === "bare";
+        return undefined;
+      },
+    },
+  ];
+
+  const outcome = await runSteps(steps, ctx);
   close();
+
+  if (ctx.fatal) {
+    console.error(`\n${C.red}${ctx.fatal}${C.reset}`);
+    return 1;
+  }
+  if (outcome === CANCEL) {
+    say();
+    dim("Cancelled. Nothing was written.");
+    return 130;
+  }
+
+  // The rest of this function still reads these names, and they are what the
+  // steps above were collecting.
+  const { target, model: chosen } = ctx;
+  const useOllama = chosen.id === "ollama";
+  const ollamaBaseUrl = chosen.ollamaBaseUrl ?? null;
+  const apiKeyLine = chosen.apiKeyLine;
+  const modelLine = chosen.modelLine;
+  const wantComposio = ctx.wantComposio;
+  const composioLine = wantComposio
+    ? ctx.composioKey
+      ? `COMPOSIO_API_KEY=${ctx.composioKey}`
+      : "COMPOSIO_API_KEY="
+    : "# COMPOSIO_API_KEY=ak_...";
+  const wantStart = ctx.wantStart;
+  // Re-read rather than carried from the Services step: minutes can pass between
+  // that question and this line — the dependency install alone is a minute — and
+  // Docker Desktop finishing its start in the meantime is the common case.
+  const dockerUp = dockerState() === "running";
 
   // ---- scaffold -------------------------------------------------------------
   blank();
@@ -1155,6 +2495,32 @@ export async function create(argv) {
     return 1;
   }
 
+  // ---- the one credential that is not a key ---------------------------------
+  //
+  // Before the registry installs rather than after: those can take a minute
+  // each and some of them stop to ask for their own credentials, so a browser
+  // tab opening in the middle of that is a tab nobody connects to a question
+  // they answered two screens ago.
+  const signIn = chosen.signIn ? await signInToChatGpt({ target, nonInteractive }) : null;
+  if (signIn?.state === "ready") {
+    blank();
+    ok(`Signed in to ChatGPT ${c.dim("— your plan is what answers")}`);
+  } else if (signIn) {
+    blank();
+    warn(`Not signed in yet — ${signIn.why}.`);
+    dim(`Finish it any time: ${signIn.command}`);
+  }
+
+  // ---- what was picked ------------------------------------------------------
+  //
+  // After the dependency install, because `eve add` runs the project's own eve
+  // and there is no `node_modules/.bin/eve` until the install has finished.
+  const wanted = [...chosenChannels(), ...chosenIntegrations()];
+  const deferred = ctx.skipAdds ? wanted : [];
+  const { ready, pending, failed, moved, broke, missingEnv } = ctx.skipAdds
+    ? { ready: [], pending: [], failed: [], moved: [], broke: null, missingEnv: [] }
+    : await addRegistryItems({ target, items: wanted, verbose: args.verbose });
+
   // ---- bring it up ----------------------------------------------------------
   //
   // Two of these are pure setup with one correct answer and the third is a pull;
@@ -1175,13 +2541,42 @@ export async function create(argv) {
   });
   blank();
   say(`  ${c.bold("Dashboard")}   ${c.brandBold(dashboardUrl)}`);
-  say(`  ${c.bold("Sign in")}     evestack ${c.dim("/")} ${c.bold(password)}`);
+  say(signInLine(password));
+  // THE COMMAND, NOT A FOOTNOTE ABOUT THE COMMAND.
+  //
+  // This line used to read "`npx evestack open` prints them again — this
+  // terminal will scroll", in dim grey, under a URL and a password. Two things
+  // wrong with that, and the second is the expensive one.
+  //
+  // It is dim, at the moment of highest attention in the whole run. And it
+  // describes the command as doing LESS than it does: `open` reads the port out
+  // of .env.local, health-checks the dashboard, prints the credentials AND
+  // launches the browser. Sold as "prints them again" it reads like a clipboard
+  // helper, so the reader's conclusion is "copy this URL, then type this
+  // password" — the manual version of a command that was sitting right there.
+  //
+  // Same arrow and same shape as `evestack status`'s own line, because they are
+  // the same instruction and someone who meets one should recognise the other.
+  //
+  // `npx` regardless of the project's package manager, matching the
+  // `npx evestack status` line below: evestack is not a dependency of the
+  // scaffold, so there is no local binary for `pnpm evestack` to find, and
+  // `pnpm dlx` / `yarn dlx` would be a third spelling of one idea.
+  say(`  ${c.dim(`${g.arrow} `)}${c.bold("npx evestack dashboard")}   ${c.dim("opens it in your browser, already signed in")}`);
   say(`  ${c.dim("Both are in .env.local, which the dashboard container reads too.")}`);
-  say(`  ${c.dim("`npx evestack open` prints them again — this terminal will scroll.")}`);
   blank();
 
   if (!useOllama && apiKeyLine.endsWith("=")) {
     say(`  ${c.yellowBold(`Add ${chosen.keyVar} to .env.local before you start.`)}`);
+    blank();
+  }
+  // The same thing an unset key is — one step between here and a reply — said
+  // in the same place, because "sign in" and "paste a key" are the same
+  // sentence to someone who just wants the agent to answer. Repeated at the
+  // bottom deliberately: the attempt itself happened before a minute of
+  // registry installs and has scrolled off by now.
+  if (signIn && signIn.state !== "ready") {
+    say(`  ${c.yellowBold("Sign in to ChatGPT before you start:")} ${c.bold(signIn.command)}`);
     blank();
   }
 
@@ -1191,16 +2586,23 @@ export async function create(argv) {
     say(`  ${c.bold("Next")}`);
     say(`    ${c.bold(`cd ${cd}`)}`);
     if (!dockerUp) say(`    ${c.dim("start Docker Desktop")}`);
-    say(`    ${c.bold("docker compose up -d postgres")}              ${c.dim("# durable sessions")}`);
-    // `npx --package=@workflow/world-postgres bootstrap` looks equivalent and is
-    // not: its CLI loads `.env` via dotenv and never reads `.env.local`, so it
-    // silently falls back to postgres://world:world@localhost:5432/world and dies
-    // on ECONNREFUSED. The script wires the generated .env.local in explicitly.
-    say(`    ${c.bold(`${pm} run db:bootstrap`)}                        ${c.dim("# create the workflow schema")}`);
-    say(`    ${c.bold("docker compose --profile dashboard up -d")}   ${c.dim(`# the dashboard on :${dashboardPort}`)}`);
-    say(`    ${c.bold(`${pm} run dev`)}                                ${c.dim("# the agent")}`);
+    // Aligned by measurement rather than by hand-counted spaces.
+    //
+    // The padding here was five hardcoded runs of spaces sized for `npm`, which
+    // put the bootstrap line's `#` one column right of the other four — and put
+    // ALL of them somewhere different the moment `pm` is `pnpm`, which is two
+    // characters longer and appears in two of the commands. A column that only
+    // lines up for one package manager is not a column.
+    //
+    // The last entry is the payoff, and it is what the list was missing: four
+    // commands that start things, and the one that shows you what you started.
+    // Without it the list ended on `run dev` — an agent in a terminal — with
+    // the dashboard a container the reader had booted and never been told how
+    // to look at.
+    for (const line of nextSteps({ pm, dashboardPort })) say(`    ${line}`);
     blank();
     say(`  ${c.dim("Then `npx evestack status` from anywhere inside the project.")}`);
+    reportPicked({ ready, pending, failed, moved, broke, missingEnv, deferred, pm });
     blank();
     return 0;
   }
@@ -1208,10 +2610,25 @@ export async function create(argv) {
   // Everything but the agent is up, and the agent is a foreground process that
   // belongs to this terminal. Offering to start it is the difference between
   // finishing with a running stack and finishing with one more thing to paste.
+  // Opened before the block below is printed, so the browser is already coming
+  // up while the reader is still reading. The result decides what that block says.
+  const openedDashboard = await autoOpenDashboard(dashboardUrl, { suppressed: args.noOpen });
+
   say(`  ${c.bold("One command left")}`);
   say(`    ${c.bold(`cd ${cd} && ${pm} run dev`)}`);
   blank();
-  say(`  ${c.dim("Then, in another terminal:")} ${c.bold("npx evestack tour")} ${c.dim("— a guided first run.")}`);
+  // This branch is the one where the dashboard is ALREADY UP — the wizard just
+  // pulled the image and started the container. So "one command left" was true
+  // of the agent and quietly untrue of the thing the reader can look at right
+  // now, in another terminal, without waiting for anything.
+  if (openedDashboard) {
+    say(`  ${c.dim("The dashboard is open in your browser, signed in.")}`);
+    say(`  ${c.dim("Bring it back any time with")} ${c.bold("npx evestack dashboard")}${c.dim(", or")} ${c.bold(`${pm} run dashboard`)}${c.dim(".")}`);
+  } else {
+    say(`  ${c.dim("Right now, in another terminal:")} ${c.bold("npx evestack dashboard")} ${c.dim("— the dashboard, signed in.")}`);
+  }
+  say(`  ${c.dim("Then:")} ${c.bold("npx evestack tour")} ${c.dim("— a guided first run.")}`);
+  reportPicked({ ready, pending, failed, moved, broke, missingEnv, deferred, pm });
   blank();
 
   if (await confirmRunAgent(cd)) {
@@ -1317,9 +2734,114 @@ function architecture({ agentPort, pgPort, dashboardPort, provider, model, up, o
  * provider name and then this, so anything past about 60 characters wraps on an
  * 80-column terminal. The test beside this pins that budget.
  */
-export function modelEdge(provider, model, ollamaBaseUrl = null) {
-  if (provider !== "ollama") return `${model} — the only thing that leaves this machine`;
-  const url = ollamaBaseUrl || "http://127.0.0.1:11434";
+/**
+ * The commands to paste, in order, when the wizard did not start anything.
+ *
+ * Extracted so the two properties that keep breaking can be asserted rather
+ * than eyeballed.
+ *
+ * ALIGNMENT BY MEASUREMENT. This was five hardcoded runs of spaces sized for
+ * `npm`, which put the bootstrap line's `#` one column right of the other four
+ * — and put ALL of them somewhere different the moment `pm` is `pnpm`, two
+ * characters longer and present in two of the commands. A column that lines up
+ * for one package manager is not a column.
+ *
+ * AND THE LAST ENTRY IS THE PAYOFF. Four of these start something; the fifth is
+ * the one that shows you what you started. Without it the list ended on
+ * `run dev` — an agent in a terminal — with the dashboard a container the
+ * reader had booted and never been told how to look at. `evestack open` reads
+ * the port out of .env.local, health-checks it, prints the credentials and
+ * launches the browser, and this is the list where someone goes looking for it.
+ */
+/**
+ * The variable that puts the old behaviour back.
+ *
+ * Named for what it does rather than for the gate it opens, because the person
+ * who needs it is reading a CI config six months from now and has to be able to
+ * tell what it turns on without finding this file.
+ */
+export const PRINT_SECRETS_VAR = "EVESTACK_PRINT_SECRETS";
+
+/**
+ * Is it safe to put a generated credential on this stream?
+ *
+ * The answer is "when a person is looking at it", and `isTTY` is the only thing
+ * that knows. A terminal is transient and belongs to the one person typing;
+ * everything else a stream can be — a pipe, a file, a CI log, a
+ * `tee setup.log`, a wrapper capturing output — is a recording of it, kept
+ * somewhere nobody is tracking and rotated by nothing.
+ *
+ * Set EVESTACK_PRINT_SECRETS to anything non-empty and the old behaviour comes
+ * back everywhere this is consulted, for the one legitimate case: an automated
+ * setup that genuinely wants the value out of stdout and has somewhere to put
+ * it. That is a decision somebody makes on purpose, which is the difference.
+ *
+ * Exported and shared with attach.mjs rather than copied: two answers to "is
+ * anyone reading this" in one package is how one of them ends up stale.
+ */
+export function showSecrets(stream = process.stdout) {
+  if (process.env[PRINT_SECRETS_VAR]) return true;
+  return Boolean(stream?.isTTY);
+}
+
+/**
+ * The dashboard sign-in line — with the password in it only when a person is
+ * looking at it.
+ *
+ * The value is real and it is the one credential that gets someone into a
+ * control plane which starts agent runs and approves gated shell commands. On a
+ * terminal, printing it is the whole point: the scaffolder generates it, nobody
+ * chose it, and the alternative is sending a first-time reader to go and find
+ * out which key in a dotfile is the password.
+ *
+ * Off a terminal it is a different thing entirely. `npx create-evestack ... |
+ * tee setup.log`, a CI job, a wrapper script capturing output, a screen-share
+ * recorder — all of those turn one line of a finish screen into a credential
+ * at rest somewhere nobody is tracking. The same generated password also sits
+ * in .env.local, which the generated .gitignore ignores and which this function
+ * names instead, so nothing is lost: the reader is one `cat` away, or one
+ * `npx evestack dashboard` away, which prints it on a terminal.
+ *
+ * This is the shape `verify --json` already used — it has always omitted the
+ * password — so the intent existed; it just had no gate on the human path.
+ * EVESTACK_PRINT_SECRETS=1 restores the old behaviour for a caller that wants
+ * the value out of a pipe on purpose.
+ *
+ * `show` is a parameter rather than a call to `showSecrets()` inside, so both
+ * branches are testable without a pty.
+ */
+export function signInLine(password, { user = "evestack", show = showSecrets() } = {}) {
+  if (show) return `  ${c.bold("Sign in")}     ${user} ${c.dim("/")} ${c.bold(password)}`;
+  return `  ${c.bold("Sign in")}     ${user} ${c.dim("/")} ${c.dim("(not printed to a pipe; it is EVESTACK_AUTH_PASSWORD in .env.local)")}`;
+}
+
+export function nextSteps({ pm = "npm", dashboardPort = 4000 } = {}) {
+  const steps = [
+    ["docker compose up -d postgres", "durable sessions"],
+    // `npx --package=@workflow/world-postgres bootstrap` looks equivalent and is
+    // not: its CLI loads `.env` via dotenv and never reads `.env.local`, so it
+    // silently falls back to postgres://world:world@localhost:5432/world and
+    // dies on ECONNREFUSED. The script wires the generated .env.local in.
+    [`${pm} run db:bootstrap`, "create the workflow schema"],
+    ["docker compose --profile dashboard up -d", `the dashboard on :${dashboardPort}`],
+    [`${pm} run dev`, "the agent"],
+    // `npx` whatever `pm` is: evestack is not a dependency of the scaffold, so
+    // there is no local binary for `pnpm evestack` to find.
+    ["npx evestack dashboard", `see it, signed in, on :${dashboardPort}`],
+  ];
+  const gutter = Math.max(...steps.map(([command]) => command.length)) + 3;
+  return steps.map(([command, note]) => `${c.bold(pad(command, gutter))}${c.dim(`# ${note}`)}`);
+}
+
+export function modelEdge(provider, model, localBaseUrl = null) {
+  // Two providers are decided by their URL rather than by their name. Ollama is
+  // loopback by default and remote if someone pointed it at a server; an
+  // OpenAI-compatible endpoint is the reverse — usually remote (Groq, Together)
+  // and local when it is LM Studio or llama.cpp on this desk. Neither can be
+  // answered from the provider id alone, which is why the URL is the input.
+  const decidedByUrl = provider === "ollama" || provider === "compatible";
+  if (!decidedByUrl) return `${model} — the only thing that leaves this machine`;
+  const url = localBaseUrl || "http://127.0.0.1:11434";
   const where = hostOf(url);
   if (!isLoopback(url)) return `${model} — on ${where}, which does leave this machine`;
   return `${model} — on ${where}; nothing leaves this machine`;
@@ -1471,6 +2993,7 @@ function inspectTarget(path) {
  */
 const CREATE_FLAGS = new Map([
   ["--yes", "yes"], ["-y", "yes"],
+  ["--no-open", "noOpen"],
   ["--verbose", "verbose"],
   ["--help", "help"], ["-h", "help"],
   ["--version", "version"], ["-V", "version"],
@@ -1482,7 +3005,6 @@ const FLAGS_ELSEWHERE = new Map([
   ["-n", "attach"],
   ["--json", "verify"],
   ["--open", "verify"],
-  ["--no-open", "verify and open"],
   ["--sql", "doctor"],
   ["--verbose", "doctor"],
 ]);
@@ -1501,6 +3023,7 @@ Options
                   a terminal — CI, a heredoc, a Dockerfile. It also declines to
                   start containers, because nobody is there to say no
   --verbose       show the raw npm and docker output instead of one line each
+  --no-open       do not open the dashboard in a browser when the stack comes up
   --help, -h      this
   --version, -V   print create-evestack's version
 

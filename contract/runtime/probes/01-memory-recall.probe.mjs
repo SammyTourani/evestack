@@ -135,6 +135,7 @@ export default {
           content     text NOT NULL,
           tags        text[] NOT NULL DEFAULT '{}',
           session_id  text,
+          principal_id text,
           embedding   vector(${DIMENSIONS}) NOT NULL,
           created_at  timestamptz NOT NULL DEFAULT now()
         )
@@ -147,22 +148,27 @@ export default {
 
       const values = [];
       for (let i = 0; i < ROWS; i++) {
-        values.push(`('memory ${i}', '${i >= ROWS - TAGGED ? "{rare}" : "{}"}', '${gradedVector(i, ROWS)}')`);
+        values.push(`('alice', 'memory ${i}', '${i >= ROWS - TAGGED ? "{rare}" : "{}"}', '${gradedVector(i, ROWS)}')`);
       }
       for (let i = 0; i < values.length; i += 100) {
         await client.query(
-          `INSERT INTO ${schema}.memories (content, tags, embedding) VALUES ${values.slice(i, i + 100).join(",")}`,
+          `INSERT INTO ${schema}.memories (principal_id, content, tags, embedding) VALUES ${values.slice(i, i + 100).join(",")}`,
         );
       }
+      await client.query(
+        `INSERT INTO ${schema}.memories (principal_id, content, tags, embedding)
+         VALUES ('bob', 'private-bob', '{rare}', $1::vector)`, [gradedVector(0, ROWS)],
+      );
       await client.query(`ANALYZE ${schema}.memories`);
       t.note(`${ROWS} rows inserted after the indexes existed; ${TAGGED} carry a rare tag`);
 
       // The recall() query from lib/memory.ts, verbatim apart from the schema.
       const RECALL = `
-        SELECT id, content, tags, created_at,
+        SELECT id, content, tags, principal_id, created_at,
                1 - (embedding <=> $1::vector) AS similarity
           FROM ${schema}.memories
          WHERE ($2::text[] = '{}' OR tags && $2::text[])
+           AND (principal_id = $4 OR principal_id IS NULL OR tags && $5::text[])
          ORDER BY embedding <=> $1::vector
          LIMIT $3`;
 
@@ -174,7 +180,7 @@ export default {
        *
        * `SET LOCAL hnsw.ef_search` mirrors what recall() itself now does. It is
        * not a convenience for the probe: HNSW returns at most ef_search rows,
-       * whose default of 40 is below recall()'s own cap of 50, so without it a
+       * whose owner-scoped width is Math.max(200, limit * 10); the default of 40 is below recall()'s own cap of 50, so without it a
        * request for 50 comes back with 40 and the ordering is silently
        * truncated. Measured against 5,000 rows with the planner left alone. If
        * this line and the one in lib/memory.ts ever disagree, this probe is
@@ -184,8 +190,8 @@ export default {
         await client.query("BEGIN");
         try {
           if (forceIndex) await client.query("SET LOCAL enable_seqscan = off");
-          await client.query(`SET LOCAL hnsw.ef_search = ${Math.max(40, limit * 2)}`);
-          const { rows } = await client.query(RECALL, [query, tags, limit]);
+          await client.query(`SET LOCAL hnsw.ef_search = ${Math.max(200, limit * 10)}`);
+          const { rows } = await client.query(RECALL, [query, tags, limit, "alice", ["shared"]]);
           return rows.map((r) => r.content);
         } finally {
           await client.query("ROLLBACK");
@@ -217,6 +223,8 @@ export default {
         );
 
         // The assertion this probe exists for.
+        t.ok(!planner.includes("private-bob") && !forced.includes("private-bob"),
+          `${c.label} excludes another principal under both plans`);
         const same = planner.length === forced.length && planner.every((v, i) => v === forced[i]);
         t.ok(same, `${c.label} is unchanged when the vector index is forced`, {
           ...(same

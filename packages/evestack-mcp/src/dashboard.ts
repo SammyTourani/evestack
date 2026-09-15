@@ -68,6 +68,23 @@ export class DashboardClient {
     return this.#config.maxOutputBytes;
   }
 
+  /**
+   * The identity this server OFFERS, which is not necessarily the one recorded.
+   *
+   * Exposed for the same reason `maxOutputBytes` is: one handler has to know it.
+   * approve_or_deny compares what was configured against the `approverVia` the
+   * dashboard answers with, because those two disagree silently in the common
+   * case — the dashboard reads the forwarded identity header only behind
+   * EVESTACK_TRUSTED_PROXY, so with nothing in front of it the name below is
+   * sent, ignored, and replaced on the row by whoever the Basic credential or
+   * session cookie names. A model that reported "approved by <configured name>"
+   * on the strength of this variable would be describing a row that says
+   * something else. See tools.ts:attributionWarning.
+   */
+  get approver(): string | null {
+    return this.#config.approver;
+  }
+
   identifyClient(name: string, version: string): void {
     const clean = (value: string) => value.replace(/[^\w.\-/ ]/g, "").slice(0, 64) || "unknown";
     this.#clientLabel = `${clean(name)}/${clean(version)}`;
@@ -101,7 +118,23 @@ export class DashboardClient {
       "user-agent": `evestack-mcp/${VERSION} (${this.#clientLabel})`,
     });
     if (body !== undefined) headers.set("content-type", "application/json");
+    // Ready to send, not raw. `EVESTACK_MCP_DASHBOARD_AUTH` used to be spliced in
+    // here exactly as typed, and the docs told people to type `user:password` —
+    // which the dashboard's `verifyBasic` rejects because it has no `Basic `
+    // prefix, so the documented configuration 401'd on every tool. config.ts
+    // normalizes it now; this line must stay a straight assignment so there is
+    // exactly one place that decides what the header says.
     if (this.#config.authorization) headers.set("authorization", this.#config.authorization);
+    // WHAT THIS HEADER IS WORTH, said here because this is where it goes out.
+    // The dashboard reads X-Forwarded-User (or EVESTACK_APPROVER_HEADER) ONLY
+    // when EVESTACK_TRUSTED_PROXY is set — `identifyApprover` does not consult
+    // the forwarded names at all otherwise (packages/dashboard/lib/approvals.ts,
+    // via `trustsForwardedIdentity` in lib/auth.ts). So on a dashboard with
+    // nothing in front of it, this header is sent and ignored, and the audit row
+    // records whoever the Basic credential or session cookie names instead. That
+    // is the honest outcome rather than a bug: a name this process read out of a
+    // config file is not evidence about a human, and a log that accepted it
+    // would be a log anyone who can reach the port can dictate.
     if (this.#config.approver) headers.set(this.#config.approverHeader, this.#config.approver);
 
     let response: Response;

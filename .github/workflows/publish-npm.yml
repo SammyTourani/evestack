@@ -1,0 +1,99 @@
+name: Publish npm
+
+on:
+  push:
+    tags:
+      - 'create-evestack@*'
+      - 'evestack@*'
+      - '@evestack/budget@*'
+      - '@evestack/composio@*'
+      - '@evestack/schedules@*'
+      - '@evestack/mcp@*'
+      - '@evestack/sandbox-opensandbox@*'
+  workflow_dispatch:
+    inputs:
+      package:
+        description: 'Published package name (for example @evestack/budget)'
+        required: true
+        type: string
+      version:
+        description: 'Stable x.y.z version; select its existing release tag above'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  pack:
+    runs-on: ubuntu-latest
+    outputs:
+      name: ${{ steps.target.outputs.name }}
+      version: ${{ steps.target.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+      - name: validate tag, protected ancestry, manifest and published prerequisites
+        id: target
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && format('{0}@{1}', inputs.package, inputs.version) || github.ref_name }}
+        run: node .github/scripts/npm-release.mjs
+      - run: pnpm install --frozen-lockfile
+      - name: build workspace libraries
+        run: pnpm -r --if-present --filter '!@evestack/website' --filter '!@evestack/dashboard' --filter '!@evestack/template-default' run build
+      - run: node contract/run.mjs
+      - name: test the package and its shipped template
+        env:
+          PACKAGE: ${{ steps.target.outputs.name }}
+        run: pnpm --filter "$PACKAGE" --filter @evestack/template-default test
+      - name: pack with pnpm to resolve workspace dependencies
+        env:
+          PACKAGE_DIR: ${{ steps.target.outputs.directory }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/npm-release"
+          pnpm --dir "$PACKAGE_DIR" pack --pack-destination "$RUNNER_TEMP/npm-release"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: npm-package
+          path: ${{ runner.temp }}/npm-release/*.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: pack
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      # This job runs no project code or package lifecycle scripts. Dependencies
+      # and prepack ran without an OIDC credential in the separate pack job.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: require an npm CLI with native trusted publishing
+        run: |
+          node -e 'const v=require("child_process").execFileSync("npm",["--version"],{encoding:"utf8"}).trim().split(".").map(Number); if(v[0]<11 || (v[0]===11 && (v[1]<5 || (v[1]===5 && v[2]<1)))) throw Error("npm >=11.5.1 required")'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: npm-package
+          path: package
+      - name: publish the verified tarball with provenance
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          packages=(package/*.tgz)
+          [ "${#packages[@]}" -eq 1 ] || { echo 'Expected one tarball'; exit 1; }
+          npm publish "${packages[0]}" --ignore-scripts --provenance --access public

@@ -58,8 +58,75 @@ const optionalStr = (args: Record<string, unknown>, key: string): string | undef
   return typeof value === "string" && value.length > 0 ? value : undefined;
 };
 
+/**
+ * An origin nothing resolves, used only to ask the URL parser a question.
+ * `.invalid` is reserved for exactly this (RFC 2606), so a typo that turned this
+ * into a real request would fail to connect rather than reach somebody.
+ */
+const ROUTE_PROBE_ORIGIN = "https://evestack.invalid";
+
+/**
+ * One path segment, and proof that it stays one.
+ *
+ * ── The hole this closes ─────────────────────────────────────────────────────
+ *
+ * `sessionId` is a model-authored string; its schema says `type: "string",
+ * minLength: 1` and nothing else. `encodeURIComponent` escapes "/" and every
+ * other separator, which is why the traversal tests in test/injection.test.mjs
+ * pass — but it does NOT escape a dot, because a dot is legal in a path segment.
+ * So the two strings that are ENTIRELY dots survive it intact, and then the URL
+ * parser resolves them:
+ *
+ *   ".."  ->  /api/control/sessions/../approve  ->  /api/control/approve
+ *   "."   ->  /api/control/sessions/./approve   ->  /api/control/sessions/approve
+ *   ".."  ->  /api/control/sessions/../cancel   ->  /api/control/cancel
+ *   ".."  ->  /api/evals/promote/..             ->  /api/evals/
+ *
+ * `new URL(base + path)` in dashboard.ts does that normalization for us, so the
+ * tool sends a request to a route it did not name — and the third row is a POST.
+ * Those are not derivations; they are what a recording dashboard received from
+ * this server before this function existed (test/injection.test.mjs records the
+ * measurement).
+ *
+ * Not exploitable against the dashboard as it stands: none of the three targets
+ * above is a route (there is no /api/control/approve, no /api/control/sessions
+ * GET, no /api/evals), so each answers 404 and the tool reports a missing
+ * handler. That is a fact about today's route table, not a property of this
+ * code, and a route table is the kind of thing that grows. The version skew this
+ * package is built around makes it worse: the whole point of the "missing route"
+ * handling is that an old client talks to a new dashboard, so the route table
+ * that makes this inert is not even the one this build was written against.
+ *
+ * ── Why this is a property check and not a list of bad strings ───────────────
+ *
+ * `encoded === "." || encoded === ".."` would be correct today and would say
+ * nothing about why. The invariant is the thing worth pinning: splicing the id
+ * into a route must not change the route's shape. So the encoded value is put
+ * between two segments and handed to the same parser dashboard.ts will use — if
+ * what comes back is not what went in, the id rewrote the path, whatever it was
+ * made of. That keeps working if the encoder is ever changed, if the parser's
+ * normalization rules widen, or if someone finds a third dot spelling.
+ *
+ * A ToolFailure rather than a thrown RpcError: a bad id is business logic the
+ * model can fix by calling list_sessions, which is what `isError: true` is for.
+ */
+function segment(value: string, argument: string): string {
+  const encoded = encodeURIComponent(value);
+  const probe = `/a/${encoded}/b`;
+  if (new URL(ROUTE_PROBE_ORIGIN + probe).pathname !== probe) {
+    throw new ToolFailure(
+      `${argument} ${JSON.stringify(value)} is not a usable id: spliced into a dashboard route it ` +
+        `resolves to a different route than the one this tool names, so the request was not sent. ` +
+        `Pass a real session id — list_sessions returns them, and they look like ` +
+        `'wrun_01KZ8CQ5012M1M9P6YE7YG3FJ3'.`,
+      { [argument]: value, reason: "unroutable_id" },
+    );
+  }
+  return encoded;
+}
+
 const path = (sessionId: string, suffix: string): string =>
-  `/api/control/sessions/${encodeURIComponent(sessionId)}${suffix}`;
+  `/api/control/sessions/${segment(sessionId, "sessionId")}${suffix}`;
 
 /**
  * Only the shape a control route needs.
@@ -381,7 +448,7 @@ const promoteSessionToEval: ToolDefinition = {
   async handle(args, client) {
     const sessionId = str(args, "sessionId");
     const generated = record(
-      await client.get(`/api/evals/promote/${encodeURIComponent(sessionId)}`, { format: "json" }),
+      await client.get(`/api/evals/promote/${segment(sessionId, "sessionId")}`, { format: "json" }),
     );
     const result = {
       sessionId,
@@ -418,7 +485,7 @@ const promoteSessionToEval: ToolDefinition = {
       // Only when `source` itself is what gets cut. A pathological `warnings`
       // list is ordinary data and can be shortened like any other array.
       const sourceCharacters = typeof result.source === "string" ? result.source.length : 0;
-      const download = `${client.baseUrl}/api/evals/promote/${encodeURIComponent(sessionId)}`;
+      const download = `${client.baseUrl}/api/evals/promote/${segment(sessionId, "sessionId")}`;
       throw new ToolFailure(
         `The eval generated from session ${sessionId} is ${sourceCharacters} characters, and the whole ` +
           `result is ${resultBytes} bytes against this server's ${cap}-byte cap ` +
@@ -535,6 +602,78 @@ const sendMessage: ToolDefinition = {
   },
 };
 
+/** The three `approverVia` values that name a PERSON rather than the deployment. */
+const FORWARDED_VIA = new Set(["forwarded-user", "forwarded-email", "header"]);
+
+/**
+ * What to tell the model about the name on the row it just wrote.
+ *
+ * ── The warning that could not fire ──────────────────────────────────────────
+ *
+ * There used to be one branch here: a null `approver` produced "this decision
+ * was recorded with no approver, set EVESTACK_MCP_APPROVER". That reads as
+ * though setting the variable is what puts a name on the row, and it is not. The
+ * dashboard reads X-Forwarded-User (or EVESTACK_APPROVER_HEADER) only when
+ * EVESTACK_TRUSTED_PROXY is set; with it unset — the default for every ordinary
+ * self-hosted install — `identifyApprover` never looks at those headers and
+ * falls through to the credential that authenticated the request
+ * (packages/dashboard/lib/approvals.ts).
+ *
+ * So on a dashboard behind Basic auth, which is the documented setup, the row
+ * came back with `approver` set to the Basic username and `approverVia: "basic"`
+ * — non-null, so the only warning there was stayed silent, while the name the
+ * operator configured had been dropped on the floor. Attribution that is wrong
+ * and confident is the failure this whole area exists to avoid; a model that
+ * reads `approver` off this result and repeats it is then reporting a person who
+ * did not decide anything.
+ *
+ * ── Why a warning rather than a refusal ──────────────────────────────────────
+ *
+ * The decision has already taken effect by the time this runs; the gated tool
+ * is executing. Refusing the RESULT would leave the caller with an error and a
+ * turn that was approved anyway, which is strictly worse than a true sentence
+ * about what was recorded. EVESTACK_REQUIRE_APPROVER=1 on the dashboard is the
+ * control that refuses BEFORE anything happens, and it is what this points at.
+ */
+function attributionWarning(client: DashboardClient, response: Record<string, unknown>): string | null {
+  const approver = typeof response.approver === "string" && response.approver ? response.approver : null;
+  const via = typeof response.approverVia === "string" && response.approverVia ? response.approverVia : null;
+
+  if (approver === null) {
+    return (
+      "This decision was recorded with no approver. Set EVESTACK_MCP_APPROVER on this MCP server " +
+      "AND EVESTACK_TRUSTED_PROXY on the dashboard — without the second one the dashboard does not " +
+      "read the identity header this server sends. EVESTACK_REQUIRE_APPROVER=1 on the dashboard " +
+      "refuses unattributed decisions outright."
+    );
+  }
+
+  // A dashboard too old to report `approverVia` says nothing about how it
+  // decided, and inventing a warning from its silence would be the same species
+  // of error as the one above.
+  if (client.approver === null || via === null || FORWARDED_VIA.has(via)) return null;
+
+  // Said as provenance rather than as a comparison of two strings, which is not a
+  // stylistic preference. The two names are often the SAME string: an operator who
+  // wants their own name in the audit log sets EVESTACK_MCP_APPROVER to their
+  // address, and the dashboard's Basic user is frequently that same address. The
+  // first wording here opened "the name on this row is not the one this server
+  // offered", which in that configuration reads as a flat contradiction — `X` is
+  // not `X` — inside the one field whose entire job is to stop a model repeating
+  // something confident and wrong. The row is still worth warning about when the
+  // strings coincide, because what is wrong is not the name but where it came
+  // from: the credential that authenticated the request, never the header this
+  // server sent. So the sentence states that, and stays true either way.
+  return (
+    `The name on this row did not come from this server. EVESTACK_MCP_APPROVER is ` +
+    `${JSON.stringify(client.approver)}, and the audit row records ${JSON.stringify(approver)} with ` +
+    `approverVia '${via}' — the identity of the credential that authenticated the request, not of a ` +
+    `person. The dashboard reads the forwarded identity header only when EVESTACK_TRUSTED_PROXY is ` +
+    `set. Nothing failed and the decision took effect; do not report ${JSON.stringify(client.approver)} ` +
+    `as having approved it.`
+  );
+}
+
 const approveOrDeny: ToolDefinition = {
   name: "approve_or_deny",
   title: "Answer a parked human-in-the-loop request",
@@ -546,10 +685,14 @@ const approveOrDeny: ToolDefinition = {
     "actually execute — this is the gate a human was asked to stand at, so do not answer one on your own " +
     "initiative. Ask the person you are working with, and quote them the tool name and arguments from " +
     "get_session's `pendingRequests` before you do.\n\n" +
-    "The decision is written to the evestack.approvals audit log under whatever identity this MCP server " +
-    "was configured with (EVESTACK_MCP_APPROVER). The response echoes `approver` and `approverVia` so you " +
-    "can see what was recorded; if `approver` is null the row says nobody. `audited: false` means the " +
-    "decision took effect but the audit write failed.\n\n" +
+    "The decision is written to the evestack.approvals audit log. READ `approver` AND `approverVia` off " +
+    "the response rather than assuming: the name this server was configured with " +
+    "(EVESTACK_MCP_APPROVER) is only recorded when the dashboard sets EVESTACK_TRUSTED_PROXY, and " +
+    "otherwise the row names the credential that authenticated the request instead. `approverVia` says " +
+    "which it was — 'forwarded-user', 'forwarded-email' and 'header' name a person, 'basic' and " +
+    "'session' name the installation, 'unidentified' names nobody. When the two disagree the result " +
+    "carries an `attributionWarning`; do not report a name the row does not carry. `audited: false` " +
+    "means the decision took effect but the audit write failed.\n\n" +
     "Tool approvals take `decision`. Questions the agent asked take `optionId` or `text`. If the turn is " +
     "waiting on more than one request you must name one with `requestId`.",
   inputSchema: {
@@ -596,19 +739,14 @@ const approveOrDeny: ToolDefinition = {
         }),
       ),
     );
+    const warning = attributionWarning(client, response);
     return {
       sessionId: response.sessionId,
       answered: response.answered,
       approver: response.approver ?? null,
       approverVia: response.approverVia ?? null,
       audited: response.audited,
-      ...(response.approver
-        ? {}
-        : {
-            attributionWarning:
-              "This decision was recorded with no approver. Set EVESTACK_MCP_APPROVER on this MCP " +
-              "server (and EVESTACK_REQUIRE_APPROVER=1 on the dashboard to refuse unattributed ones).",
-          }),
+      ...(warning === null ? {} : { attributionWarning: warning }),
     };
   },
 };

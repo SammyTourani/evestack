@@ -68,6 +68,69 @@ const FALLBACK_PRICING: Record<string, ModelPrice> = {
   // The gateway catalog contains no `ollama/` entry at all (checked: zero of
   // 317), so this rule cannot come from the generator.
   "ollama/*": { input: 0, output: 0, cacheRead: 0 },
+  /**
+   * A ChatGPT subscription is zero at the margin, which is a different claim
+   * from "free" and the only one a per-token table can make truthfully.
+   *
+   * The alternative was to leave it unpriced, and that is worse than it sounds:
+   * unpriced means every session on this provider trips the loud
+   * `no price for …` warning and the spend cap can never evaluate, so someone
+   * running the easiest option on the list gets the noisiest dashboard. The
+   * real cost is a fixed monthly one, and it does not vary with a token — so
+   * counting tokens at 0 is not a fiction here the way `openrouter/*` at 0
+   * would be. What the dashboard cannot show is the subscription itself.
+   *
+   * A wildcard because the Codex backend decides per account which model slugs
+   * it serves; every one of them bills the same way, which is not at all.
+   */
+  "chatgpt/*": { input: 0, output: 0, cacheRead: 0 },
+  /**
+   * The SAME provider under the name its spans carry, and the reason every
+   * entry in this table needs checking against both consumers rather than one.
+   *
+   * Two different strings reach `findPrice` for one configuration. The budget
+   * hook builds its key from the environment — `envModel()` returns
+   * `${EVESTACK_PROVIDER}/${EVESTACK_MODEL}`, so `chatgpt/gpt-5.6-sol`. The
+   * dashboard reads `$eve.model` off the span, which eve writes as
+   * `provider.split(".")[0] + "/" + modelId` from the model object itself —
+   * and the object eve builds for a ChatGPT plan reports `codex.responses`.
+   * So the span says `codex/gpt-5.6-sol`, verified from a compiled manifest.
+   *
+   * Miss this and the failure is one-sided and quiet: the spend cap works, the
+   * dashboard shows the same sessions as unpriced, and the two disagree with no
+   * error to connect them.
+   */
+  "codex/*": { input: 0, output: 0, cacheRead: 0 },
+  /**
+   * The wizard's OpenRouter default, priced from OpenRouter's own /models
+   * endpoint (USD per 1M: prompt 0.214, completion 2.55, cache read 0.15).
+   *
+   * Here rather than in the generated block because the AI Gateway catalog does
+   * not carry it — it lists Qwen under `alibaba/`, and this is OpenRouter's id
+   * for a different build of the model at a different price.
+   *
+   * One exact id and deliberately NOT an `openrouter/*` wildcard. OpenRouter
+   * fronts 445 models, from a frontier model down to `:free`, so a single
+   * wildcard price would be wrong for nearly all of them — and wrong in the
+   * direction that matters, because a wildcard at 0 leaves the cap unable to
+   * trip while looking perfectly configured. Every other OpenRouter model stays
+   * honestly unpriced, which is what the unpriced warning exists for.
+   *
+   * Keyed WITHOUT a provider prefix because `envModel()` passes any id
+   * containing a slash through unchanged — a gateway id already names its own
+   * vendor. The cost of that convention, stated plainly: this is OpenRouter's
+   * price, and it would also be applied to the same id reached through another
+   * gateway at another rate. EVESTACK_BUDGET_MODEL is the override.
+   *
+   * And then the prefixed form as well, because that convention only ever
+   * described one of the two callers. `createOpenRouter({})("qwen/qwen3.8-27b")`
+   * reports its provider as `openrouter.chat`, so the span eve records says
+   * `openrouter/qwen/qwen3.8-27b` — measured, not assumed. The bare key priced
+   * the budget hook correctly and left the dashboard calling the wizard's own
+   * default model unpriced.
+   */
+  "qwen/qwen3.8-27b": { input: 0.214, output: 2.55, cacheRead: 0.15 },
+  "openrouter/qwen/qwen3.8-27b": { input: 0.214, output: 2.55, cacheRead: 0.15 },
 };
 
 // GENERATED:pricing start
@@ -295,22 +358,167 @@ const GATEWAY_PRICING: Record<string, ModelPrice> = {
 let table: Record<string, ModelPrice> | null = null;
 let wildcards: Array<{ prefix: string; price: ModelPrice }> = [];
 
+/**
+ * One rate, as a number `costUsd` can actually multiply by.
+ *
+ * Zero is valid and load-bearing — `ollama/*` and `chatgpt/*` are priced AT
+ * zero because that is the truth about them, and that is a different claim
+ * from being unpriced, so zero has to pass. Negative does not: a negative rate
+ * would make an expensive step LOWER a running total, and since `costUsd`'s
+ * answer flows straight into `recordStep` in evestack-budget/src/store.ts,
+ * which adds it into a stored day-total, that is not a display glitch but a
+ * way to make an over-cap session read as comfortably under it.
+ */
+function isRate(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+/**
+ * Whether a value pulled out of `EVESTACK_PRICING` can stand in for a real
+ * `ModelPrice`.
+ *
+ * Measured against this file on 2026-09-15, before this check existed:
+ *
+ *   EVESTACK_PRICING='{"acme/m1":{"input":0.25}}'
+ *
+ * — an override with no output rate, which is the single likeliest way to get
+ * this wrong — was `JSON.parse`d and spread straight into the merged table.
+ * `costUsd("acme/m1", …)` then computed `0.25 * nonCached + undefined * output`,
+ * which is NaN; `isPriced("acme/m1")` still answered true, because the key
+ * existed; and in @evestack/budget, `evaluate()` read the session as "not
+ * exceeded", because `NaN >= 2` is false. That NaN then reached `recordStep`,
+ * and `cost + NaN` is NaN forever, so the poisoning outlived the typo that
+ * caused it for as long as the stored row did — the cap stayed silently
+ * disabled even after the environment variable was fixed and the process
+ * restarted.
+ *
+ * `input` and `output` are required because `costUsd` multiplies by both, and
+ * `undefined * n` is the NaN above. `cacheRead`/`cacheWrite` are optional —
+ * most of the generated table below states neither, and `costUsd` documents
+ * its own fallback for exactly that — but a value that IS present still has to
+ * be a rate, or the same multiplication produces the same NaN one term later.
+ */
+function isModelPrice(value: unknown): value is ModelPrice {
+  if (typeof value !== "object" || value === null) return false;
+  const price = value as Partial<ModelPrice>;
+  if (!isRate(price.input) || !isRate(price.output)) return false;
+  if (price.cacheRead !== undefined && !isRate(price.cacheRead)) return false;
+  if (price.cacheWrite !== undefined && !isRate(price.cacheWrite)) return false;
+  return true;
+}
+
+/**
+ * Why one `EVESTACK_PRICING` entry was thrown away, in words an operator can
+ * fix without reading this file. Per-field rather than a single "malformed"
+ * verdict: the realistic case is eight correct entries and one forgotten rate,
+ * and "some overrides were invalid" does not say which of the eight to look at.
+ */
+function describeRejection(price: unknown): string {
+  if (typeof price !== "object" || price === null) {
+    return `it is ${price === null ? "null" : typeof price}, not an object with input and output rates`;
+  }
+  const candidate = price as Partial<Record<keyof ModelPrice, unknown>>;
+  const problems: string[] = [];
+  for (const field of ["input", "output"] as const) {
+    if (!Object.hasOwn(candidate, field)) problems.push(`"${field}" is missing`);
+    else if (!isRate(candidate[field])) problems.push(`"${field}" is not a number >= 0`);
+  }
+  for (const field of ["cacheRead", "cacheWrite"] as const) {
+    if (Object.hasOwn(candidate, field) && !isRate(candidate[field])) {
+      problems.push(`"${field}" is not a number >= 0`);
+    }
+  }
+  // isModelPrice rejects for one of the reasons collected above, so this line
+  // should be unreachable. It stays so a truncated-looking empty message can
+  // never reach an operator if some future check is added above without a
+  // matching problems.push.
+  return problems.length > 0 ? problems.join(" and ") : "its shape is not a price";
+}
+
 function build(): Record<string, ModelPrice> {
-  let overrides: Record<string, ModelPrice> = {};
+  // A null-prototype accumulator, not `{}`, for two independent reasons.
+  //
+  // First, this is where a validated override gets written, by computed key
+  // (`overrides[model] = …`) with `model` coming straight out of parsed JSON.
+  // `JSON.parse` never produces an INHERITED property — even a key spelled
+  // "__proto__" comes back as a genuine own property of the parsed object —
+  // but ASSIGNING through that name is a different operation: `plain["__proto__"]
+  // = x` on an ordinary object invokes Object.prototype's `__proto__` accessor
+  // and reassigns the object's actual prototype instead of storing `x` under
+  // that key. An operator pricing a model literally called "__proto__" is
+  // unlikely, but the entire point of validating untrusted input is to not
+  // lean on "unlikely" — with a plain `{}` here, that entry would either
+  // silently vanish or hand every later lookup on this object a different
+  // prototype, depending on what `x` was. `Object.create(null)` has no such
+  // accessor, so the assignment below is always an ordinary property write.
+  //
+  // Second, and the more likely way this was ever actually hit: `findPrice`
+  // looked models up as `known[model]` over an object literal, so a model
+  // literally named "constructor" or "toString" resolved through the object's
+  // PROTOTYPE CHAIN to a built-in function — `findPrice("constructor")`
+  // returned the `Object` constructor, and `isPriced("toString")` was true. No
+  // override was needed to hit that one at all. Building `merged` below on a
+  // null-prototype base — and carrying that prototype through `overrides`,
+  // since `Object.assign` copies onto whatever object it is given — closes
+  // both routes with the same fix: a table with no prototype chain has nothing
+  // for those names to resolve through, so they are simply absent, exactly
+  // like any other model nobody has priced.
+  const overrides: Record<string, ModelPrice> = Object.create(null) as Record<string, ModelPrice>;
+
   const raw = process.env.EVESTACK_PRICING;
   if (raw) {
+    let parsed: unknown;
     try {
-      overrides = JSON.parse(raw) as Record<string, ModelPrice>;
+      parsed = JSON.parse(raw);
     } catch {
       console.warn("[evestack] EVESTACK_PRICING is not valid JSON; ignoring it.");
+      parsed = undefined;
+    }
+
+    if (parsed !== undefined) {
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+        console.warn(
+          "[evestack] EVESTACK_PRICING must be a JSON object keyed by model id; ignoring it.",
+        );
+      } else {
+        for (const [model, price] of Object.entries(parsed)) {
+          if (!isModelPrice(price)) {
+            console.warn(
+              `[evestack] EVESTACK_PRICING override for "${model}" was rejected because ` +
+                `${describeRejection(price)}. A half-written override used to price every step as ` +
+                `NaN, which reads as "under the cap" and poisons the stored spend totals for the ` +
+                `rest of the day, so the entry is dropped and "${model}" is priced from the ` +
+                `built-in table instead.`,
+            );
+            continue;
+          }
+          // Rebuilt field by field rather than passed through, so nothing else
+          // the JSON object happened to carry reaches the merged table.
+          overrides[model] = {
+            input: price.input,
+            output: price.output,
+            ...(price.cacheRead === undefined ? {} : { cacheRead: price.cacheRead }),
+            ...(price.cacheWrite === undefined ? {} : { cacheWrite: price.cacheWrite }),
+          };
+        }
+      }
     }
   }
 
   // Later wins: a generated price beats the hand-written floor, and an operator's
   // override beats both. An operator who has negotiated rates, or is routing
   // through a region the catalog prices higher, is the only party here who knows
-  // what they are actually billed.
-  const merged = { ...FALLBACK_PRICING, ...GATEWAY_PRICING, ...overrides };
+  // what they are actually billed. `Object.assign` onto a null-prototype target
+  // rather than a `{ ...spread }`: a spread's target is a fresh ordinary `{}`,
+  // which is exactly the object shape that let Object.prototype members answer
+  // as prices before — merging good data onto a bad target would not have fixed
+  // that.
+  const merged: Record<string, ModelPrice> = Object.assign(
+    Object.create(null) as Record<string, ModelPrice>,
+    FALLBACK_PRICING,
+    GATEWAY_PRICING,
+    overrides,
+  );
 
   wildcards = Object.entries(merged)
     .filter(([key]) => key.endsWith("/*"))

@@ -130,6 +130,7 @@ function partText(part: unknown): string | null {
  */
 export function spanKind(name: string): string {
   if (name === "agent.session") return "session";
+  if (name === "invoke_agent" || name.startsWith("invoke_agent ")) return "turn";
   if (name === "agent.turn") return "turn";
   if (name === "agent.turn.terminal") return "turn end";
   if (name === "agent.step") return "step";

@@ -113,6 +113,20 @@ const wrap = (...opens) => {
  * in the common case where the bold part is last, which is exactly what makes it
  * a bug that ships.
  */
+/**
+ * A filled chip: brand background, dark text.
+ *
+ * The current step was `brandBold(" Channels ")` — blue text among grey text —
+ * and at a glance that is a colour difference, not a position. A filled
+ * background is the only thing on the line that reads as "you are here" from
+ * across the room, which is the whole job of a step header.
+ *
+ * `7m` (reverse video) is the fallback, because it swaps whatever the terminal
+ * already uses and therefore works on a 16-colour tty and on a light theme.
+ */
+export const chip = (s) =>
+  color ? `${rich ? "\x1b[48;5;33m\x1b[38;5;232m" : "\x1b[7m"}${C.bold}${s}${C.reset}` : String(s);
+
 export const c = {
   bold: wrap(C.bold),
   dim: wrap(C.dim),
@@ -169,10 +183,10 @@ export function shortPath(path, max = 46) {
 const G = unicode
   ? { mark: "▚", ok: "✓", fail: "✗", warn: "!", skip: "·", dot: "●", branch: "└", arrow: "→",
       bar: "─", down: "▼", up: "▲", pipe: "│", block: "█", tl: "┌", tr: "┐", bl: "└", br: "┘",
-      ellip: "…" }
+      ellip: "…", sep: "·" }
   : { mark: "#", ok: "+", fail: "x", warn: "!", skip: "-", dot: "*", branch: "\\", arrow: "->",
       bar: "-", down: "v", up: "^", pipe: "|", block: "#", tl: "+", tr: "+", bl: "+", br: "+",
-      ellip: "..." };
+      ellip: "...", sep: "-" };
 
 /** Pre-coloured status glyphs — the four states everything reports in. */
 export const g = {
@@ -302,17 +316,22 @@ export function heading(title, subtitle = "") {
  * the diagonal, at the only resolution a terminal has. `big` is the 2x version,
  * printed once by `create` and nowhere else.
  */
-export function wordmark({ big = false, tagline = "the whole eve stack, on your own machine" } = {}) {
+export function wordmark({ big = false, tagline = "the whole eve stack, on your own machine", version = "" } = {}) {
   const solid = c.brand(G.block.repeat(big ? 4 : 2));
   const ghost = c.brandDim(G.block.repeat(big ? 4 : 2));
+  // Beside the name, always, because "which version am I running" is the first
+  // question of every support conversation and the last one anybody thinks to
+  // ask. npx resolves a version from a cache the reader cannot see, so the only
+  // reliable answer is the one the running process prints about itself.
+  const name = version ? `${c.bold("evestack")} ${c.dim(`v${version}`)}` : c.bold("evestack");
   blank();
   if (big) {
     say(`    ${solid}`);
-    say(`    ${solid}        ${c.bold("evestack")}`);
+    say(`    ${solid}        ${name}`);
     say(`        ${ghost}    ${c.dim(tagline)}`);
     say(`        ${ghost}`);
   } else {
-    say(`    ${solid}      ${c.bold("evestack")}`);
+    say(`    ${solid}      ${name}`);
     say(`      ${ghost}    ${c.dim(tagline)}`);
   }
   blank();

@@ -46,7 +46,7 @@ const SCAFFOLD_COMMANDS = new Set(["create", "attach"]);
  * What it shares with the other four is that it owns `--dir`, `--print` and
  * `--force`, none of which doctor's parser has ever heard of.
  */
-const PROJECT_COMMANDS = new Set(["status", "verify", "open", "tour", "skills"]);
+const PROJECT_COMMANDS = new Set(["status", "verify", "dashboard", "open", "tour", "skills"]);
 
 /**
  * Which scaffolder command this argv is, or null for everything else.
@@ -79,9 +79,9 @@ export function projectCommand(argv) {
 export const USAGE = `evestack — the whole eve stack, on your own machine
 
   evestack create [name]     scaffold an agent, a database and a dashboard
+  evestack dashboard         open the dashboard in your browser, signed in
   evestack status            is it up? what do I run?
   evestack tour              a guided first run, on a stack that is already up
-  evestack open              the dashboard URL and its password, in a browser
   evestack verify            check every part and name the fix for anything broken
   evestack skills            teach your coding agent this project
   evestack attach [dir]      add evestack to an eve project you already have
@@ -216,7 +216,7 @@ async function printVersion(stdout) {
 }
 
 /** Every verb this binary answers to, for the router and for did-you-mean. */
-export const COMMANDS = ["create", "status", "tour", "open", "verify", "skills", "attach", "doctor"];
+export const COMMANDS = ["create", "status", "tour", "dashboard", "verify", "skills", "attach", "doctor"];
 
 /**
  * Edit distance, capped at 2.
@@ -261,6 +261,8 @@ async function runProjectCommand(name, argv, { stdout, stderr }) {
     status: () => import("./status.mjs"),
     tour: () => import("./tour.mjs"),
     verify: () => import("./project.mjs"),
+    dashboard: () => import("./project.mjs"),
+    // The name `dashboard` replaced. Same module, same exported function.
     open: () => import("./project.mjs"),
     skills: () => import("./skills.mjs"),
   };

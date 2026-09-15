@@ -1,3 +1,9 @@
 packages:
   - "packages/*"
   - "templates/*"
+
+# Keep transitive copies on patched releases, including dependencies whose
+# existing lock entries otherwise survive a direct-package update.
+overrides:
+  'nanoid@>=3.0.0 <3.3.18': 3.3.19
+  'js-yaml@>=4.0.0 <4.3.2': 4.3.2

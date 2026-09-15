@@ -47,7 +47,7 @@ The dependency chain is **three levels deep**, not one:
 `templates/default/package.json`. `packages/create-evestack/scripts/sync-template.mjs`
 rewrites those `workspace:*` ranges to `^<version>` at pack time, so **all three must exist on
 npm before `create-evestack` does**. `evestack` in turn declares
-`create-evestack: workspace:^`, so it goes last.
+`create-evestack: workspace:*`, packed as an exact version, so it goes last.
 
 Publish out of order and every `npx create-evestack` in between dies on
 
@@ -56,49 +56,52 @@ npm error 404 Not Found - GET https://registry.npmjs.org/@evestack%2fbudget
 ```
 
 Since a version cannot be unpublished after 72 hours, that is an unrecoverable first impression.
-So:
+Release only reviewed commits on `main`. After checks pass and the version is
+bumped, create and push an annotated tag named `<package>@<version>`. The
+[Publish npm workflow](.github/workflows/publish-npm.yml) validates the tag,
+manifest, main ancestry and published prerequisites, then builds, tests and
+packs without publishing credentials. A separate job publishes the tarball
+using npm OIDC and provenance, with lifecycle scripts disabled.
+
+For example, after choosing the new budget version:
 
 ```bash
-pnpm install --frozen-lockfile
-pnpm -r typecheck                       # must be clean
-pnpm -r test                            # must be green
-node registry/build.mjs                 # regenerate registry/r from templates/default
-
-# 1. every scoped package the template names. `prepack` builds dist/;
-#    `publishConfig.access: public` is required because npm defaults a scoped
-#    package to restricted.
-npm publish ./packages/evestack-budget
-npm publish ./packages/evestack-composio
-npm publish ./packages/evestack-schedules
-
-# 2. verify all three resolve before continuing. Do not skip this — it is the
-#    only gate between a typo and an unrecoverable 404 for every new user.
-npm view @evestack/budget version
-npm view @evestack/composio version
-npm view @evestack/schedules version
-
-# 3. then the scaffolder. `prepack` copies templates/default into template/ and
-#    pins the workspace ranges to the versions just published.
-npm publish ./packages/create-evestack
-npm view create-evestack version
-
-# 4. then the CLI, which depends on the scaffolder published in step 3.
-#    pnpm, NOT npm — and this is the one package where it matters. `evestack`
-#    declares `create-evestack: workspace:^`, npm has never implemented that
-#    protocol, and `npm publish` would ship the range verbatim so that every
-#    install ends at `Unsupported URL Type "workspace:"`. pnpm resolves it as it
-#    packs. packages/evestack-cli/scripts/prepack.mjs refuses the npm form
-#    rather than letting it through, so the wrong command fails loudly here
-#    instead of quietly on every user — but this line said `npm publish` for
-#    long enough to be worth correcting.
-pnpm --filter evestack publish --access public
-npm view evestack version
-
-# Independent of the chain — no other published package names them, so these can
-# go at any point.
-npm publish ./packages/evestack-mcp
-npm publish ./packages/sandbox-opensandbox
+git tag -a '@evestack/budget@X.Y.Z' -m 'Release @evestack/budget X.Y.Z'
+git push origin '@evestack/budget@X.Y.Z'
 ```
+
+Replace `X.Y.Z` with the manifest version. Release budget, Composio and schedules
+first; wait for those exact versions to resolve on npm, then release
+`create-evestack`, then `evestack`. MCP and OpenSandbox can release independently.
+The workflow uses `pnpm pack` so `workspace:*` dependencies become installable
+registry ranges. Do not use `npm publish` on an unpacked workspace directory.
+For a manual retry, select the existing release **tag** in Actions and enter its
+package and version. Publishing an already-published npm version fails; investigate
+the prior run instead of moving a release tag. Dashboard images retain their
+separate release workflow.
+
+### One-time npm account setup (all seven public packages)
+
+The workflow cannot publish until a maintainer configures each package. In npm:
+**Packages → package → Settings → Trusted Publisher → GitHub Actions**. Enter:
+
+- Organization or user: `SammyTourani`
+- Repository: `evestack`
+- Workflow filename: `publish-npm.yml`
+- Environment name: leave empty (this workflow does not use an environment)
+- Allowed actions: enable **Allow npm publish** for the tag-driven release flow
+
+Save the connection, then set **Publishing access → Require two-factor
+authentication and disallow bypass 2fa tokens** and update package settings.
+Apply this to `create-evestack`, `evestack`, `@evestack/budget`,
+`@evestack/composio`, `@evestack/schedules`, `@evestack/mcp`, and
+`@evestack/sandbox-opensandbox`. No `NPM_TOKEN` secret or fallback is used.
+
+Verified against [npm's trusted publishing documentation](https://docs.npmjs.com/trusted-publishers/):
+Node 22.14+ and npm 11.5.1+ are required, GitHub-hosted runners are supported,
+and new connections require explicitly enabling direct publishing. The workflow
+uses Node 24 and checks the npm version. The first real release verifies the
+server-side trust relationship; saving the form alone does not validate it.
 
 ### Both names are live — check them anyway
 

@@ -86,13 +86,27 @@ Opting in is one line:
 
 evestack records **who** approved something, and always records **how** it learned that
 (`packages/dashboard/lib/approvals.ts`). This server threads identity through by setting the header the
-dashboard already reads:
+dashboard already reads. Whether the dashboard *believes* that header is not this server's decision, and
+that difference is the whole of this section.
 
-| | Sent | Dashboard records |
+**The precondition.** `identifyApprover` reads `X-Forwarded-User`, `X-Forwarded-Email` and
+`EVESTACK_APPROVER_HEADER` only when **`EVESTACK_TRUSTED_PROXY` is set on the dashboard**. Unset — the
+default — those headers are not read at all: not read and downgraded, not read and marked untrusted.
+Ignored.
+
+| Dashboard | With `EVESTACK_MCP_APPROVER` set | Dashboard records |
 | --- | --- | --- |
-| `EVESTACK_MCP_APPROVER` set | `X-Forwarded-User: <value>` | `approverVia: "forwarded-user"` |
-| …plus `EVESTACK_APPROVER_HEADER` set | that header instead | `approverVia: "header"` |
-| **Unset (default)** | *nothing* | `approverVia: "unidentified"` |
+| `EVESTACK_TRUSTED_PROXY` set | `X-Forwarded-User: <value>` is read | `approver: <value>`, `approverVia: "forwarded-user"` |
+| …plus `EVESTACK_APPROVER_HEADER` set | that header is read instead | `approverVia: "header"` |
+| **`EVESTACK_TRUSTED_PROXY` unset (default)** | header is sent and **ignored** | the name on the credential that got in — `approverVia: "basic"` or `"session"` |
+| `EVESTACK_MCP_APPROVER` unset | *nothing sent* | as above, or `approverVia: "unidentified"` if nothing authenticated the call |
+
+This section used to say that setting `EVESTACK_MCP_APPROVER` records `approverVia: "forwarded-user"`, and
+that the variable "is for the case where nothing else is in front". Both were wrong, and wrong in the same
+direction: with nothing in front is precisely when the name is discarded, and the audit row names the
+shared deployment credential instead. `approve_or_deny`'s attribution warning does not cover for it
+either — that warning fires on a **null** approver, and the Basic username is not null. The result was a
+row that looked attributed, an MCP server that looked configured, and a name that never left the header.
 
 Note what the default does **not** do: it does not invent an identity. An MCP server genuinely does not
 know which human is at the other end of the conversation, and writing a plausible-looking name into an
@@ -106,11 +120,19 @@ row still says the decision arrived through MCP, and from which client. The vers
 typed twice as a literal once, and a published bump would have put a version that was never released into
 the audit log permanently. This sentence is not the place to make that three.
 
-Be clear-eyed about the trust here, the same way the dashboard's approvals page is: `X-Forwarded-User` is
-a header a proxy is supposed to set. If your dashboard sits behind one that does OAuth, that proxy will
-overwrite whatever this server sends, which is the correct outcome — the proxy knows and this server is
-guessing. `EVESTACK_MCP_APPROVER` is for the case where nothing else is in front, and it is worth exactly
-as much as the config file it lives in.
+Be clear-eyed about what turning the precondition on costs, the same way the dashboard's approvals page
+is. `EVESTACK_TRUSTED_PROXY=1` tells the dashboard to believe a forwarded name on every request that
+reaches it. There is no signature and no second factor: **anyone holding the dashboard credential can then
+write any name they like onto an audit row with one `curl -H 'X-Forwarded-User: …'`.** It is honest only
+when a proxy you control terminates every request *and strips the client's own `X-Forwarded-*` headers* —
+that stripping is the real control, and the variable only records that you did it. Setting it so that this
+server's `EVESTACK_MCP_APPROVER` lands in the log, on a dashboard reachable directly, trades a row that
+says "the deployment credential" for a row that says whatever the last caller typed.
+
+If your dashboard already sits behind a proxy that does OAuth, that proxy will overwrite whatever this
+server sends, which is the correct outcome — the proxy knows and this server is guessing.
+`EVESTACK_MCP_APPROVER` is worth exactly as much as the config file it lives in, and on a dashboard with
+nothing in front of it, nothing at all.
 
 ## Configuration
 
@@ -118,9 +140,10 @@ as much as the config file it lives in.
 | --- | --- | --- |
 | `EVESTACK_MCP_DASHBOARD_URL` | `http://localhost:4000` | Dashboard origin. |
 | `EVESTACK_MCP_ALLOW_CONTROL` | unset | `1` advertises the mutating tools. |
-| `EVESTACK_MCP_APPROVER` | unset | Identity recorded on approvals. |
-| `EVESTACK_APPROVER_HEADER` | `x-forwarded-user` | Header to carry it in. Same variable the dashboard reads, so one line configures both ends. |
-| `EVESTACK_MCP_DASHBOARD_AUTH` | unset | Verbatim `Authorization` value, if your dashboard is behind auth. |
+| `EVESTACK_MCP_APPROVER` | unset | Identity offered for approvals. Recorded **only** if the dashboard sets `EVESTACK_TRUSTED_PROXY`; ignored otherwise. See [Identity vs. provenance](#identity-vs-provenance). |
+| `EVESTACK_APPROVER_HEADER` | `x-forwarded-user` | Header to carry it in. Same variable the dashboard reads, so one line configures both ends. Also only read behind `EVESTACK_TRUSTED_PROXY`. |
+| `EVESTACK_MCP_DASHBOARD_AUTH` | unset | The dashboard credential. Either `user:password`, which is encoded here as `Basic …`, or a complete header value (`Basic dXNlcjpwYXNz`, `Bearer …`), which is sent exactly as written. |
+| `EVESTACK_MCP_DASHBOARD_AUTH_VERBATIM` | unset | `1` sends `EVESTACK_MCP_DASHBOARD_AUTH` exactly as written whatever it looks like. Only needed for a proxy wanting a schemeless value that contains a colon. |
 | `EVESTACK_MCP_TIMEOUT_MS` | `30000` | Per-request timeout. |
 | `EVESTACK_MCP_MAX_OUTPUT_BYTES` | `65536` | Ceiling on one tool result. See [Output cap](#output-cap). Minimum 1024; a value below that is rejected at startup rather than clamped. |
 
@@ -226,6 +249,15 @@ Argument validation is a hand-rolled subset of JSON Schema (`src/schema.ts`) cov
 these tools declare. The server asserts at startup that no schema uses a keyword the validator does not
 enforce, so the subset can never silently stop covering the schemas — an advertised constraint that is not
 actually checked is a lie told to a model.
+
+One check is not declarative and so is worth naming: a `sessionId` is spliced into a dashboard route, and
+`encodeURIComponent` — which escapes `/`, `?` and `#` — leaves a dot alone, because a dot is legal in a
+path segment. So `sessionId: ".."` used to arrive intact and `new URL(base + path)` resolved it, turning
+`/api/control/sessions/../approve` into `/api/control/approve`. Every such target 404s on the dashboard as
+it stands, but that is a fact about today's route table rather than about this code, and this package
+exists to talk to dashboards it was not built against. `src/tools.ts` now probes each id through the same
+URL parser and refuses one that changes the shape of the route, before any request goes out. Ids that
+merely *contain* dots are ordinary and still work.
 
 ## When a route is missing
 

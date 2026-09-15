@@ -56,7 +56,31 @@ const typeDiscriminator = {
     t.ok("$eve.title" in session, "a session run still carries $eve.title (the dashboard's session label)");
     t.ok("$eve.trigger" in session, "a session run still carries $eve.trigger (which channel started it)");
 
-    const turn = attrs.buildTurnAttributes({ requestId: "req_1", parentSessionId: "s_1", rootSessionId: "s_1" });
+    // `serializedContext` is not optional here, and omitting it is exactly
+    // what used to make this call crash: "Cannot read properties of undefined
+    // (reading 'eve.otelTraceEnabled')" — not a moved file, an incomplete
+    // fixture. buildTurnAttributes() unconditionally does
+    // `isWorkflowOtelTraceEnabled(e.serializedContext)`, which indexes into
+    // `e.serializedContext` with the literal key `eve.otelTraceEnabled`; with
+    // no `serializedContext` in the input object that index is `undefined[…]`.
+    // Confirmed against eve's one real caller,
+    // dist/src/execution/dispatch-turn-step.js, which always supplies
+    // `serializedContext: e.serializedContext` alongside `parentSessionId`,
+    // `requestId` and `rootSessionId` — the same four fields this call builds,
+    // serializedContext included. The session and subagent calls immediately
+    // below already pass `serializedContext: {}`; this call simply never did,
+    // and eve 0.54.3's buildTurnAttributes is the first shape that actually
+    // dereferences it unconditionally rather than tolerating its absence. An
+    // empty object is enough: every reader of it (isWorkflowOtelTraceEnabled,
+    // isWorkflowTraceContentVisible, readSessionTraceId) treats a missing key
+    // as "false" or "absent" rather than throwing, which is exactly the
+    // behaviour the session and subagent assertions below already rely on.
+    const turn = attrs.buildTurnAttributes({
+      requestId: "req_1",
+      parentSessionId: "s_1",
+      rootSessionId: "s_1",
+      serializedContext: {},
+    });
     t.equal(turn["$eve.type"], "turn", 'a turn run is still tagged $eve.type = "turn"');
     t.equal(turn["$eve.parent"], "s_1", "a turn still points at its session through $eve.parent");
     t.equal(turn["$eve.root"], "s_1", "a turn still carries $eve.root");

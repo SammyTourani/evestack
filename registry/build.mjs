@@ -31,6 +31,117 @@ const template = join(root, "templates", "default");
 const outDir = join(root, "registry", "r");
 
 const read = (rel) => readFileSync(join(template, rel), "utf8");
+/**
+ * Strip the template-only slash-command wiring out of `agent/channels/eve.ts`.
+ *
+ * THE BUG THIS EXISTS TO PREVENT, which shipped once and was caught by reading
+ * the built JSON rather than by any test. The template's channel file does two
+ * jobs: it declares the auth chain, and it wires `onMessage` to
+ * `lib/dashboard-command.ts` so `/dashboard` works inside `npm run dev`. The
+ * `basic-auth` registry item claims to be the FIRST of those and is installed
+ * into a stock `eve init` project, which has no `lib/dashboard-command.ts` and
+ * never will. Embedding the file verbatim therefore handed that project an
+ * import of a module that does not exist — a hard build failure, from an item
+ * whose whole description is "replace vercelOidc() with HTTP Basic".
+ *
+ * A second copy of the auth chain was the obvious alternative and is worse: the
+ * auth chain is the part that must never drift between the template and the
+ * registry, and this repository's most expensive recurring failure is a
+ * duplicated claim going stale. So the auth chain stays single-sourced and the
+ * wiring is removed here, by a transform that REFUSES rather than guesses.
+ *
+ * Every assertion below is load-bearing. If the template's shape changes so
+ * that a marker is no longer found, this throws and the build stops — which is
+ * the only acceptable failure mode, because the alternative is silently
+ * publishing an item that breaks on install.
+ */
+/**
+ * Refuse to emit an item whose files import something the item does not ship.
+ *
+ * Written after a real escape: `basic-auth` embeds the template's
+ * `agent/channels/eve.ts`, that file grew an import of `lib/dashboard-command`,
+ * and the item went on being built and published with an import of a module that
+ * exists only in an evestack scaffold. Installing it into a stock eve project —
+ * the only thing this item is for — is then a build failure, and nothing here
+ * noticed, because every check this script had was about whether the JSON was
+ * well formed rather than whether the code inside it could run.
+ *
+ * Deliberately narrow: only RELATIVE specifiers are resolved, because those are
+ * the ones whose target has to travel with the item. A bare specifier is a
+ * package and is covered by the item's own `dependencies`.
+ */
+function assertImportsAreSatisfied(item, files) {
+  const shipped = new Set();
+  for (const file of files) {
+    shipped.add(file.target);
+    shipped.add(file.target.replace(/\.(ts|js|mjs)$/, ""));
+  }
+  for (const file of files) {
+    const dir = file.target.includes("/") ? file.target.slice(0, file.target.lastIndexOf("/")) : "";
+    for (const match of file.content.matchAll(/from\s+["'](\.[^"']*)["']/g)) {
+      const specifier = match[1];
+      const segments = `${dir}/${specifier}`.split("/");
+      const stack = [];
+      for (const segment of segments) {
+        if (segment === "" || segment === ".") continue;
+        if (segment === "..") stack.pop();
+        else stack.push(segment);
+      }
+      const resolved = stack.join("/");
+      const ok = ["", ".ts", ".js", ".mjs"].some((ext) => shipped.has(resolved + ext));
+      if (!ok) {
+        throw new Error(
+          `${item.name}: ${file.target} imports "${specifier}", which resolves to ` +
+            `"${resolved}" — a file this item does not ship. A project installing ` +
+            `@evestack/${item.name} would get an import it cannot resolve. Either add the ` +
+            "file to this item, or transform the import out (see stripSlashCommandWiring).",
+        );
+      }
+    }
+  }
+}
+
+function stripSlashCommandWiring(source, rel) {
+  const NL = String.fromCharCode(10);
+  const importLine = new RegExp('^import \\{ handleSlashCommand \\}.*' + NL, 'm');
+  if (!importLine.test(source)) {
+    throw new Error(
+      `${rel}: expected the handleSlashCommand import that this transform removes. ` +
+        'If the wiring moved, update stripSlashCommandWiring; if it is gone, delete it.',
+    );
+  }
+  let out = source.replace(importLine, '');
+
+  // The block runs from its own doc comment to the closing brace of the method.
+  const OPEN = '  /**' + NL + '   * Slash commands typed at the agent';
+  const CLOSE = NL + '  },' + NL;
+  const start = out.indexOf(OPEN);
+  if (start === -1) {
+    throw new Error(`${rel}: expected the onMessage doc comment that opens the wiring block.`);
+  }
+  const end = out.indexOf(CLOSE, start);
+  if (end === -1) throw new Error(`${rel}: could not find the end of the onMessage block.`);
+  out = out.slice(0, start).replace(new RegExp(NL + '+$'), NL) + out.slice(end + CLOSE.length);
+
+  // `defaultEveAuth` is only imported for the wiring; with the block gone it is
+  // an unused import, which `eve build` reports and a reader has to explain.
+  out = out.replace(
+    'import { defaultEveAuth, eveChannel } from "eve/channels/eve";',
+    'import { eveChannel } from "eve/channels/eve";',
+  );
+
+  // What must be TRUE of the result, not merely absent from it.
+  for (const gone of ['dashboard-command', 'handleSlashCommand', 'onMessage', 'defaultEveAuth']) {
+    if (out.includes(gone)) throw new Error(`${rel}: "${gone}" survived the transform.`);
+  }
+  for (const kept of ['httpBasic', 'localDev', 'eveChannel', 'EVESTACK_AUTH_PASSWORD']) {
+    if (!out.includes(kept)) {
+      throw new Error(`${rel}: the transform removed "${kept}", which it must keep.`);
+    }
+  }
+  return out;
+}
+
 
 const templateManifest = JSON.parse(read("package.json"));
 
@@ -125,7 +236,15 @@ const ITEMS = [
     title: "HTTP Basic route auth",
     description:
       "Replace vercelOidc()/placeholderAuth() with HTTP Basic, for agents that run off Vercel.",
-    files: [{ source: "agent/channels/eve.ts", target: "agent/channels/eve.ts" }],
+    files: [
+      {
+        source: "agent/channels/eve.ts",
+        target: "agent/channels/eve.ts",
+        // See stripSlashCommandWiring: the template file also wires `/dashboard`,
+        // which needs a module a stock eve project does not have.
+        transform: stripSlashCommandWiring,
+      },
+    ],
     /* The docs below lead with the file collision, because this item's single file
        targets agent/channels/eve.ts — which EVERY `eve init` project already has,
        since that is where eve puts its own auth chain. So this is the one registry
@@ -219,6 +338,13 @@ mkdirSync(outDir, { recursive: true });
 
 const index = [];
 for (const item of ITEMS) {
+  const builtFiles = item.files.map((f) => ({
+    path: `registry/${item.name}/${f.target}`,
+    target: f.target,
+    type: "registry:file",
+    content: f.transform ? f.transform(read(f.source), f.source) : read(f.source),
+  }));
+  assertImportsAreSatisfied(item, builtFiles);
   const json = {
     $schema: "https://ui.shadcn.com/schema/registry-item.json",
     name: item.name,
@@ -227,12 +353,7 @@ for (const item of ITEMS) {
     description: item.description,
     ...(item.dependencies ? { dependencies: item.dependencies } : {}),
     ...(item.devDependencies ? { devDependencies: item.devDependencies } : {}),
-    files: item.files.map((f) => ({
-      path: `registry/${item.name}/${f.target}`,
-      target: f.target,
-      type: "registry:file",
-      content: read(f.source),
-    })),
+    files: builtFiles,
     ...(item.docs ? { docs: item.docs } : {}),
   };
   writeFileSync(join(outDir, `${item.name}.json`), `${JSON.stringify(json, null, 2)}\n`);

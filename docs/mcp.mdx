@@ -31,10 +31,18 @@ route for something, this package has no tool for it.**
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `EVESTACK_MCP_DASHBOARD_URL` | `http://localhost:4000` | Where the dashboard is. |
-| `EVESTACK_MCP_DASHBOARD_AUTH` | — | `user:password` for the dashboard. Every route is behind it. |
+| `EVESTACK_MCP_DASHBOARD_AUTH` | — | The dashboard credential. Every route is behind it. Write it as `user:password` and this server encodes it into `Basic …`; write a complete header value (`Basic dXNlcjpwYXNz`, `Bearer …`) and it is sent exactly as written. |
+| `EVESTACK_MCP_DASHBOARD_AUTH_VERBATIM` | unset | `1` sends the value above exactly as written, whatever it looks like. Only for a proxy that wants a schemeless credential containing a colon. |
 | `EVESTACK_MCP_ALLOW_CONTROL` | unset | `1` advertises the four mutating tools. See below. |
-| `EVESTACK_MCP_APPROVER` | — | The name recorded in the audit log for decisions this server makes. |
+| `EVESTACK_MCP_APPROVER` | — | The name this server offers for decisions it makes. Recorded **only** if the dashboard sets `EVESTACK_TRUSTED_PROXY` — see [Whose name ends up on an approval](#whose-name-ends-up-on-an-approval). |
 | `EVESTACK_MCP_TIMEOUT_MS` | — | Per-request timeout against the dashboard. |
+
+<Note>
+  `EVESTACK_MCP_DASHBOARD_AUTH` used to be documented as `user:password` while the server sent the value
+  untouched — and the dashboard only accepts an `Authorization` header that begins with `Basic `, so the
+  documented spelling returned 401 from every tool. Both forms work now. If you are debugging an older
+  install, that is the symptom: a correct password, a reachable dashboard, and 401 everywhere.
+</Note>
 
 ## The tools
 
@@ -69,8 +77,30 @@ talks the server into using one.
 
 <Warning>
   Turning on `EVESTACK_MCP_ALLOW_CONTROL` means an agent can approve shell commands on your machine
-  and start runs that cost money. Set `EVESTACK_MCP_APPROVER` with it, so the audit log on
-  [Approvals](/docs/dashboard) records which agent decided rather than `unidentified`.
+  and start runs that cost money. Every decision is written to the audit log on
+  [Approvals](/docs/dashboard) whatever you configure; what `EVESTACK_MCP_APPROVER` changes is only the
+  name on the row, and only under the condition below.
+</Warning>
+
+## Whose name ends up on an approval
+
+Setting `EVESTACK_MCP_APPROVER` sends `X-Forwarded-User` with every request. The dashboard reads that
+header **only when `EVESTACK_TRUSTED_PROXY` is set**; with it unset — the default — the forwarded names
+are not read at all, and the audit row records whoever the dashboard credential names, with
+`approverVia: "basic"` or `"session"`. So on a plain self-hosted dashboard, setting `EVESTACK_MCP_APPROVER`
+changes nothing that gets stored.
+
+That is the honest behaviour rather than a gap. A name this server read out of a config file is not
+evidence about a human, and an audit log that accepts one is an audit log anybody who can reach the port
+can dictate.
+
+<Warning>
+  **`EVESTACK_TRUSTED_PROXY=1` lets any credential holder assert any name.** It tells the dashboard to
+  believe `X-Forwarded-User` on every request — there is no signature and no second factor, so one
+  `curl -H 'X-Forwarded-User: someone.else@example.com'` writes a colleague's name onto an approval. It is
+  only honest when a proxy you control terminates every request **and strips the client's own
+  `X-Forwarded-*` headers**; that stripping is the control, and the variable only records that you did it.
+  Turning it on merely to get this server's name into the log is a bad trade.
 </Warning>
 
 ## What it tells you when a route is missing

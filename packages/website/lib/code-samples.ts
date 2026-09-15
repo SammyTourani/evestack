@@ -9,7 +9,9 @@ const repoRoot = path.join(process.cwd(), "..", "..");
 
 async function readRepoFile(rel: string): Promise<string> {
   const raw = await readFile(path.join(repoRoot, rel), "utf8");
-  return raw.trimEnd();
+  // Git may check out CRLF on Windows. Anchors and width checks operate on
+  // logical source lines, so normalize terminators before selecting excerpts.
+  return raw.replace(/\r\n?/g, "\n").trimEnd();
 }
 
 /* Each card must show its whole excerpt inside the visible box — no

@@ -37,6 +37,11 @@ import {
   findAgent,
   readEnvFile,
 } from "./checks.mjs";
+// The ONE generator of the approval label, imported rather than reimplemented.
+// `forget` compares what the model sends against `describeForDeletion`'s output
+// byte for byte, so a second copy of these four lines here would be a demo that
+// passes until someone edits the real one. Node strips the types on the way in.
+import { deletionLabel } from "../lib/memory.ts";
 
 /** How many times to ask before reporting that the model will not do it. */
 const ATTEMPTS = 3;
@@ -63,21 +68,54 @@ function fail(lines) {
  * missing row changes what approving DOES, not whether it asks. `forget` has a
  * branch for that and says so in its result.
  */
+/**
+ * A target that is deliberately not there.
+ *
+ * `forget`'s gate parks on an id it cannot find — it has nothing to compare a
+ * label against, so it asks the human rather than refusing — which is exactly
+ * what this script measures. So "no addressable row" is not a failure here, it
+ * is the simpler half of the demo, and the id is one nothing will ever occupy.
+ */
+const MISSING_ROW = { id: 2147483647, content: null, deleteWith: null };
+
 async function pickTarget() {
   const url = env("WORKFLOW_POSTGRES_URL");
-  if (!url) return { id: 1, content: null };
+  if (!url) return MISSING_ROW;
   const probe = await connectPostgres(url, 4000);
-  if (!probe.ok) return { id: 1, content: null };
+  if (!probe.ok) return MISSING_ROW;
   try {
+    // ONLY an unowned row, and that restriction is the whole of this query.
+    //
+    // `forget` now refuses to park until the model hands back the exact
+    // `deleteWith` label `describeForDeletion` generates for that row, and that
+    // label names the owner RELATIVE TO THE CALLER: the same row reads "yours"
+    // to the principal who wrote it and "written by <them>" to anyone else. This
+    // script talks to the agent over HTTP and has no idea which principal the
+    // session will run as, so for any owned row it cannot produce the string the
+    // gate will compare against, and every prompt it wrote would be denied
+    // rather than parked — turning a demo of the approval gate into a demo of
+    // the ownership check.
+    //
+    // A row with no owner is the one case whose label is the same for every
+    // viewer ("no owner recorded"), so it is the only row this script can
+    // address. Rows written before the principal column existed are exactly
+    // that, which is also the population most likely to be present on a project
+    // old enough to have memories at all.
     const rows = await probe.client.query(
-      "SELECT id, content FROM evestack.memories ORDER BY id LIMIT 1",
+      `SELECT id, content
+         FROM evestack.memories
+        WHERE principal_id IS NULL
+        ORDER BY id
+        LIMIT 1`,
     );
-    if (rows.rowCount === 0) return { id: 1, content: null };
-    return { id: Number(rows.rows[0].id), content: String(rows.rows[0].content) };
+    if (rows.rowCount === 0) return MISSING_ROW;
+    const id = Number(rows.rows[0].id);
+    const content = String(rows.rows[0].content);
+    return { id, content, deleteWith: deletionLabel({ id, content, principalId: null }) };
   } catch {
-    // No memories table yet is the ordinary state of a project nobody has talked
-    // to. It is not worth a failure: id 1 parks just as well.
-    return { id: 1, content: null };
+    // No memories table yet, or no principal_id column on an old one. Either way
+    // there is nothing addressable here, and a missing id parks unconditionally.
+    return MISSING_ROW;
   } finally {
     await probe.client.end().catch(() => {});
   }
@@ -90,11 +128,28 @@ async function pickTarget() {
  * attempts that produced prose instead of a tool call were the ones where the
  * model had to invent the required `reason` itself.
  */
-function prompts(id) {
+function prompts(id, deleteWith = null) {
+  // `deleteWith` is supplied for the same reason `reason` is: it is a REQUIRED
+  // input of the tool, and the finding this script exists to record is that the
+  // attempts which produced prose instead of a tool call were the ones where the
+  // model had to invent a required input itself. Omitting it would not merely
+  // make the demo harder, it would change what is being measured — `forget`
+  // refuses to ask a human until the label matches, so a prompt without it tests
+  // the ownership check and never reaches the approval gate.
+  //
+  // Null when the target does not exist, which is the case the gate short-
+  // circuits: no row means no label to match, and it parks on the bare id.
+  const label = deleteWith === null ? "" : `, deleteWith="${deleteWith}"`;
+  const json =
+    deleteWith === null
+      ? `{"id": ${id}, "reason": "trying the approval gate"}`
+      : `{"id": ${id}, "reason": "trying the approval gate", "deleteWith": ${JSON.stringify(deleteWith)}}`;
   return [
-    `Use the forget tool to delete memory id ${id}. Set reason to "trying the approval gate".`,
-    `Call the forget tool now. id=${id}, reason="trying the approval gate". Reply with the tool call and nothing else.`,
-    `You have a tool called forget. Call it with exactly {"id": ${id}, "reason": "trying the approval gate"}. Do not write any text.`,
+    `Use the forget tool to delete memory id ${id}. Set reason to "trying the approval gate"${
+      deleteWith === null ? "" : ` and deleteWith to exactly "${deleteWith}"`
+    }.`,
+    `Call the forget tool now. id=${id}, reason="trying the approval gate"${label}. Reply with the tool call and nothing else.`,
+    `You have a tool called forget. Call it with exactly ${json}. Do not write any text.`,
   ];
 }
 
@@ -179,7 +234,9 @@ const target = await pickTarget();
 const dashboard = dashboardTarget(env("EVESTACK_DASHBOARD_URL"));
 
 console.log(`\n${C.bold}  Asking the agent to call a gated tool.${C.reset}\n`);
-console.log(`  Tool     ${C.bold}forget${C.reset}, which ships behind approval: always().`);
+console.log(
+  `  Tool     ${C.bold}forget${C.reset}, gated on a label this process generated, then on a human.`,
+);
 if (target.content === null) {
   console.log(`  Target   memory ${target.id}, which does not exist yet, so approving deletes nothing.`);
 } else {
@@ -188,7 +245,7 @@ if (target.content === null) {
 }
 console.log();
 
-const messages = prompts(target.id);
+const messages = prompts(target.id, target.deleteWith);
 const tried = [];
 for (const [index, message] of messages.slice(0, ATTEMPTS).entries()) {
   process.stdout.write(`  ${C.dim}attempt ${index + 1} of ${Math.min(ATTEMPTS, messages.length)}...${C.reset}\r`);

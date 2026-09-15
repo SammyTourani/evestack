@@ -42,25 +42,91 @@ import { compare } from "../lib/semver.mjs";
 const INSTRUCTIONS = "templates/default/agent/instructions.md";
 
 /**
- * eve's own registry of framework-provided tools, minified but structurally
- * legible: the default set and the opt-in set are two flat array literals of
- * import bindings, side by side.
+ * eve's own registry of framework-provided tool SOURCES, keyed by the same
+ * logical path a user's own `agent/tools/*.ts` file would occupy if it chose
+ * to override one.
  *
- *   REGISTERED_FRAMEWORK_TOOLS=[ASK_QUESTION_TOOL_DEFINITION,BASH_TOOL_DEFINITION,…]
- *   OPT_IN_FRAMEWORK_TOOLS=[GLOB_TOOL_DEFINITION,GREP_TOOL_DEFINITION]
+ * Nothing here is a flat array of `*_TOOL_DEFINITION` constants any more.
+ * That whole naming convention is gone from the package — confirmed by
+ * grepping the entire dist tree (minus dist/src/compiled, which is vendored)
+ * for `REGISTERED_FRAMEWORK_TOOLS`, `OPT_IN_FRAMEWORK_TOOLS`, and every
+ * `*_TOOL_DEFINITION` identifier this contract used to look for: zero hits,
+ * on all of them. In 0.54.3 the compiler instead composes each agent out of
+ * "programmatic sources" — named bundles of `{ logicalPath, loadNamespace }`
+ * entries — and dist/src/framework/sources/registry.js is where eve defines
+ * the two sources wired into every scaffolded agent unconditionally:
+ * `localDefaults` (id `eve:defaults`, applied to every local node) and
+ * `rootDefaults` (id `eve:root-defaults`, applied only to the root node,
+ * which is why the `agent` self-dispatch tool lives there and not in
+ * `localDefaults` — a subagent can be dispatched only from the session root).
+ * A third source in the same file, id `eve:memory-wrapper`, is registered
+ * only as a template (`createAgentSourceRegistry(sources, { templates: [...]
+ * })`) rather than composed the way the other two are — read
+ * `frameworkAgentSourceRegistry`'s own construction call to see the
+ * distinction made in eve's own code, not asserted by us. It is deliberately
+ * excluded below: a template is not wired into every agent, so a tool it
+ * carries is not a default just because its `logicalPath` starts with
+ * `tools/` the same way a real default's does (`tools/memory-wrapper.ts` is
+ * exactly this trap — present in the file, absent from what actually composes
+ * by default).
  *
- * Read statically rather than by calling `getFrameworkToolDefinitions()`, which
- * is the obvious approach and does not work: an unpacked eve tarball has no
- * node_modules, so importing anything under `dist/src/runtime/` fails on the
- * peer dependency `ai` ("Cannot find package 'ai' imported from
- * dist/src/shared/tool-schema.js"). The whole point of
- * EVESTACK_CONTRACT_EVE_DIR is to interrogate a candidate release before
- * installing it, so an assertion that only works on an installed eve would not
- * run in the one situation it is for.
+ * Read statically rather than by importing the module, for the reason the
+ * previous version of this contract gave and that reason has not changed: an
+ * unpacked eve tarball has no node_modules, so importing anything that reaches
+ * into dist/src/runtime/ fails on the peer dependency `ai`. EVESTACK_CONTRACT_EVE_DIR
+ * exists to interrogate exactly that kind of candidate — unpacked, not yet
+ * installed — so an assertion that only works once eve is installed would not
+ * run in the one situation it exists for.
  */
-const FRAMEWORK_TOOLS_INDEX = "dist/src/runtime/framework-tools/index.js";
-const DEFAULT_SET_RE = /REGISTERED_FRAMEWORK_TOOLS\s*=\s*\[([^\]]*)\]/;
-const DEFINITION_RE = /[A-Z][A-Z0-9_]*_TOOL_DEFINITION/g;
+const FRAMEWORK_SOURCES_REGISTRY = "dist/src/framework/sources/registry.js";
+
+/**
+ * Slices `text` between two literal anchors (exclusive of both), or null if
+ * either is missing.
+ *
+ * Used to scope the logical-path regex below to one `defineProgrammaticAgentSource`
+ * call at a time rather than the whole file. `modules:[` alone is not a unique
+ * enough anchor — all three sources have one — and the memory-wrapper source's
+ * `tools/memory-wrapper.ts` entry starts with `tools/` exactly like a real
+ * default's does, so an unscoped scan over-counts it. Anchoring on each
+ * source's `id:` literal instead, and taking the text up to the NEXT source's
+ * `id:` literal, isolates one source's `modules` array without having to
+ * balance the nested `{`/`[` this minified text does not make it easy to
+ * balance by hand.
+ */
+function between(text, startAnchor, endAnchor) {
+  const start = text.indexOf(startAnchor);
+  if (start === -1) return null;
+  const end = text.indexOf(endAnchor, start + startAnchor.length);
+  return end === -1 ? null : text.slice(start + startAnchor.length, end);
+}
+
+// Every module entry in the registry uses backtick-quoted string literals —
+// `` `tools/bash.ts` ``, never `"tools/bash.ts"` or `'tools/bash.ts'` — which
+// is the bundler's own output convention here, not a choice made by this
+// file, and the regex has to match the delimiter that is actually on disk.
+const TOOL_LOGICAL_PATH_RE = /logicalPath:`tools\/([a-z_]+)\.ts`/g;
+
+/**
+ * Every tool name eve KNOWS how to provide — default or opt-in — derived from
+ * eve's own package.json `exports` map rather than from any one dist file.
+ * That map is the one place both categories are guaranteed to be listed
+ * together: a tool a user must opt into by re-exporting it (`glob`, `grep`)
+ * still needs a public subpath to opt in FROM, so it is exported precisely
+ * when it exists at all, regardless of whether it defaults on. This replaces
+ * the old `known` set, which used to come from every `*_TOOL_DEFINITION`
+ * identifier anywhere in the (now nonexistent) framework-tools index file.
+ *
+ * Three tool-shaped-looking subpaths are excluded on purpose: bare `eve/tools`
+ * is the authoring-helper barrel (`defineTool`, `defineDynamic`, `disableTool`,
+ * …), and `eve/tools/approval` / `eve/tools/workflow` are helper namespaces
+ * (`always()`/`never()`/`once()`, and the experimental workflow-tool authoring
+ * helpers) rather than one specific tool the model calls by that name.
+ * Confirmed by reading both .d.ts files directly: neither has a `default`
+ * export, and every real tool subpath (`eve/tools/glob`, `eve/tools/bash`, …)
+ * does.
+ */
+const NON_TOOL_SUBPATHS = new Set(["eve/tools", "eve/tools/approval", "eve/tools/workflow"]);
 
 /**
  * Tool name → the binding eve names its definition after.
@@ -71,9 +137,16 @@ const DEFINITION_RE = /[A-Z][A-Z0-9_]*_TOOL_DEFINITION/g;
  * Deriving blindly would have looked for `LOAD_SKILL_TOOL_DEFINITION`, found
  * nothing, and reported a default tool as missing — a false failure on a name
  * eve ships perfectly well.
+ *
+ * UPDATE, 0.54.3: this whole alias table is dead weight now, kept only as a
+ * flag for the next person who wonders where it went. The `_TOOL_DEFINITION`
+ * naming convention it worked around no longer exists (see the comment on
+ * FRAMEWORK_SOURCES_REGISTRY above) — both `known` and `defaults` are now
+ * plain tool-name strings (`"load_skill"`, not `"SKILL_TOOL_DEFINITION"`),
+ * because both the exports-map subpath and the registry's `logicalPath` name
+ * a tool `tools/load_skill` / `eve/tools/load_skill` consistently. There is
+ * no exception left to alias.
  */
-const DEFINITION_ALIASES = { load_skill: "SKILL_TOOL_DEFINITION" };
-const definitionFor = (tool) => DEFINITION_ALIASES[tool] ?? `${tool.toUpperCase()}_TOOL_DEFINITION`;
 
 /**
  * Backticked lowercase identifiers in the prompt.
@@ -118,32 +191,60 @@ const promises = {
     const prompt = readFileSync(join(REPO_ROOT, INSTRUCTIONS), "utf8");
 
     if (
-      !t.ok(eve.fileExists(FRAMEWORK_TOOLS_INDEX), `eve ${eve.version} still ships ${FRAMEWORK_TOOLS_INDEX}`, {
-        expected: `${FRAMEWORK_TOOLS_INDEX} in the tarball`,
-        actual: "not found — eve reorganised its framework tool registry; re-derive the default set before trusting this",
-      })
+      !t.ok(
+        eve.fileExists(FRAMEWORK_SOURCES_REGISTRY),
+        `eve ${eve.version} still ships ${FRAMEWORK_SOURCES_REGISTRY}`,
+        {
+          expected: `${FRAMEWORK_SOURCES_REGISTRY} in the tarball`,
+          actual:
+            "not found — eve reorganised its framework tool registry again; re-derive the default set before trusting this",
+        },
+      )
     ) {
       return;
     }
 
-    const index = eve.readFile(FRAMEWORK_TOOLS_INDEX);
-    const known = new Set(index.match(DEFINITION_RE) ?? []);
-    const defaults = new Set(DEFAULT_SET_RE.exec(index)?.[1].match(DEFINITION_RE) ?? []);
+    const known = new Set(
+      eve
+        .declaredSubpaths()
+        .filter((subpath) => subpath.startsWith("eve/tools/") && !NON_TOOL_SUBPATHS.has(subpath))
+        .map((subpath) => subpath.slice("eve/tools/".length)),
+    );
+
+    // Anti-vacuity for the `known` derivation specifically, kept separate from
+    // the `promised.length > 0` check below so a break in declaredSubpaths()
+    // itself — eve's exports map stops naming tools under `./tools/*` — fails
+    // with its own message instead of being inferred two steps removed from
+    // the actual cause.
+    t.ok(known.size > 0, `eve's package.json exports map still lists ${known.size} tool subpath(s) under ./tools/*`, {
+      expected: "at least one ./tools/<name> entry in eve's exports map, besides the excluded helper namespaces",
+      actual: "none — eve's exports map stopped naming tools this way; read package.json before changing this filter",
+    });
+
+    const registrySource = eve.readFile(FRAMEWORK_SOURCES_REGISTRY);
+    const localDefaultsChunk = between(registrySource, "id:`eve:defaults`", "id:`eve:root-defaults`") ?? "";
+    const rootDefaultsChunk = between(registrySource, "id:`eve:root-defaults`", "id:`eve:memory-wrapper`") ?? "";
+    const defaults = new Set([
+      ...[...localDefaultsChunk.matchAll(TOOL_LOGICAL_PATH_RE)].map((m) => m[1]),
+      ...[...rootDefaultsChunk.matchAll(TOOL_LOGICAL_PATH_RE)].map((m) => m[1]),
+    ]);
 
     // Anti-vacuity. A regex that matched nothing would make every assertion
     // below pass for the wrong reason — "no tool is missing from a set with
-    // nothing in it" — so the parse is asserted before it is used.
+    // nothing in it" — so the parse is asserted before it is used. Either
+    // anchor pair failing to resolve (an `id:` literal renamed) lands here
+    // too, since `between()` returning null degrades to the empty string.
     t.ok(
       defaults.size > 0,
-      `eve's default tool set parsed to ${defaults.size} definitions from REGISTERED_FRAMEWORK_TOOLS`,
+      `eve's default tool set parsed to ${defaults.size} tool(s) from ${FRAMEWORK_SOURCES_REGISTRY}`,
       {
-        expected: "REGISTERED_FRAMEWORK_TOOLS=[…] matched in the minified index",
-        actual: "no match — the literal was renamed or restructured; read the file before changing this regex",
+        expected: "at least one `logicalPath:`tools/<name>.ts`` entry under the eve:defaults or eve:root-defaults source",
+        actual: "no match — an `id:` literal was renamed, or the module shape changed; read the file before changing this parse",
       },
     );
 
     const promised = [...new Set([...prompt.matchAll(BACKTICKED_RE)].map((m) => m[1]))]
-      .filter((name) => known.has(definitionFor(name)))
+      .filter((name) => known.has(name))
       .sort();
 
     // The other half of the anti-vacuity pair, and the one that catches an edit
@@ -160,10 +261,10 @@ const promises = {
 
     for (const tool of promised) {
       t.ok(
-        defaults.has(definitionFor(tool)),
+        defaults.has(tool),
         `\`${tool}\` is still in eve ${eve.version}'s default tool set, so the prompt can promise it`,
         {
-          expected: `${definitionFor(tool)} in REGISTERED_FRAMEWORK_TOOLS`,
+          expected: `\`tools/${tool}.ts\` under the eve:defaults or eve:root-defaults programmatic source`,
           actual:
             "not a default on this release — the prompt promises a tool the scaffolded agent does not have. " +
             "Either stop naming it, or add the opt-in file under templates/default/agent/tools/ that brings it back",
@@ -175,7 +276,7 @@ const promises = {
     // names them: this is the fact the prompt edit was based on, so it is the
     // fact that has to stay checked.
     for (const [tool, moved] of Object.entries(MOVED_TO_OPT_IN)) {
-      const stillDefault = defaults.has(definitionFor(tool));
+      const stillDefault = defaults.has(tool);
       const expected = compare(eve.version, moved.since) < 0;
       t.equal(
         stillDefault,

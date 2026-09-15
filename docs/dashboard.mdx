@@ -3,6 +3,38 @@ title: The dashboard
 description: The open replacement for Agent Runs — and it drives the agent, not just watches it.
 ---
 
+## Five ways in
+
+The dashboard is the screen that makes the rest of the stack legible, so reaching it should never
+be the hard part. It is not behind a command you have to have read this page to know.
+
+| | |
+| --- | --- |
+| **It opens itself** | When `evestack create` brings the stack up, it health-checks the dashboard and opens your browser at it, signed in. `--no-open` declines, and it never opens one without a terminal — CI, a pipe and a Dockerfile all get the printed URL instead. |
+| **`npx evestack dashboard`** | From any terminal, anywhere inside the project. Reads the port out of `.env.local`, prints the credentials, says whether anything is answering, and opens it. |
+| **`npm run dashboard`** | The same thing from inside the project, with no `npx` fetch — it works offline and runs the version that shipped with this project. It sits next to `dev` in `package.json`, which is where someone reading the file will find it. |
+| **`/dashboard`** | Typed at the agent, inside `npm run dev`. |
+| **The printed URL** | `evestack status` and the scaffolder's finish screen both print it with the password. |
+
+### `/dashboard` is not one of eve's own commands, and that is worth knowing
+
+eve's terminal UI has a slash-command registry — `/model`, `/add`, `/traces` and the rest — and it
+is a module-level constant with no registration hook, so no application can add to it. evestack
+does not fork eve, so `/dashboard` is not in that list and never will be.
+
+What makes it work is that eve treats an unrecognised `/word` as an ordinary message rather than an
+error, and the eve channel has a documented pre-dispatch hook, `eveChannel({ onMessage })`, that
+runs on the host before the runtime dispatches. `agent/channels/eve.ts` uses it: the browser opens
+from the agent process itself, immediately, and does not wait on the model or depend on it
+answering correctly. What the hook cannot do is cancel the turn, so the model still replies — with
+one line it is handed verbatim. `lib/dashboard-command.ts` in your project carries the whole
+explanation, including what it deliberately does not do.
+
+It is on the eve channel only, so a message from Telegram, Slack or Discord never reaches it: a
+stranger cannot make a window open on your machine by typing a slash command at your bot. It also
+does nothing on a process with no terminal, which is what a deployed agent is. `EVESTACK_NO_BROWSER`
+turns it off entirely.
+
 ## Observe
 
 - **Sessions** — every run on your machine, with title, status, and trigger
