@@ -283,6 +283,53 @@ function num(value: string | null): number {
 }
 
 /**
+ * The gate between a computed cost and a `numeric` column, and the reason it
+ * exists is that Postgres will happily take the bad value.
+ *
+ * `numeric` has its own NaN, `pg` serializes a JavaScript number by stringifying
+ * it, and `'NaN'` is a literal Postgres accepts — so `cost_usd` really does end
+ * up holding NaN, and the upserts in `recordStep` are `cost_usd + EXCLUDED.cost_usd`,
+ * which makes that NaN permanent for both the session and the whole
+ * principal-day. Measured: one step priced by an `EVESTACK_PRICING` override
+ * missing its `"output"` rate disabled the cap for that principal for the rest
+ * of the day, and correcting the variable did not fix it because the damage was
+ * already in the table.
+ *
+ * checked-pricing.ts stops this package computing such a number. This is the
+ * second lock, at the boundary where the damage becomes durable, and it is the
+ * one that also covers costs this package did not compute — `hook.ts` prefers
+ * `usage.costUsd` when the provider reports one, and that number is not ours to
+ * trust.
+ *
+ * Negative is refused with the same words as non-finite: it is not a smaller
+ * error but the same one, because a negative row SUBTRACTS from a running total
+ * and makes an expensive session look cheap. Zero is fine and expected — a local
+ * model is priced at zero because that is the truth about it.
+ */
+function isStorableUsd(value: number): boolean {
+  return Number.isFinite(value) && value >= 0;
+}
+
+/**
+ * The same check where the write is a display value rather than an accumulator.
+ *
+ * `budget_stops.spent_usd` and `budget_events.spent_usd` are assigned, never
+ * summed, so a bad number there misreports one row instead of poisoning a total.
+ * Refusing the write would be the worse trade by a distance: the stop row is
+ * what the guard reads, and declining to write it because its cosmetic amount is
+ * wrong would leave every tool enabled on an over-budget session. So these
+ * substitute zero and say so, where `recordStep` throws.
+ */
+function displayUsd(value: number, field: string): number {
+  if (isStorableUsd(value)) return value;
+  console.warn(
+    `[evestack:budget] ${field} was ${String(value)}, which is not an amount of money; ` +
+      `storing 0 so the row itself is still written.`,
+  );
+  return 0;
+}
+
+/**
  * Adds one step's spend to both scopes and returns the new totals.
  *
  * One statement, because the guard's decision must be made against the same
@@ -292,6 +339,22 @@ function num(value: string | null): number {
  * accurate number to compare against the cap, it just does not pay twice.
  */
 export async function recordStep(config: BudgetConfig, spend: StepSpend): Promise<RecordedSpend> {
+  // Before `ensureSchema`, before the pool, before anything that could be
+  // reported as a database problem: this is a caller bug, and it has to read as
+  // one. `hook.ts` catches this the same way it catches a Postgres outage — log
+  // loudly, honour EVESTACK_BUDGET_FAIL_CLOSED, keep serving — which means the
+  // step's spend goes uncounted. That is the deliberate trade. One step missing
+  // from the totals under-reports by one model call; one NaN written into them
+  // makes the caps unenforceable for that principal for the rest of the day, and
+  // survives both the fix and a restart because the number is in the table.
+  if (!isStorableUsd(spend.costUsd)) {
+    throw new Error(
+      `[evestack:budget] refusing to record a cost of ${String(spend.costUsd)} for model ` +
+        `"${spend.model}". cost_usd is summed into both the session and the principal-day ` +
+        `totals, and a non-finite or negative value there cannot be undone by fixing whatever ` +
+        `produced it. This step is not counted; spend for it is under-reported by one model call.`,
+    );
+  }
   await ensureSchema(config);
   const db = getPool(config);
   const dayScopeKey = principalDayKey(spend.principalId, spend.day);
@@ -464,7 +527,14 @@ export async function recordStop(
     `INSERT INTO evestack.budget_stops (scope, scope_key, session_id, reason, limit_usd, spent_usd)
      VALUES ($1, $2, $3, $4, $5, $6)
      ON CONFLICT (scope, scope_key) DO UPDATE SET spent_usd = EXCLUDED.spent_usd`,
-    [input.scope, input.scopeKey, input.sessionId, input.reason, input.limitUsd, input.spentUsd],
+    [
+      input.scope,
+      input.scopeKey,
+      input.sessionId,
+      input.reason,
+      displayUsd(input.limitUsd, "budget_stops.limit_usd"),
+      displayUsd(input.spentUsd, "budget_stops.spent_usd"),
+    ],
   );
 }
 
@@ -476,15 +546,72 @@ export async function recordStop(
  */
 export async function clearStop(
   config: BudgetConfig,
-  input: { readonly sessionId: string; readonly principalId: string; readonly day: string },
+  input: {
+    readonly sessionId: string;
+    readonly principalId: string;
+    readonly day: string;
+    /**
+     * The caps to re-check against, `false` for an axis that is not capped and
+     * omitted only by a caller that genuinely wants the old unconditional
+     * delete. Passing them is what makes this safe under concurrency; see below.
+     */
+    readonly sessionUsd?: number | false;
+    readonly dailyUsd?: number | false;
+  },
 ): Promise<void> {
   await ensureSchema(config);
   const db = getPool(config);
+  /**
+   * Conditional on the totals as they are RIGHT NOW, not as the caller read
+   * them.
+   *
+   * This used to be a plain two-scope `DELETE`, issued by `hook.ts` the first
+   * time a session found itself under budget. That is sound for the session
+   * scope, which only one session writes — and wrong for the principal-day
+   * scope, which every session belonging to one principal shares. The losing
+   * interleaving is ordinary, not exotic:
+   *
+   *   session A  recordStep  → day total $9.80, under the $10 cap
+   *   session B  recordStep  → day total $10.20, over it
+   *   session B  recordStop  → writes the principal-day stop
+   *   session A  clearStop   → deletes it
+   *
+   * A was not wrong about anything it saw; its total was simply stale by the
+   * time the delete landed. The result is the failure the stop table exists to
+   * prevent: the guard reads no stop, every tool stays enabled, and the daily
+   * cap is silently lifted for whichever session happened to be a step behind.
+   *
+   * Re-reading the totals in the application and then deleting would only move
+   * the race. Reading them inside the DELETE's own statement removes it: the
+   * subqueries see whatever B has committed, so a stop whose scope is genuinely
+   * over its cap cannot be deleted by a session that thought otherwise. A stop
+   * whose scope really is under its cap is still lifted within one step, which
+   * is the behaviour the "raise a cap and it heals" promise depends on.
+   *
+   * `$3`/`$4` are NULL for an axis with no cap, and a NULL cap deletes
+   * unconditionally — there is no number for the row to be over, so a stop on an
+   * uncapped axis is by definition stale. Omitting them entirely gives the old
+   * unconditional behaviour rather than deleting nothing, so an existing caller
+   * that has not been updated keeps working as it did.
+   */
+  const cap = (limit: number | false | undefined): number | null =>
+    limit === false || limit === undefined ? null : limit;
   await db.query(
     `DELETE FROM evestack.budget_stops
-      WHERE (scope = 'session' AND scope_key = $1)
-         OR (scope = 'principal-day' AND scope_key = $2)`,
-    [input.sessionId, principalDayKey(input.principalId, input.day)],
+      WHERE (scope = 'session' AND scope_key = $1
+             AND ($3::numeric IS NULL
+                  OR COALESCE((SELECT u.cost_usd FROM evestack.budget_usage u
+                                WHERE u.scope = 'session' AND u.scope_key = $1), 0) < $3::numeric))
+         OR (scope = 'principal-day' AND scope_key = $2
+             AND ($4::numeric IS NULL
+                  OR COALESCE((SELECT u.cost_usd FROM evestack.budget_usage u
+                                WHERE u.scope = 'principal-day' AND u.scope_key = $2), 0) < $4::numeric))`,
+    [
+      input.sessionId,
+      principalDayKey(input.principalId, input.day),
+      cap(input.sessionUsd),
+      cap(input.dailyUsd),
+    ],
   );
 }
 
@@ -540,8 +667,8 @@ export async function recordBudgetEvent(
       input.turnId ?? null,
       input.principalId,
       input.scope,
-      input.limitUsd,
-      input.spentUsd,
+      displayUsd(input.limitUsd, "budget_events.limit_usd"),
+      displayUsd(input.spentUsd, "budget_events.spent_usd"),
       input.action,
       input.detail ? JSON.stringify(input.detail) : null,
     ],

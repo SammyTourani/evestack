@@ -93,7 +93,7 @@ DO $guard$
 DECLARE
   -- Must equal the migration's own `target` at the bottom of this file;
   -- test/schema-guard.test.mjs reads both out of the file and fails if they part.
-  target    constant integer := 4;
+  target    constant integer := 5;
   installed integer;
 BEGIN
   SELECT version INTO installed FROM evestack.schema_version WHERE component = 'spans';
@@ -175,6 +175,8 @@ CREATE TABLE IF NOT EXISTS evestack.spans (
   -- No AI SDK counterpart exists for the root session, so subagent traces can
   -- only be stitched when the local tracer produced them.
   root_session_id text GENERATED ALWAYS AS (attributes ->> 'agent.root.session.id') STORED,
+  -- Conversation IDs correlate activations across traces; they are not session IDs.
+  conversation_id text GENERATED ALWAYS AS (attributes ->> 'gen_ai.conversation.id') STORED,
   turn_id         text GENERATED ALWAYS AS (
                     COALESCE(attributes ->> 'agent.turn.id',
                              attributes ->> 'ai.settings.context.eve.turn.id')) STORED,
@@ -409,12 +411,32 @@ AS $fn$
 DECLARE
   scope   text[] := traces;
   changed bigint;
+  run_sessions jsonb;
 BEGIN
   IF scope IS NULL THEN
     SELECT array_agg(DISTINCT trace_id) INTO scope FROM evestack.spans;
   END IF;
   IF scope IS NULL OR cardinality(scope) = 0 THEN
     RETURN 0;
+  END IF;
+
+  -- Schema v4 removed session identity from activation spans. The durable
+  -- turn supplies the parent session; conversation IDs can be supplied by an
+  -- upstream caller and must never be interpreted as session IDs. Build a
+  -- trace-scoped map once, before the walk, so resolving again is a no-op write.
+  -- Dynamic SQL preserves collector-only databases without a workflow schema.
+  IF to_regclass('workflow.workflow_runs') IS NOT NULL THEN
+    EXECUTE $sessions$
+      SELECT jsonb_object_agg(r.id, r.attributes ->> '$eve.parent')
+      FROM workflow.workflow_runs r
+      WHERE r.attributes ->> '$eve.type' = 'turn'
+        AND r.attributes ->> '$eve.parent' IS NOT NULL
+        AND r.id IN (
+          SELECT turn_id FROM evestack.spans WHERE trace_id = ANY($1)
+          UNION
+          SELECT attributes ->> 'workflow.run.id' FROM evestack.spans WHERE trace_id = ANY($1)
+        )
+    $sessions$ INTO run_sessions USING scope;
   END IF;
 
   WITH RECURSIVE walk AS (
@@ -463,15 +485,16 @@ BEGIN
     FROM inherited
   )
   UPDATE evestack.spans s
-     SET resolved_session_id = r.sid,
+     SET resolved_session_id = COALESCE(r.sid, run_sessions ->> r.tid),
          resolved_turn_id    = r.tid
     FROM resolved r
    WHERE s.trace_id = r.trace_id
      AND s.span_id  = r.span_id
-     AND (s.resolved_session_id IS DISTINCT FROM r.sid
+     AND (s.resolved_session_id IS DISTINCT FROM COALESCE(r.sid, run_sessions ->> r.tid)
           OR s.resolved_turn_id IS DISTINCT FROM r.tid);
 
   GET DIAGNOSTICS changed = ROW_COUNT;
+
   RETURN changed;
 END
 $fn$;
@@ -677,7 +700,7 @@ $fn$;
 -- both numbers out of the file and fails if they disagree.
 DO $mig$
 DECLARE
-  target    constant integer := 4;
+  target    constant integer := 5;
   installed integer;
   current_expr text;
   -- The resolver that was in the database when this file started, and the one
@@ -752,6 +775,13 @@ BEGIN
     ALTER TABLE evestack.spans DROP COLUMN IF EXISTS workflow_run_id;
   END IF;
 
+  -- 5: add conversation correlation without reinterpreting it as a session.
+  -- Existing rows are recomputed from their original attributes on upgrade.
+  IF installed < 5 THEN
+    ALTER TABLE evestack.spans ADD COLUMN IF NOT EXISTS conversation_id text
+      GENERATED ALWAYS AS (attributes ->> 'gen_ai.conversation.id') STORED;
+  END IF;
+
   -- 4: resolved_turn_id names a workflow run, not a tracer-local alias.
   --
   -- No DDL — resolve_span_ancestry() above is CREATE OR REPLACE and is already
@@ -767,7 +797,7 @@ BEGIN
   -- above is what notices. Every statement in here is idempotent, so running it
   -- for either reason costs a walk that changes nothing when nothing is wrong —
   -- and on a fresh database the walk is over an empty table.
-  IF installed < 4 OR resolver_changed THEN
+  IF installed < 5 OR resolver_changed THEN
     PERFORM evestack.resolve_span_ancestry();
 
     -- The fact tables key on resolved_turn_id and refresh from a watermark over
@@ -842,6 +872,9 @@ CREATE INDEX IF NOT EXISTS spans_resolved_turn_idx
 -- part of it that needed the justification in its header.
 CREATE INDEX IF NOT EXISTS spans_resolved_turn_only_idx
   ON evestack.spans (resolved_turn_id) WHERE resolved_turn_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS spans_conversation_idx
+  ON evestack.spans (conversation_id) WHERE conversation_id IS NOT NULL;
 
 -- Retention scans this, and so does anything asking for a time window.
 CREATE INDEX IF NOT EXISTS spans_start_time_idx

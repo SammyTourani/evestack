@@ -13,10 +13,10 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, posix, win32 } from "node:path";
 
 import { projectCommand, scaffoldCommand, COMMANDS, USAGE, unknownCommand } from "../src/cli.mjs";
-import { defaultTarget, parseSkillsArgs, SKILLS_USAGE, skills } from "../src/skills.mjs";
+import { defaultTarget, parseSkillsArgs, safeJoin, SKILLS_USAGE, skills } from "../src/skills.mjs";
 
 function tmp(prefix = "evestack-skills-") {
   return mkdtempSync(join(tmpdir(), prefix));
@@ -224,6 +224,87 @@ test("the whole install banner reaches the stream the caller supplied", async ()
     // report can be compared and matched rather than only looked at.
     // eslint-disable-next-line no-control-regex
     assert.doesNotMatch(text, /\x1b\[/, "escape sequences leaked into a non-TTY stream");
+  } finally {
+    delete process.env.EVESTACK_PACK_URL;
+    await pack.close();
+  }
+});
+
+/* -------------------------------------------------------------------------- */
+/* the guard that refused everything on Windows                                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * `safeJoin` was `full.startsWith(root + "/")`, and the "/" is hardcoded.
+ *
+ * On Windows `resolve()` builds with backslashes, so the comparison is against
+ * a string that can never match: EVERY file was refused, for every path, and
+ * `evestack skills` could not write anything at all on a native Windows
+ * install. The message it printed was "Refusing to write outside the target
+ * directory: SKILL.md", which reads as a security refusal about a path that is
+ * plainly inside the target — the wording least likely to make anyone suspect
+ * the guard itself.
+ *
+ * Driven through `path.win32` rather than skipped off Windows. There is no
+ * Windows machine in this loop, and a test that only runs on the platform the
+ * bug is on is a test that never ran. That is the only reason `safeJoin` takes
+ * a path module at all.
+ */
+test("a Windows target accepts the files it is supposed to", () => {
+  const root = "C:\\Users\\sam\\.claude\\skills\\evestack";
+  assert.equal(safeJoin(root, "SKILL.md", win32), `${root}\\SKILL.md`);
+  assert.equal(safeJoin(root, "references/cli.md", win32), `${root}\\references\\cli.md`);
+  assert.equal(safeJoin(root, "references\\cli.md", win32), `${root}\\references\\cli.md`);
+  // The default target is exactly this shape, so the bug covered the whole
+  // command and not an exotic --dir.
+  assert.equal(safeJoin("C:\\p\\agent\\skills\\evestack", "SKILL.md", win32), "C:\\p\\agent\\skills\\evestack\\SKILL.md");
+});
+
+test("a Windows target still refuses what it is supposed to", () => {
+  const root = "C:\\Users\\sam\\.claude\\skills\\evestack";
+  for (const escape of ["../../escaped.md", "..\\..\\escaped.md", "a\\..\\..\\..\\escaped.md"]) {
+    assert.throws(() => safeJoin(root, escape, win32), /outside the target directory/, escape);
+  }
+  // A different drive is absolute and contains no `..` at all, so a `..` test
+  // alone would let it through. This is what `isAbsolute` is for.
+  assert.throws(() => safeJoin(root, "D:\\evil.md", win32), /outside the target directory/);
+  assert.throws(() => safeJoin(root, "C:\\Windows\\evil.md", win32), /outside the target directory/);
+});
+
+test("a trailing slash on --dir is a path, not an escape attempt", () => {
+  // `root + "/"` becomes `/tmp/x//`, which nothing starts with — so tab
+  // completion, which appends the separator, produced the same false refusal on
+  // POSIX that Windows got for every path.
+  assert.equal(safeJoin("/tmp/x/", "SKILL.md", posix), "/tmp/x/SKILL.md");
+  assert.equal(safeJoin("/tmp/x//", "references/cli.md", posix), "/tmp/x/references/cli.md");
+  assert.equal(safeJoin("C:\\p\\evestack\\", "SKILL.md", win32), "C:\\p\\evestack\\SKILL.md");
+});
+
+test("a name that merely begins with two dots is not an escape", () => {
+  // `startsWith("..")` would reject these. The test is on whole segments,
+  // because `..config.md` is a file and `../config.md` is a different directory.
+  assert.equal(safeJoin("/tmp/x", "..config.md", posix), "/tmp/x/..config.md");
+  assert.equal(safeJoin("/tmp/x", "refs/..keep", posix), "/tmp/x/refs/..keep");
+});
+
+/**
+ * The end-to-end half, on whatever platform is running the suite.
+ *
+ * The unit cases above use `path.win32`; this one proves the wiring, so that a
+ * future refactor cannot fix `safeJoin` and leave the caller passing the wrong
+ * root.
+ */
+test("a real install writes through the guard, and a real escape still stops it", async () => {
+  const pack = await servePack([
+    { path: "SKILL.md", content: "body\n" },
+    { path: "references/cli.md", content: "# cli\n" },
+  ]);
+  process.env.EVESTACK_PACK_URL = pack.url;
+  try {
+    // A trailing separator, which is what shell completion gives you.
+    const dir = `${join(tmp(), "evestack")}/`;
+    assert.equal(await skills([`--dir=${dir}`], { stdout: sink(), stderr: sink() }), 0);
+    assert.equal(readFileSync(join(dir, "references", "cli.md"), "utf8"), "# cli\n");
   } finally {
     delete process.env.EVESTACK_PACK_URL;
     await pack.close();

@@ -15,8 +15,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { createServer } from "node:http";
+
 import {
-  fetchRegistry, gated, loadCatalog, needsBadge, summarise,
+  fetchRegistry, gated, isRegistryId, loadCatalog, needsBadge, summarise,
 } from "../catalog.mjs";
 import { FEATURED_CHANNELS, SNAPSHOT } from "../catalog.data.mjs";
 
@@ -111,5 +113,98 @@ test("descriptions stay sentences after the boilerplate is trimmed", async () =>
   assert.match(web.note, /^[A-Z]/, "and what is left still starts a sentence");
   for (const item of catalog.channels) {
     assert.doesNotMatch(item.note, /^(to|with|through|from|and)\b/i, `${item.id}: ${item.note}`);
+  }
+});
+
+/* -------------------------------------------------------------------------- */
+/* the id is a command-line argument, and was type-checked and nothing more    */
+/* -------------------------------------------------------------------------- */
+
+/** A stand-in for the registry at eve.dev, so no test here needs the network. */
+async function serveRegistry(items) {
+  const server = createServer((_req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify(items));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return { url: `http://127.0.0.1:${server.address().port}/r.json`, close: () => new Promise((r) => server.close(r)) };
+}
+
+test("every id in the snapshot is one the wizard will accept", () => {
+  // The gate is only worth having if the real catalogue passes it. All 99 rows
+  // do; a registry convention that changes would fail here rather than silently
+  // emptying a section of the picker for everybody.
+  for (const row of SNAPSHOT) {
+    assert.ok(isRegistryId(row.id), `${row.id} is in the snapshot and would be refused`);
+  }
+});
+
+test("an id that is not an id is refused, and a plausible one is not", () => {
+  for (const good of ["channel/web", "connection/notion", "extension/browserbase", "eve", "a.b-c_d/e1"]) {
+    assert.ok(isRegistryId(good), good);
+  }
+  // Each of these is a shell fragment first and a name second. On Windows the
+  // installer's spawn ends up at cmd.exe, and `&`, `|`, `>` and `%` all mean
+  // something there.
+  for (const bad of [
+    "channel/slack & calc",
+    "channel/x&calc",
+    "channel/x|calc",
+    "channel/x>out.txt",
+    "%PATH%",
+    "channel/x`id`",
+    "channel/x$(id)",
+    "/absolute",
+    "channel//double",
+    "-flag",
+    "Channel/Web",
+    "",
+    null,
+    undefined,
+    42,
+    `a${"b".repeat(200)}`,
+  ]) {
+    assert.equal(isRegistryId(bad), false, `${JSON.stringify(bad)} was accepted`);
+  }
+});
+
+/**
+ * THE BUG THIS PINS, stated as the wizard sees it.
+ *
+ * `fetchRegistry` filtered on `typeof item?.name === "string"`, and the id it
+ * kept goes straight into `eve add <id>` as an argv element. The picker renders
+ * `title`, never `id`, so the row below looks exactly like Slack: someone ticks
+ * "Slack", and on Windows the part after `&` runs.
+ *
+ * The row is DROPPED rather than sanitised. A name that is not a name is not
+ * something to install a corrected version of.
+ */
+test("a registry row whose id is a shell fragment never reaches the picker", async () => {
+  const registry = await serveRegistry([
+    { name: "channel/slack & calc", title: "Slack", description: "Connect an eve agent to Slack." },
+    { name: "channel/web", title: "Web Chat", description: "Add the built-in Next.js Web Chat channel to an eve agent." },
+  ]);
+  try {
+    const rows = await fetchRegistry(registry.url, 3000);
+    assert.deepEqual(rows.map((r) => r.id), ["channel/web"]);
+    assert.equal(
+      rows.some((r) => r.title === "Slack"),
+      false,
+      "the row survived under a title that gives the reader no way to see its id",
+    );
+  } finally {
+    await registry.close();
+  }
+});
+
+test("a registry of nothing but bad ids falls back to the snapshot", async () => {
+  // The same answer as any other unusable response: use the snapshot, say
+  // nothing. `rows.length > 0` is what makes that happen, and it only holds
+  // because the filter runs before the emptiness test.
+  const registry = await serveRegistry([{ name: "x;y", title: "X", description: "" }]);
+  try {
+    assert.equal(await fetchRegistry(registry.url, 3000), null);
+  } finally {
+    await registry.close();
   }
 });

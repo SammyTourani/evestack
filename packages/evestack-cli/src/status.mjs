@@ -490,7 +490,7 @@ export async function status(argv, { stdout = process.stdout, stderr = process.s
     const url = forHumans(dashboard.url ?? "http://localhost:4000");
     lines.push(
       `  ${c.greenBold("Everything is up.")}  ${c.dim("Your dashboard:")} ${c.brand(url)}`,
-      `  ${c.dim(`${g.arrow} `)}${c.bold("evestack open")}${c.dim("   sign in, with the password printed for you")}`,
+      `  ${c.dim(`${g.arrow} `)}${c.bold("evestack dashboard")}${c.dim("   sign in, with the password printed for you")}`,
       "",
     );
     stdout.write(`${lines.join("\n")}\n`);

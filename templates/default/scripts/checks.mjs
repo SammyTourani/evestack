@@ -109,6 +109,66 @@ export function envValue(fileEnv, key) {
   return fromFile === undefined || fromFile === "" ? undefined : fromFile;
 }
 
+/**
+ * Is anyone actually reading this stream?
+ *
+ * `verify` ends by printing the dashboard sign-in, and the password in it is
+ * one the scaffolder generated — nobody chose it, and on a terminal printing it
+ * is the only thing that makes the dashboard reachable. Every other destination
+ * a stream can have is a recording: `npm run verify | tee verify.log`, a CI job
+ * archiving output, a screen-share. This file's own header already says CI runs
+ * it, and `--json` has always omitted the password, so the intent was written
+ * down long before there was a gate on the human path.
+ *
+ * EVESTACK_PRINT_SECRETS puts the old behaviour back, for an automated setup
+ * that wants the value out of stdout on purpose. It is the same variable
+ * create-evestack and `evestack tour` honour; a scaffolded project is
+ * standalone and cannot import from either, which is why this is a third copy
+ * of three lines rather than a shared helper.
+ */
+export function showSecrets(stream = process.stdout) {
+  if (process.env.EVESTACK_PRINT_SECRETS) return true;
+  return Boolean(stream?.isTTY);
+}
+
+/**
+ * The dashboard password `.env.example` ships with, and the only value in this
+ * project that is a credential in form and not in fact.
+ *
+ * `.env.example` carries `EVESTACK_AUTH_PASSWORD=change-me`, which is correct
+ * for an example file — it has to show the shape of the line — and was checked
+ * by nothing at all. A scaffold made by `create-evestack` never sees it: that
+ * wizard generates 24 random characters. The people who do see it are the ones
+ * who set the project up by hand from the example, which is exactly the path
+ * `.env.example` exists to serve, and the documented one for a deployment.
+ *
+ * What it costs them is not theoretical. eve fails closed and these two
+ * variables are what open it: from eve 0.30 `localDev()` grants only inside
+ * `eve dev`, so a BUILT server (see scripts/start.mjs) checks EVESTACK_AUTH_*
+ * on every request, loopback included — and the dashboard, which starts agent
+ * runs and approves gated shell commands, signs in with the same pair. A
+ * published value is the same as no value, with the appearance of one.
+ *
+ * Compared after trim and lowercase because `CHANGE-ME` and `change-me ` are
+ * the same mistake, and only against the one value this repository actually
+ * ships: a general "does this look weak?" heuristic would be a different
+ * feature, with false positives, and false positives are how a yellow line
+ * becomes a line people scroll past.
+ */
+export const PLACEHOLDER_AUTH_PASSWORD = "change-me";
+
+export function isPlaceholderAuthPassword(value) {
+  return typeof value === "string" && value.trim().toLowerCase() === PLACEHOLDER_AUTH_PASSWORD;
+}
+
+/**
+ * The sentence both `preflight` and `verify` say about it, in one place so the
+ * two cannot describe the same problem two ways.
+ */
+export const PLACEHOLDER_AUTH_FIX =
+  `EVESTACK_AUTH_PASSWORD is still "${PLACEHOLDER_AUTH_PASSWORD}", the value .env.example ships` +
+  " — replace it, e.g. `openssl rand -base64 24`";
+
 /** Never print a password back at someone, not in a terminal and not in a log. */
 export function redact(connectionString) {
   return String(connectionString).replace(/:\/\/([^:@/]*):[^@/]*@/, "://$1:***@");
@@ -569,6 +629,61 @@ export function eveBinary(scriptUrl, platform = process.platform) {
   return existsSync(local) ? local : "eve";
 }
 
+/* -------------------------------------------------------------------------- */
+/* the environment a BUILT server is allowed to inherit                        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The escape hatch, named so that anyone who reads it in a shell history knows
+ * what they turned back on. Set it to anything non-empty to keep EVE_DEV.
+ *
+ * Exported as a constant AND read below as a literal property, which looks
+ * redundant and is not: contract/contracts/19-env-names.contract.mjs finds
+ * every EVESTACK_* name the code reads so it can insist each one is documented,
+ * and it cannot see a name that only ever appears as an identifier. Its own
+ * header records that exact blind spot costing lib/skills.ts a variable nobody
+ * could find. The constant is what the test pins the two spellings together
+ * with, so they cannot drift.
+ */
+export const ALLOW_DEV_GRANT_VAR = "EVESTACK_ALLOW_EVE_DEV";
+
+/**
+ * The environment `scripts/start.mjs` hands the built agent.
+ *
+ * Two things, and the second is the one that matters.
+ *
+ * NODE_ENV=production BEFORE the spread, so an orchestrator that sets it still
+ * wins. eve reads it once at module load and stamps it on every model span as
+ * `eve.environment` (harness/tool-loop.js: `process.env.NODE_ENV ?? "unknown"`),
+ * which is the Environment column in the dashboard. Unset, a deployed agent and
+ * a laptop are indistinguishable in the one list that shows both.
+ *
+ * EVE_DEV IS REMOVED, and only here. eve's `localDev()` grants an
+ * unauthenticated principal on `EVE_DEV === "1"` alone — it is a flag, not a
+ * credential, and it does not care which command is running. `npm start` is
+ * `node --env-file-if-exists=.env.local scripts/start.mjs`, so every line of
+ * .env.local is in this process's environment before it spawns anything: one
+ * stray `EVE_DEV=1` left in that file after a debugging session, or copied out
+ * of a gist, and the BUILT server — the one whose whole point is that eve fails
+ * closed on it — answers every route with no password at all. Nothing on screen
+ * says so, because from the outside an authenticated request and a waved-through
+ * one look identical.
+ *
+ * Deliberately NOT done in scripts/dev.mjs. There the grant is the intended
+ * behaviour: `eve dev` is a developer's own machine, EVESTACK_AUTH_* is usually
+ * unset, and stripping it would break the ordinary loop to fix nothing.
+ *
+ * Reversible on purpose, in case someone is genuinely running a built server
+ * behind their own front door and wants the old behaviour: set
+ * EVESTACK_ALLOW_EVE_DEV=1 and EVE_DEV passes through untouched.
+ */
+export function productionEnv(source = process.env) {
+  const env = { NODE_ENV: "production", ...source };
+  if (env.EVESTACK_ALLOW_EVE_DEV) return env;
+  delete env.EVE_DEV;
+  return env;
+}
+
 /**
  * Refuse to start, name the one command that fixes it, and exit 1.
  *
@@ -601,6 +716,28 @@ export function stop(title, lines) {
 export async function preflight({ label = "npm run dev", requireEmbedModel = false } = {}) {
   const fileEnv = readEnvFile();
   const env = (key) => envValue(fileEnv, key);
+
+  /* -- the credential that was never a credential -------------------------- */
+  //
+  // First, before anything that can `return` early: the database branch below
+  // gives up and returns when WORKFLOW_POSTGRES_URL is unset, and a project set
+  // up by hand from .env.example is exactly the project most likely to be
+  // missing both lines. A warning that only prints on the healthy path is a
+  // warning for people who do not need it.
+  //
+  // A warning and not a `stop()`, deliberately. `npm run dev` is the loop; it is
+  // also the one command where this value is not yet load-bearing, because
+  // `eve dev` grants through localDev() and never checks it. Refusing to start
+  // here would break a working single-user install to prevent a problem that
+  // only exists once that install is BUILT and served — which is where
+  // productionEnv above, and the `auth` row in scripts/verify.mjs, take over.
+  if (isPlaceholderAuthPassword(env("EVESTACK_AUTH_PASSWORD"))) {
+    console.warn(
+      `${C.yellow}  !${C.reset} ${PLACEHOLDER_AUTH_FIX}\n` +
+        `    ${C.dim}It is the dashboard sign-in and, on a built server, the only thing between${C.reset}\n` +
+        `    ${C.dim}your agent and anyone who can reach its port. \`npm run verify\` says so too.${C.reset}`,
+    );
+  }
 
   /* -- the database ------------------------------------------------------- */
 

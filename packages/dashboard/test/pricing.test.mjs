@@ -374,6 +374,89 @@ test("invalid EVESTACK_PRICING is ignored with a warning, not a crash", async (t
   assert.match(warnings[0], /EVESTACK_PRICING/);
 });
 
+/**
+ * The defect this whole section exists to close, reproduced directly against
+ * THIS table rather than against the checked wrapper in @evestack/budget.
+ * That wrapper (packages/evestack-budget/src/checked-pricing.ts) never had
+ * access to this file to fix in the first place — it exists because this file
+ * is copied wholesale into that package at build time and the copy is
+ * gitignored there, so the validation had to go in front of it instead. This
+ * test is the proof that the same defect, in the actual source both consumers
+ * trace back to, is now closed at the root rather than only papered over one
+ * layer up.
+ *
+ * Reproduced with the identical override @evestack/budget's own test for the
+ * identical defect uses — see "a half-written EVESTACK_PRICING override is
+ * rejected, not billed as NaN" in
+ * packages/evestack-budget/test/pricing-and-caps.test.mjs:
+ *
+ *   EVESTACK_PRICING='{"acme/m1":{"input":0.25}}'
+ *
+ * — someone adjusting a rate and forgetting the other half of the pair, which
+ * is the single likeliest way to get this wrong. Measured against this file
+ * before this check existed: costUsd("acme/m1", 1000, 1000) was NaN,
+ * isPriced("acme/m1") was true (the key existed in the merged table), and
+ * findPrice("acme/m1") returned `{ input: 0.25 }` — an object that passes a
+ * bare `if (price)` truthiness check while carrying no `output` for costUsd to
+ * multiply by. Every assertion below fails on the old code, and the first one
+ * fails specifically as NaN rather than as a wrong-but-finite number.
+ */
+test("a half-written EVESTACK_PRICING override fails closed instead of returning NaN", async (t) => {
+  const warnings = [];
+  t.mock.method(console, "warn", (...args) => warnings.push(args.join(" ")));
+
+  await withPricing(JSON.stringify({ "acme/m1": { input: 0.25 } }), (mod) => {
+    const cost = mod.costUsd("acme/m1", 1000, 1000);
+    assert.ok(!Number.isNaN(cost), "an unusable override must not produce NaN");
+    assert.equal(cost, 0, "and must not produce any other number either — it is not a price");
+    assert.equal(mod.isPriced("acme/m1"), false, "an override that cannot price a token is not a price");
+    assert.equal(mod.findPrice("acme/m1"), null);
+  });
+
+  // Named, the same way @evestack/budget's test for this insists on: an
+  // EVESTACK_PRICING with several entries and one typo is the realistic case,
+  // and "some overrides were invalid" does not tell anyone which one to fix.
+  const warning = warnings.join("\n");
+  assert.match(warning, /acme\/m1/);
+  assert.match(warning, /"output" is missing/);
+});
+
+/**
+ * The other half of the same defect, and the one that needs no environment
+ * variable at all to trigger: `findPrice` used to look models up as
+ * `known[model]` over a plain object literal, so a model literally named after
+ * anything JavaScript hangs off Object.prototype answered as a price.
+ *
+ * Measured against this file before the fix: findPrice("constructor")
+ * returned the `Object` constructor FUNCTION — which has no `input`, so
+ * costing it was NaN by the same multiplication as the override defect above
+ * — and isPriced("toString") and isPriced("__proto__") were both true. An
+ * unpriced model that reports itself priced is exactly the state isPriced()
+ * exists to make impossible; see the file header.
+ *
+ * No override needed, so this runs against the plain top-level import, and it
+ * runs after the override tests above on purpose: each `withPricing` call
+ * proves the table rebuilds correctly, and this proves the rebuilt table is
+ * STILL immune, not just the first one `delete process.env.EVESTACK_PRICING`
+ * produced at the top of the file.
+ */
+test("Object.prototype members are not models, and are not prices", () => {
+  for (const name of [
+    "constructor",
+    "toString",
+    "valueOf",
+    "__proto__",
+    "hasOwnProperty",
+    "isPrototypeOf",
+    "propertyIsEnumerable",
+    "toLocaleString",
+  ]) {
+    assert.equal(findPrice(name), null, name);
+    assert.equal(isPriced(name), false, name);
+    assert.equal(costUsd(name, 1_000_000, 1_000_000), 0, name);
+  }
+});
+
 /* -------------------------------------------------------------------------- */
 /* rendering                                                                   */
 /* -------------------------------------------------------------------------- */

@@ -1,5 +1,6 @@
 import { httpBasic, localDev } from "eve/channels/auth";
-import { eveChannel } from "eve/channels/eve";
+import { defaultEveAuth, eveChannel } from "eve/channels/eve";
+import { handleSlashCommand } from "../../lib/dashboard-command";
 
 /**
  * Route auth. eve fails closed: anything not matched here gets a 401.
@@ -44,4 +45,32 @@ export default eveChannel({
       ? [httpBasic({ username, password }, { realm: "evestack" })]
       : []),
   ],
+
+  /**
+   * Slash commands typed at the agent, handled before the model sees them.
+   *
+   * eve's terminal UI owns a fixed list of slash commands and passes anything it
+   * does not recognise through as an ordinary message. This is where those land.
+   * `/dashboard` opens the control plane from the host, deterministically, while
+   * the model is still being asked — see lib/dashboard-command.ts for why that is
+   * the only seam eve offers and what it can and cannot do.
+   *
+   * `defaultEveAuth(ctx)` is not optional here. Defining `onMessage` replaces the
+   * default auth projection, and omitting it would hand every session a null
+   * principal — the helper exists so a hook can add `context` without taking on
+   * the auth decision as well.
+   *
+   * Every message pays one `Set` lookup for this, and nothing else: a message
+   * that is not a command returns before any work is done.
+   */
+  async onMessage(ctx, message) {
+    const auth = defaultEveAuth(ctx);
+    const command = await handleSlashCommand(message);
+    if (!command.handled) return { auth };
+    return {
+      auth,
+      ...(command.context ? { context: command.context } : {}),
+      ...(command.title ? { title: command.title } : {}),
+    };
+  },
 });

@@ -46,6 +46,13 @@ covers `/eve/v1/session*` only. Discord cannot send an `Authorization` header, s
 your tunnel or reverse proxy behind Basic auth — Discord will simply fail to reach you. The
 signature is the auth here, and it is a stronger one.
 
+And note what the signature proves, which is narrower than it sounds: that **Discord** sent this
+interaction, not that a person you trust invoked it. Anyone holding the bot's install link can
+add it to a server and type the command, and every accepted command spends your API key. That
+is what the allow-lists in
+[Locking down who can spend your budget](#locking-down-who-can-spend-your-budget) are for, and
+they now refuse everyone until you set one.
+
 ## The ordering trap
 
 Discord will not save an Interactions Endpoint URL until that URL answers its PING challenge
@@ -131,7 +138,8 @@ Put the credentials in `templates/default/.env.local` (gitignored — never comm
 DISCORD_PUBLIC_KEY=...        # required; without it every interaction 401s
 DISCORD_APPLICATION_ID=...    # needed for step 4; optional at runtime
 DISCORD_BOT_TOKEN=...         # optional; typing, proactive posts, expired-token fallback
-DISCORD_ALLOWED_GUILD_IDS=... # optional; see below
+DISCORD_ALLOWED_GUILD_IDS=... # who may run the command; unset = nobody. See below.
+DISCORD_ALLOWED_USER_IDS=...  # the only way to allow a DM to the bot. See below.
 ```
 
 Restart the agent so it picks them up. **Now** go back to **General Information**, set
@@ -149,22 +157,54 @@ Type `/ask` in a channel where the bot is installed. Discord enforces a three-se
 acknowledgement deadline; eve defers immediately and edits the deferred reply when the turn
 finishes, so a two-minute agent run is fine.
 
+**The first command is refused on purpose** unless you set an allow-list above. You get an
+ephemeral *"Command ignored."*, and the agent log carries one line naming the server id and the
+user id it turned away — paste one of those into the matching variable and try again.
+
 ## Locking down who can spend your budget
 
-An interactions endpoint is world-reachable by design, and every accepted command runs on
-*your* API key. eve's default is to dispatch for any user in any server the bot is in.
+An interactions endpoint is world-reachable by design, and every accepted command runs on *your*
+API key, with bash in a container running as root behind it. eve's own default is to dispatch
+for any user in any server the bot is in; `agent/channels/discord.ts` replaces that with two
+allow-lists, and **unset means nobody**.
 
 ```bash
-DISCORD_ALLOWED_GUILD_IDS=123456789012345678,987654321098765432
+DISCORD_ALLOWED_GUILD_IDS=123456789012345678,987654321098765432  # servers
+DISCORD_ALLOWED_USER_IDS=234567890123456789                      # people
 ```
 
-Commands from anywhere else get an ephemeral "Command ignored." and never start a turn. Unset
-means "any guild", which is exactly eve's stock behavior. Direct messages to the bot have no
-guild id, so they are rejected once the list is non-empty.
+A command is accepted when its **server** is listed *or* its **invoker** is — the two lists are
+ORed, not ANDed. Anything else gets an ephemeral *"Command ignored."* and never starts a turn,
+and the agent prints one line naming both ids so you know which one to add. Turn on **Developer
+Mode** (User Settings → Advanced) to right-click a server or a person and copy their id.
+
+<Note>
+**Why a user list as well.** A direct message to the bot carries no guild id at all, so a
+server allow-list can never match one — under the old "unset = any guild" default those slipped
+through by accident, and under a closed default they would be permanently unreachable.
+`DISCORD_ALLOWED_USER_IDS` is what lets one person talk to their own bot in a DM without opening
+every server the bot is in.
+</Note>
+
+`DISCORD_ALLOWED_USER_IDS=*` accepts anyone anywhere, which is eve's stock behavior and what
+this shipped as before. Use that one and not the guild list if what you want is "no gate at
+all": a DM carries no guild id, so `DISCORD_ALLOWED_GUILD_IDS=*` opens every **server** and
+still refuses DMs. Every interaction carries a user id, so the user list is the one that can
+match everything. Both lists are re-read on every interaction, so editing `.env.local` takes
+effect on the next command rather than on the next restart.
+
+Two things the lists do not cover, both by design:
+
+- **Discord's endpoint-verification PING.** eve answers it with a PONG before the command hook
+  is ever consulted, so a closed allow-list cannot break the Portal handshake in step 5.
+- **HITL buttons and modals.** They resume a session that already exists, and their custom ids
+  are only ever rendered into a channel the agent was already allowed to answer in — but anyone
+  who can see that channel can click one.
 
 This is a complement to, not a replacement for, `@evestack/budget` — the allow-list caps *who*
 can start a turn, the budget caps *how much* a turn costs. Discord principals arrive as
-`discord:<guild>:<user>`, which is what the per-principal daily cap meters on.
+`discord:<guild>:<user>`, which is what the per-principal daily cap meters on. Note that the cap
+is per principal, so ten strangers cost ten times the daily cap rather than one.
 
 ## What this channel gives the agent
 

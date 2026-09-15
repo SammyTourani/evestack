@@ -111,16 +111,34 @@ test("an old Node is refused with a sentence", () => {
 test("the unknown-command hint names every command the binary ships", () => {
   // It said "create, attach or doctor" while five commands existed, so the two a
   // stuck user most wants were missing from the message they see after a typo.
-  for (const command of ["create", "verify", "open", "attach", "doctor"]) {
+  for (const command of ["create", "verify", "dashboard", "attach", "doctor"]) {
     assert.match(USAGE, new RegExp(`evestack ${command}`));
   }
 });
 
-test("the command list names verify and open, so they are discoverable at all", () => {
+test("the command list names verify and dashboard, so they are discoverable at all", () => {
   // The only reason these exist is that a stuck user can find them. A command
   // missing from --help may as well not be implemented.
   assert.match(USAGE, /evestack verify/);
-  assert.match(USAGE, /evestack open/);
+  assert.match(USAGE, /evestack dashboard/);
+});
+
+/**
+ * `open` was this command's first name, and renaming it must not strand anyone.
+ *
+ * The name is in the scaffolder's finish screen, in both READMEs, in docs, and
+ * in shell history. `dashboard` is what gets printed from here on because it is
+ * the word someone guesses when they want the dashboard — but the old spelling
+ * has to keep resolving, and a test is the only thing that stops a later tidy-up
+ * from deleting an alias that looks redundant in the source.
+ */
+test("`evestack open` still routes, and to the very same function", async () => {
+  assert.equal(projectCommand(["open"]), "open", "the old name must still be routed");
+  assert.equal(projectCommand(["dashboard"]), "dashboard");
+
+  const module = await import("../src/project.mjs");
+  assert.equal(typeof module.dashboard, "function");
+  assert.equal(module.open, module.dashboard, "the alias must not drift into a second copy");
 });
 
 /**
@@ -164,10 +182,47 @@ test("open's whole report reaches the stream it was handed, header included", as
   assert.match(text, /not running yet/, "and so did the subtitle that says why");
   // The rest of the block, so this cannot pass on a header alone.
   assert.match(text, /127\.0\.0\.1:1|localhost:1/, "the URL is the point of the command");
-  assert.match(text, /s3cret/, "and the password it exists to reprint");
+  // The sign-in LINE, not the secret. The stream this test hands in is a sink,
+  // not a terminal, and the password is deliberately withheld from a pipe now —
+  // see showSecrets(). What this test is for is plumbing: every line of the
+  // report must reach the stream the caller supplied rather than the real
+  // process.stdout, and the sign-in row is one of those lines either way.
+  assert.match(text, /sign in {2}evestack/, "the sign-in row went past the stream it was handed");
+  assert.doesNotMatch(text, /s3cret/, "a pipe must not receive the password");
   // Header first: two interleaved write sequences could not promise even that.
   assert.ok(
-    text.indexOf("dashboard") < text.indexOf("s3cret"),
+    text.indexOf("dashboard") < text.indexOf("sign in"),
     `the report arrived out of order:\n${text}`,
   );
+});
+
+/**
+ * The credential still reaches someone who asked for it.
+ *
+ * Withholding it from a pipe is only correct if there is a way back: an
+ * automated setup that genuinely needs the value on stdout sets
+ * EVESTACK_PRINT_SECRETS, and this is the test that stops that escape hatch
+ * being quietly dropped as dead code, since nothing in the default path
+ * exercises it.
+ */
+test("EVESTACK_PRINT_SECRETS puts the password back into a pipe", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evestack-open-"));
+  writeFileSync(
+    join(root, ".env.local"),
+    "EVESTACK_DASHBOARD_URL=http://127.0.0.1:1\nEVESTACK_AUTH_USER=evestack\nEVESTACK_AUTH_PASSWORD=s3cret\n",
+  );
+  const chunks = [];
+  const stdout = { write: (s) => chunks.push(s) };
+  const cwd = process.cwd();
+  const before = process.env.EVESTACK_PRINT_SECRETS;
+  try {
+    process.chdir(root);
+    process.env.EVESTACK_PRINT_SECRETS = "1";
+    await open(["--no-open"], { stdout, stderr: { write: () => {} } });
+  } finally {
+    process.chdir(cwd);
+    if (before === undefined) delete process.env.EVESTACK_PRINT_SECRETS;
+    else process.env.EVESTACK_PRINT_SECRETS = before;
+  }
+  assert.match(chunks.join(""), /s3cret/, "the documented escape hatch does nothing");
 });

@@ -21,7 +21,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { startSession, streamReply, tour } from "../src/tour.mjs";
+import { signInLine, startSession, streamReply, tour } from "../src/tour.mjs";
 
 /** Collects what the tour would have printed. */
 function sink() {
@@ -565,4 +565,37 @@ test("captureStdout keeps what the tour printed and forwards what it did not", a
     "a write from outside the capture reaches the real stream — this is the regression",
   );
   assert.doesNotMatch(forwarded, /TOUR-OUTPUT-LINE/, "and the captured output is not also printed");
+});
+
+/* -------------------------------------------------------------------------- */
+/* the closing sign-in line                                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The tour ends by handing over the dashboard, and the password is the half of
+ * that handover nobody can reconstruct — the scaffolder generated it.
+ *
+ * On a terminal it belongs on screen. Off one, `evestack tour --yes | tee
+ * tour.log`, a CI step, or a wrapper capturing stdout turns the credential to a
+ * control plane that starts agent runs into a value in a file nothing rotates.
+ * The command already knows the difference and acts on it twice before this
+ * line: `--no-open` defaults on without a terminal, and `--yes` is required to
+ * spend money without one. This is the third place that question mattered.
+ *
+ * Unit rather than end-to-end: reaching step 4 through `tour()` needs a stub
+ * that answers the health probe, Postgres, a model and the dashboard, and then
+ * completes a streamed turn. The decision is one boolean.
+ */
+test("the closing line withholds the password when nobody is watching", () => {
+  const shown = signInLine("evestack", "s3cr3t-not-a-real-one", true);
+  assert.match(shown, /s3cr3t-not-a-real-one/);
+
+  const withheld = signInLine("evestack", "s3cr3t-not-a-real-one", false);
+  assert.doesNotMatch(withheld, /s3cr3t-not-a-real-one/);
+  // Withheld, not hidden: the variable and the file are both named, and the
+  // user name stays on both because it is not a secret.
+  assert.match(withheld, /EVESTACK_AUTH_PASSWORD/);
+  assert.match(withheld, /\.env\.local/);
+  assert.match(withheld, /evestack/);
+  assert.match(withheld, /Sign in/);
 });

@@ -26,7 +26,7 @@ import { spawn } from "node:child_process";
 
 import { blank, c, fixLine, forHumans, forStream, g, headingLine, rowLine, ruleLine } from "create-evestack/ui";
 
-import { findProjectEnv, notAProject, projectEnv, wantsHelp } from "./project.mjs";
+import { findProjectEnv, notAProject, projectEnv, showSecrets, wantsHelp } from "./project.mjs";
 import { probeAll } from "./status.mjs";
 
 /** A first turn on a cold agent has to compile the workflow and reach a
@@ -264,12 +264,49 @@ export async function tour(argv, { stdout = process.stdout, stderr = process.std
   for (const [what, why] of tips) out(rowLine(c.dim(g.skip), what, c.dim(why), "", { indent: 4, labelWidth: 12 }));
   out();
   out(`  ${c.bold("Dashboard")}  ${c.brand(dashboard)}`);
-  if (password) out(`  ${c.bold("Sign in")}    ${env("EVESTACK_AUTH_USER") ?? "evestack"} ${c.dim("/")} ${password}`);
+  if (password) out(signInLine(env("EVESTACK_AUTH_USER") ?? "evestack", password, showSecrets(stdout)));
   out();
   out(`  ${c.dim("`evestack status` any time · `evestack doctor` if a run stops moving")}`);
   out();
   return 0;
 }
+
+/**
+ * The closing sign-in line, with the password in it only for a person.
+ *
+ * The tour ends by handing over the dashboard, and the password is the half of
+ * that handover nobody can reconstruct: the scaffolder generated it. On a
+ * terminal it belongs on screen.
+ *
+ * Every other destination this line can reach is a recording of it. `evestack
+ * tour --yes | tee tour.log`, a CI step, a wrapper capturing stdout — all of
+ * them turn the credential to a control plane that starts agent runs into a
+ * value sitting in a file that nothing rotates. The command already knows the
+ * difference and acts on it two screens earlier: `noOpen` defaults on without a
+ * terminal, and `--yes` is required to spend money without one.
+ *
+ * `isTTY` is read from the `stdout` the command was HANDED, not from
+ * `process.stdout`. Everything else in `tour()` goes through that stream (see
+ * the docblock on `out`), and asking a different object whether this output is
+ * being watched would be the same class of mistake that docblock is about.
+ *
+ * EVESTACK_PRINT_SECRETS=1 restores the old behaviour, for a caller that wants
+ * the value out of a pipe deliberately. Same variable the scaffolder and the
+ * template's `verify` honour — one switch, not three.
+ *
+ * Nothing is withheld that the reader cannot get back: .env.local has the
+ * value, and `evestack dashboard` prints it — on a terminal.
+ *
+ * Exported for test/tour.test.mjs. Reaching step 4 through `tour()` needs a
+ * stub that answers the health probe, Postgres, a model and the dashboard, and
+ * then completes a streamed turn; the decision this makes is one boolean, and
+ * pinning it should not cost five fixtures.
+ */
+export function signInLine(user, password, show) {
+  const shown = show ? password : c.dim("(not printed to a pipe; it is EVESTACK_AUTH_PASSWORD in .env.local)");
+  return `  ${c.bold("Sign in")}    ${user} ${c.dim("/")} ${shown}`;
+}
+
 
 /* -------------------------------------------------------------------------- */
 /* talking to the agent                                                        */

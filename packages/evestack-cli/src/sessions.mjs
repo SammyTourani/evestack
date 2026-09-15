@@ -57,24 +57,70 @@ export const STUCK_TURN_MS = 60 * 60 * 1000;
 /** Probing costs a round trip each, so the sweep is bounded rather than complete. */
 export const MAX_PROBES = 25;
 
-const DEFAULT_AGENT_URL = "http://127.0.0.1:2000";
+/** What `eve dev` binds when nothing says otherwise, and what it auto-increments from. */
+const DEFAULT_AGENT_PORT = "2000";
 /** eve's stream is newline-delimited JSON. It is NOT text/event-stream. */
 const EVE_STREAM_CONTENT_TYPE = "application/x-ndjson; charset=utf-8";
 const EVE_STREAM_TAIL_INDEX_HEADER = "x-eve-stream-tail-index";
 
-export function agentBaseUrl(override) {
-  const raw = (override ?? process.env.EVESTACK_AGENT_URL ?? "").trim();
-  return (raw.length > 0 ? raw : DEFAULT_AGENT_URL).replace(/\/+$/, "");
+/**
+ * Where to look for the agent, in the order every other command looks.
+ *
+ * `env` is an accessor — `projectEnv(found)` from project.mjs, which merges the
+ * project's `.env` and `.env.local` in eve's own load order with the real
+ * environment winning — and it defaults to the process environment alone so a
+ * caller that has no project still works.
+ *
+ * TWO THINGS WERE MISSING, and they had the same cause: this read
+ * `process.env.EVESTACK_AGENT_URL` and nothing else.
+ *
+ *   EVESTACK_AGENT_PORT was never consulted. It is the variable the scaffolder
+ *   WRITES — EVESTACK_AGENT_URL is not written to a scaffolded .env.local at
+ *   all — and `status`, `tour` and the template's own `verify` all read it,
+ *   because `eve dev` takes 2000 and silently auto-increments when 2000 is
+ *   busy. So on a machine with two projects, doctor probed 127.0.0.1:2000,
+ *   which is the FIRST project's agent, and reported this project's sessions
+ *   against it: at best "the agent does not know this session id" for every
+ *   candidate, at worst a confident classification read off a different
+ *   conversation.
+ *
+ *   And the project's env files were never read, so even an operator who did
+ *   set EVESTACK_AGENT_URL in .env.local got the default unless they had also
+ *   exported it into the shell they typed `evestack doctor` in.
+ *
+ * `--agent-url` still wins over both, which is what an operator pointing this
+ * at a remote agent expects.
+ *
+ * Trailing slashes are trimmed and nothing else is: a base URL carrying a path
+ * prefix (`http://host/agents/a`) is preserved, because the callers below build
+ * on it with string concatenation and `new URL(...).origin` would silently drop
+ * the prefix from a configuration that works today.
+ */
+export function agentBaseUrl(override, env = (key) => process.env[key]) {
+  const explicit = (override ?? env("EVESTACK_AGENT_URL") ?? "").trim();
+  const port = (env("EVESTACK_AGENT_PORT") ?? "").trim() || DEFAULT_AGENT_PORT;
+  const raw = explicit.length > 0 ? explicit : `http://127.0.0.1:${port}`;
+  return raw.replace(/\/+$/, "");
 }
 
 /**
  * `localDev()` in the agent's channel config waves through loopback with no
  * credentials, so Basic auth is only attached when both vars are set — sending
  * an empty Basic header would be worse than sending none.
+ *
+ * Read through the same accessor as the URL, for the reason `tour` records
+ * beside its own copy of this: from eve 0.30 `localDev()` grants only inside
+ * `eve dev`, so a BUILT server refuses loopback too. Reading `process.env`
+ * alone meant doctor sent no credentials at all to a project whose password
+ * lives — as the scaffolder writes it — in .env.local and nowhere else. Every
+ * probe came back 401, `inspectSessions` stops the sweep on the first
+ * unreachable probe, and the report said the agent was unreachable about an
+ * agent that was answering perfectly well and had just declined to talk to
+ * someone with no password.
  */
-function authHeader() {
-  const user = process.env.EVESTACK_AUTH_USER;
-  const password = process.env.EVESTACK_AUTH_PASSWORD;
+function authHeader(env) {
+  const user = env("EVESTACK_AUTH_USER");
+  const password = env("EVESTACK_AUTH_PASSWORD");
   if (!user || !password) return undefined;
   return `Basic ${Buffer.from(`${user}:${password}`, "utf8").toString("base64")}`;
 }
@@ -208,14 +254,18 @@ export async function quietSessions(client, { workflowSchema, idleMs, limit }) {
  * somewhere: `includeTailIndex=1` returns the index of the last recorded event,
  * which turns "read the recent history" into a read of a known number of lines.
  */
-async function readRecentEvents(baseUrl, sessionId, { lookback = 512, timeoutMs = 10_000 } = {}) {
+async function readRecentEvents(
+  baseUrl,
+  sessionId,
+  { lookback = 512, timeoutMs = 10_000, env = (key) => process.env[key] } = {},
+) {
   const params = new URLSearchParams({ startIndex: String(-lookback), includeTailIndex: "1" });
   const url = `${baseUrl}/eve/v1/session/${encodeURIComponent(sessionId)}/stream?${params}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   const headers = { accept: EVE_STREAM_CONTENT_TYPE };
-  const auth = authHeader();
+  const auth = authHeader(env);
   if (auth) headers.authorization = auth;
 
   try {
@@ -392,7 +442,10 @@ export function classifySession(snapshot, idleMs) {
  * would say nothing more than one does, and the whole point of this branch is
  * that the answer is "unknown" — not a slower "unknown".
  */
-export async function inspectSessions(candidates, { baseUrl, timeoutMs = 10_000 } = {}) {
+export async function inspectSessions(
+  candidates,
+  { baseUrl, timeoutMs = 10_000, env = (key) => process.env[key] } = {},
+) {
   const entries = [];
   let agentReachable = true;
   let agentError = null;
@@ -400,7 +453,7 @@ export async function inspectSessions(candidates, { baseUrl, timeoutMs = 10_000 
   for (const candidate of candidates) {
     if (!agentReachable) break;
     try {
-      const events = await readRecentEvents(baseUrl, candidate.sessionId, { timeoutMs });
+      const events = await readRecentEvents(baseUrl, candidate.sessionId, { timeoutMs, env });
       entries.push({ ...candidate, ...classifySession(foldSnapshot(events), candidate.idleMs) });
     } catch (error) {
       // A 404 is about this session, not about the agent; keep going.

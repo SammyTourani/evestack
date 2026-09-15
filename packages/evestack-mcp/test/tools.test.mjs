@@ -44,19 +44,24 @@ function evalSource(chars) {
  * Answers every route the tools use, and remembers each request.
  * `evalChars` sizes what /api/evals/promote returns.
  */
-async function dashboard({ evalChars = 400, env = {}, approvalsBody = null } = {}) {
+async function dashboard({ evalChars = 400, env = {}, approvalsBody = null, approveBody = null } = {}) {
   const seen = [];
   const server = http.createServer((req, res) => {
     let raw = "";
     req.on("data", (chunk) => (raw += chunk));
     req.on("end", () => {
       const url = new URL(req.url, "http://127.0.0.1");
-      seen.push({ method: req.method, path: url.pathname, search: url.search, body: raw });
+      // `headers` so the auth tests at the bottom can read what actually left
+      // this process. Recording the request and asserting on a config object
+      // instead is how a header that is never set passes its own test.
+      seen.push({ method: req.method, path: url.pathname, search: url.search, body: raw, headers: req.headers });
       const answer = url.pathname.startsWith("/api/evals/promote/")
         ? { filename: `${SESSION_ID}.eval.ts`, source: evalSource(evalChars), warnings: [] }
         : url.pathname === "/api/approvals" && approvalsBody
           ? approvalsBody
-          : { ok: true, approvals: [], count: 0, sessionId: SESSION_ID, answered: [], audited: true };
+          : url.pathname.endsWith("/approve") && approveBody
+            ? approveBody
+            : { ok: true, approvals: [], count: 0, sessionId: SESSION_ID, answered: [], audited: true };
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(answer));
     });
@@ -236,4 +241,173 @@ test("a dashboard too old to report it gets no answer invented for it", async ()
     !("moreRowsMayExist" in response.structuredContent),
     `the key is present as ${response.structuredContent.moreRowsMayExist}`,
   );
+});
+
+// ---------------------------------------------------------------------------
+// The Authorization header, and the spelling the docs told everyone to use
+// ---------------------------------------------------------------------------
+
+/**
+ * `EVESTACK_MCP_DASHBOARD_AUTH` reaches the dashboard as the `Authorization`
+ * header. docs/mcp.mdx documented it as "`user:password` for the dashboard" and
+ * this server sent that string unchanged, while the dashboard's `verifyBasic`
+ * returns null for anything that does not match /^Basic /i
+ * (packages/dashboard/lib/auth.ts). So the documented configuration
+ * authenticated nothing: every tool came back 401, on a dashboard that was
+ * working and a credential that was correct.
+ *
+ * These assert on the bytes that leave this process rather than on `loadConfig`'s
+ * return value, because a normalization that never reaches `headers.set` is the
+ * same bug with a passing unit test.
+ */
+const authHeader = (last) => last().headers.authorization;
+
+test("A BARE user:password IS ENCODED, because that is what the docs asked for", async () => {
+  const { call, last } = await dashboard({ env: { EVESTACK_MCP_DASHBOARD_AUTH: "admin:hunter2" } });
+  await call("list_sessions", {});
+
+  const sent = authHeader(last);
+  assert.match(sent, /^Basic /, "the prefix verifyBasic requires, which the raw value never had");
+  assert.equal(
+    Buffer.from(sent.slice("Basic ".length), "base64").toString("utf8"),
+    "admin:hunter2",
+    "and the credential itself is unchanged — this is an encoding, not an interpretation",
+  );
+});
+
+test("a value that already carries a scheme is sent exactly as written", async () => {
+  // The backward-compatibility half. Anyone whose dashboard works today typed a
+  // real header value, and a real header value starts with a scheme token that
+  // cannot contain a colon (RFC 9110 §11.1). Those must come through untouched —
+  // including schemes this package has never heard of, and credentials that
+  // themselves contain colons.
+  for (const value of [
+    "Basic YWRtaW46aHVudGVyMg==",
+    "Bearer eyJhbGciOiJIUzI1NiJ9.e30.x",
+    "SSWS 00a:bc",
+    "Negotiate YIIZ",
+  ]) {
+    const { call, last } = await dashboard({ env: { EVESTACK_MCP_DASHBOARD_AUTH: value } });
+    await call("list_sessions", {});
+    assert.equal(authHeader(last), value, value);
+  }
+});
+
+test("a schemeless value with no colon is left alone rather than guessed at", async () => {
+  // Not a username and password. Encoding it would invent a credential that the
+  // operator did not type, which is a worse failure than the 401 they can read.
+  const { call, last } = await dashboard({ env: { EVESTACK_MCP_DASHBOARD_AUTH: "opaque-proxy-token" } });
+  await call("list_sessions", {});
+  assert.equal(authHeader(last), "opaque-proxy-token");
+});
+
+test("EVESTACK_MCP_DASHBOARD_AUTH_VERBATIM=1 restores the old pass-through", async () => {
+  // The escape hatch for the one shape the rule reads wrong: a proxy that wants
+  // a schemeless value which happens to contain a colon.
+  const { call, last } = await dashboard({
+    env: { EVESTACK_MCP_DASHBOARD_AUTH: "admin:hunter2", EVESTACK_MCP_DASHBOARD_AUTH_VERBATIM: "1" },
+  });
+  await call("list_sessions", {});
+  assert.equal(authHeader(last), "admin:hunter2");
+});
+
+test("no variable, no header — an unauthenticated dashboard is not sent an empty credential", async () => {
+  const { call, last } = await dashboard();
+  await call("list_sessions", {});
+  assert.equal(authHeader(last), undefined);
+});
+
+// ---------------------------------------------------------------------------
+// The name on an approval row, and the warning that could not fire
+// ---------------------------------------------------------------------------
+
+/**
+ * `EVESTACK_MCP_APPROVER` is sent as `X-Forwarded-User`, and the dashboard reads
+ * that header only when `EVESTACK_TRUSTED_PROXY` is set (lib/approvals.ts →
+ * `trustsForwardedIdentity` in lib/auth.ts). On every install without a proxy in
+ * front — the documented setup — the name is therefore sent and ignored, and the
+ * row records the Basic username instead.
+ *
+ * The old warning branch fired only on a NULL approver, so that case produced no
+ * warning at all: a non-null name, from a source the operator did not choose,
+ * reported to a model as though it were the configured identity. These pin the
+ * disagreement being noticed, and — just as important — pin that a correctly
+ * attributed decision stays quiet, because a warning on every row is a warning
+ * nobody reads.
+ */
+const APPROVER = "mcp-agent@example.com";
+
+test("A ROW THAT NAMES SOMEONE ELSE SAYS SO, even though nothing failed", async () => {
+  const { call } = await dashboard({
+    env: { EVESTACK_MCP_APPROVER: APPROVER },
+    approveBody: { ok: true, sessionId: SESSION_ID, answered: ["req_1"], audited: true, approver: "admin", approverVia: "basic" },
+  });
+  const response = await call("approve_or_deny", { sessionId: SESSION_ID, decision: "approve" });
+
+  assert.equal(response.isError, false, "the decision took effect; this is not a failure");
+  const { attributionWarning, approver, approverVia } = response.structuredContent;
+
+  assert.equal(approver, "admin", "the row is reported as it is, not as it was meant to be");
+  assert.equal(approverVia, "basic");
+  assert.match(attributionWarning, /EVESTACK_TRUSTED_PROXY/);
+  assert.match(attributionWarning, new RegExp(APPROVER), "names what was configured");
+  assert.match(attributionWarning, /"admin"/, "and what was actually recorded");
+});
+
+test("and it does not claim a difference when the two names are the SAME string", async () => {
+  // The configuration that makes a wording built on string comparison read as
+  // nonsense, and it is not a contrived one: an operator who wants their own name
+  // in the audit log sets EVESTACK_MCP_APPROVER to their address, and the
+  // dashboard's Basic user is very often that same address. The row is still
+  // wrong in the way that matters — `basic` names the shared credential, not the
+  // person, and the header this server sent was never read — so the warning must
+  // still fire. What it must not do is open by saying `X` is not `X`.
+  const { call } = await dashboard({
+    env: { EVESTACK_MCP_APPROVER: APPROVER },
+    approveBody: { ok: true, sessionId: SESSION_ID, answered: ["req_1"], audited: true, approver: APPROVER, approverVia: "basic" },
+  });
+  const response = await call("approve_or_deny", { sessionId: SESSION_ID, decision: "approve" });
+
+  const { attributionWarning } = response.structuredContent;
+  assert.match(attributionWarning, /approverVia 'basic'/, "the provenance is still worth saying");
+  assert.doesNotMatch(
+    attributionWarning,
+    /not the one this server offered/,
+    "with the same string on both sides that sentence is a flat contradiction, which is exactly the " +
+      "confident wrongness this field exists to prevent",
+  );
+});
+
+test("a row that names the configured identity is left alone", async () => {
+  const { call } = await dashboard({
+    env: { EVESTACK_MCP_APPROVER: APPROVER },
+    approveBody: { ok: true, sessionId: SESSION_ID, answered: ["req_1"], audited: true, approver: APPROVER, approverVia: "forwarded-user" },
+  });
+  const response = await call("approve_or_deny", { sessionId: SESSION_ID, decision: "approve" });
+  assert.equal(response.structuredContent.attributionWarning, undefined);
+});
+
+test("a dashboard too old to report `approverVia` gets no warning invented for it", async () => {
+  // Same rule as the /api/approvals `truncated` flag above: silence from the
+  // other side is not evidence, and a warning manufactured out of it would be
+  // the same species of confident wrongness this file is about.
+  const { call } = await dashboard({
+    env: { EVESTACK_MCP_APPROVER: APPROVER },
+    approveBody: { ok: true, sessionId: SESSION_ID, answered: ["req_1"], audited: true, approver: "admin" },
+  });
+  const response = await call("approve_or_deny", { sessionId: SESSION_ID, decision: "approve" });
+  assert.equal(response.structuredContent.attributionWarning, undefined);
+});
+
+test("a row that names nobody still says how to fix it, and now says the whole of it", async () => {
+  const { call } = await dashboard({
+    approveBody: { ok: true, sessionId: SESSION_ID, answered: ["req_1"], audited: true, approver: null, approverVia: "unidentified" },
+  });
+  const response = await call("approve_or_deny", { sessionId: SESSION_ID, decision: "approve" });
+
+  const { attributionWarning } = response.structuredContent;
+  assert.match(attributionWarning, /EVESTACK_MCP_APPROVER/);
+  // The half that was missing: setting the variable alone changes nothing.
+  assert.match(attributionWarning, /EVESTACK_TRUSTED_PROXY/);
+  assert.match(attributionWarning, /EVESTACK_REQUIRE_APPROVER/);
 });

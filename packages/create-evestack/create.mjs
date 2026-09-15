@@ -270,6 +270,45 @@ function openInBrowser(url) {
 }
 
 /**
+ * Open the dashboard the moment the stack is up.
+ *
+ * WHY THIS IS AUTOMATIC. Every route to the dashboard used to be a command the
+ * reader had to notice, in a terminal that was about to scroll, describing a
+ * thing they had not seen yet. The dashboard is what makes the rest of this
+ * legible — it is where the sessions, the cost, the approvals and the traces
+ * are — and asking someone to type a command to discover the product's best
+ * screen is asking most of them not to.
+ *
+ * Three gates, all of them real:
+ *
+ *   --no-open   the explicit opt-out, for anyone who does not want a window.
+ *   no TTY      CI, a heredoc, a Dockerfile. Opening a browser on a build agent
+ *               is at best noise. (`--yes` never reaches here: it declines to
+ *               start containers, so `up` is false and this is not called.)
+ *   not healthy the container is started but the app inside it may still be
+ *               booting, and a tab that lands on ECONNREFUSED is worse than no
+ *               tab — the reader's first impression of the dashboard would be a
+ *               browser error page.
+ *
+ * Returns whether a window was actually opened, because the line printed under
+ * this has to say something different in each case and must never claim a
+ * browser that did not open.
+ */
+async function autoOpenDashboard(url, { suppressed = false } = {}) {
+  if (suppressed) return false;
+  if (!process.stdout.isTTY) return false;
+  try {
+    const response = await fetch(new URL("/api/health", url), {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!response.ok) return false;
+  } catch {
+    return false;
+  }
+  return openInBrowser(url);
+}
+
+/**
  * The question before the questions.
  *
  * The old wizard opened on "Project name?", which assumes the reader already
@@ -705,15 +744,31 @@ function printable(answer) {
  * with its own output withheld is strictly worse than noise. `--verbose` puts
  * the raw stream back for anyone debugging the commands themselves.
  *
- * `shell` on Windows only, and not for cosmetic consistency: `npm`, `pnpm`,
- * `yarn` and `bun` are installed there as `.cmd` shims, which CreateProcess
- * cannot execute, so a bare spawn fails with ENOENT before the package manager
- * runs at all. templates/default/scripts/dev.mjs and start.mjs already pass
- * exactly this for exactly this reason. Every argument this file passes is a
- * literal without spaces, which is what makes the shell safe to use here.
+ * WINDOWS GOES THROUGH cmd.exe, and this file no longer asks `shell: true` to
+ * arrange that. See `spawnTarget` below for the whole mechanism; the short
+ * version is that `shell: true` builds the command line by joining argv with
+ * single spaces and escaping nothing, which is safe only if every argument is
+ * a literal — and this file's arguments are not.
  *
- * NOT VERIFIED ON WINDOWS — there is no Windows machine in this loop. The claim
- * being matched is the one the template's own scripts already make.
+ * THE CLAIM THAT USED TO BE HERE WAS FALSE, and it is worth recording rather
+ * than quietly deleting, because it read like a security argument. It said
+ * "Every argument this file passes is a literal without spaces, which is what
+ * makes the shell safe to use here." Two of them are not literals: `addOne`
+ * passes `item.id`, which comes off the live registry at eve.dev and was
+ * type-checked and nothing more, and it passes every `--answer` string, which is
+ * built from that registry item's own NDJSON output. Under `shell: true` a name
+ * containing `&` runs whatever follows it, on the machine of someone who ticked
+ * a row in a picker that does not display ids at all.
+ *
+ * Both ends are now closed: catalog.mjs refuses an id that is not shaped like an
+ * id (see `isRegistryId` there), and `spawnTarget` escapes what it spawns so
+ * that correctness does not depend on the first gate holding.
+ *
+ * NOT VERIFIED ON WINDOWS — there is no Windows machine in this loop. What
+ * `spawnTarget` emits is deliberately the same thing Node's own `shell: true`
+ * emits — same cmd.exe, same `/d /s /c`, same outer quotes, same
+ * `windowsVerbatimArguments` — with the tokens escaped instead of bare, so the
+ * behaviour being relied on is the one that was already being relied on.
  *
  * ASYNC, and that part is load-bearing rather than a style choice. The first
  * version of this used `spawnSync`, which blocks the event loop for the whole
@@ -760,13 +815,108 @@ export function childEnv() {
   return env;
 }
 
+/**
+ * One token, escaped so that cmd.exe hands it to the child unchanged.
+ *
+ * Two parsers see this string in sequence and they are not the same parser, so
+ * it is escaped twice, in that order:
+ *
+ *   1. The C runtime's argv splitter, which is what the child program itself
+ *      uses to turn one command line back into an argument vector. Its rule is
+ *      the awkward one: backslashes are literal EXCEPT immediately before a
+ *      double quote, where each pair collapses to one and an odd one escapes
+ *      the quote. So a run of backslashes before a quote — and before the
+ *      closing quote we are about to add — has to be doubled first.
+ *
+ *   2. cmd.exe, which scans the line BEFORE any of that and acts on
+ *      `& | < > ( ) %` and friends. Its escape is the caret, and the caret is
+ *      only honoured OUTSIDE a quoted region — inside one it is passed through
+ *      as a literal character. That is the trap, and it is why the quotes added
+ *      in step 1 are themselves caret-escaped: the whole token reaches cmd as
+ *      an unquoted run of caret-escaped characters, cmd strips every caret, and
+ *      what is left is the properly quoted string step 1 built.
+ *
+ * The metacharacter set is deliberately wider than cmd's own. Escaping a
+ * character cmd would have passed through costs nothing — `^x` outside quotes
+ * is just `x` — while missing one costs everything, so the list errs long.
+ *
+ * The algorithm is the one documented at qntm.org/cmd and implemented by
+ * `cross-spawn`, which is the de-facto answer for this on npm. It is reproduced
+ * here rather than depended on because this package is deliberately
+ * dependency-free (see the header): a scaffolder that installs a package before
+ * it can spawn one is the thing that header refuses.
+ */
+export function quoteForCmd(token) {
+  let text = String(token);
+  // A run of backslashes followed by a quote: double the run, escape the quote.
+  text = text.replace(/(\\*)"/g, '$1$1\\"');
+  // A run of backslashes at the end, which is about to be followed by the
+  // closing quote: double it for the same reason.
+  text = text.replace(/(\\*)$/, "$1$1");
+  text = `"${text}"`;
+  // Now cmd's pass, over the whole thing including the quotes just added.
+  return text.replace(/([()\][%!^"`<>&|;, *?])/g, "^$1");
+}
+
+/**
+ * The command line cmd.exe is given after `/d /s /c`.
+ *
+ * Wrapped in one outer pair of quotes because that is what `/s` consumes: with
+ * `/s /c`, cmd strips the first and last character of the argument when they are
+ * both quotes and treats the remainder verbatim. Node does exactly this under
+ * `shell: true`; the difference is what goes between the quotes.
+ */
+export function windowsCommandLine(command, args) {
+  return `"${[command, ...args].map(quoteForCmd).join(" ")}"`;
+}
+
+/**
+ * What to actually hand `spawn`, per platform.
+ *
+ * POSIX is the identity case: no shell, no quoting, argv goes straight to
+ * execve, and nothing a registry says can become a command.
+ *
+ * Windows cannot be the identity case, and the reason is narrow and real. `npm`,
+ * `pnpm`, `yarn`, `bun` and every `node_modules/.bin` entry are `.cmd` shims
+ * there; CreateProcess cannot execute a batch file, and since the fix for
+ * CVE-2024-27980 Node refuses to try — a `.cmd` spawned without a shell throws
+ * EINVAL. Something has to run cmd.exe. The question is only who builds the
+ * command line, and `shell: true` builds it by joining argv with spaces:
+ *
+ *     [file, ...args].join(' ')        // node:child_process, normalizeSpawnArguments
+ *
+ * with no escaping and no quoting of any kind. So this returns the same spawn
+ * `shell: true` would have produced — comspec, `/d /s /c`, one quoted command
+ * line, `windowsVerbatimArguments` — with `quoteForCmd` applied to each token.
+ *
+ * `platform` is a parameter so the Windows branch is testable on a machine that
+ * is not Windows, which is every machine this repository is developed on.
+ */
+export function spawnTarget(command, args, platform = process.platform) {
+  if (platform !== "win32") {
+    return { file: command, args, windowsVerbatimArguments: false };
+  }
+  return {
+    // The same lookup Node does for `shell: true`. ComSpec is normally an
+    // absolute path to cmd.exe; the literal is the fallback for an environment
+    // that has lost it.
+    file: process.env.ComSpec || "cmd.exe",
+    args: ["/d", "/s", "/c", windowsCommandLine(command, args)],
+    windowsVerbatimArguments: true,
+  };
+}
+
 function run(cwd, command, args, { verbose = false } = {}) {
   return new Promise((resolve) => {
-    const child = spawn(command, args, {
+    const launch = spawnTarget(command, args);
+    const child = spawn(launch.file, launch.args, {
       cwd,
       env: childEnv(),
       stdio: verbose ? "inherit" : ["ignore", "pipe", "pipe"],
-      shell: process.platform === "win32",
+      // `shell` is deliberately absent. On POSIX `launch` is the command and its
+      // argv unchanged; on Windows it is cmd.exe with a command line this file
+      // escaped, which is the whole point of `spawnTarget`.
+      windowsVerbatimArguments: launch.windowsVerbatimArguments,
     });
     let output = "";
     const collect = (chunk) => {
@@ -886,10 +1036,16 @@ function readRegistry(pm) {
     // A `timeout` rather than a Promise.race: a race leaves the child running,
     // and an orphan holding a pipe keeps the event loop alive past the point
     // where the scaffold has finished and should have exited.
-    const child = spawn(pm, ["config", "get", "registry"], {
+    // Through `spawnTarget` for the same reason `run` is, even though `pm` here
+    // is one of four literals from `detectPm()` and the arguments are constants:
+    // two spawn shapes in one file is how the escaped one stops being the one
+    // everybody copies. The `timeout` still kills cmd.exe rather than the
+    // package manager under it, exactly as it did under `shell: true`.
+    const launch = spawnTarget(pm, ["config", "get", "registry"]);
+    const child = spawn(launch.file, launch.args, {
       env: childEnv(),
       stdio: ["ignore", "pipe", "ignore"],
-      shell: process.platform === "win32",
+      windowsVerbatimArguments: launch.windowsVerbatimArguments,
       timeout: 5_000,
     });
     child.stdout?.setEncoding("utf8").on("data", (chunk) => {
@@ -1347,6 +1503,30 @@ async function addOne({ target, runner, item, verbose }) {
 }
 
 /**
+ * This project's own `eve`, by the name the platform can actually execute.
+ *
+ * On POSIX `node_modules/.bin/eve` is a symlink to the package's bin and there
+ * is nothing to choose. On Windows npm writes THREE files for one bin — `eve`
+ * (a Cygwin-style sh script), `eve.ps1`, and `eve.cmd` — and only the last of
+ * those is something cmd.exe can run. The extensionless one exists, so
+ * `existsSync(eveBin)` said yes and the runner then handed cmd.exe a path to a
+ * shell script; whether that resolves at all depends on cmd's PATHEXT probing
+ * of an already-qualified name, which is not a thing worth depending on.
+ * Naming the shim removes the question.
+ *
+ * `null` rather than a path when nothing is there, so the caller's fallback to
+ * `npx --yes eve` reads as the decision it is.
+ *
+ * `platform` is a parameter for the same reason it is one on `spawnTarget`:
+ * the Windows branch is only ever exercised from a machine that is not Windows.
+ */
+export function localEveBinary(target, platform = process.platform) {
+  const bin = join(target, "node_modules", ".bin", "eve");
+  if (platform === "win32" && existsSync(`${bin}.cmd`)) return `${bin}.cmd`;
+  return existsSync(bin) ? bin : null;
+}
+
+/**
  * Install the chosen channels and integrations with eve's own installer.
  *
  * `eve add` and not a reimplementation: an evestack project IS an eve project,
@@ -1370,8 +1550,8 @@ async function addRegistryItems({ target, items, verbose }) {
   // The project's own eve, not a global one and not npx: the scaffold pins a
   // version, and the installer has to be that version or it writes files the
   // pinned runtime does not understand.
-  const eveBin = join(target, "node_modules", ".bin", "eve");
-  const runner = existsSync(eveBin) ? { command: eveBin, prefix: [] } : { command: "npx", prefix: ["--yes", "eve"] };
+  const eveBin = localEveBinary(target);
+  const runner = eveBin ? { command: eveBin, prefix: [] } : { command: "npx", prefix: ["--yes", "eve"] };
 
   blank();
   rule();
@@ -2361,7 +2541,7 @@ export async function create(argv) {
   });
   blank();
   say(`  ${c.bold("Dashboard")}   ${c.brandBold(dashboardUrl)}`);
-  say(`  ${c.bold("Sign in")}     evestack ${c.dim("/")} ${c.bold(password)}`);
+  say(signInLine(password));
   // THE COMMAND, NOT A FOOTNOTE ABOUT THE COMMAND.
   //
   // This line used to read "`npx evestack open` prints them again — this
@@ -2382,7 +2562,7 @@ export async function create(argv) {
   // `npx evestack status` line below: evestack is not a dependency of the
   // scaffold, so there is no local binary for `pnpm evestack` to find, and
   // `pnpm dlx` / `yarn dlx` would be a third spelling of one idea.
-  say(`  ${c.dim(`${g.arrow} `)}${c.bold("npx evestack open")}   ${c.dim("opens it in your browser, already signed in")}`);
+  say(`  ${c.dim(`${g.arrow} `)}${c.bold("npx evestack dashboard")}   ${c.dim("opens it in your browser, already signed in")}`);
   say(`  ${c.dim("Both are in .env.local, which the dashboard container reads too.")}`);
   blank();
 
@@ -2430,6 +2610,10 @@ export async function create(argv) {
   // Everything but the agent is up, and the agent is a foreground process that
   // belongs to this terminal. Offering to start it is the difference between
   // finishing with a running stack and finishing with one more thing to paste.
+  // Opened before the block below is printed, so the browser is already coming
+  // up while the reader is still reading. The result decides what that block says.
+  const openedDashboard = await autoOpenDashboard(dashboardUrl, { suppressed: args.noOpen });
+
   say(`  ${c.bold("One command left")}`);
   say(`    ${c.bold(`cd ${cd} && ${pm} run dev`)}`);
   blank();
@@ -2437,7 +2621,12 @@ export async function create(argv) {
   // pulled the image and started the container. So "one command left" was true
   // of the agent and quietly untrue of the thing the reader can look at right
   // now, in another terminal, without waiting for anything.
-  say(`  ${c.dim("Right now, in another terminal:")} ${c.bold("npx evestack open")} ${c.dim("— the dashboard, signed in.")}`);
+  if (openedDashboard) {
+    say(`  ${c.dim("The dashboard is open in your browser, signed in.")}`);
+    say(`  ${c.dim("Bring it back any time with")} ${c.bold("npx evestack dashboard")}${c.dim(", or")} ${c.bold(`${pm} run dashboard`)}${c.dim(".")}`);
+  } else {
+    say(`  ${c.dim("Right now, in another terminal:")} ${c.bold("npx evestack dashboard")} ${c.dim("— the dashboard, signed in.")}`);
+  }
   say(`  ${c.dim("Then:")} ${c.bold("npx evestack tour")} ${c.dim("— a guided first run.")}`);
   reportPicked({ ready, pending, failed, moved, broke, missingEnv, deferred, pm });
   blank();
@@ -2564,6 +2753,68 @@ function architecture({ agentPort, pgPort, dashboardPort, provider, model, up, o
  * the port out of .env.local, health-checks it, prints the credentials and
  * launches the browser, and this is the list where someone goes looking for it.
  */
+/**
+ * The variable that puts the old behaviour back.
+ *
+ * Named for what it does rather than for the gate it opens, because the person
+ * who needs it is reading a CI config six months from now and has to be able to
+ * tell what it turns on without finding this file.
+ */
+export const PRINT_SECRETS_VAR = "EVESTACK_PRINT_SECRETS";
+
+/**
+ * Is it safe to put a generated credential on this stream?
+ *
+ * The answer is "when a person is looking at it", and `isTTY` is the only thing
+ * that knows. A terminal is transient and belongs to the one person typing;
+ * everything else a stream can be — a pipe, a file, a CI log, a
+ * `tee setup.log`, a wrapper capturing output — is a recording of it, kept
+ * somewhere nobody is tracking and rotated by nothing.
+ *
+ * Set EVESTACK_PRINT_SECRETS to anything non-empty and the old behaviour comes
+ * back everywhere this is consulted, for the one legitimate case: an automated
+ * setup that genuinely wants the value out of stdout and has somewhere to put
+ * it. That is a decision somebody makes on purpose, which is the difference.
+ *
+ * Exported and shared with attach.mjs rather than copied: two answers to "is
+ * anyone reading this" in one package is how one of them ends up stale.
+ */
+export function showSecrets(stream = process.stdout) {
+  if (process.env[PRINT_SECRETS_VAR]) return true;
+  return Boolean(stream?.isTTY);
+}
+
+/**
+ * The dashboard sign-in line — with the password in it only when a person is
+ * looking at it.
+ *
+ * The value is real and it is the one credential that gets someone into a
+ * control plane which starts agent runs and approves gated shell commands. On a
+ * terminal, printing it is the whole point: the scaffolder generates it, nobody
+ * chose it, and the alternative is sending a first-time reader to go and find
+ * out which key in a dotfile is the password.
+ *
+ * Off a terminal it is a different thing entirely. `npx create-evestack ... |
+ * tee setup.log`, a CI job, a wrapper script capturing output, a screen-share
+ * recorder — all of those turn one line of a finish screen into a credential
+ * at rest somewhere nobody is tracking. The same generated password also sits
+ * in .env.local, which the generated .gitignore ignores and which this function
+ * names instead, so nothing is lost: the reader is one `cat` away, or one
+ * `npx evestack dashboard` away, which prints it on a terminal.
+ *
+ * This is the shape `verify --json` already used — it has always omitted the
+ * password — so the intent existed; it just had no gate on the human path.
+ * EVESTACK_PRINT_SECRETS=1 restores the old behaviour for a caller that wants
+ * the value out of a pipe on purpose.
+ *
+ * `show` is a parameter rather than a call to `showSecrets()` inside, so both
+ * branches are testable without a pty.
+ */
+export function signInLine(password, { user = "evestack", show = showSecrets() } = {}) {
+  if (show) return `  ${c.bold("Sign in")}     ${user} ${c.dim("/")} ${c.bold(password)}`;
+  return `  ${c.bold("Sign in")}     ${user} ${c.dim("/")} ${c.dim("(not printed to a pipe; it is EVESTACK_AUTH_PASSWORD in .env.local)")}`;
+}
+
 export function nextSteps({ pm = "npm", dashboardPort = 4000 } = {}) {
   const steps = [
     ["docker compose up -d postgres", "durable sessions"],
@@ -2576,7 +2827,7 @@ export function nextSteps({ pm = "npm", dashboardPort = 4000 } = {}) {
     [`${pm} run dev`, "the agent"],
     // `npx` whatever `pm` is: evestack is not a dependency of the scaffold, so
     // there is no local binary for `pnpm evestack` to find.
-    ["npx evestack open", `see it, signed in, on :${dashboardPort}`],
+    ["npx evestack dashboard", `see it, signed in, on :${dashboardPort}`],
   ];
   const gutter = Math.max(...steps.map(([command]) => command.length)) + 3;
   return steps.map(([command, note]) => `${c.bold(pad(command, gutter))}${c.dim(`# ${note}`)}`);
@@ -2742,6 +2993,7 @@ function inspectTarget(path) {
  */
 const CREATE_FLAGS = new Map([
   ["--yes", "yes"], ["-y", "yes"],
+  ["--no-open", "noOpen"],
   ["--verbose", "verbose"],
   ["--help", "help"], ["-h", "help"],
   ["--version", "version"], ["-V", "version"],
@@ -2753,7 +3005,6 @@ const FLAGS_ELSEWHERE = new Map([
   ["-n", "attach"],
   ["--json", "verify"],
   ["--open", "verify"],
-  ["--no-open", "verify and open"],
   ["--sql", "doctor"],
   ["--verbose", "doctor"],
 ]);
@@ -2772,6 +3023,7 @@ Options
                   a terminal — CI, a heredoc, a Dockerfile. It also declines to
                   start containers, because nobody is there to say no
   --verbose       show the raw npm and docker output instead of one line each
+  --no-open       do not open the dashboard in a browser when the stack comes up
   --help, -h      this
   --version, -V   print create-evestack's version
 

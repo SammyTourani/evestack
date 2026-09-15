@@ -88,6 +88,119 @@ the tree is one patch ahead of it.
 
 ### Changed but not yet versioned
 
+- **Remediation follow-through.** All seven broken compatibility contracts now pass against
+  Eve 0.54.3. The dashboard links activation spans through workflow turn parents, migrates old
+  trace rows, and keeps conversation correlation separate from session identity. Telegram,
+  Discord and Slack also enforce their allow-lists on approval/answer callbacks. Attach commands
+  require a real password before Docker starts; attached databases use the current world pin.
+  OpenSandbox implements Eve’s stop/delete lifecycle and propagates provider failures.
+- **Release and dependency hardening.** A tag-driven npm workflow validates main ancestry and
+  dependency publish order, packs without publishing credentials, and publishes tarballs with
+  OIDC/provenance from a separate job. It requires per-package npm trusted-publisher setup.
+  Eval reporting is isolated from dependency execution; the negative control reuses the frozen
+  install and verifies that the ungated tool actually ran. Patched sharp, PostCSS, nanoid and
+  js-yaml versions close the remaining dependency advisories found on 2026-09-15.
+
+- **The dashboard opens itself, and `/dashboard` works inside `npm run dev`.** Reaching the
+  control plane was a command you had to have read the README to know, printed once into a
+  terminal that then scrolls. Five routes now: `evestack create` health-checks the dashboard and
+  opens your browser when it brings the stack up (`--no-open` declines, and it never opens one
+  without a terminal); `evestack dashboard` from any terminal; `npm run dashboard` from inside the
+  project, offline; `/dashboard` typed at the agent; and the printed URL.
+
+  `evestack open` was **renamed** to `evestack dashboard`, with the old name kept as an alias and
+  a test pinning them to the same function — the documented verb count stays at eight, which is
+  why a rename beat adding a ninth.
+
+  The slash command is not one of eve's. eve's TUI command list is a module constant with no
+  registration hook, and evestack does not fork eve — but eve forwards an unrecognised `/word` as
+  an ordinary message, and `eveChannel({ onMessage })` is a documented pre-dispatch hook running
+  on the host. So the browser opens from the agent process, immediately, without waiting on the
+  model or depending on it answering correctly. What that hook cannot do is cancel the turn, so
+  the model still replies, with one line it is handed verbatim. It is wired on the eve channel
+  only, so a stranger cannot make a window open on your machine by typing it at your Telegram
+  bot, and it does nothing on a process with no terminal.
+
+
+- **Security pass, 2026-09-15.** Ten confirmed findings from a full review, fixed across every
+  package. Nothing here is released yet; the dashboard image and three npm packages all need a
+  version bump before any of it reaches a user. Grouped by what an attacker gets.
+
+  **Multi-user installs were not multi-user safe.** Three separate holes, all opening the moment a
+  channel is enabled and strangers become principals:
+
+  - `evestack.memories` had no owner column, so every channel user could read, contradict and
+    delete every other user's memories — and because the agent is told to treat recalled text as
+    fact, a memory planted by a stranger was a prompt injection into the operator's next session
+    and into the unattended heartbeat. Rows now carry `principal_id`, `recall` is owner-scoped,
+    `forget` refuses a row the caller does not own and shows the human WHAT is being deleted, and
+    recalled content is fenced as data rather than presented as fact. `EVESTACK_MEMORY_SCOPE`
+    picks between `owner` (default), `strict` and the old `shared` behaviour. The migration is an
+    `ADD COLUMN IF NOT EXISTS` that runs on the first `remember` or `recall`, because the template
+    is copied once and never updated underneath a running project.
+  - The channels dispatched for anyone. Telegram had no allow-list at all, Discord's was empty by
+    default, and Slack answered any workspace member — each turn handing the model a root shell in
+    a container with no memory, CPU or pid limit. All three now gate dispatch, and `.env.example`
+    says plainly that a webhook secret authenticates the platform and not the person.
+  - Composio bound every principal to one identity (`"evestack"`), so one person's Gmail grant was
+    executable by everyone, and its write tools ran with no human in the loop. Identities are per
+    principal behind a bounded cache, and `COMPOSIO_MULTI_EXECUTE_TOOL` and
+    `COMPOSIO_MANAGE_CONNECTIONS` park for approval. `EVESTACK_COMPOSIO_SHARED_IDENTITY` and
+    `EVESTACK_COMPOSIO_APPROVALS` restore the old behaviour for an install that wants it.
+
+  **The nightly eve-watch job ran freshly-downloaded npm code while holding a token that could
+  push to `main`** — which is the live `@evestack` registry and the live site. Checkout no longer
+  persists credentials, the job is split so the half that installs and executes the candidate
+  holds no write permission and no secrets, `git add -A` is gone, and `OPENAI_API_KEY` is scoped
+  to the steps that need it in all three workflows that use it. Every third-party action is
+  pinned to a commit SHA. The repository now requires a PR, passing CI and resolved review
+  conversations for `main`, blocks force-push/deletion, and prevents Actions from approving PRs.
+  Private vulnerability reporting is enabled.
+
+  **The dashboard's trace ingest was the one write without a cross-site check**, so a page on any
+  other port of localhost could post spans carrying the operator's cookie — and the insert is an
+  upsert, so it could overwrite the spans an operator reads before approving a tool call. The
+  proxy now runs the origin check on anything not carrying the shared token, and the route
+  requires the JSON media type, compared by essence rather than by substring (`text/plain;
+  charset=application/json` is a CORS-simple request that contains the substring, and was
+  measured passing the first version of that check). Bodies are bounded everywhere, including on
+  the unauthenticated sign-in route. `next` moved to 16.3.5 in both the dashboard and the website,
+  closing two critical advisories; the image optimizer, which had no consumer, is off.
+
+  **The spend cap could be walked past one full model call at a time.** Spend was only evaluated
+  after a step completed, so a session that had already blown its cap answered every new message
+  with one complete uncapped call. The cap is now read at the turn boundary, before the model
+  runs, and a stop left over from a cap that has since been raised is lifted rather than honoured
+  — so "raise the cap and it heals" still works. Separately, a partial `EVESTACK_PRICING`
+  override (an input price with no output price) made every cost `NaN`, which read as under the
+  cap and then poisoned the stored totals; overrides are validated and a non-finite cost is
+  refused at the store.
+
+  Also: the scaffolder no longer relies on `shell: true` for correctness on Windows and validates
+  registry ids before they reach a command line; the dashboard password is printed only to a
+  terminal, with `EVESTACK_PRINT_SECRETS` for automated setups; `evestack skills` works on
+  Windows, where the path check refused every file; `evestack doctor` reads the project's own
+  agent port and credentials instead of probing whichever agent holds 2000; and `npm run start`
+  strips `EVE_DEV`, which otherwise turned a built server unauthenticated from one stray line in
+  `.env.local`.
+
+- **The heartbeat stopped talking to you when it has nothing to say.** The template asked the
+  agent to reply `HEARTBEAT_OK` and then carried a long warning that nothing drops it, because
+  eve posts the reply itself and evestack never sees the text. eve has since made the case
+  first-class: a reply of exactly `<eve-empty-delivery/>` becomes a completed message with no
+  content, and no channel posts one. The template asks for that marker, and the warning — in
+  `heartbeat.ts`, `HEARTBEAT.md`, `docs/proactive.mdx` and `@evestack/schedules`' README — is
+  gone rather than merely softened.
+
+- **`registry/build.mjs` refuses to emit an item that imports a file the item does not ship.**
+  Written after exactly that escaped: `basic-auth` embeds the template's `agent/channels/eve.ts`,
+  that file grew an import of `lib/dashboard-command`, and the item was rebuilt and would have
+  been served with an import that cannot resolve in the stock eve project it exists for. The
+  guard resolves every relative specifier against the item's own file list; a negative control
+  proves it catches the original bug. The auth chain stays single-sourced, and the template-only
+  wiring is transformed out by a function that throws rather than guesses if the shape changes.
+
+
 - **`contract/`** — 1b63559 and 06274c4 repaired a probe that was writing rows eve's
   `WorkflowRunSchema` rejects, which bricked a development database for four days.
   Ships in no published artifact — `contract/` is in no package's `files` — and is recorded

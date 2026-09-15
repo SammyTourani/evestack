@@ -22,6 +22,47 @@ export { SNAPSHOT_TAKEN, REGISTRY_URL };
  */
 const TIMEOUT_MS = 2000;
 
+/**
+ * The only shape of id this wizard will accept from the registry.
+ *
+ * An id is not a label. `create.mjs`'s `addOne` passes it to `eve add <id>` as
+ * an argv element, and on Windows that spawn goes through cmd.exe — so the id
+ * is, in the most literal sense, a fragment of a command line on somebody
+ * else's machine. The only gate it had was `typeof item?.name === "string"`,
+ * and `"channel/slack & calc"` is a string.
+ *
+ * That is worth stating plainly, because the shape of the hazard is unusual:
+ * the id is never shown in the picker — the picker renders `title` — so a row
+ * reading "Slack" could carry any id at all, and the person who ticked it would
+ * have no way to see it. The registry is read live from eve.dev over the
+ * network, which is one more party than the reader thinks they are trusting.
+ *
+ * create.mjs now escapes what it spawns (see `quoteForCmd` there), so this is
+ * the second of two gates rather than the only one. It is still the right place
+ * for the FIRST gate: an id that does not look like an id is not something this
+ * wizard should be installing at all, escaped or not, and refusing it here
+ * means every consumer downstream — the spawn, the `eve add <id>` recovery line
+ * printed in the summary, the `--answer` round trip — gets a value with a known
+ * shape instead of an arbitrary one.
+ *
+ * The pattern is eve's own naming convention, read off the 99 rows in
+ * catalog.data.mjs: lowercase segments of `[a-z0-9._-]` separated by `/`, each
+ * segment starting with a letter or digit. All 99 pass. A registry that starts
+ * publishing something outside it loses that row from the wizard — a missing
+ * item, which the reader can still install by hand with `eve add`, rather than
+ * a shell fragment nobody can see.
+ *
+ * The length cap is belt and braces: the longest real id is 30 characters, and
+ * nothing legitimate is anywhere near 128.
+ */
+const MAX_ID_LENGTH = 128;
+const REGISTRY_ID = /^[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)*$/;
+
+/** Exported so the snapshot can be held to the same rule the live read is. */
+export function isRegistryId(value) {
+  return typeof value === "string" && value.length <= MAX_ID_LENGTH && REGISTRY_ID.test(value);
+}
+
 /** Which bucket a registry id belongs in. Prefix is the whole rule. */
 function kindOf(id) {
   return id.startsWith("channel/") ? "channel" : "integration";
@@ -90,7 +131,10 @@ export async function fetchRegistry(url = REGISTRY_URL, timeoutMs = TIMEOUT_MS) 
     const items = Array.isArray(body) ? body : Array.isArray(body?.items) ? body.items : null;
     if (!items || items.length === 0) return null;
     const rows = items
-      .filter((item) => typeof item?.name === "string" && typeof item?.title === "string")
+      // `isRegistryId`, not `typeof name === "string"`. See its docblock: the id
+      // becomes an argv element in a spawn, and the picker shows the title, so a
+      // row whose id is not an id is a row nobody can inspect before choosing it.
+      .filter((item) => isRegistryId(item?.name) && typeof item?.title === "string")
       .map((item) => ({
         id: item.name,
         title: item.title,

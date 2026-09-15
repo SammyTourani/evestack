@@ -62,6 +62,40 @@ export interface BudgetConfig {
    */
   readonly unpricedModel: "warn" | "stop";
   /**
+   * Whether the hook checks the stop table on `turn.started`, BEFORE the turn's
+   * first model call, as well as on `step.completed` after it.
+   *
+   * Default `true`, and the reason is an aggregate this package used to get
+   * wrong in a way no single turn revealed. Spend was only ever evaluated in
+   * `step.completed`, which fires after the model has already been billed, and
+   * the process-local `stopped` flag is cleared on `turn.cancelled` and
+   * `turn.failed` so the next turn can stop again. Nothing read the durable stop
+   * table at the start of a turn. So once a cap had tripped, EVERY new message
+   * bought one full uncapped model call before the turn failed again: N messages
+   * were N billed calls, with the cap already gone. The README's "at most one
+   * step that was already in flight" was true of one turn and false of the day.
+   *
+   * With this on, a turn that starts while the cap is still gone never reaches a
+   * model. "Still" is load-bearing: the stop row is only what makes the hook
+   * look, and the totals are re-read and compared against the caps as they are
+   * now, so raising a cap still heals a stopped session on its next message
+   * rather than being locked out by a row written under the old one. The
+   * mechanism is the same throw the `fail` path already relies on —
+   * eve 0.54 wraps a throw from `turn.started` in a `BoundaryHookError`, parks
+   * the session with `step.failed` / `turn.failed` carrying our message and then
+   * `session.waiting`, and does not run the turn (read in
+   * `eve/dist/src/context/hook-lifecycle.js` and `harness/tool-loop.js`).
+   *
+   * `EVESTACK_BUDGET_PREFLIGHT=0` restores the pre-0.4 behaviour exactly, for
+   * two cases that are both real. Older eve builds — the peer range still allows
+   * 0.30 — have no `BoundaryHookError` wrapper, so a throw from `turn.started`
+   * escapes to the workflow driver rather than parking the session politely. And
+   * a client that treats `turn.failed` harshly is the same client `mode: cancel`
+   * exists for; a hook has no way to stop a model call other than throwing, so
+   * `cancel` cannot be honoured at the turn boundary and this switch is the out.
+   */
+  readonly preflight: boolean;
+  /**
    * What happens when the spend store itself is unreachable.
    *
    * Default `false`: log loudly and let the turn run. A Postgres blip turning
@@ -250,6 +284,16 @@ export function resolveConfig(options: BudgetOptions = {}): BudgetConfig {
     mode: envMode(process.env.EVESTACK_BUDGET_MODE),
     model: envModel(),
     unpricedModel: process.env.EVESTACK_BUDGET_UNPRICED === "stop" ? "stop" : "warn",
+    // Opt-OUT rather than opt-in, and spelled as the three words an operator
+    // actually types. Every other switch in this file is opt-in because its
+    // default is the cheap direction; this one defaults on because the thing it
+    // prevents is a billed model call per message for as long as the cap stays
+    // tripped, and an enforcement that has to be discovered before it enforces
+    // is the same as no enforcement. Anything else — including a typo — leaves
+    // it on, which is the safe direction here.
+    preflight: !["0", "false", "off"].includes(
+      process.env.EVESTACK_BUDGET_PREFLIGHT?.trim().toLowerCase() ?? "",
+    ),
     failClosed:
       process.env.EVESTACK_BUDGET_FAIL_CLOSED === "1" ||
       process.env.EVESTACK_BUDGET_FAIL_CLOSED === "true",

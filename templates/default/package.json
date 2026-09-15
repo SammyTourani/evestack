@@ -11,6 +11,7 @@
   },
   "scripts": {
     "dev": "node --env-file-if-exists=.env.local scripts/dev.mjs",
+    "dashboard": "node --env-file-if-exists=.env.local scripts/dashboard.mjs",
     "build": "eve build",
     "start": "node --env-file-if-exists=.env.local scripts/start.mjs",
     "typecheck": "tsc",

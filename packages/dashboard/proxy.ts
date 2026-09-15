@@ -79,11 +79,56 @@ export default function proxy(request: NextRequest): NextResponse {
   }
 
   if (tier === "ingest") {
-    if (ingestAuthorized(request)) return NextResponse.next();
-    return NextResponse.json(
-      { code: OTLP_UNAUTHENTICATED, message: INGEST_UNAUTHENTICATED_MESSAGE },
-      { status: 401, headers: NO_STORE },
-    );
+    const ingest = ingestAuthorized(request);
+    if (ingest === null) {
+      return NextResponse.json(
+        { code: OTLP_UNAUTHENTICATED, message: INGEST_UNAUTHENTICATED_MESSAGE },
+        { status: 401, headers: NO_STORE },
+      );
+    }
+
+    // A credential is not the whole question on a write, and this tier used to
+    // act as though it were: it returned `NextResponse.next()` the moment
+    // `ingestAuthorized` said yes, which made ingest the only write tier in the
+    // dashboard reached without the check the sign-in tier above and the session
+    // tier below both run. `ingestAuthorized` accepts the operator's cookie as
+    // well as the shared token — on every deployment, configured token or not —
+    // so "authorised" here can mean nothing more than "a browser was logged in".
+    //
+    // THE MECHANISM, because SameSite=Lax reads like it already covers this and
+    // does not. Lax withholds the cookie from a cross-SITE POST, and a site is
+    // scheme + registrable domain: THE PORT IS NOT PART OF IT. Any other server
+    // on the operator's own machine — a dev server on http://localhost:3000, a
+    // preview of something they cloned — is same-site with the dashboard on
+    // :4000, so the cookie is attached to its writes. A page there needs no
+    // preflight to reach us either: `fetch(url, {method:"POST",
+    // credentials:"include", headers:{"content-type":"text/plain"}, body:
+    // json})` is a CORS-simple request. The attacker cannot read the reply, and
+    // does not need to — the span is already stored by then.
+    //
+    // WHAT A FORGED BATCH IS WORTH. `insertSpans` in lib/traces.ts upserts on
+    // (trace_id, span_id) — DO UPDATE, not DO NOTHING. So a forged POST is not
+    // only "extra rows in the Traces tab": it can rewrite the prompt and the
+    // tool result on spans that already exist, which are what the session page
+    // shows the operator while they decide whether to approve a tool call.
+    //
+    // The token door skips the check, and giving that up would cost more than it
+    // buys. Presenting `x-evestack-ingest-token` or an `Authorization` header
+    // makes a request non-simple, so a browser preflights it, and this dashboard
+    // answers no preflight at all — there is no Access-Control-Allow-Origin
+    // anywhere in it — so that fetch never becomes a POST. A real OTLP exporter
+    // is not a browser and sends neither Origin nor Sec-Fetch-Site, so it takes
+    // the early return inside isCrossSiteWrite and is unaffected either way;
+    // `curl -u`, which lands here as "basic", is in the same position.
+    //
+    // Answered in the dashboard's vocabulary rather than OTLP's, unlike the 401
+    // above: the only caller that can reach this line is a page in a browser,
+    // and a google.rpc.Status is for the exporters that cannot.
+    if (ingest.via !== "token" && isCrossSiteWrite(request)) {
+      return deny(request, CROSS_SITE, 403, "cross_site");
+    }
+
+    return NextResponse.next();
   }
 
   if (authenticate(request) === null) {

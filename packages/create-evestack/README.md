@@ -32,7 +32,7 @@ npm run dev                                # the agent — holds this terminal
 The order matters: `npm run dev` is a foreground process that holds the terminal until you
 Ctrl-C it, so it goes last. The dashboard port is whichever one was free when you scaffolded,
 4000 unless something already had it; `.env.local` and `docker-compose.yml` carry the real
-number, and `npx evestack open` prints it.
+number, and `npx evestack dashboard` prints it and opens it.
 
 Either way you get a `.env.local` with a freshly generated auth password, and dependencies
 installed.

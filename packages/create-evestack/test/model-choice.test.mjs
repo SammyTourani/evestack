@@ -709,11 +709,15 @@ test("a list shorter than the viewport shows all of itself", () => {
 test("the last step is the one that shows you what the others started", () => {
   // Four commands start something. Without the fifth the list ends on `run dev`
   // — an agent in a terminal — and the dashboard is a container the reader has
-  // booted and never been told how to look at. `evestack open` reads the port
-  // from .env.local, health-checks it, prints the credentials AND launches the
-  // browser; this is where someone goes looking for it.
+  // booted and never been told how to look at. `evestack dashboard` reads the
+  // port from .env.local, health-checks it, prints the credentials AND launches
+  // the browser; this is where someone goes looking for it.
+  //
+  // This list is the MANUAL path, printed only when the stack was not brought
+  // up. On the path where it was, the wizard opens the dashboard itself and this
+  // list is never reached.
   const lines = nextSteps({ pm: "npm", dashboardPort: 4000 });
-  assert.match(lines.at(-1), /npx evestack open/);
+  assert.match(lines.at(-1), /npx evestack dashboard/);
   assert.match(lines.at(-1), /signed in/);
 });
 

@@ -132,12 +132,13 @@ const basic = `Basic ${Buffer.from(`${USER}:${PASSWORD}`).toString("base64")}`;
  * depend on a second model.
  */
 async function ensureAMemoryExists() {
-  const { rows } = await sql.query("SELECT count(*)::int AS n FROM evestack.memories");
+  const { rows } = await sql.query("SELECT count(*)::int AS n FROM evestack.memories WHERE principal_id IS NULL");
   if (rows[0].n > 0) return false;
   await sql.query(
     `INSERT INTO evestack.memories (content, tags, embedding)
      VALUES ($1, ARRAY['probe']::text[],
-             (SELECT array_agg(0.001::real)::vector FROM generate_series(1, 768)))`,
+             (SELECT array_agg(0.001::real)::vector FROM generate_series(1, (SELECT atttypmod FROM pg_attribute
+               WHERE attrelid = 'evestack.memories'::regclass AND attname = 'embedding'))))`,
     ["a memory written by approval-end-to-end.mjs so the gate has something to delete"],
   );
   return true;
@@ -258,7 +259,7 @@ section("4 - the memory is actually gone");
 let remaining = 1;
 for (let attempt = 0; attempt < 120 && remaining > 0; attempt += 1) {
   const { rows } = await sql.query(
-    "SELECT count(*)::int AS n FROM evestack.memories WHERE id = $1",
+    "SELECT count(*)::int AS n FROM evestack.memories WHERE principal_id IS NULL WHERE id = $1",
     [targetId],
   );
   remaining = rows[0].n;

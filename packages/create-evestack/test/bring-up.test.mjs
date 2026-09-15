@@ -18,12 +18,15 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { bringUp, childEnv, composeEnvFile, composeFile, projectNameFor } from "../create.mjs";
+import {
+  bringUp, childEnv, composeEnvFile, composeFile, localEveBinary, projectNameFor, quoteForCmd,
+  spawnTarget, windowsCommandLine,
+} from "../create.mjs";
 import { freePort } from "../shared.mjs";
 
 const PG_IMAGE = "pgvector/pgvector:pg17";
@@ -192,4 +195,172 @@ test("npm config that arrives through the environment cannot change what a step 
     if (saved === undefined) delete process.env.npm_config_if_present;
     else process.env.npm_config_if_present = saved;
   }
+});
+
+/* -------------------------------------------------------------------------- */
+/* what `run()` hands the operating system                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * THE DEFECT: `shell: process.platform === "win32"`, under a comment that said
+ * "Every argument this file passes is a literal without spaces, which is what
+ * makes the shell safe to use here."
+ *
+ * Two of them are not literals. `addOne` passes `item.id`, which comes off the
+ * live registry at eve.dev, and every `--answer` string, which is built from
+ * that item's own NDJSON output. Node's `shell: true` on Windows does this:
+ *
+ *     command = [file, ...args].join(' ')            // no quoting, no escaping
+ *     args    = ['/d', '/s', '/c', `"${command}"`]   // handed to cmd.exe
+ *
+ * so `eve add channel/x&calc` is a command line with `&` in it, and cmd.exe
+ * means something by that. The id is never rendered in the picker — rows show
+ * `title` — so the person who ticked "Slack" has no way to see what they chose.
+ *
+ * These assert on the escaping rather than on the spawn, because the Windows
+ * branch cannot be executed here. They are the reason `spawnTarget` takes a
+ * `platform` parameter at all.
+ */
+
+/**
+ * cmd.exe's own parse, done here so the assertions can be about the ARGUMENT a
+ * child would receive rather than about a string of carets.
+ *
+ * Outside a quoted region cmd removes each caret and takes the next character
+ * literally. Everything `quoteForCmd` emits is outside a quoted region — that
+ * is the point of caret-escaping the quotes it adds — so this single rule is
+ * the whole of cmd's pass over it.
+ */
+const stripCarets = (line) => line.replace(/\^(.)/g, "$1");
+
+/**
+ * The C runtime's argv splitter, which is what the child program itself uses.
+ * Backslashes are literal except before a quote, where pairs collapse and an
+ * odd one escapes the quote.
+ */
+function crtSplit(line) {
+  const args = [];
+  let current = "";
+  let quoted = false;
+  let started = false;
+  let slashes = 0;
+  const flushSlashes = (half) => {
+    current += "\\".repeat(half ? slashes >> 1 : slashes);
+    slashes = 0;
+  };
+  for (const ch of line) {
+    if (ch === "\\") {
+      slashes += 1;
+      started = true;
+      continue;
+    }
+    if (ch === '"') {
+      const escaped = slashes % 2 === 1;
+      flushSlashes(true);
+      started = true;
+      if (escaped) current += '"';
+      else quoted = !quoted;
+      continue;
+    }
+    flushSlashes(false);
+    if (ch === " " && !quoted) {
+      if (started) args.push(current);
+      current = "";
+      started = false;
+      continue;
+    }
+    started = true;
+    current += ch;
+  }
+  flushSlashes(false);
+  if (started) args.push(current);
+  return args;
+}
+
+/** command + args, put through both parsers in the order Windows applies them. */
+function roundTrip(command, args) {
+  const spawned = spawnTarget(command, args, "win32");
+  // `/s` strips the first and last character when both are quotes, then cmd
+  // parses what is left. Node does the same wrapping under `shell: true`.
+  const line = spawned.args[3];
+  assert.equal(line[0], '"');
+  assert.equal(line.at(-1), '"');
+  return crtSplit(stripCarets(line.slice(1, -1)));
+}
+
+test("a registry id that is a shell fragment arrives as one argument, not a command", () => {
+  // The whole finding, in one assertion. Under the old `shell: true` the line
+  // was `eve add channel/x&calc --non-interactive`, and cmd.exe runs `calc`.
+  assert.deepEqual(
+    roundTrip("eve", ["add", "channel/x&calc", "--non-interactive"]),
+    ["eve", "add", "channel/x&calc", "--non-interactive"],
+  );
+});
+
+test("every cmd.exe metacharacter survives as text", () => {
+  const nasty = [
+    "a&b", "a|b", "a>b", "a<b", "a&&b", "a||b", "a^b", "%PATH%", "!DELAYED!",
+    "a(b)c", "a;b", "a,b", "a b", "a*b", "a?b", "a`b", 'a"b', "a\\b", "a\\\\b", 'end\\',
+  ];
+  assert.deepEqual(roundTrip("eve", nasty), ["eve", ...nasty]);
+});
+
+test("an --answer built from the registry's own JSON round-trips exactly", () => {
+  // `recommendedAnswer` produces `key=<JSON>`, so quotes are not an edge case
+  // here, they are every case — and a JSON string can hold anything at all.
+  const answers = [
+    'channel=["web"]',
+    'token={"name":"a b","then":"& calc"}',
+    'path={"dir":"C:\\\\Users\\\\a b\\\\x"}',
+  ];
+  assert.deepEqual(roundTrip("eve", ["add", "channel/web", ...answers]), [
+    "eve", "add", "channel/web", ...answers,
+  ]);
+});
+
+test("POSIX is the identity case, with no shell anywhere in it", () => {
+  // The escaping above exists for one platform. Everywhere else argv goes
+  // straight to execve, and a change that started quoting on macOS would break
+  // every spawn in the file — so this is pinned, not assumed.
+  const args = ["add", "channel/x&calc", "--non-interactive"];
+  assert.deepEqual(spawnTarget("eve", args, "linux"), {
+    file: "eve",
+    args,
+    windowsVerbatimArguments: false,
+  });
+  assert.deepEqual(spawnTarget("eve", args, "darwin").args, args);
+});
+
+test("the Windows launcher is the one Node's own shell:true would have used", () => {
+  // Same interpreter, same switches, same verbatim flag: the only thing that
+  // changes is that the tokens are escaped. That equivalence is what makes this
+  // safe to ship without a Windows machine to try it on.
+  const launched = spawnTarget("npm", ["install"], "win32");
+  assert.match(launched.file, /cmd(\.exe)?$/i);
+  assert.deepEqual(launched.args.slice(0, 3), ["/d", "/s", "/c"]);
+  assert.equal(launched.windowsVerbatimArguments, true);
+  assert.equal(launched.args[3], windowsCommandLine("npm", ["install"]));
+  // And nothing is left bare: a token with a metacharacter in it cannot appear
+  // in the command line unescaped.
+  assert.doesNotMatch(spawnTarget("npm", ["a&b"], "win32").args[3], /[^^]&/);
+  assert.equal(quoteForCmd("a&b"), '^"a^&b^"');
+});
+
+test("the local eve is resolved to the shim Windows can actually execute", () => {
+  // npm writes three files for one bin on Windows: `eve` (an sh script, which
+  // neither CreateProcess nor cmd.exe can run), `eve.ps1`, and `eve.cmd`.
+  // `existsSync(<no extension>)` said yes to the first of those.
+  const dir = mkdtempSync(join(tmpdir(), "evestack-evebin-"));
+  const bin = join(dir, "node_modules", ".bin");
+  mkdirSync(bin, { recursive: true });
+
+  assert.equal(localEveBinary(dir, "win32"), null, "nothing installed is null, not a path");
+  assert.equal(localEveBinary(dir, "linux"), null);
+
+  writeFileSync(join(bin, "eve"), "#!/bin/sh\n");
+  assert.equal(localEveBinary(dir, "linux"), join(bin, "eve"));
+
+  writeFileSync(join(bin, "eve.cmd"), "@echo off\n");
+  assert.equal(localEveBinary(dir, "win32"), join(bin, "eve.cmd"), "the .cmd shim is the runnable one");
+  assert.equal(localEveBinary(dir, "linux"), join(bin, "eve"), "and POSIX is untouched by it");
 });

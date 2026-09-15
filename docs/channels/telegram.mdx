@@ -61,6 +61,7 @@ Add these to `templates/default/.env.local` (gitignored, never committed):
 TELEGRAM_BOT_TOKEN=123456789:AAH...        # from BotFather
 TELEGRAM_WEBHOOK_SECRET_TOKEN=...          # you invent this; see below
 TELEGRAM_BOT_USERNAME=my_evestack_bot      # optional, no @ — needed for group @mentions
+TELEGRAM_ALLOWED_USER_IDS=123456789        # who may talk to it; unset = nobody
 ```
 
 Generate the secret token yourself. Telegram accepts 1–256 characters from `A-Z a-z 0-9 _ -`:
@@ -69,9 +70,17 @@ Generate the secret token yourself. Telegram accepts 1–256 characters from `A-
 openssl rand -hex 32
 ```
 
-This secret is the **only** thing standing between your agent and anyone on the internet who
-finds the webhook URL. Telegram echoes it back in the `X-Telegram-Bot-Api-Secret-Token` header
-on every delivery, and eve compares it in constant time before parsing a single byte of body.
+Telegram echoes this secret back in the `X-Telegram-Bot-Api-Secret-Token` header on every
+delivery, and eve compares it in constant time before parsing a single byte of body. It is what
+stops someone who finds your webhook URL from posting fake updates into it.
+
+<Warning>
+**It authenticates Telegram, not the person messaging you.** A valid secret token means "this
+POST really came from Telegram's servers" and nothing more — not that the human on the other
+end is someone you know. A bot's username is public and anyone on Telegram can open a chat with
+it, so the second half of the door is `TELEGRAM_ALLOWED_USER_IDS`, below. Unset, the bot answers
+nobody.
+</Warning>
 
 <Note>
 The Telegram route is **not** behind evestack's HTTP Basic auth. `agent/channels/eve.ts` guards
@@ -100,7 +109,7 @@ eve add @evestack/channel-telegram
 Or write the file yourself — the filename is the channel id:
 
 ```ts title="agent/channels/telegram.ts"
-import { telegramChannel } from "eve/channels/telegram";
+import { defaultTelegramAuth, telegramChannel } from "eve/channels/telegram";
 
 export default telegramChannel({
   botUsername: process.env.TELEGRAM_BOT_USERNAME,
@@ -108,8 +117,27 @@ export default telegramChannel({
     allowedMediaTypes: ["image/*", "application/pdf"],
     maxBytes: 20 * 1024 * 1024,
   },
+  async onMessage(ctx, message) {
+    const allowed = (process.env.TELEGRAM_ALLOWED_USER_IDS ?? "")
+      .split(",")
+      .map((id) => id.trim())
+      .filter(Boolean);
+    const userId = message.from?.id;
+    if (!userId || !(allowed.includes("*") || allowed.includes(userId))) return null;
+    await ctx.telegram.startTyping();
+    return { auth: defaultTelegramAuth(message) };
+  },
 });
 ```
+
+<Warning>
+That sketch is deliberately shorter than the shipped file, and the missing part matters.
+Defining `onMessage` **replaces** eve's `defaultOnMessage` rather than wrapping it, and the
+default is what makes group chats stricter than DMs. A bot running the sketch above would answer
+every line of chatter in every group it is in. The template's copy reproduces that rule; copy it
+rather than this, and leave `onMessage` out entirely only if you are happy for eve's default —
+which answers everybody — to be in charge.
+</Warning>
 
 Confirm eve sees it:
 
@@ -176,12 +204,63 @@ is down or `eve dev` is not running.
 ## 6. Talk to it
 
 Make sure the agent is up (`npm run dev` in your project, serving `:2000`), then DM your bot
-in Telegram. It should start typing and answer.
+in Telegram.
+
+**The first message is refused on purpose**, unless you already set `TELEGRAM_ALLOWED_USER_IDS`
+in step 2. The bot stays silent and the agent log carries one line with the user id it turned
+away — paste that id into the variable, and the next message gets a typing indicator and an
+answer. See [Who is allowed to talk to it](#who-is-allowed-to-talk-to-it).
+
+## Who is allowed to talk to it
+
+The webhook secret proves Telegram sent the update. It does not say who wrote it, and those are
+different sentences. Anyone on Telegram can find a bot and message it; before this gate existed,
+every one of those messages started a turn with bash in a container running as root, metered
+against *your* API key. Spend is capped per principal, so ten strangers cost ten times the daily
+cap rather than one — and on a local model every step is priced at zero, so nothing trips at all.
+
+So `agent/channels/telegram.ts` dispatches only for numeric user ids you name, and **unset means
+nobody**:
+
+```bash
+TELEGRAM_ALLOWED_USER_IDS=123456789            # just you
+TELEGRAM_ALLOWED_USER_IDS=123456789,987654321  # you and one other person
+TELEGRAM_ALLOWED_USER_IDS=*                    # anyone, which is eve's own default
+```
+
+A refused message is dropped before any model call, and the agent prints exactly one line:
+
+```
+[evestack:telegram] refused a message from user id 123456789 (@you) in private chat 123456789:
+TELEGRAM_ALLOWED_USER_IDS does not list it. Set TELEGRAM_ALLOWED_USER_IDS=123456789 in
+.env.local to allow this person, or TELEGRAM_ALLOWED_USER_IDS=* to accept anyone.
+```
+
+That line is the easiest way to learn your own id, because the Telegram apps do not show it
+anywhere. [@userinfobot](https://t.me/userinfobot) will tell you too. A bot with a token and no
+allow-list also says so once at boot, so you are not left guessing why it went quiet.
+
+The list is re-read on every message, so editing `.env.local` takes effect on the next message
+rather than on the next restart.
+
+Two things it deliberately does not cover:
+
+- **Approval buttons.** Human-in-the-loop taps arrive as `callback_query` updates, which eve
+  routes straight to the session that raised them without consulting the message hook. Those
+  buttons only appear in a chat the agent was already allowed to answer in — but in a *group*,
+  any member of that group can press one.
+- **The heartbeat.** `EVESTACK_HEARTBEAT_*` posts outbound on a schedule. It is not inbound
+  traffic and runs whatever the allow-list says.
+
+This is a complement to [`@evestack/budget`](/docs/registry), not a replacement: the allow-list
+caps *who* can start a turn, the budget caps *how much* a turn costs.
 
 ## What actually reaches the agent
 
-Group chats are deliberately stricter than DMs. eve's default dispatch rule, read straight out
-of the adapter:
+The allow-list decides *who*; this decides *which of their messages count as addressed to the
+bot*. Group chats are deliberately stricter than DMs. This is eve's own dispatch rule, read
+straight out of the adapter — `agent/channels/telegram.ts` reproduces it verbatim, because
+defining `onMessage` replaces the default rather than wrapping it:
 
 | Where | Wakes the bot |
 | --- | --- |
@@ -195,8 +274,9 @@ Two sharp edges worth knowing:
 - **`@mentions` need `TELEGRAM_BOT_USERNAME`.** Without it eve has no idea what its own handle
   is, so in a group only `/commands` and replies work.
 - **Any slash command wakes it.** `/anything` with no `@target` counts, so an unrelated bot's
-  `/roll` in a shared group will start a turn. Scope it with `/roll@otherbot` or keep the bot
-  out of busy groups. Override `onMessage` if you need stricter rules.
+  `/roll` in a shared group will start a turn — from anyone on the allow-list. Scope it with
+  `/roll@otherbot`, keep the bot out of busy groups, or edit `shouldDispatch` in
+  `agent/channels/telegram.ts`, which is where this rule now lives.
 - **The reply rule checks "is a bot", not "is *this* bot".** eve gates on
   `replyToMessage.from.isBot`, so replying to *any* bot in the group also wakes yours. Same
   mitigation as above.
@@ -254,4 +334,6 @@ re-run `setWebhook`. The old token dies immediately.
 | Bot answers in DMs but is silent in a group | Privacy mode is on (`/setprivacy` → Disable) and/or `TELEGRAM_BOT_USERNAME` is unset |
 | Buttons appear but nothing happens when tapped | `callback_query` missing from `allowed_updates` — re-run `setWebhook` |
 | Agent boots but the channel does nothing | `TELEGRAM_BOT_TOKEN` unset; look for the `[evestack:telegram]` line at startup |
+| Bot receives fine (`pending_update_count` is 0) but never answers anyone | `TELEGRAM_ALLOWED_USER_IDS` unset or missing your id — the log line names the id to add |
+| It answered yesterday and refuses today | You are messaging from a second account, or a group now routes a different user id; each person needs listing |
 | Replies contain literal `**asterisks**` | Expected — the default handler sends plain text |

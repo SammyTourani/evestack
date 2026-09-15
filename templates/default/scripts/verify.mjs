@@ -73,9 +73,12 @@ import {
   envValue,
   findAgent,
   inspectOllama,
+  isPlaceholderAuthPassword,
+  PLACEHOLDER_AUTH_FIX,
   probeJson,
   readEnvFile,
   schemasPresent,
+  showSecrets,
   pgvectorState,
 } from "./checks.mjs";
 import { blank, c, fix, g, heading, row, rule } from "./ui.mjs";
@@ -138,6 +141,35 @@ if (fileEnv) {
     "config",
     "no .env.local here and nothing in the environment",
     "run this from the project directory create-evestack made",
+  );
+}
+
+/*
+ * The sign-in, and the one value here that can be wrong while looking right.
+ *
+ * `.env.example` ships `EVESTACK_AUTH_PASSWORD=change-me` so the line has a
+ * shape, and until now nothing anywhere refused it. A scaffolded project never
+ * meets it — the wizard generates 24 random characters — but a project set up by
+ * hand from the example, which is the documented path for a deployment, can
+ * reach production with a password that is printed in this repository.
+ *
+ * A warning rather than a failure, and the line is the whole argument for that:
+ * everything works. eve accepts it, the dashboard signs in with it, every other
+ * check on this screen is green. Exiting 1 would tell CI a working stack is
+ * broken; a yellow line with the command to fix it is what this file does with
+ * every other "this will cost you something later".
+ *
+ * Nothing is pushed on the healthy path. There is no green `auth` row, because
+ * the absence of a problem is not news and a twelfth always-green line makes the
+ * eleven above it harder to read. `auth` is listed in GROUPS below so that when
+ * it does appear it appears next to `config`, where it belongs — a group with
+ * no matching result is skipped, not printed empty.
+ */
+if (isPlaceholderAuthPassword(env("EVESTACK_AUTH_PASSWORD"))) {
+  warn(
+    "auth",
+    "the dashboard password is the placeholder from .env.example, so it is public",
+    PLACEHOLDER_AUTH_FIX,
   );
 }
 
@@ -613,7 +645,9 @@ if (asJson) {
  */
 
 const GROUPS = [
-  ["foundation", ["config", "docker", "postgres", "schema", "pgvector"]],
+  // `auth` sits beside `config` because it is a fact about the same file, and it
+  // only ever has a row when something is wrong with it.
+  ["foundation", ["config", "auth", "docker", "postgres", "schema", "pgvector"]],
   ["model", ["model", "memory"]],
   ["the stack", ["agent", "dashboard", "traces"]],
 ];
@@ -681,7 +715,30 @@ console.log(
 );
 blank();
 console.log(`  ${c.bold("Dashboard")}   ${c.brandBold(dashboardUrl)}`);
-if (password) console.log(`  ${c.bold("Sign in")}     ${user} ${c.dim("/")} ${password}`);
+/*
+ * The password, and the one condition under which it is printed.
+ *
+ * This file's header says "Exit code is 1 if anything required failed, so CI
+ * can run it too", and `--json` has always omitted the password — so the
+ * intent was already written down; it just had no gate on the human path.
+ * `npm run verify | tee verify.log`, a CI job archiving its output, a
+ * screen-share recording: each turns the dashboard credential into a value
+ * sitting somewhere that nothing rotates, and the dashboard starts agent runs
+ * and approves gated shell commands.
+ *
+ * Gated on `showSecrets()`, which is `process.stdout.isTTY` plus one override
+ * — the same question this file asks two screens down before offering to open a
+ * browser, "is a person reading this?", and the same answer. Nothing is lost:
+ * the value is the EVESTACK_AUTH_PASSWORD line in .env.local, which is named
+ * here, and `evestack dashboard` prints it on a terminal. Set
+ * EVESTACK_PRINT_SECRETS=1 to get the old behaviour back in a pipe.
+ */
+if (password) {
+  const shown = showSecrets()
+    ? password
+    : c.dim("(not printed to a pipe; it is EVESTACK_AUTH_PASSWORD in .env.local)");
+  console.log(`  ${c.bold("Sign in")}     ${user} ${c.dim("/")} ${shown}`);
+}
 console.log(`  ${c.dim("Sessions, live chat, approvals, memory and cost — all read from your own Postgres.")}`);
 blank();
 // One command, not a three-line curl. The tour does the same thing and then

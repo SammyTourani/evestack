@@ -5,6 +5,25 @@ on:
     branches: [main]
   pull_request:
 
+# Stated, rather than inherited. With no `permissions:` block a workflow's
+# GITHUB_TOKEN gets whatever the repository default happens to be — a setting in
+# Settings → Actions → General, not anything in this tree. It reads "read" here
+# today, but for a repository created before GitHub flipped that default, and
+# for any repository whose owner sets "Read and write permissions", it is a
+# token that can push to main, open and close issues, and write packages.
+# Nothing in this file needs any of that: every job here reads the tree, builds
+# it, and reports through the check API, which needs no token at all.
+#
+# The reason it matters more than "tidy" is what these jobs DO. Each one runs
+# `pnpm install` and then executes the result, so every postinstall script in
+# the dependency graph — hundreds of packages deep, on every PR including a
+# fork's — runs with whatever this token can do. `contents: read` is the
+# difference between that being a read of a public repository and being a write
+# to it. Same reasoning as the `persist-credentials: false` on every checkout
+# below: shrink what a compromised dependency finds lying around.
+permissions:
+  contents: read
+
 # Deliberately does NOT run `eve eval`: it drives a real model through a real
 # Docker sandbox, which means a model API key as a repo secret and Docker
 # available in the runner. That's real money spent on every PR from a fork,
@@ -36,18 +55,50 @@ jobs:
       matrix:
         node-version: [24, 26]
     steps:
-      - uses: actions/checkout@v4
+      # Two things are deliberate on this line, and both repeat in every job in
+      # this file and in every other workflow.
+      #
+      # THE SHA. `actions/checkout@v4` is a tag, and a tag is mutable by
+      # whoever owns the repository it lives in. `uses:` with a tag therefore
+      # means "run whatever code is behind that name at the moment the job
+      # starts" — a live execution primitive with no review step, holding this
+      # job's token. The 40-character commit is immutable; the trailing comment
+      # is what a human reads. .github/dependabot.yml moves both together so the
+      # pin cannot quietly rot, which is the half that makes pinning safe rather
+      # than merely frozen.
+      #
+      # persist-credentials: false. By default checkout writes an
+      # `http.<host>.extraheader` with the job's token into `.git/config` and
+      # leaves it there for the rest of the job. Every process that runs
+      # afterwards can read that file — which in this repository means every
+      # `postinstall` script in a several-hundred-package dependency graph, on
+      # every pull request, including one opened from a fork. Nothing in this
+      # workflow talks to the remote after the checkout (no fetch, no push, no
+      # submodules, and no git-protocol dependencies in pnpm-lock.yaml), so the
+      # credential has no use here except to be stolen.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       # No `version:` here, or in any other job. Given one while package.json
       # also has `packageManager`, the action refuses to install at all —
       # "Error: Multiple versions of pnpm specified" — which killed every run
       # of this workflow in ~15s, before any real step ever executed. Left
       # bare, the action reads packageManager, so the pin lives in exactly one
       # place.
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      #
+      # v4.3.0 and not v4.4.0, which exists. Every `uses:` in this repository
+      # was previously a floating major, and `pnpm/action-setup`'s `v4` tag
+      # resolves to b906aff — v4.3.0's commit. Pinning to the newest release
+      # instead would have shipped a pnpm-setup upgrade nobody asked for inside
+      # a change whose entire claim is "this freezes what was already running".
+      # Dependabot offers v4.4.0 as its own reviewable PR; that is the right
+      # place for it.
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ matrix.node-version }}
           cache: pnpm
+      - run: node --test .github/scripts/*.test.mjs
       - run: pnpm install --frozen-lockfile
       # Workspace packages publish their types from dist/, which is gitignored —
       # so a clean checkout has no dist and a bare `pnpm -r typecheck` dies on
@@ -147,9 +198,11 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
@@ -255,9 +308,11 @@ jobs:
       # fail".
       TZ: America/New_York
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
@@ -496,9 +551,11 @@ jobs:
   dashboard-build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
@@ -544,9 +601,11 @@ jobs:
   scaffolder:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
@@ -729,8 +788,10 @@ jobs:
       matrix:
         node-version: [24, 26]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ matrix.node-version }}
       - run: node registry/build.mjs
@@ -880,9 +941,11 @@ jobs:
     continue-on-error: true
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
@@ -911,12 +974,14 @@ jobs:
     continue-on-error: true
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       # Bare, for the same reason every other job here is: package.json's
       # `packageManager` is the single pin, and passing `version:` as well makes
       # the action refuse to install at all.
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
@@ -937,3 +1002,140 @@ jobs:
         run: pnpm --filter create-evestack test
       - name: the template's own suite
         run: pnpm --filter @evestack/template-default test
+
+  # ---------------------------------------------------------------------------
+  # The workflows check themselves.
+  # ---------------------------------------------------------------------------
+  # Three invariants about .github/workflows/, asserted on every commit, because
+  # all three are the kind that decay silently: nothing goes red when somebody
+  # adds a step with `uses: some/action@v1`, and nothing goes red when a secret
+  # drifts back up into a job's `env:`. The whole cost of this job is a checkout
+  # and half a second of node — no install, no database, no Docker — so there is
+  # no reason for it to be anything other than always-on.
+  #
+  # Each check exists because its absence was a real finding on this repository,
+  # not because it is a general good idea:
+  #
+  #   1. FLOATING ACTION TAGS. `uses: actions/checkout@v4` names a tag, and a tag
+  #      is mutable by whoever owns it. That made every scheduled run an
+  #      unreviewed code execution holding that job's token. Every `uses:` is now
+  #      a 40-character commit with the version in a trailing comment, and
+  #      .github/dependabot.yml moves both together.
+  #
+  #   2. A SECRET IN JOB-LEVEL `env:`. eve-watch, evals and provider-bisect each
+  #      install freshly-resolved packages and then execute them. A key in the
+  #      job's `env:` is a key in the environment of every postinstall script in
+  #      that graph. Scoped to the steps that genuinely need it, the install, the
+  #      build and the reporting steps no longer see it.
+  #
+  #   3. A WORKFLOW WITH NO `permissions:`. With none, GITHUB_TOKEN gets
+  #      whatever Settings → Actions → General currently says, which is a
+  #      checkbox and not a commit: it reads "read" on this repository today
+  #      (`gh api repos/SammyTourani/evestack/actions/permissions/workflow`),
+  #      and flipping it to "Read and write permissions" would silently widen
+  #      every workflow that states nothing. ci.yml and dashboard-image.yml both
+  #      stated nothing while executing a fork's dependency graph on every pull
+  #      request, so both were one checkbox from handing that graph a writable
+  #      token.
+  #
+  # Check 2 is an indentation rule, and that is worth saying out loud because it
+  # is the one that could be wrong in the future rather than merely wrong-ly
+  # written. Under `jobs.<id>:` (2 spaces), a job-level `env:` is at 4 and its
+  # entries at 6; a step's `env:` is at 8 and its entries at 10. So a
+  # `secrets.` reference indented exactly 6 spaces is a job-level env value.
+  # `jobs.<id>.secrets:` — the block that passes secrets to a REUSABLE workflow
+  # — also puts its entries at 6, so it would be flagged too. There are no
+  # reusable-workflow calls in this repository today; if one is added, this check
+  # has to learn the difference rather than being deleted.
+  workflows:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          # No `cache: pnpm` and no pnpm/action-setup: this job installs nothing,
+          # and the cache option needs pnpm on PATH to resolve a store it would
+          # never read.
+
+      - name: every action is pinned, no secret sits in a job env, every workflow states its permissions
+        run: |
+          node -e '
+            const fs = require("node:fs");
+            const dir = ".github/workflows";
+            const files = fs.readdirSync(dir).filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"));
+            if (files.length < 3) {
+              console.error("::error::only " + files.length + " workflow files were found. This check reads the directory rather than a list, so finding almost nothing means the path is wrong and nothing above was actually checked.");
+              process.exit(1);
+            }
+
+            let bad = 0;
+            let usesSeen = 0;
+            for (const file of files) {
+              const path = dir + "/" + file;
+              const lines = fs.readFileSync(path, "utf8").split("\n");
+              let permissions = false;
+
+              lines.forEach((line, i) => {
+                const where = path + ":" + (i + 1);
+
+                const uses = /^\s*(?:-\s*)?uses:\s*(\S+)\s*(#.*)?$/.exec(line);
+                if (uses !== null) {
+                  usesSeen += 1;
+                  const [, ref, comment] = uses;
+                  const sha = ref.split("@")[1] ?? "";
+                  if (!/^[0-9a-f]{40}$/.test(sha)) {
+                    console.error("::error file=" + path + ",line=" + (i + 1) + "::" + ref + " is not pinned to a commit. A tag or a branch is mutable by whoever owns that action, so this line runs unreviewed code with this job token. Resolve it with: gh api repos/<owner>/<repo>/git/ref/tags/<tag>");
+                    bad += 1;
+                  } else if (comment === undefined || !/#\s*v?\d/.test(comment)) {
+                    console.error("::error file=" + path + ",line=" + (i + 1) + "::" + ref + " is pinned but carries no version comment. Write it as `<sha> # v1.2.3` — the comment is the only thing a human can read, and Dependabot updates the pair together.");
+                    bad += 1;
+                  }
+                }
+
+                if (/^\s{6}\S.*\$\{\{\s*secrets\./.test(line) && /^\s{6}[A-Za-z_]/.test(line)) {
+                  console.error("::error file=" + path + ",line=" + (i + 1) + "::a secret is in a JOB-level env block. Every step in that job gets it, including `pnpm install` and anything it executes. Move it to the `env:` of the individual steps that need it.");
+                  bad += 1;
+                }
+
+                // And the same thing one level further out. A `secrets.`
+                // reference at exactly 2 spaces is a value under a TOP-level key,
+                // and the
+                // only top-level key it would plausibly sit under is `env:` —
+                // which is the job-level case made worse, since it reaches every
+                // step of every job rather than every step of one. No workflow
+                // here has ever had a top-level `env:` carrying a secret, and
+                // that is precisely why it is asserted: the shape nobody writes
+                // is the shape nobody reviews, and the check above would have
+                // waved it through.
+                if (/^\s{2}[A-Za-z_][A-Za-z0-9_-]*:.*\$\{\{\s*secrets\./.test(line)) {
+                  console.error("::error file=" + path + ",line=" + (i + 1) + "::a secret is at the TOP level of this workflow — every step of every job gets it, including every `pnpm install` and everything that install executes. Move it to the `env:` of the individual steps that need it.");
+                  bad += 1;
+                }
+
+                if (/^permissions:/.test(line) || /^\s{4}permissions:/.test(line)) permissions = true;
+              });
+
+              if (!permissions) {
+                console.error("::error file=" + path + "::no permissions block anywhere in this workflow, so GITHUB_TOKEN gets whatever Settings → Actions → General happens to say — a checkbox that can widen every workflow here without a commit. Add `permissions: contents: read` at the top, or a block per job.");
+                bad += 1;
+              }
+            }
+
+            // Anti-vacuity, the same rule the release gate in
+            // publish-dashboard.yml follows: a regex that stopped matching would
+            // report every action as pinned by finding none.
+            if (usesSeen < 10) {
+              console.error("::error::only " + usesSeen + " `uses:` lines were recognised across " + files.length + " workflows. The pattern has drifted and this check asserted nothing.");
+              process.exit(1);
+            }
+
+            // Says `uses: lines`, not `pinned actions`: this line prints on the way
+            // out whether or not anything failed above, and calling them pinned
+            // when the errors above say they are not is how a summary line starts
+            // lying.
+            console.log(usesSeen + " `uses:` lines across " + files.length + " workflows checked, " + bad + " problems.");
+            process.exit(bad === 0 ? 0 : 1);
+          '
