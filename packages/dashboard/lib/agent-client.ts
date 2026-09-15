@@ -393,6 +393,7 @@ export async function answerInput(
 export interface OpenStreamOptions {
   /** Non-negative is absolute; negative reads back from the tail (-1 = latest). */
   startIndex?: number;
+  /** Requests a finite snapshot ending at the returned tail in Eve 0.54. */
   includeTailIndex?: boolean;
   signal?: AbortSignal;
 }
@@ -454,9 +455,9 @@ export interface RecentEvents {
 /**
  * Reads the tail of the durable stream and stops, instead of following it live.
  *
- * The stream never ends on its own, so the bound has to come from somewhere:
- * `includeTailIndex=1` returns the index of the last recorded event, which turns
- * "read the recent history" into a read of an exactly known number of lines.
+ * `includeTailIndex=1` returns the index of the last recorded event and, in
+ * Eve 0.54, closes after that event. The explicit line count also bounds reads
+ * against older agents that leave their snapshot streams open.
  */
 export async function readRecentEvents(
   sessionId: string,

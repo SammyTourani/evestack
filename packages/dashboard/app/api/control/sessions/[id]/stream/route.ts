@@ -113,6 +113,16 @@ export async function GET(
     // A negative startIndex is relative to the tail; SSE ids must be absolute.
     const firstIndex = startIndex < 0 ? Math.max(0, tailIndex + 1 + startIndex) : startIndex;
 
+    // Eve 0.54 bounds includeTailIndex responses at the captured tail. Use that
+    // request only to check existence and resolve a relative position, then
+    // open the live stream from the absolute index. Reusing the snapshot would
+    // close the browser connection before later events arrive.
+    await upstream.body.cancel();
+    upstream = await openEventStream(id, { startIndex: firstIndex, signal: request.signal });
+    if (!upstream.body) {
+      return jsonError("The agent returned an empty event stream.", 502, "invalid_response");
+    }
+
     const headers = new Headers({
       "cache-control": "no-store, no-transform",
       // Tells nginx and friends not to buffer, which would defeat streaming.
