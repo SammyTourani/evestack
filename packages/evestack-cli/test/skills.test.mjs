@@ -69,12 +69,12 @@ test("--dir without a value is refused, never guessed", () => {
 
 test("the default target is agent/skills only inside an eve project", () => {
   const bare = tmp();
-  assert.match(defaultTarget(bare).dir, /\.claude\/skills\/evestack$/);
+  assert.equal(defaultTarget(bare).dir, join(bare, ".claude", "skills", "evestack"));
 
   const project = tmp();
   mkdirSync(join(project, "agent", "skills"), { recursive: true });
   const target = defaultTarget(project);
-  assert.match(target.dir, /agent\/skills\/evestack$/);
+  assert.equal(target.dir, join(project, "agent", "skills", "evestack"));
   // In a scaffolded project that directory is a real runtime location — eve
   // scans it — so landing there makes the pack loadable, not merely readable.
   assert.equal(target.reason, "eve project");

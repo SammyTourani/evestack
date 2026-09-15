@@ -202,26 +202,33 @@ function toServerSentEvents(
 
     async pull(controller) {
       try {
-        const { done, value } = await reader.read();
-        if (done) {
-          buffered = "";
-          closed = true;
-          stopHeartbeat();
-          controller.close();
-          return;
-        }
-
-        buffered += decoder.decode(value, { stream: true });
-        let newline = buffered.indexOf("\n");
-        while (newline !== -1) {
-          const line = buffered.slice(0, newline).trim();
-          buffered = buffered.slice(newline + 1);
-          // eve primes the stream with a bare newline to flush headers.
-          if (line.length > 0) {
-            controller.enqueue(encoder.encode(`id: ${index}\ndata: ${line}\n\n`));
-            index += 1;
+        // A pull must enqueue something, close, or keep reading. Returning
+        // after a priming newline or a partial JSON line can leave a pending
+        // browser read asleep until the 15-second heartbeat wakes it again.
+        while (!closed) {
+          const { done, value } = await reader.read();
+          if (done) {
+            buffered = "";
+            closed = true;
+            stopHeartbeat();
+            controller.close();
+            return;
           }
-          newline = buffered.indexOf("\n");
+
+          const beforeIndex = index;
+          buffered += decoder.decode(value, { stream: true });
+          let newline = buffered.indexOf("\n");
+          while (newline !== -1) {
+            const line = buffered.slice(0, newline).trim();
+            buffered = buffered.slice(newline + 1);
+            // eve primes the stream with a bare newline to flush headers.
+            if (line.length > 0) {
+              controller.enqueue(encoder.encode(`id: ${index}\ndata: ${line}\n\n`));
+              index += 1;
+            }
+            newline = buffered.indexOf("\n");
+          }
+          if (index > beforeIndex) return;
         }
       } catch (error) {
         closed = true;

@@ -88,6 +88,9 @@ the tree is one patch ahead of it.
 
 ### Changed but not yet versioned
 
+- **Chat stream progress.** The dashboard continues reading when a network chunk contains
+  only part of an event or a blank line. Previously, a pending browser read could stall until
+  the 15-second heartbeat. Regression tests cover split events, blank chunks and absolute IDs.
 - **Remediation follow-through.** All seven broken compatibility contracts now pass against
   Eve 0.54.3. The dashboard links activation spans through workflow turn parents, migrates old
   trace rows, and keeps conversation correlation separate from session identity. Telegram,
