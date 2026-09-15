@@ -111,7 +111,7 @@ test("the progress row is not blocked by the child process", async () => {
   const probe = `
     process.stdout.isTTY = true;
     const { writeFileSync } = await import("node:fs");
-    const { task } = await import(${JSON.stringify(new URL("../ui.mjs", import.meta.url).pathname)});
+    const { task } = await import(${JSON.stringify(new URL("../ui.mjs", import.meta.url).href)});
     const { spawn, spawnSync } = await import("node:child_process");
     const child = [process.execPath, ["-e", "setTimeout(()=>{},1000)"]];
     async function measure(blocking) {
@@ -156,7 +156,7 @@ test("ui.mjs installs no signal handlers merely by being imported", async () => 
     [
       "--input-type=module",
       "-e",
-      `await import(${JSON.stringify(new URL("../ui.mjs", import.meta.url).pathname)});
+      `await import(${JSON.stringify(new URL("../ui.mjs", import.meta.url).href)});
        process.stdout.write(JSON.stringify({
          sigint: process.listenerCount("SIGINT"),
          sigterm: process.listenerCount("SIGTERM"),
