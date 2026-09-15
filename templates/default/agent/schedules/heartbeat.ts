@@ -37,7 +37,7 @@ import { join } from "node:path";
  *     stopped the same feature becoming spam.
  *
  *     Why no such filter can simply be called from here: this handler hands the
- *     turn to eve with `receive()`, and eve posts the reply itself:
+ *     turn to eve with `to(...).send(...)`, and eve posts the reply itself:
  *
  *         "message.completed"(e, t) {
  *           e.finishReason === `tool-calls` || !e.message || await t.telegram.post(e.message)
@@ -131,7 +131,7 @@ async function readTasks(): Promise<string | null> {
 
 async function fire(
   channelName: string,
-  { receive, waitUntil, appAuth }: ScheduleHandlerArgs,
+  { to, waitUntil, appAuth }: ScheduleHandlerArgs,
 ): Promise<void> {
   // Which conversation to speak into. Every channel's target has a different
   // shape — Telegram wants a chatId, Slack a channelId — so this is JSON rather
@@ -150,16 +150,21 @@ async function fire(
 
   const channel = loadChannel(channelName);
 
-  const dispatch = receive(channel as never, {
-    target: target as never,
-    message:
-      `${tasks}\n\n---\n` +
+  // `to(channel, target).send(message, { auth })`, and it was
+  // `receive(channel, { target, message, auth })` through eve 0.30.x.
+  //
+  // eve 0.31 replaced ScheduleHandlerArgs.receive with `to`, which selects the
+  // target first and hands back a `{ send }` handle. Same three inputs, same
+  // returned Session promise, different shape — the compiler catches it, which
+  // is why this is the only line the upgrade touched in the whole workspace.
+  const dispatch = to(channel as never, target as never).send(
+    `${tasks}\n\n---\n` +
       `You are running as a scheduled heartbeat, not in a conversation. Work through the ` +
       `checks above. If nothing needs the user's attention, reply with exactly ${ACK} and ` +
       `nothing else. Only write a real message when there is something they would want to ` +
       `be interrupted for.`,
-    auth: appAuth,
-  });
+    { auth: appAuth },
+  );
 
   // `waitUntil(p)` WITHOUT awaiting `p` is what made every heartbeat record
   // itself `completed` in a handful of milliseconds, whatever happened.
