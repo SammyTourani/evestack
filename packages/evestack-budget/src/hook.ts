@@ -1,7 +1,14 @@
 import { defineHook } from "eve/hooks";
 import type { HookContext, HookDefinition } from "eve/hooks";
 import { cancelTurn } from "./cancel.js";
-import { dayKey, isUncapped, resolveConfig, type BudgetConfig, type BudgetOptions } from "./config.js";
+import { runtimeBudgetConfig } from "./runtime-settings.js";
+import {
+  dayKey,
+  isUncapped,
+  resolveConfig,
+  type BudgetConfig,
+  type BudgetOptions,
+} from "./config.js";
 // Never `./pricing.js` directly. That module is a build-time copy of the
 // dashboard's table and reads EVESTACK_PRICING with no shape check; importing
 // the checked wrapper is what keeps a half-written override from pricing every
@@ -134,10 +141,16 @@ export function evaluate(
   if (config.sessionUsd !== false && !Number.isFinite(totals.session.costUsd)) {
     return unusableTotal("session", totals.session.costUsd);
   }
-  if (config.dailyUsd !== false && !Number.isFinite(totals.principalDay.costUsd)) {
+  if (
+    config.dailyUsd !== false &&
+    !Number.isFinite(totals.principalDay.costUsd)
+  ) {
     return unusableTotal("principal-day", totals.principalDay.costUsd);
   }
-  if (config.sessionUsd !== false && totals.session.costUsd >= config.sessionUsd) {
+  if (
+    config.sessionUsd !== false &&
+    totals.session.costUsd >= config.sessionUsd
+  ) {
     return {
       exceeded: true,
       scope: "session",
@@ -145,7 +158,10 @@ export function evaluate(
       spentUsd: totals.session.costUsd,
     };
   }
-  if (config.dailyUsd !== false && totals.principalDay.costUsd >= config.dailyUsd) {
+  if (
+    config.dailyUsd !== false &&
+    totals.principalDay.costUsd >= config.dailyUsd
+  ) {
     return {
       exceeded: true,
       scope: "principal-day",
@@ -183,7 +199,10 @@ export class BudgetExceededError extends Error {
 
 function describe(verdict: BudgetVerdict): string {
   if (verdict.reason) return verdict.reason;
-  const scope = verdict.scope === "session" ? "session budget" : "daily budget for this user";
+  const scope =
+    verdict.scope === "session"
+      ? "session budget"
+      : "daily budget for this user";
   return (
     `Stopped by the evestack ${scope}: ${formatUsd(verdict.spentUsd ?? 0)} spent against a ` +
     `${formatUsd(verdict.limitUsd ?? 0)} cap. Raise EVESTACK_BUDGET_${
@@ -266,11 +285,12 @@ const preflightBlocked = new Set<string>();
  * complete configuration.
  */
 export function budgetHook(options: BudgetOptions = {}): HookDefinition {
-  const config = resolveConfig(options);
+  const baseConfig = resolveConfig(options);
 
   return defineHook({
     events: {
       async "session.started"(_event, ctx) {
+        const config = await runtimeBudgetConfig(baseConfig);
         if (isUncapped(config)) return;
         // Nothing to record yet — this is here so the first turn does not pay
         // for CREATE TABLE IF NOT EXISTS inside the step that has to decide
@@ -347,6 +367,7 @@ export function budgetHook(options: BudgetOptions = {}): HookDefinition {
        * eve itself makes for any failing `turn.started` handler.
        */
       async "turn.started"(event, ctx) {
+        const config = await runtimeBudgetConfig(baseConfig);
         if (isUncapped(config)) return;
         if (!config.preflight) return;
         // Cheapest possible exit for the mode that is defined as stopping
@@ -365,16 +386,25 @@ export function budgetHook(options: BudgetOptions = {}): HookDefinition {
           // it hands a configured string to `Intl`, and an escaped `RangeError`
           // here would be indistinguishable from the budget stopping the turn.
           day = dayKey(config);
-          stop = await readStop(config, { sessionId: ctx.session.id, principalId, day });
+          stop = await readStop(config, {
+            sessionId: ctx.session.id,
+            principalId,
+            day,
+          });
           // The totals only when there is a stop to test them against, which is
           // why they are not read unconditionally: the overwhelmingly common
           // turn has no stop row, and it must keep costing exactly one
           // primary-key lookup. A turn that IS stopped can afford a second one —
           // it is about to be refused, and the alternative is refusing it on a
           // cap that was raised an hour ago.
-          totals = stop
-            ? await readTotals(config, { sessionId: ctx.session.id, principalId, day })
-            : null;
+          totals =
+            stop || config.dashboardControls
+              ? await readTotals(config, {
+                  sessionId: ctx.session.id,
+                  principalId,
+                  day,
+                })
+              : null;
         } catch (error) {
           // Same posture as every other store failure in this package, and it
           // matters more here than anywhere: this runs on the first event of
@@ -389,7 +419,7 @@ export function budgetHook(options: BudgetOptions = {}): HookDefinition {
           return;
         }
 
-        if (!stop || !totals) return;
+        if (!totals) return;
 
         /**
          * The same two-branch decision `step.completed` makes, against the same
@@ -409,7 +439,17 @@ export function budgetHook(options: BudgetOptions = {}): HookDefinition {
             ? { exceeded: true, scope: "session" }
             : evaluate(config, totals);
 
-        const verdict = preflightVerdict(config, stop, live);
+        const effectiveStop =
+          stop ??
+          (config.dashboardControls && live.exceeded
+            ? {
+                scope: live.scope ?? "session",
+                reason:
+                  live.reason ??
+                  "The configured spend limit or pricing requirement prevents this turn.",
+              }
+            : null);
+        const verdict = preflightVerdict(config, effectiveStop, live);
         if (!verdict) {
           // The cap moved, or the row was reset, and this stop is a leftover.
           // Lifting it HERE rather than leaving it to the coming
@@ -455,6 +495,7 @@ export function budgetHook(options: BudgetOptions = {}): HookDefinition {
       },
 
       async "step.completed"(event, ctx) {
+        const config = await runtimeBudgetConfig(baseConfig);
         if (isUncapped(config)) return;
 
         const usage = event.data.usage;
@@ -517,7 +558,13 @@ export function budgetHook(options: BudgetOptions = {}): HookDefinition {
         // live it beats our table, and it is one `??` to be ready for it.
         const cost =
           usage.costUsd ??
-          costUsd(config.model, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens);
+          costUsd(
+            config.model,
+            inputTokens,
+            outputTokens,
+            cacheReadTokens,
+            cacheWriteTokens,
+          );
 
         const principalId = principalOf(ctx);
 
@@ -644,7 +691,11 @@ export function budgetHook(options: BudgetOptions = {}): HookDefinition {
             limitUsd: verdict.limitUsd ?? 0,
             spentUsd: verdict.spentUsd ?? 0,
             action: "turn-failed",
-            detail: { model: config.model, stepIndex: event.data.stepIndex, day },
+            detail: {
+              model: config.model,
+              stepIndex: event.data.stepIndex,
+              day,
+            },
           }).catch(() => undefined);
           console.warn(`[evestack:budget] ${message}`);
           // eve treats a thrown hook as a real failure and surfaces it as

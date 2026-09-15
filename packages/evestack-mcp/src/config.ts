@@ -19,6 +19,8 @@ export interface Config {
   readonly dashboardUrl: string;
   /** When false, the mutating tools are not advertised and cannot be called. */
   readonly allowControl: boolean;
+  /** Separate authority to answer decisions owned by a human. Requires control too. */
+  readonly allowApprovals: boolean;
   /** Identity attached to approvals, or null to let the dashboard record `unidentified`. */
   readonly approver: string | null;
   /** Header the dashboard reads that identity from. */
@@ -39,7 +41,12 @@ export interface Config {
 function truthy(value: string | undefined): boolean {
   if (value === undefined) return false;
   const normalized = value.trim().toLowerCase();
-  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+  return (
+    normalized === "1" ||
+    normalized === "true" ||
+    normalized === "yes" ||
+    normalized === "on"
+  );
 }
 
 /**
@@ -108,7 +115,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const raw = env.EVESTACK_MCP_DASHBOARD_URL?.trim() || "http://localhost:4000";
   let dashboardUrl: string;
   try {
-    dashboardUrl = new URL(raw).origin + new URL(raw).pathname.replace(/\/+$/, "");
+    dashboardUrl =
+      new URL(raw).origin + new URL(raw).pathname.replace(/\/+$/, "");
   } catch {
     throw new Error(
       `EVESTACK_MCP_DASHBOARD_URL is not a valid URL: ${JSON.stringify(raw)}. ` +
@@ -119,7 +127,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const timeoutRaw = env.EVESTACK_MCP_TIMEOUT_MS?.trim();
   const timeoutMs = timeoutRaw ? Number(timeoutRaw) : 30_000;
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    throw new Error(`EVESTACK_MCP_TIMEOUT_MS must be a positive number of milliseconds, got ${timeoutRaw}.`);
+    throw new Error(
+      `EVESTACK_MCP_TIMEOUT_MS must be a positive number of milliseconds, got ${timeoutRaw}.`,
+    );
   }
 
   // The one knob that costs money when it is wrong in either direction: too low
@@ -138,8 +148,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   // life of the file. The constant stays for the messages below, where the name
   // is being reported rather than looked up.
   const maxOutputRaw = env.EVESTACK_MCP_MAX_OUTPUT_BYTES?.trim();
-  const maxOutputBytes = maxOutputRaw ? Number(maxOutputRaw) : DEFAULT_MAX_OUTPUT_BYTES;
-  if (!Number.isInteger(maxOutputBytes) || maxOutputBytes < MIN_MAX_OUTPUT_BYTES) {
+  const maxOutputBytes = maxOutputRaw
+    ? Number(maxOutputRaw)
+    : DEFAULT_MAX_OUTPUT_BYTES;
+  if (
+    !Number.isInteger(maxOutputBytes) ||
+    maxOutputBytes < MIN_MAX_OUTPUT_BYTES
+  ) {
     throw new Error(
       `${MAX_OUTPUT_BYTES_ENV} must be a whole number of bytes >= ${MIN_MAX_OUTPUT_BYTES}, got ` +
         `${JSON.stringify(maxOutputRaw)}. Below ${MIN_MAX_OUTPUT_BYTES} the truncation notice itself ` +
@@ -152,11 +167,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   // Deliberately the same variable the dashboard reads, so one line in a shared
   // .env configures both ends of the same handshake. Default matches the header
   // lib/approvals.ts falls back to.
-  const approverHeader = env.EVESTACK_APPROVER_HEADER?.trim() || "x-forwarded-user";
+  const approverHeader =
+    env.EVESTACK_APPROVER_HEADER?.trim() || "x-forwarded-user";
 
   const config: Config = {
     dashboardUrl,
     allowControl: truthy(env.EVESTACK_MCP_ALLOW_CONTROL),
+    allowApprovals: truthy(env.EVESTACK_MCP_ALLOW_APPROVALS),
     approver,
     approverHeader,
     authorization: resolveAuthorization(env),
@@ -164,7 +181,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     maxOutputBytes,
   };
 
-  if (config.allowControl && config.approver === null) {
+  if (
+    config.allowControl &&
+    config.allowApprovals &&
+    config.approver === null
+  ) {
     // Worth saying out loud at startup rather than at the moment a decision is
     // recorded with nobody's name on it.
     log(

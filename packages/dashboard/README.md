@@ -142,6 +142,26 @@ copying it into this package's `.env.local` yourself.
   than it sees on the request. It is used for OAuth callback URLs and for the
   cross-site write check.
 
+## Release verification
+
+`pnpm --filter @evestack/dashboard test` runs the unit and rendering checks.
+For the native database group, set `EVESTACK_TEST_POSTGRES_URL` to a disposable
+PostgreSQL server whose fixture role can create databases, then run from this
+package:
+
+```bash
+node --import ./test/register-ts-resolve.mjs --test test/routines-postgres.test.mjs
+```
+
+The test creates a uniquely named database and drops only that database on
+completion. It checks claims from separate processes, ambiguous HTTP acceptance,
+crash recovery, audit rollback, decision reconciliation and shared budget
+activation. It uses local HTTP fixtures and makes no model calls.
+
+Dashboard routines require its Node clock to remain running. Set
+`EVESTACK_ROUTINES_DISABLED=1` and restart to stop this scheduling path. See
+[Recurring work](../../docs/routines.mdx) for dispatch and rollback semantics.
+
 ## Layout
 
 ```

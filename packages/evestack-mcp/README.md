@@ -42,8 +42,8 @@ is the same bet the rest of evestack makes: a few hundred lines you can read bea
 
 | Tool | Reads | Notes |
 | --- | --- | --- |
-| `list_sessions` | `/api/health/detail` | **Five most recent only** — that route's limit, not a choice made here. |
-| `get_session` | `/api/control/sessions/:id/approve` + `/api/budget` + `/api/health/detail` | Live waiting state, pending approval requests, usage, and the verbatim budget-stop reason. |
+| `list_sessions` | `/api/tasks` | Search all titles/IDs with `q`; page with `cursor` and `limit` (1–100). |
+| `get_session` | `/api/control/sessions/:id/approve` + `/api/budget` + `/api/tasks/:id` | Live waiting state, pending approval requests, usage, and the verbatim budget-stop reason. |
 | `list_approvals` | `/api/approvals` | Who decided what, and how the identity was established. |
 | `get_costs` | `/api/budget` + `/api/health/detail` | Caps, per-principal daily spend, stops, lifetime totals. |
 | `promote_session_to_eval` | `/api/evals/promote/:id` | Generates eval source and returns it. Writes nothing. |
@@ -54,7 +54,7 @@ Enabled only with `EVESTACK_MCP_ALLOW_CONTROL=1`:
 | --- | --- | --- |
 | `start_session` | `POST /api/control/sessions` | Starts a real run. Spends money. |
 | `send_message` | `POST …/:id/message` | Another turn on a live session. Spends money. |
-| `approve_or_deny` | `POST …/:id/approve` | **Runs the gated tool for real.** Audited. |
+| `approve_or_deny` | `POST …/:id/approve` | Also requires `EVESTACK_MCP_ALLOW_APPROVALS=1`. Runs the gated tool for real; audited. |
 | `cancel_run` | `POST …/:id/cancel` | Cooperative stop between steps; the in-flight model call still bills. |
 
 Read-only vs mutating is stated three ways, because different clients surface different ones: the first
@@ -72,15 +72,17 @@ enabling itself: the gate is an environment variable read once at launch, before
 parsed. Calling one anyway returns a JSON-RPC `-32602` whose message says who can turn it on (the
 operator) and how.
 
-Opting in is one line:
+To enable task control while keeping human decisions withheld:
 
 ```jsonc
 "env": {
   "EVESTACK_MCP_DASHBOARD_URL": "http://localhost:4000",
-  "EVESTACK_MCP_ALLOW_CONTROL": "1",
-  "EVESTACK_MCP_APPROVER": "sammy@example.com"
+  "EVESTACK_MCP_ALLOW_CONTROL": "1"
 }
 ```
+
+To additionally allow answers to human decisions, explicitly set
+`EVESTACK_MCP_ALLOW_APPROVALS=1`. This is a separate grant of authority.
 
 ### Identity vs. provenance
 
@@ -139,7 +141,8 @@ nothing in front of it, nothing at all.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `EVESTACK_MCP_DASHBOARD_URL` | `http://localhost:4000` | Dashboard origin. |
-| `EVESTACK_MCP_ALLOW_CONTROL` | unset | `1` advertises the mutating tools. |
+| `EVESTACK_MCP_ALLOW_CONTROL` | unset | `1` advertises task mutations. |
+| `EVESTACK_MCP_ALLOW_APPROVALS` | unset | With control enabled, `1` also grants authority to answer human decisions. |
 | `EVESTACK_MCP_APPROVER` | unset | Identity offered for approvals. Recorded **only** if the dashboard sets `EVESTACK_TRUSTED_PROXY`; ignored otherwise. See [Identity vs. provenance](#identity-vs-provenance). |
 | `EVESTACK_APPROVER_HEADER` | `x-forwarded-user` | Header to carry it in. Same variable the dashboard reads, so one line configures both ends. Also only read behind `EVESTACK_TRUSTED_PROXY`. |
 | `EVESTACK_MCP_DASHBOARD_AUTH` | unset | The dashboard credential. Either `user:password`, which is encoded here as `Basic …`, or a complete header value (`Basic dXNlcjpwYXNz`, `Bearer …`), which is sent exactly as written. |
@@ -164,10 +167,10 @@ Treat them as representative sizes for a busy deployment, not as a ceiling:
 
 | Tool | Uncapped | ≈ tokens |
 | --- | --- | --- |
-| `list_sessions` | 1,489 B | 0.4k |
+| `list_sessions` | 11,765 B | 2.9k |
 | `promote_session_to_eval` (40-turn session) | 15,592 B | 3.9k |
-| `get_session` (one pending `write_file` approval) | 39,861 B | 10k |
-| `get_costs` (200 principals) | 81,942 B | 20k |
+| `get_session` (one pending `write_file` approval) | 40,015 B | 10k |
+| `get_costs` (200 principals) | 81,967 B | 20k |
 | `list_approvals` (no arguments — 200 rows) | 113,289 B | 28k |
 | `list_approvals` `limit=500` | 283,123 B | 71k |
 | `list_approvals` `sessionId`, no limit (1000 rows) | 566,182 B | **142k** |
@@ -177,8 +180,8 @@ defaults the whole-log arm to 200 rows and the `?sessionId=` arm to `MAX_APPROVA
 asking about **one session** without a limit, not from omitting arguments.
 
 The measured results fall into two groups with a wide gap between them — three that stay small on any
-deployment, topping out at 39,861 B, and four whose size tracks how much history you have, starting at
-81,942 B. 64 KiB (~16k tokens) is the only power of two in that gap: 32 KiB would cut `get_session`, and
+deployment, topping out at 40,015 B, and four whose size tracks how much history you have, starting at
+81,967 B. 64 KiB (~16k tokens) is the only power of two in that gap: 32 KiB would cut `get_session`, and
 128 KiB would wave a 28k-token audit log through on a call with no arguments.
 
 **A shortened result never passes for a whole one.** The payload stays valid JSON, and a `_truncated` object
@@ -307,3 +310,14 @@ table, checked in so those figures can be re-derived instead of believed. `trunc
 fails if the numbers in this README and in `src/truncate.ts` have drifted from what it prints.
 
 Apache-2.0.
+
+
+## Task and routine APIs in this release
+
+The matching dashboard now supplies paginated task history and task detail. `get_session` retains stored history when the agent is unreachable, and explains which live or budget sections could not be read. Older dashboards need an upgrade to supply these routes.
+
+- `list_routines` reads saved routines and clock health.
+- `get_routine` reads a routine and its latest 50 runs.
+- `pending_decisions` checks a page of 20 open tasks; follow `nextOffset` and inspect `unknown` coverage.
+
+Ordinary control does not grant approval authority. Existing installations using `approve_or_deny` must explicitly set both control and approval flags after reviewing that authority. The default remains read-only.

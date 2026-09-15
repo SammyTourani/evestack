@@ -61,6 +61,14 @@ const EMPTY: SpendTotals = {
 let pool: Pool | null = null;
 let ready: Promise<void> | null = null;
 
+/** Graceful shutdown and isolated integration tests must not leave a pool pointing at an old database. */
+export async function closeSpendStore(): Promise<void> {
+  const previous = pool;
+  pool = null;
+  ready = null;
+  if (previous) await previous.end();
+}
+
 function getPool(config: BudgetConfig): Pool {
   const url = config.databaseUrl;
   if (!url) {
@@ -73,7 +81,11 @@ function getPool(config: BudgetConfig): Pool {
   // Small on purpose: this runs inside the agent process next to eve's own
   // pool and the memory pool, and it does two tiny indexed writes per step.
   if (!pool) {
-    pool = new Pool({ connectionString: url, max: 4, connectionTimeoutMillis: 5_000 });
+    pool = new Pool({
+      connectionString: url,
+      max: 4,
+      connectionTimeoutMillis: 5_000,
+    });
     // Without this, a Postgres restart while a client sits idle here is an
     // uncaughtException, not a failed query, and it takes the agent down with
     // it. pg-pool re-emits an idle client's socket error on the pool, and
@@ -82,7 +94,9 @@ function getPool(config: BudgetConfig): Pool {
     // project whether or not its owner ever thought about budgets.
     // packages/dashboard/lib/db.ts has carried this listener all along.
     pool.on("error", (error) => {
-      console.warn(`[evestack:budget] idle Postgres client error: ${error.message}`);
+      console.warn(
+        `[evestack:budget] idle Postgres client error: ${error.message}`,
+      );
     });
   }
   return pool;
@@ -338,7 +352,10 @@ function displayUsd(value: number, field: string): number {
  * `COALESCE` falls through to the stored totals — the caller still gets an
  * accurate number to compare against the cap, it just does not pay twice.
  */
-export async function recordStep(config: BudgetConfig, spend: StepSpend): Promise<RecordedSpend> {
+export async function recordStep(
+  config: BudgetConfig,
+  spend: StepSpend,
+): Promise<RecordedSpend> {
   // Before `ensureSchema`, before the pool, before anything that could be
   // reported as a database problem: this is a caller bug, and it has to read as
   // one. `hook.ts` catches this the same way it catches a Postgres outage — log
@@ -473,8 +490,15 @@ export async function recordStep(config: BudgetConfig, spend: StepSpend): Promis
 /** Reads both scopes without writing. Used by the guard and the report route. */
 export async function readTotals(
   config: BudgetConfig,
-  input: { readonly sessionId: string; readonly principalId: string; readonly day: string },
-): Promise<{ readonly session: SpendTotals; readonly principalDay: SpendTotals }> {
+  input: {
+    readonly sessionId: string;
+    readonly principalId: string;
+    readonly day: string;
+  },
+): Promise<{
+  readonly session: SpendTotals;
+  readonly principalDay: SpendTotals;
+}> {
   await ensureSchema(config);
   const db = getPool(config);
   const { rows } = await db.query<{
@@ -618,7 +642,11 @@ export async function clearStop(
 /** The guard's whole question, answered in one primary-key lookup. */
 export async function readStop(
   config: BudgetConfig,
-  input: { readonly sessionId: string; readonly principalId: string; readonly day: string },
+  input: {
+    readonly sessionId: string;
+    readonly principalId: string;
+    readonly day: string;
+  },
 ): Promise<{ readonly scope: BudgetScope; readonly reason: string } | null> {
   await ensureSchema(config);
   const db = getPool(config);
@@ -722,7 +750,14 @@ export async function recentBudgetEvents(
 export async function principalDaySpend(
   config: BudgetConfig,
   day: string,
-): Promise<readonly { principalId: string; costUsd: number; steps: number; unpricedSteps: number }[]> {
+): Promise<
+  readonly {
+    principalId: string;
+    costUsd: number;
+    steps: number;
+    unpricedSteps: number;
+  }[]
+> {
   await ensureSchema(config);
   const db = getPool(config);
   const { rows } = await db.query(
@@ -741,10 +776,15 @@ export async function principalDaySpend(
 }
 
 /** Test/ops helper: clears a session's counters so a cap can be re-observed. */
-export async function resetSession(config: BudgetConfig, sessionId: string): Promise<void> {
+export async function resetSession(
+  config: BudgetConfig,
+  sessionId: string,
+): Promise<void> {
   await ensureSchema(config);
   const db = getPool(config);
-  await db.query("DELETE FROM evestack.budget_steps WHERE session_id = $1", [sessionId]);
+  await db.query("DELETE FROM evestack.budget_steps WHERE session_id = $1", [
+    sessionId,
+  ]);
   await db.query(
     "DELETE FROM evestack.budget_usage WHERE scope = 'session' AND scope_key = $1",
     [sessionId],

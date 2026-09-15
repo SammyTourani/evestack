@@ -18,10 +18,11 @@ path (`npx create-evestack my-agent`).
 If you are an agent that can speak MCP, `@evestack/mcp` (`packages/evestack-mcp`, docs at
 `/docs/mcp`) exposes this dashboard as tools — sessions, costs, the approval audit log, and
 promote-a-session-to-an-eval. It is a thin client over the dashboard's HTTP routes, not a second
-implementation, so it can answer nothing the dashboard cannot. **Its four mutating tools — starting
-runs, sending turns, answering approvals, cancelling — are withheld from `tools/list` entirely
-unless `EVESTACK_MCP_ALLOW_CONTROL=1`.** Do not advise anyone to set that without saying that it
-lets a model approve a gated tool call a human was asked to stand at.
+implementation, so it can answer nothing the dashboard cannot. Task start, continuation
+and cancellation require `EVESTACK_MCP_ALLOW_CONTROL=1`. Answering human decisions
+also requires `EVESTACK_MCP_ALLOW_APPROVALS=1`; enabling task control alone does not
+grant approval authority. Read-only tools include paginated/searchable task history,
+routines and the pending decision queue with explicit unknown probe results.
 
 ## If you are an agent someone just pointed at this project
 
@@ -124,6 +125,7 @@ on advertising them.
 - [Local setup](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/local-setup.mdx)
 - [Architecture](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/architecture.mdx)
 - [Dashboard](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/dashboard.mdx)
+- [Recurring work](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/routines.mdx)
 - [Alerts](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/alerts.mdx)
 - [Observability](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/observability.mdx)
 - [Composio auth](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/composio-auth.mdx)

@@ -6,6 +6,8 @@
  * is a budget nobody turns on.
  */
 export interface BudgetConfig {
+  /** Opt in to durable dashboard controls, refreshed before each turn and after each step. */
+  readonly dashboardControls?: boolean;
   /**
    * USD ceiling for one durable session. `false` disables the session cap.
    *
@@ -129,15 +131,21 @@ const DEFAULT_SESSION_USD = 2;
 const DEFAULT_DAILY_USD = 10;
 const DEFAULT_TIME_ZONE = "UTC";
 
-function envNumberOrFalse(raw: string | undefined, fallback: number | false): number | false {
+function envNumberOrFalse(
+  raw: string | undefined,
+  fallback: number | false,
+): number | false {
   if (raw === undefined || raw.trim() === "") return fallback;
   const trimmed = raw.trim().toLowerCase();
-  if (trimmed === "false" || trimmed === "off" || trimmed === "none") return false;
+  if (trimmed === "false" || trimmed === "off" || trimmed === "none")
+    return false;
   const value = Number(trimmed.replace(/^\$/, ""));
   // A typo in a cap must not silently become "no cap" — fall back to the
   // default, which is the safe direction, and say so.
   if (!Number.isFinite(value) || value < 0) {
-    console.warn(`[evestack:budget] ignoring unparseable cap "${raw}"; using ${String(fallback)}`);
+    console.warn(
+      `[evestack:budget] ignoring unparseable cap "${raw}"; using ${String(fallback)}`,
+    );
     return fallback;
   }
   return value;
@@ -146,7 +154,9 @@ function envNumberOrFalse(raw: string | undefined, fallback: number | false): nu
 function envMode(raw: string | undefined): BudgetConfig["mode"] {
   if (raw === "fail" || raw === "observe" || raw === "cancel") return raw;
   if (raw !== undefined && raw.trim() !== "") {
-    console.warn(`[evestack:budget] unknown EVESTACK_BUDGET_MODE "${raw}"; using "fail"`);
+    console.warn(
+      `[evestack:budget] unknown EVESTACK_BUDGET_MODE "${raw}"; using "fail"`,
+    );
   }
   return "fail";
 }
@@ -237,8 +247,10 @@ function envModel(): string {
   const explicit = process.env.EVESTACK_BUDGET_MODEL?.trim();
   if (explicit) return explicit;
 
-  const provider = process.env.EVESTACK_PROVIDER?.trim().toLowerCase() || "openai";
-  const model = process.env.EVESTACK_MODEL?.trim() || PROVIDER_DEFAULT_MODEL[provider];
+  const provider =
+    process.env.EVESTACK_PROVIDER?.trim().toLowerCase() || "openai";
+  const model =
+    process.env.EVESTACK_MODEL?.trim() || PROVIDER_DEFAULT_MODEL[provider];
   if (!model) {
     // A provider `agent.ts` does not know, which it treats as a hard error — so
     // the agent will not have started, and refusing here too would buy nothing
@@ -271,19 +283,28 @@ export function resolveConfig(options: BudgetOptions = {}): BudgetConfig {
   // that throw as "spend store unavailable". A spend cap that silently does not
   // run, with every other half of the app looking healthy, is the worst shape
   // this failure could have taken.
-  const databaseUrl = process.env.WORKFLOW_POSTGRES_URL ?? process.env.DATABASE_URL;
+  const databaseUrl =
+    process.env.WORKFLOW_POSTGRES_URL ?? process.env.DATABASE_URL;
 
   const resolved: BudgetConfig = {
+    dashboardControls: process.env.EVESTACK_BUDGET_DASHBOARD === "1",
     sessionUsd: disabled
       ? false
-      : envNumberOrFalse(process.env.EVESTACK_BUDGET_SESSION_USD, DEFAULT_SESSION_USD),
+      : envNumberOrFalse(
+          process.env.EVESTACK_BUDGET_SESSION_USD,
+          DEFAULT_SESSION_USD,
+        ),
     dailyUsd: disabled
       ? false
-      : envNumberOrFalse(process.env.EVESTACK_BUDGET_DAILY_USD, DEFAULT_DAILY_USD),
+      : envNumberOrFalse(
+          process.env.EVESTACK_BUDGET_DAILY_USD,
+          DEFAULT_DAILY_USD,
+        ),
     timeZone: validTimeZone(process.env.EVESTACK_BUDGET_TIMEZONE),
     mode: envMode(process.env.EVESTACK_BUDGET_MODE),
     model: envModel(),
-    unpricedModel: process.env.EVESTACK_BUDGET_UNPRICED === "stop" ? "stop" : "warn",
+    unpricedModel:
+      process.env.EVESTACK_BUDGET_UNPRICED === "stop" ? "stop" : "warn",
     // Opt-OUT rather than opt-in, and spelled as the three words an operator
     // actually types. Every other switch in this file is opt-in because its
     // default is the cheap direction; this one defaults on because the thing it
@@ -297,12 +318,15 @@ export function resolveConfig(options: BudgetOptions = {}): BudgetConfig {
     failClosed:
       process.env.EVESTACK_BUDGET_FAIL_CLOSED === "1" ||
       process.env.EVESTACK_BUDGET_FAIL_CLOSED === "true",
-    agentUrl: process.env.EVESTACK_BUDGET_AGENT_URL ?? `http://127.0.0.1:${port}`,
+    agentUrl:
+      process.env.EVESTACK_BUDGET_AGENT_URL ?? `http://127.0.0.1:${port}`,
     guardTools: (process.env.EVESTACK_BUDGET_GUARD_TOOLS ?? "")
       .split(",")
       .map((name) => name.trim())
       .filter((name) => name.length > 0),
-    ...(process.env.EVESTACK_AUTH_USER ? { authUser: process.env.EVESTACK_AUTH_USER } : {}),
+    ...(process.env.EVESTACK_AUTH_USER
+      ? { authUser: process.env.EVESTACK_AUTH_USER }
+      : {}),
     ...(process.env.EVESTACK_AUTH_PASSWORD
       ? { authPassword: process.env.EVESTACK_AUTH_PASSWORD }
       : {}),
@@ -317,7 +341,11 @@ export function resolveConfig(options: BudgetOptions = {}): BudgetConfig {
   // must not get a different outcome; and because `BudgetOptions` is a
   // `Partial`, an explicit `timeZone: undefined` spreads over a good value as
   // `undefined`, which `Intl` rejects as well.
-  return { ...merged, timeZone: validTimeZone(merged.timeZone) };
+  return {
+    ...merged,
+    dashboardControls: !disabled && merged.dashboardControls,
+    timeZone: validTimeZone(merged.timeZone),
+  };
 }
 
 /** True when neither axis is capped, i.e. the hook has nothing to enforce. */

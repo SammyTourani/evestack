@@ -1,6 +1,12 @@
 import { defineDynamic, defineTool } from "eve/tools";
-import { dayKey, isUncapped, resolveConfig, type BudgetOptions } from "./config.js";
+import {
+  dayKey,
+  isUncapped,
+  resolveConfig,
+  type BudgetOptions,
+} from "./config.js";
 import { readStop } from "./store.js";
+import { runtimeBudgetConfig } from "./runtime-settings.js";
 
 /**
  * The half of enforcement that closes the race.
@@ -70,12 +76,14 @@ export function budgetGuard(options: BudgetOptions = {}) {
    * their guard guards nothing is noise about a decision they already made.
    */
   const guardsNothing =
-    config.guardTools.length === 0 && !isUncapped(config) && config.mode !== "observe";
+    config.guardTools.length === 0 &&
+    !isUncapped(config) &&
+    config.mode !== "observe";
   if (guardsNothing && !warnedEmptyGuardTools) {
     warnedEmptyGuardTools = true;
     console.warn(
       "[evestack:budget] budgetGuard() has no tools to shadow, so it will do nothing when the " +
-        "budget runs out. It shadows tools BY NAME: pass guardTools: [\"remember\", \"bash\", ...] " +
+        'budget runs out. It shadows tools BY NAME: pass guardTools: ["remember", "bash", ...] ' +
         "or set EVESTACK_BUDGET_GUARD_TOOLS to a comma-separated list of the authored tools in " +
         "agent/tools/. If you do not want a guard, delete the file that calls budgetGuard() — the " +
         "hook still enforces the cap without it.",
@@ -94,26 +102,31 @@ export function budgetGuard(options: BudgetOptions = {}) {
 
         let stop;
         try {
-          stop = await readStop(config, {
+          const current = await runtimeBudgetConfig(config);
+          stop = await readStop(current, {
             sessionId: ctx.session.id,
             principalId,
-            day: dayKey(config),
+            day: dayKey(current),
           });
         } catch (error) {
           // eve catches and skips a resolver that throws, which would restore
           // every tool without saying so. Returning null does the same thing,
           // out loud.
           console.error(
-            `[evestack:budget] guard could not read stop state, tools left enabled: ${
+            `[evestack:budget] guard could not read stop state, tools ${config.dashboardControls ? "blocked" : "left enabled"}: ${
               error instanceof Error ? error.message : String(error)
             }`,
           );
-          return null;
+          if (!config.dashboardControls) return null;
+          stop = {
+            reason:
+              "Budget settings or stop state could not be read. These tools remain unavailable until the next successful check.",
+          };
         }
 
         if (!stop) return null;
 
-        const reason = `${stop.reason} Tools are disabled until the budget is raised or the window rolls over.`;
+        const reason = `${stop.reason} Review budget state before the next step.`;
 
         return Object.fromEntries(
           config.guardTools.map((name) => [

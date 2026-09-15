@@ -95,7 +95,9 @@ const budgetEvent = (i) => ({
   spent_usd: (4.1 + i / 100).toFixed(6),
   action: i % 4 === 0 ? "stop" : "warn",
   detail: "spend crossed 80% of the session cap on step 214",
-  created_at: new Date(Date.UTC(2026, 7, 9, 11, 0, 0) + i * 60_000).toISOString(),
+  created_at: new Date(
+    Date.UTC(2026, 7, 9, 11, 0, 0) + i * 60_000,
+  ).toISOString(),
 });
 
 /** `SELECT ... FROM evestack.budget_stops` in app/api/budget/route.ts:111. */
@@ -106,12 +108,17 @@ const budgetStop = (i) => ({
   reason: `session cap $5.00 exceeded: step 231 would bring spend to $5.0${String(i).padStart(2, "0")}`,
   limit_usd: "5.000000",
   spent_usd: (5.0 + i / 100).toFixed(6),
-  created_at: new Date(Date.UTC(2026, 7, 9, 11, 30, 0) + i * 60_000).toISOString(),
+  created_at: new Date(
+    Date.UTC(2026, 7, 9, 11, 30, 0) + i * 60_000,
+  ).toISOString(),
 });
 
 /** app/api/health/detail/route.ts:30 — the five-row projection, not the full session row. */
 const recentSession = (i) => ({
-  id: i === 0 ? SESSION_ID : `wrun_01KZ8CQ5012M1M9P6YE7YG3F${String(i).padStart(2, "0")}`,
+  id:
+    i === 0
+      ? SESSION_ID
+      : `wrun_01KZ8CQ5012M1M9P6YE7YG3F${String(i).padStart(2, "0")}`,
   status: i === 0 ? "waiting" : "completed",
   turns: 40 - i,
   tokens: 451_093 + i * 1_311,
@@ -136,7 +143,7 @@ const pendingWriteFile = {
     toolName: "write_file",
     input: {
       path: "packages/dashboard/app/api/approvals/route.ts",
-      contents: "export const dynamic = \"force-dynamic\";\n".repeat(12),
+      contents: 'export const dynamic = "force-dynamic";\n'.repeat(12),
     },
   },
 };
@@ -158,8 +165,12 @@ function generatedEval(turns) {
     body.push(`    ${handle}.calledTool("shell.exec");`);
     body.push(`    ${handle}.calledTool("read_file");`);
     body.push(`    ${handle}.succeeded();`);
-    body.push(`    // Observed reply — replace with the phrase that actually matters:`);
-    body.push(`    // ${handle}.messageIncludes("Applied 3 migrations; evestack.approvals now has 1,2");`);
+    body.push(
+      `    // Observed reply — replace with the phrase that actually matters:`,
+    );
+    body.push(
+      `    // ${handle}.messageIncludes("Applied 3 migrations; evestack.approvals now has 1,2");`,
+    );
   }
   return {
     filename: `${SESSION_ID}-replay-of-the-staging-migration.eval.ts`,
@@ -192,14 +203,45 @@ function routes(url) {
     // log and MAX_APPROVALS for one session. This is the line the old table's
     // "no limit → 562,138 B" row contradicted.
     const raw = url.searchParams.get("limit");
-    const limit = raw === null ? (sessionId ? MAX_APPROVALS : 200) : Number(raw);
+    const limit =
+      raw === null ? (sessionId ? MAX_APPROVALS : 200) : Number(raw);
     const rows = Array.from({ length: limit }, (_, i) => approvalRow(i));
     const summary = {
       count: rows.length,
       unidentified: rows.filter((r) => r.approverVia === "unidentified").length,
       truncated: rows.length >= limit,
     };
-    return { ok: true, ...(sessionId ? { sessionId } : {}), ...summary, approvals: rows };
+    return {
+      ok: true,
+      ...(sessionId ? { sessionId } : {}),
+      ...summary,
+      approvals: rows,
+    };
+  }
+
+  if (path === "/api/tasks") {
+    return {
+      ok: true,
+      tasks: Array.from({ length: 30 }, (_, i) => ({
+        ...recentSession(i),
+        title: `Repository brief ${i}`,
+        outcome: "ok",
+        lastActivity: "2026-09-15T09:00:00Z",
+        unpricedTurns: 0,
+      })),
+      nextCursor: "fixture-next-cursor",
+    };
+  }
+  if (path.startsWith("/api/tasks/")) {
+    return {
+      ok: true,
+      task: {
+        session: recentSession(0),
+        runs: [],
+        workspaceUrl: `/chat?session=${SESSION_ID}`,
+        evidenceUrl: `/sessions/${SESSION_ID}`,
+      },
+    };
   }
 
   if (path === "/api/health/detail") {
@@ -207,7 +249,13 @@ function routes(url) {
     return {
       ok: true,
       database: "connected",
-      totals: { sessions: 812, turns: 9_431, inputTokens: 331_884_012, outputTokens: 29_118_447, costUsd: 1_284.91 },
+      totals: {
+        sessions: 812,
+        turns: 9_431,
+        inputTokens: 331_884_012,
+        outputTokens: 29_118_447,
+        costUsd: 1_284.91,
+      },
       recentSessions: Array.from({ length: 5 }, (_, i) => recentSession(i)),
     };
   }
@@ -217,7 +265,12 @@ function routes(url) {
     return {
       ok: true,
       day: "2026-08-09",
-      limits: { sessionUsd: 5, dailyUsd: 50, mode: "fail", timeZone: "America/New_York" },
+      limits: {
+        sessionUsd: 5,
+        dailyUsd: 50,
+        mode: "fail",
+        timeZone: "America/New_York",
+      },
       ...(sessionId ? { session: { id: sessionId, ...usage(0) } } : {}),
       principals: Array.from({ length: 200 }, (_, i) => ({
         principalId: `user_${String(i).padStart(3, "0")}@example.com`,
@@ -247,7 +300,9 @@ function routes(url) {
 
 const server = http.createServer((req, res) => {
   const body = routes(new URL(req.url, "http://127.0.0.1"));
-  res.writeHead(body === null ? 404 : 200, { "content-type": "application/json" });
+  res.writeHead(body === null ? 404 : 200, {
+    "content-type": "application/json",
+  });
   res.end(JSON.stringify(body ?? { ok: false, error: "no such route" }));
 });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -267,7 +322,10 @@ await mcp.handle({
   jsonrpc: "2.0",
   id: 0,
   method: "initialize",
-  params: { protocolVersion: "2025-11-25", clientInfo: { name: "measure-output-sizes", version: "1" } },
+  params: {
+    protocolVersion: "2025-11-25",
+    clientInfo: { name: "measure-output-sizes", version: "1" },
+  },
 });
 
 async function measure(label, name, args) {
@@ -277,7 +335,8 @@ async function measure(label, name, args) {
     method: "tools/call",
     params: { name, arguments: args },
   });
-  if (response.isError) throw new Error(`${label}: ${JSON.stringify(response.structuredContent)}`);
+  if (response.isError)
+    throw new Error(`${label}: ${JSON.stringify(response.structuredContent)}`);
   const size = bytes(response.content[0].text);
   // ~4 characters per token is the rule of thumb every one of these clients
   // uses; it is an estimate and the table labels it "≈".
@@ -286,16 +345,28 @@ async function measure(label, name, args) {
 
 const results = [
   await measure("list_sessions", "list_sessions", {}),
-  await measure("promote_session_to_eval (40-turn session)", "promote_session_to_eval", {
-    sessionId: SESSION_ID,
-  }),
+  await measure(
+    "promote_session_to_eval (40-turn session)",
+    "promote_session_to_eval",
+    {
+      sessionId: SESSION_ID,
+    },
+  ),
   await measure("get_session", "get_session", { sessionId: SESSION_ID }),
   await measure("get_costs", "get_costs", { sessionId: SESSION_ID }),
-  await measure("list_approvals (no arguments → 200 rows)", "list_approvals", {}),
+  await measure(
+    "list_approvals (no arguments → 200 rows)",
+    "list_approvals",
+    {},
+  ),
   await measure("list_approvals limit=500", "list_approvals", { limit: 500 }),
-  await measure("list_approvals sessionId, no limit → 1000 rows", "list_approvals", {
-    sessionId: SESSION_ID,
-  }),
+  await measure(
+    "list_approvals sessionId, no limit → 1000 rows",
+    "list_approvals",
+    {
+      sessionId: SESSION_ID,
+    },
+  ),
 ];
 
 /** "0.4k", "3.9k", "10k", "142k" — one decimal only when it says something. */
@@ -305,12 +376,16 @@ const thousands = (tokens) => {
 };
 
 const width = Math.max(...results.map((r) => r.label.length));
-console.log(`\nUncapped tool-result sizes, measured through tools/call on ${new Date().toISOString().slice(0, 10)}:\n`);
+console.log(
+  `\nUncapped tool-result sizes, measured through tools/call on ${new Date().toISOString().slice(0, 10)}:\n`,
+);
 for (const { label, size, tokens } of results) {
   console.log(
     `  ${label.padEnd(width)}  ${size.toLocaleString("en-US").padStart(9)} B   ~${thousands(tokens)} tokens`,
   );
 }
-console.log(`\n  cap (EVESTACK_MCP_MAX_OUTPUT_BYTES default) 65,536 B   ~16k tokens\n`);
+console.log(
+  `\n  cap (EVESTACK_MCP_MAX_OUTPUT_BYTES default) 65,536 B   ~16k tokens\n`,
+);
 
 server.close();

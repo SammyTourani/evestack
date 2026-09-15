@@ -17,7 +17,13 @@ import { INVALID_PARAMS, RpcError } from "./jsonrpc.js";
  */
 
 export interface JsonSchema {
-  readonly type?: "object" | "string" | "number" | "integer" | "boolean" | "array";
+  readonly type?:
+    | "object"
+    | "string"
+    | "number"
+    | "integer"
+    | "boolean"
+    | "array";
   readonly description?: string;
   readonly properties?: Readonly<Record<string, JsonSchema>>;
   readonly required?: readonly string[];
@@ -25,6 +31,7 @@ export interface JsonSchema {
   readonly items?: JsonSchema;
   readonly enum?: readonly string[];
   readonly minLength?: number;
+  readonly maxLength?: number;
   readonly minimum?: number;
   readonly maximum?: number;
   readonly default?: unknown;
@@ -39,6 +46,7 @@ const SUPPORTED_KEYWORDS = new Set([
   "items",
   "enum",
   "minLength",
+  "maxLength",
   "minimum",
   "maximum",
   "default",
@@ -48,7 +56,9 @@ const SUPPORTED_KEYWORDS = new Set([
 export function assertSupported(schema: JsonSchema, where: string): void {
   for (const key of Object.keys(schema)) {
     if (!SUPPORTED_KEYWORDS.has(key)) {
-      throw new Error(`${where}: schema keyword '${key}' is not supported by src/schema.ts.`);
+      throw new Error(
+        `${where}: schema keyword '${key}' is not supported by src/schema.ts.`,
+      );
     }
   }
   for (const [name, child] of Object.entries(schema.properties ?? {})) {
@@ -63,7 +73,20 @@ function typeOf(value: unknown): string {
   return typeof value;
 }
 
-function check(value: unknown, schema: JsonSchema, path: string, errors: string[]): void {
+function check(
+  value: unknown,
+  schema: JsonSchema,
+  path: string,
+  errors: string[],
+): void {
+  if (
+    typeof value === "string" &&
+    schema.maxLength !== undefined &&
+    value.length > schema.maxLength
+  ) {
+    errors.push(`${path} must be at most ${schema.maxLength} characters`);
+    return;
+  }
   if (schema.type === "integer") {
     if (typeof value !== "number" || !Number.isInteger(value)) {
       errors.push(`${path} must be an integer, got ${typeOf(value)}`);
@@ -74,28 +97,50 @@ function check(value: unknown, schema: JsonSchema, path: string, errors: string[
     return;
   }
 
-  if (schema.enum && (typeof value !== "string" || !schema.enum.includes(value))) {
+  if (
+    schema.enum &&
+    (typeof value !== "string" || !schema.enum.includes(value))
+  ) {
     errors.push(`${path} must be one of ${schema.enum.join(", ")}`);
     return;
   }
-  if (schema.minLength !== undefined && typeof value === "string" && value.length < schema.minLength) {
+  if (
+    schema.minLength !== undefined &&
+    typeof value === "string" &&
+    value.length < schema.minLength
+  ) {
     errors.push(`${path} must be at least ${schema.minLength} character(s)`);
   }
-  if (schema.minimum !== undefined && typeof value === "number" && value < schema.minimum) {
+  if (
+    schema.minimum !== undefined &&
+    typeof value === "number" &&
+    value < schema.minimum
+  ) {
     errors.push(`${path} must be >= ${schema.minimum}`);
   }
-  if (schema.maximum !== undefined && typeof value === "number" && value > schema.maximum) {
+  if (
+    schema.maximum !== undefined &&
+    typeof value === "number" &&
+    value > schema.maximum
+  ) {
     errors.push(`${path} must be <= ${schema.maximum}`);
   }
 
-  if (schema.type === "object" && typeof value === "object" && value !== null && !Array.isArray(value)) {
+  if (
+    schema.type === "object" &&
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value)
+  ) {
     const record = value as Record<string, unknown>;
     for (const name of schema.required ?? []) {
       // `undefined` cannot survive a JSON round trip, so an explicit null is the
       // only way a client can spell "present but empty" — and for these tools it
       // means the same thing as absent.
       if (record[name] === undefined || record[name] === null) {
-        errors.push(`${path === "arguments" ? "" : `${path}.`}${name} is required`);
+        errors.push(
+          `${path === "arguments" ? "" : `${path}.`}${name} is required`,
+        );
       }
     }
     for (const [name, child] of Object.entries(record)) {
@@ -104,7 +149,9 @@ function check(value: unknown, schema: JsonSchema, path: string, errors: string[
         if (schema.additionalProperties === false) {
           errors.push(
             `${path}.${name} is not a recognized argument` +
-              (schema.properties ? ` (expected: ${Object.keys(schema.properties).join(", ")})` : ""),
+              (schema.properties
+                ? ` (expected: ${Object.keys(schema.properties).join(", ")})`
+                : ""),
           );
         }
         continue;
@@ -115,7 +162,9 @@ function check(value: unknown, schema: JsonSchema, path: string, errors: string[
   }
 
   if (schema.type === "array" && Array.isArray(value) && schema.items) {
-    value.forEach((entry, index) => check(entry, schema.items!, `${path}[${index}]`, errors));
+    value.forEach((entry, index) =>
+      check(entry, schema.items!, `${path}[${index}]`, errors),
+    );
   }
 }
 
@@ -126,16 +175,23 @@ export function validateArguments(
 ): Record<string, unknown> {
   const value = args === undefined || args === null ? {} : args;
   if (typeof value !== "object" || Array.isArray(value)) {
-    throw new RpcError(INVALID_PARAMS, `Tool '${toolName}': 'arguments' must be an object.`);
+    throw new RpcError(
+      INVALID_PARAMS,
+      `Tool '${toolName}': 'arguments' must be an object.`,
+    );
   }
 
   const errors: string[] = [];
   check(value, schema, "arguments", errors);
   if (errors.length > 0) {
-    throw new RpcError(INVALID_PARAMS, `Tool '${toolName}': ${errors.join("; ")}.`, {
-      tool: toolName,
-      errors,
-    });
+    throw new RpcError(
+      INVALID_PARAMS,
+      `Tool '${toolName}': ${errors.join("; ")}.`,
+      {
+        tool: toolName,
+        errors,
+      },
+    );
   }
   return value as Record<string, unknown>;
 }

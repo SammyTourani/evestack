@@ -112,12 +112,12 @@ this package has no tool for it.
 ```
 
 Read-only tools: `list_sessions`, `get_session`, `list_approvals`, `get_costs`,
-`promote_session_to_eval`.
+`promote_session_to_eval`, `list_routines`, `get_routine`, `pending_decisions`.
 
-**The four mutating tools — `start_session`, `send_message`, `approve_or_deny`, `cancel_run` —
-are withheld from `tools/list` entirely** unless `EVESTACK_MCP_ALLOW_CONTROL=1`. A model cannot
-plan around a capability it has never been told exists, and the gate is an environment variable
-read once at launch, before any client input is parsed.
+`EVESTACK_MCP_ALLOW_CONTROL=1` enables `start_session`, `send_message`, and
+`cancel_run`. `approve_or_deny` additionally requires
+`EVESTACK_MCP_ALLOW_APPROVALS=1`. Both gates are checked at advertisement and call
+time, using environment configuration read at server launch.
 
-Never advise a user to set that flag without saying what it means: it lets a model approve a
-gated tool call a human was asked to stand at, which is the entire reason eve pauses the turn.
+Task control can incur model charges. The separate approval flag allows a model
+to answer decisions intended for a human, including permission for real tool effects.

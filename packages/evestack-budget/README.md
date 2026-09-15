@@ -107,12 +107,13 @@ retry twice.
 ## Configuration
 
 Every field reads from the environment, so `budgetHook()` with no arguments is a complete configuration.
-Options passed in code win over the environment.
+Options passed in code win over the environment. Opted-in dashboard controls take precedence over those options once a shared policy is saved; the explicit disabled switch still disables the hook.
 
 | Env var | Default | Meaning |
 | --- | --- | --- |
 | `EVESTACK_BUDGET_SESSION_USD` | `2` | Per-session cap. `false` disables it. |
 | `EVESTACK_BUDGET_DAILY_USD` | `10` | Per-principal-per-day cap. `false` disables it. |
+| `EVESTACK_BUDGET_DASHBOARD` | unset | `1` opts the hook/guard into shared dashboard controls; new templates opt in through code. |
 | `EVESTACK_BUDGET_DISABLED` | unset | `1` turns the whole thing off. |
 | `EVESTACK_BUDGET_MODE` | `fail` | `fail` \| `cancel` \| `observe`. |
 | `EVESTACK_BUDGET_PREFLIGHT` | on | `0`, `false` or `off` stops the hook checking the cap on `turn.started`. See [The preflight](#the-preflight). |
@@ -137,6 +138,39 @@ lifted it. That lift re-checks the stored totals inside the `DELETE` itself rath
 totals the caller read a moment earlier — two sessions belonging to one principal share the
 principal-day row, and an unconditional delete let a session whose numbers were one step stale remove a
 stop another session had just written.
+
+## Shared dashboard controls
+
+New projects use `budgetHook({ dashboardControls: true })` and the same option on
+`budgetGuard`. Existing projects can opt in with that option or
+`EVESTACK_BUDGET_DASHBOARD=1`. Both processes must use the same Postgres database.
+
+Before any policy is saved, the agent uses its existing configuration. Saving in
+**Settings → Budget controls** creates a revision and audit row. The next session,
+turn or completed model step reads that revision. A saved policy uses strict
+`fail` enforcement, preflight checks, stop-on-unpriced behavior, and a fail-closed
+spend store. A shared-settings read failure stops the opted-in event instead of
+falling back to an older, more permissive cap.
+
+Settings shows each process's last observed revision and model. That observation
+is historical evidence, not a claim that every attached agent is updated. Custom
+agents that have not opted in continue using their own settings. A model call
+already in flight can finish and bill; this is not a prepaid balance or a
+reservation system for concurrent calls.
+
+Lowering a cap is checked against existing spend before the next model call,
+including when no previous stop row exists. Raising it permits the next eligible
+turn; it does not automatically repeat a stopped request. Changing the time zone
+changes the date key used for future spend; existing daily totals keep their old
+keys. Keep the zone stable during a budget day if you need one continuous cap.
+
+The additive tables are `budget_settings`, `budget_settings_audit`, and
+`budget_consumers` in the `evestack` schema. Only policy, attribution and safe
+observations are stored: no provider keys or database credentials. Consumer
+observations older than seven days are pruned on process initialization; policy
+and audit records remain. `closeBudgetSettingsPools()` from
+`@evestack/budget/settings` closes this package's shared-settings connections on
+shutdown.
 
 ## The preflight
 
@@ -222,9 +256,9 @@ GET /api/budget?sessionId=wrun_...
   "principals": [...], "stops": [...], "events": [{ "action": "cancel:accepted", ... }] }
 ```
 
-That route reads the tables with plain SQL rather than importing this package, because the dashboard
-image is built from an isolated Docker context where a workspace dependency cannot resolve. The four
-tables below are the contract between the two halves; anything can read them.
+That route reads recorded spend from Postgres and reports the configuration source,
+saved revision and process observations separately. The task workspace shows remaining
+spend only when recorded steps are priced, with in-flight charges excluded.
 
 ## The guard
 
@@ -301,12 +335,9 @@ than per step, and it is the only record of why a session stopped.
 There is exactly one, in `packages/dashboard/lib/pricing.ts`. `scripts/sync-pricing.mjs` copies it into
 `src/pricing.ts` at build time, and that copy is gitignored so it cannot be edited by mistake.
 
-The direction is forced rather than chosen: this package is published to npm and must carry the table in
-its tarball, while the dashboard is containerized from an isolated build context (`context:
-./packages/dashboard`, then a plain `npm install`) where a `workspace:*` dependency fails the image build
-with `EUNSUPPORTEDPROTOCOL`. So the dashboard keeps the editable copy and the build takes it. Two tables
-would let the number you are shown and the number you are stopped at disagree, which is the one
-disagreement a spend cap cannot survive.
+The dashboard owns the editable table and the budget package includes a generated copy
+in its published tarball. The dashboard image builds both workspace dependencies. Keep
+price overrides aligned in the dashboard and agent so reported and enforced costs agree.
 
 Override prices at runtime, in both halves at once, without touching either file:
 

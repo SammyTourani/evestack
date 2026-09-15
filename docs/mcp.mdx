@@ -33,7 +33,8 @@ route for something, this package has no tool for it.**
 | `EVESTACK_MCP_DASHBOARD_URL` | `http://localhost:4000` | Where the dashboard is. |
 | `EVESTACK_MCP_DASHBOARD_AUTH` | — | The dashboard credential. Every route is behind it. Write it as `user:password` and this server encodes it into `Basic …`; write a complete header value (`Basic dXNlcjpwYXNz`, `Bearer …`) and it is sent exactly as written. |
 | `EVESTACK_MCP_DASHBOARD_AUTH_VERBATIM` | unset | `1` sends the value above exactly as written, whatever it looks like. Only for a proxy that wants a schemeless credential containing a colon. |
-| `EVESTACK_MCP_ALLOW_CONTROL` | unset | `1` advertises the four mutating tools. See below. |
+| `EVESTACK_MCP_ALLOW_CONTROL` | unset | `1` advertises task start, continuation and cancellation. |
+| `EVESTACK_MCP_ALLOW_APPROVALS` | unset | With control enabled, `1` also grants authority to answer human decisions. |
 | `EVESTACK_MCP_APPROVER` | — | The name this server offers for decisions it makes. Recorded **only** if the dashboard sets `EVESTACK_TRUSTED_PROXY` — see [Whose name ends up on an approval](#whose-name-ends-up-on-an-approval). |
 | `EVESTACK_MCP_TIMEOUT_MS` | — | Per-request timeout against the dashboard. |
 
@@ -50,8 +51,11 @@ Read-only, always available:
 
 | Tool | Answers |
 | --- | --- |
-| `list_sessions` | What has run recently. |
+| `list_sessions` | Paginated task history; search titles and IDs with `q`. |
 | `get_session` | One session: live waiting state, pending approval requests, usage, and the verbatim budget-stop reason. |
+| `list_routines` | Saved routines and dashboard clock health. |
+| `get_routine` | A routine and its latest 50 runs. |
+| `pending_decisions` | Actual pending requests, unknown probes and page coverage. |
 | `list_approvals` | Who approved or denied what, and how that identity was established. |
 | `get_costs` | Caps, per-principal daily spend, stops, lifetime totals. |
 | `promote_session_to_eval` | Generates eval source from a real session. Writes nothing. |
@@ -62,7 +66,7 @@ Advertised only with `EVESTACK_MCP_ALLOW_CONTROL=1`:
 | --- | --- |
 | `start_session` | Starts a real run. **Spends money.** |
 | `send_message` | Another turn on a live session. **Spends money.** |
-| `approve_or_deny` | **Runs the gated tool for real.** Audited. |
+| `approve_or_deny` | Also requires `EVESTACK_MCP_ALLOW_APPROVALS=1`. **Runs the gated tool for real.** Audited. |
 | `cancel_run` | Cooperative stop between steps; the in-flight model call still bills. |
 
 ## Why the default is read-only
@@ -76,8 +80,9 @@ A model cannot plan around a capability it has never been told exists, so there 
 talks the server into using one.
 
 <Warning>
-  Turning on `EVESTACK_MCP_ALLOW_CONTROL` means an agent can approve shell commands on your machine
-  and start runs that cost money. Every decision is written to the audit log on
+  Turning on `EVESTACK_MCP_ALLOW_CONTROL` lets an agent start runs that cost money.
+  Also enabling `EVESTACK_MCP_ALLOW_APPROVALS=1` lets it answer human decisions, including
+  approval of shell commands. Every decision is written to the audit log on
   [Approvals](/docs/dashboard) whatever you configure; what `EVESTACK_MCP_APPROVER` changes is only the
   name on the row, and only under the condition below.
 </Warning>

@@ -104,17 +104,29 @@ export class AgentError extends Error {
     message: string,
     options: { status: number; upstreamStatus?: number; cause?: unknown },
   ) {
-    super(message, options.cause === undefined ? undefined : { cause: options.cause });
+    super(
+      message,
+      options.cause === undefined ? undefined : { cause: options.cause },
+    );
     this.name = "AgentError";
     this.code = code;
     this.status = options.status;
-    if (options.upstreamStatus !== undefined) this.upstreamStatus = options.upstreamStatus;
+    if (options.upstreamStatus !== undefined)
+      this.upstreamStatus = options.upstreamStatus;
   }
 
   toResponse(): Response {
-    const body: Record<string, unknown> = { ok: false, error: this.message, code: this.code };
-    if (this.upstreamStatus !== undefined) body.upstreamStatus = this.upstreamStatus;
-    return Response.json(body, { status: this.status, headers: { "cache-control": "no-store" } });
+    const body: Record<string, unknown> = {
+      ok: false,
+      error: this.message,
+      code: this.code,
+    };
+    if (this.upstreamStatus !== undefined)
+      body.upstreamStatus = this.upstreamStatus;
+    return Response.json(body, {
+      status: this.status,
+      headers: { "cache-control": "no-store" },
+    });
   }
 }
 
@@ -154,7 +166,10 @@ function codeForUpstream(upstream: number): AgentErrorCode {
  * before, and it stays exactly as configured.
  */
 export function agentUrlForHumans(): string {
-  return agentBaseUrl().replace(/\/\/(host\.docker\.internal|0\.0\.0\.0)(?=[:/]|$)/, "//localhost");
+  return agentBaseUrl().replace(
+    /\/\/(host\.docker\.internal|0\.0\.0\.0)(?=[:/]|$)/,
+    "//localhost",
+  );
 }
 
 export function agentBaseUrl(): string {
@@ -183,11 +198,23 @@ export interface AgentFetchOptions {
   signal?: AbortSignal;
 }
 
-export async function agentFetch(path: string, options: AgentFetchOptions = {}): Promise<Response> {
-  const { method = "GET", body, headers = {}, timeoutMs = DEFAULT_TIMEOUT_MS, signal } = options;
+export async function agentFetch(
+  path: string,
+  options: AgentFetchOptions = {},
+): Promise<Response> {
+  const {
+    method = "GET",
+    body,
+    headers = {},
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+    signal,
+  } = options;
   const url = `${agentBaseUrl()}${path}`;
 
-  const requestHeaders: Record<string, string> = { accept: "application/json", ...headers };
+  const requestHeaders: Record<string, string> = {
+    accept: "application/json",
+    ...headers,
+  };
   const auth = authHeader();
   if (auth) requestHeaders.authorization = auth;
   if (body !== undefined) requestHeaders["content-type"] = "application/json";
@@ -209,10 +236,14 @@ export async function agentFetch(path: string, options: AgentFetchOptions = {}):
   } catch (cause) {
     if (signal?.aborted) throw cause;
     if (cause instanceof DOMException && cause.name === "TimeoutError") {
-      throw new AgentError("agent_timeout", `The agent at ${agentBaseUrl()} did not respond in time.`, {
-        status: 504,
-        cause,
-      });
+      throw new AgentError(
+        "agent_timeout",
+        `The agent at ${agentBaseUrl()} did not respond in time.`,
+        {
+          status: 504,
+          cause,
+        },
+      );
     }
     // `npm run dev`, not `pnpm exec eve dev --no-ui`. A scaffolded project is an
     // npm project with that script defined, and this string is shown at the one
@@ -230,7 +261,10 @@ export async function agentFetch(path: string, options: AgentFetchOptions = {}):
   }
 }
 
-async function agentJson<T>(path: string, options: AgentFetchOptions): Promise<T> {
+async function agentJson<T>(
+  path: string,
+  options: AgentFetchOptions,
+): Promise<T> {
   const response = await agentFetch(path, options);
   const text = await response.text();
 
@@ -239,18 +273,24 @@ async function agentJson<T>(path: string, options: AgentFetchOptions): Promise<T
     parsed = text.length === 0 ? {} : JSON.parse(text);
   } catch (cause) {
     if (response.ok) {
-      throw new AgentError("invalid_response", "The agent returned a non-JSON response.", {
-        status: 502,
-        upstreamStatus: response.status,
-        cause,
-      });
+      throw new AgentError(
+        "invalid_response",
+        "The agent returned a non-JSON response.",
+        {
+          status: 502,
+          upstreamStatus: response.status,
+          cause,
+        },
+      );
     }
     parsed = {};
   }
 
   if (!response.ok) {
     const message =
-      (typeof parsed === "object" && parsed !== null && typeof (parsed as { error?: unknown }).error === "string"
+      (typeof parsed === "object" &&
+      parsed !== null &&
+      typeof (parsed as { error?: unknown }).error === "string"
         ? (parsed as { error: string }).error
         : undefined) ?? `The agent returned ${response.status}.`;
     throw new AgentError(codeForUpstream(response.status), message, {
@@ -299,12 +339,18 @@ export interface CreateSessionResult {
   continuationToken: string | null;
 }
 
-export async function createSession(input: CreateSessionInput): Promise<CreateSessionResult> {
+export async function createSession(
+  input: CreateSessionInput,
+): Promise<CreateSessionResult> {
   const body: Record<string, unknown> = { message: input.message };
   if (input.mode !== undefined) body.mode = input.mode;
-  if (input.clientContext !== undefined) body.clientContext = input.clientContext;
+  if (input.clientContext !== undefined)
+    body.clientContext = input.clientContext;
 
-  const result = await agentJson<{ sessionId?: string; continuationToken?: string }>("/eve/v1/session", {
+  const result = await agentJson<{
+    sessionId?: string;
+    continuationToken?: string;
+  }>("/eve/v1/session", {
     method: "POST",
     body,
     ...(input.signal ? { signal: input.signal } : {}),
@@ -317,11 +363,18 @@ export async function createSession(input: CreateSessionInput): Promise<CreateSe
   // fork route polls `getSessionSnapshot` for a token that is not the one it
   // already spent. Neither has ever depended on this field.
   if (!result.sessionId) {
-    throw new AgentError("invalid_response", "The agent accepted the session but named no session.", {
-      status: 502,
-    });
+    throw new AgentError(
+      "invalid_response",
+      "The agent accepted the session but named no session.",
+      {
+        status: 502,
+      },
+    );
   }
-  return { sessionId: result.sessionId, continuationToken: result.continuationToken ?? null };
+  return {
+    sessionId: result.sessionId,
+    continuationToken: result.continuationToken ?? null,
+  };
 }
 
 export interface ContinueSessionInput {
@@ -340,16 +393,23 @@ export async function continueSession(
   sessionId: string,
   input: ContinueSessionInput,
 ): Promise<{ sessionId: string }> {
-  const body: Record<string, unknown> = { continuationToken: input.continuationToken };
+  const body: Record<string, unknown> = {
+    continuationToken: input.continuationToken,
+  };
   if (input.message !== undefined) body.message = input.message;
-  if (input.inputResponses !== undefined) body.inputResponses = input.inputResponses;
-  if (input.clientContext !== undefined) body.clientContext = input.clientContext;
+  if (input.inputResponses !== undefined)
+    body.inputResponses = input.inputResponses;
+  if (input.clientContext !== undefined)
+    body.clientContext = input.clientContext;
 
-  const result = await agentJson<{ sessionId?: string }>(sessionPath(sessionId), {
-    method: "POST",
-    body,
-    ...(input.signal ? { signal: input.signal } : {}),
-  });
+  const result = await agentJson<{ sessionId?: string }>(
+    sessionPath(sessionId),
+    {
+      method: "POST",
+      body,
+      ...(input.signal ? { signal: input.signal } : {}),
+    },
+  );
   return { sessionId: result.sessionId ?? sessionId };
 }
 
@@ -362,15 +422,18 @@ export async function cancelTurn(
   sessionId: string,
   options: { turnId?: string; signal?: AbortSignal } = {},
 ): Promise<{ sessionId: string; status: CancelTurnStatus }> {
-  const result = await agentJson<{ sessionId?: string; status?: CancelTurnStatus }>(
-    `${sessionPath(sessionId)}/cancel`,
-    {
-      method: "POST",
-      body: options.turnId === undefined ? {} : { turnId: options.turnId },
-      ...(options.signal ? { signal: options.signal } : {}),
-    },
-  );
-  return { sessionId: result.sessionId ?? sessionId, status: result.status ?? "accepted" };
+  const result = await agentJson<{
+    sessionId?: string;
+    status?: CancelTurnStatus;
+  }>(`${sessionPath(sessionId)}/cancel`, {
+    method: "POST",
+    body: options.turnId === undefined ? {} : { turnId: options.turnId },
+    ...(options.signal ? { signal: options.signal } : {}),
+  });
+  return {
+    sessionId: result.sessionId ?? sessionId,
+    status: result.status ?? "accepted",
+  };
 }
 
 /** Answers one or more parked HITL requests. This is eve's only approval path. */
@@ -408,22 +471,30 @@ export async function openEventStream(
   options: OpenStreamOptions = {},
 ): Promise<Response> {
   const params = new URLSearchParams();
-  if (options.startIndex !== undefined) params.set("startIndex", String(options.startIndex));
+  if (options.startIndex !== undefined)
+    params.set("startIndex", String(options.startIndex));
   if (options.includeTailIndex) params.set("includeTailIndex", "1");
   const query = params.size === 0 ? "" : `?${params}`;
 
-  const response = await agentFetch(`${sessionPath(sessionId)}/stream${query}`, {
-    headers: { accept: EVE_STREAM_CONTENT_TYPE },
-    timeoutMs: null,
-    ...(options.signal ? { signal: options.signal } : {}),
-  });
+  const response = await agentFetch(
+    `${sessionPath(sessionId)}/stream${query}`,
+    {
+      headers: { accept: EVE_STREAM_CONTENT_TYPE },
+      timeoutMs: null,
+      ...(options.signal ? { signal: options.signal } : {}),
+    },
+  );
 
   if (!response.ok) {
     const text = await response.text().catch(() => "");
     let message = `The agent returned ${response.status} for the event stream.`;
     try {
       const parsed: unknown = JSON.parse(text);
-      if (typeof parsed === "object" && parsed !== null && typeof (parsed as { error?: unknown }).error === "string") {
+      if (
+        typeof parsed === "object" &&
+        parsed !== null &&
+        typeof (parsed as { error?: unknown }).error === "string"
+      ) {
         message = (parsed as { error: string }).error;
       }
     } catch {
@@ -519,7 +590,10 @@ export class StreamTruncatedError extends Error {
   }
 }
 
-async function readNdjson(body: ReadableStream<Uint8Array>, limit: number): Promise<EveStreamEvent[]> {
+async function readNdjson(
+  body: ReadableStream<Uint8Array>,
+  limit: number,
+): Promise<EveStreamEvent[]> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   const events: EveStreamEvent[] = [];
@@ -620,6 +694,8 @@ export interface SessionSnapshot {
   /** True when the last boundary event was `session.waiting`. */
   waiting: boolean;
   terminal: boolean;
+  /** Failure/cancellation observed in this bounded stream window; absence is not historical proof. */
+  failedOrCancelled?: boolean;
   /** Turn id from the most recent `turn.started`, for scoped cancellation. */
   turnId?: string;
   pendingRequests: InputRequest[];
@@ -676,7 +752,8 @@ export async function getSessionSnapshot(
         break;
       }
       case "input.requested": {
-        for (const entry of toInputRequests(event.data.requests)) pending.set(entry.requestId, entry);
+        for (const entry of toInputRequests(event.data.requests))
+          pending.set(entry.requestId, entry);
         break;
       }
       case "action.result": {
@@ -685,7 +762,8 @@ export async function getSessionSnapshot(
         const callId = actionResultCallId(event.data);
         if (callId !== undefined) {
           for (const [requestId, entry] of pending) {
-            if (requestId === callId || entry.action?.callId === callId) pending.delete(requestId);
+            if (requestId === callId || entry.action?.callId === callId)
+              pending.delete(requestId);
           }
         }
         break;
@@ -699,11 +777,17 @@ export async function getSessionSnapshot(
       }
       case "session.completed":
       case "session.failed": {
+        if (event.type === "session.failed") snapshot.failedOrCancelled = true;
         snapshot.waiting = false;
         snapshot.terminal = true;
         pending.clear();
         break;
       }
+      case "turn.failed":
+      case "step.failed":
+      case "turn.cancelled":
+        snapshot.failedOrCancelled = true;
+        break;
       default:
         break;
     }

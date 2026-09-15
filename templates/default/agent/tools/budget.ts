@@ -26,5 +26,13 @@ import { budgetGuard } from "@evestack/budget";
  * leaving every tool enabled.
  */
 export default budgetGuard({
-  guardTools: ["remember", "recall", "forget", "bash", "write_file", "web_fetch"],
+  dashboardControls: true,
+  guardTools: [
+    "remember",
+    "recall",
+    "forget",
+    "bash",
+    "write_file",
+    "web_fetch",
+  ],
 });

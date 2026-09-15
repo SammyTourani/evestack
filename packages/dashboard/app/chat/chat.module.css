@@ -19,6 +19,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
 }
 .sessionLink {
   font-family: var(--mono);
@@ -146,6 +147,7 @@
 .approvalButtons {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
 }
 .approvalButtons button {
   font: inherit;
@@ -181,6 +183,7 @@
   border: 1px solid var(--border);
   background: var(--bg-raised);
   color: var(--text);
+  min-width: 0;
 }
 .composer textarea:focus {
   outline: none;
@@ -204,4 +207,39 @@
   background: transparent;
   border-color: var(--err);
   color: var(--err);
+}
+
+.approvalButtons button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+.answerForm {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+.answerForm textarea {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 8px;
+  border-radius: 6px;
+}
+@media (max-width: 600px) {
+  .wrap {
+    min-height: 560px;
+    height: calc(100dvh - 120px);
+  }
+  .head {
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .bubble,
+  .toolCard {
+    max-width: 100%;
+  }
+  .composerButtons button {
+    padding: 10px 14px;
+  }
 }

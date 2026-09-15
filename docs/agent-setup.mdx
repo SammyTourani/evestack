@@ -100,10 +100,10 @@ stack — sessions, costs, the approval audit log:
 ```
 
 <Warning>
-  Read-only by default, and the four tools that can act on a live agent are withheld from
-  `tools/list` entirely until you set `EVESTACK_MCP_ALLOW_CONTROL=1`. Turning that on lets a model
-  approve a gated tool call a human was asked to stand at — which is the entire reason eve pauses
-  the turn. See [MCP](/docs/mcp) before you do.
+  Read-only by default. `EVESTACK_MCP_ALLOW_CONTROL=1` enables task start,
+  continuation and cancellation. Answering human decisions additionally requires
+  `EVESTACK_MCP_ALLOW_APPROVALS=1`, which lets a model approve a gated tool call.
+  See [MCP](/docs/mcp) before enabling that authority.
 </Warning>
 
 ## A note on trusting it

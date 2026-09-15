@@ -63,6 +63,7 @@ on:
     paths:
       - "packages/dashboard/**"
       - "packages/evestack-schedules/**"
+      - "packages/evestack-budget/**"
       - "templates/default/agent/skills/**"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
@@ -357,6 +358,22 @@ jobs:
         run: |
           set -euo pipefail
           A=(-u "$AUTH_USER:$AUTH_PASSWORD")
+
+          # Exercise the budget workspace dependency and the new routine schema
+          # from the runtime image, where missing dist/ or SQL fails at request time.
+          curl -sf "${A[@]}" http://localhost:4000/api/settings/budget > /tmp/budget-settings.json
+          curl -sf "${A[@]}" http://localhost:4000/api/routines > /tmp/routines.json
+          curl -sf -XPOST "${A[@]}" -H 'content-type: application/json' \
+            -d '{"cron":"0 9 * * 1-5","timeZone":"America/Toronto"}' \
+            http://localhost:4000/api/routines/preview > /tmp/routine-preview.json
+          node -e '
+            const budget = require("/tmp/budget-settings.json");
+            const routines = require("/tmp/routines.json");
+            const preview = require("/tmp/routine-preview.json");
+            if (!budget.ok || !Array.isArray(budget.consumers) || !budget.defaults) throw new Error("Budget settings contract missing from image");
+            if (!routines.ok || !Array.isArray(routines.routines) || !routines.clock) throw new Error("Routine contract missing from image");
+            if (!preview.ok || preview.times?.length !== 3 || preview.times.some(t => !Number.isFinite(Date.parse(t.utc)))) throw new Error("Routine preview failed in image");
+          '
 
           # queries.ts -> sql/query-indexes.sql. It also imports ensureTraceSchema,
           # so this single request applies sql/traces.sql as a side effect.

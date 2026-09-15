@@ -28,6 +28,9 @@ export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
   if (process.env.NEXT_PHASE === "phase-production-build") return;
 
+  const { startRoutineClock } = await import("./lib/routine-dispatcher");
+  startRoutineClock();
+
   const { startAlertDelivery } = await import("./lib/alert-delivery");
   const { started, reason } = startAlertDelivery();
 

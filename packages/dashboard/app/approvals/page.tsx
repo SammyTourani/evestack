@@ -1,6 +1,11 @@
 import { DatabaseError } from "@/app/db-error";
-import { listApprovals, type ApprovalRow, type ApproverIdentity } from "@/lib/approvals";
+import {
+  listApprovals,
+  type ApprovalRow,
+  type ApproverIdentity,
+} from "@/lib/approvals";
 import { stamp } from "@/lib/time";
+import { DecisionQueue } from "@/components/decision-queue";
 import styles from "./approvals.module.css";
 
 export const dynamic = "force-dynamic";
@@ -20,8 +25,16 @@ const PROXY_TITLE =
  */
 const TRUST: Record<ApproverIdentity["via"], Trust> = {
   header: { label: "header", cls: "status-completed", title: PROXY_TITLE },
-  "forwarded-user": { label: "user", cls: "status-completed", title: PROXY_TITLE },
-  "forwarded-email": { label: "email", cls: "status-completed", title: PROXY_TITLE },
+  "forwarded-user": {
+    label: "user",
+    cls: "status-completed",
+    title: PROXY_TITLE,
+  },
+  "forwarded-email": {
+    label: "email",
+    cls: "status-completed",
+    title: PROXY_TITLE,
+  },
   session: {
     label: "signed in",
     cls: "status-running",
@@ -73,47 +86,42 @@ export default async function ApprovalsPage() {
     return <DatabaseError error={error} />;
   }
 
-  const unidentified = rows.filter((r) => r.approverVia === "unidentified").length;
+  const unidentified = rows.filter(
+    (r) => r.approverVia === "unidentified",
+  ).length;
 
   return (
     <>
-      <h1>Approvals</h1>
+      <h1>Decisions</h1>
       <p className="page-sub">
-        Every human-in-the-loop decision this dashboard carried out. eve&apos;s protocol carries no
-        identity, so this is the only place that records <em>who</em>.
+        Review pending requests, then inspect the record of decisions accepted
+        through this dashboard.
       </p>
-      {/*
-        Say what this page is NOT, because its name and its position under
-        "Drive" both promise otherwise.
-
-        This is a log of decisions already made — it has no controls and cannot
-        answer anything. A session parked on a gated tool is answered in Chat,
-        which attaches to a durable session by id. Without this line the reader
-        who came here to unblock an agent has no way of learning that, and the
-        fleet banner used to send them to a read-only page too.
-      */}
+      <DecisionQueue />
+      <h2>Decision history</h2>
       <p className="page-sub">
-        A record, not a queue — there is nothing to action here. A session parked on a decision is
-        answered in <a href="/chat">Chat</a>, which attaches to it by id; the banner on{" "}
-        <a href="/">Overview</a> links each waiting session straight through.
+        Shared sign-in identifies this installation. Personal attribution
+        requires a trusted identity proxy.
       </p>
 
       {rows.length === 0 ? (
         <div className="empty">
           <h2>No decisions recorded yet</h2>
           <p>
-            Approve or deny a gated tool call and it lands here. The template ships{" "}
-            <code>forget</code> behind <code>approval: always()</code> if you want something to try
-            it with.
+            Approve or deny a gated tool call and it lands here. The template
+            ships <code>forget</code> behind <code>approval: always()</code> if
+            you want something to try it with.
           </p>
         </div>
       ) : (
         <>
           {unidentified > 0 && (
             <p className={styles.warn}>
-              {unidentified} of these {rows.length} decisions could not be attributed to anyone. Put
-              the dashboard behind a proxy that sets <code>X-Forwarded-User</code>, then set{" "}
-              <code>EVESTACK_REQUIRE_APPROVER=1</code> to refuse anonymous approvals outright.
+              {unidentified} of these {rows.length} decisions could not be
+              attributed to anyone. Put the dashboard behind a proxy that sets{" "}
+              <code>X-Forwarded-User</code>, then set{" "}
+              <code>EVESTACK_REQUIRE_APPROVER=1</code> to refuse anonymous
+              approvals outright.
             </p>
           )}
           <table className={styles.table}>
@@ -135,25 +143,36 @@ export default async function ApprovalsPage() {
                     {/* An audit log is unbounded in time, so the year is not optional here:
                         without it a decision from last August and one from this August are
                         the same string. See the note on `stamp`. */}
-                    <td className="mono">{stamp(row.decidedAt, "second", { year: true })}</td>
+                    <td className="mono">
+                      {stamp(row.decidedAt, "second", { year: true })}
+                    </td>
                     <td>
                       <span
                         className={
-                          row.optionId === "deny" ? "status status-failed" : "status status-completed"
+                          row.optionId === "deny"
+                            ? "status status-failed"
+                            : "status status-completed"
                         }
                       >
                         {decision(row)}
                       </span>
                     </td>
-                    <td className="mono">{row.toolName ?? <span className="faint">—</span>}</td>
-                    <td>{row.approver ?? <span className="faint">nobody</span>}</td>
+                    <td className="mono">
+                      {row.toolName ?? <span className="faint">—</span>}
+                    </td>
+                    <td>
+                      {row.approver ?? <span className="faint">nobody</span>}
+                    </td>
                     <td>
                       <span className={`status ${t.cls}`} title={t.title}>
                         {t.label}
                       </span>
                     </td>
                     <td>
-                      <a className="mono" href={`/sessions/${encodeURIComponent(row.sessionId)}`}>
+                      <a
+                        className="mono"
+                        href={`/sessions/${encodeURIComponent(row.sessionId)}`}
+                      >
                         {row.sessionId.slice(-10)}
                       </a>
                     </td>
