@@ -21,7 +21,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { test } from "node:test";
 
 import {
@@ -618,11 +618,12 @@ test("a file and an unreadable path each say their own thing", () => {
 
 test("the suggested name is the nearest free one, so Enter resolves it", () => {
   // Recovering from a collision should be one keystroke, not a decision.
-  const taken = new Set(["/w/my-agent", "/w/my-agent-2", "/w/my-agent-3"]);
+  const root = resolve("/w");
+  const taken = new Set(["my-agent", "my-agent-2", "my-agent-3"].map((name) => join(root, name)));
   const exists = (p) => taken.has(p);
 
-  assert.equal(freeNameNear("my-agent", exists, "/w"), "my-agent-4");
-  assert.equal(freeNameNear("other", exists, "/w"), "other", "a free name is returned unchanged");
+  assert.equal(freeNameNear("my-agent", exists, root), "my-agent-4");
+  assert.equal(freeNameNear("other", exists, root), "other", "a free name is returned unchanged");
 });
 
 /* -------------------------------------------------------------------------- */

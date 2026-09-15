@@ -31,6 +31,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { shellQuote } from "../shared.mjs";
 import { authPasswordFlag, dashboardRunCommand, signInSummary } from "../attach.mjs";
 
 const ENTRY = join(dirname(fileURLToPath(import.meta.url)), "..", "index.mjs");
@@ -394,7 +395,7 @@ test("the printed dashboard command mounts the project's own skills", () => {
   const command = dashboardCommand(result.stdout);
   assert.match(command, /-e EVESTACK_SKILLS_DIR=\/agent-skills/, command);
   assert.ok(
-    command.includes(`${join(dir, "agent", "skills")}:/agent-skills:ro`),
+    command.includes(`${shellQuote(join(dir, "agent", "skills"))}:/agent-skills:ro`),
     `the mount is missing or not read-only:\n${command}`,
   );
 });
@@ -539,8 +540,8 @@ test("a project with no repository above it gets one, listed in the undo", () =>
   assert.equal(run(dir, "git", ["rev-parse", "--is-inside-work-tree"]).stdout.trim(), "true");
   // The whole point: eve's walk now stops here instead of in $HOME.
   assert.equal(
-    run(dir, "git", ["rev-parse", "--show-toplevel"]).stdout.trim(),
-    realpathSync(dir),
+    realpathSync.native(run(dir, "git", ["rev-parse", "--show-toplevel"]).stdout.trim()),
+    realpathSync.native(dir),
     "the repository is not rooted at the project",
   );
   // Reversible, and said so where the rest of the footprint is said.
@@ -607,8 +608,8 @@ test("a bare repository above the project is fenced off, not deferred to", () =>
 
   assert.equal(existsSync(join(dir, ".git")), true, "the enclosing repository was deferred to");
   assert.equal(
-    run(dir, "git", ["rev-parse", "--show-toplevel"]).stdout.trim(),
-    realpathSync(dir),
+    realpathSync.native(run(dir, "git", ["rev-parse", "--show-toplevel"]).stdout.trim()),
+    realpathSync.native(dir),
     "eve's walk still leaves the project",
   );
   assert.match(output, /rm -rf \.git/, output);

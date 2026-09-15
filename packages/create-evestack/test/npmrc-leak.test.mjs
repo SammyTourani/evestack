@@ -51,13 +51,14 @@
  * directory that is a dotfiles repository (`.git` + `.npmrc` with a registry
  * token), with the project some directories below it.
  */
+import { shimPath } from "./helpers/scaffold-shims.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ENTRY = join(HERE, "..", "index.mjs");
@@ -96,7 +97,7 @@ const NO_EVE = EVE_SNAPSHOT_MODULE
   ? false
   : "eve is not installed — run `pnpm install` at the repository root";
 
-const eveSnapshot = EVE_SNAPSHOT_MODULE ? await import(EVE_SNAPSHOT_MODULE) : null;
+const eveSnapshot = EVE_SNAPSHOT_MODULE ? await import(pathToFileURL(EVE_SNAPSHOT_MODULE).href) : null;
 
 /**
  * A dotfiles repository with a real credential in it, and a project below it.
@@ -142,18 +143,6 @@ function eveProject(parent, name = "my-agent") {
  * real `npm install` in a test that is about a filesystem walk would spend two
  * minutes proving nothing, and a real `docker` would try to start a stack.
  */
-function shimPath() {
-  const bin = mkdtempSync(join(tmpdir(), "evestack-leak-shim-"));
-  const write = (name, body) => {
-    writeFileSync(join(bin, name), body);
-    chmodSync(join(bin, name), 0o755);
-  };
-  const hash = String.fromCharCode(35);
-  const install = `${hash}!/bin/sh\ncase "$1" in install) mkdir -p node_modules/eve;; esac\nexit 0\n`;
-  ["npm", "pnpm", "yarn", "bun"].forEach((name) => write(name, install));
-  ["docker", "ollama"].forEach((name) => write(name, `${hash}!/bin/sh\nexit 1\n`));
-  return `${bin}:${process.env.PATH}`;
-}
 
 function cli(args, cwd) {
   return spawnSync(process.execPath, [ENTRY, ...args], {

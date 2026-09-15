@@ -25,6 +25,7 @@
  * happens strictly after both files are written, so nothing under test depends
  * on it.
  */
+import { shimPath } from "./helpers/scaffold-shims.mjs";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -60,21 +61,6 @@ const modeOf = (path) => (statSync(path).mode & 0o777).toString(8);
  * All four managers are stubbed because detectPm() reads npm_config_user_agent,
  * so which one gets called depends on what invoked the test run.
  */
-function shimPath() {
-  const bin = mkdtempSync(join(tmpdir(), "evestack-shim-"));
-  for (const name of ["npm", "pnpm", "yarn", "bun"]) {
-    writeFileSync(join(bin, name), '#!/bin/sh\nif [ "$1" = "install" ]; then mkdir -p node_modules/eve; fi\nexit 0\n');
-    chmodSync(join(bin, name), 0o755);
-  }
-  // Neither is consulted for anything this file asserts, and both are slow or
-  // absent depending on the machine. `docker info` decides only whether the
-  // scaffolder offers to start the stack, and it does not offer under --yes.
-  for (const name of ["docker", "ollama"]) {
-    writeFileSync(join(bin, name), "#!/bin/sh\nexit 1\n");
-    chmodSync(join(bin, name), 0o755);
-  }
-  return `${bin}:${process.env.PATH}`;
-}
 
 function scaffold() {
   const parent = mkdtempSync(join(tmpdir(), "evestack-credentials-"));
