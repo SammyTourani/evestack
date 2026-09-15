@@ -23,11 +23,9 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { dirname, join } from "node:path";
 import { test } from "node:test";
-import { fileURLToPath } from "node:url";
 
-const HERE = dirname(fileURLToPath(import.meta.url));
+const UNICODE_ENV = { EVESTACK_ASCII: undefined, WT_SESSION: "evestack-test-terminal" };
 
 /**
  * Read the marks back from a child process, because `unicode` is decided once
@@ -35,8 +33,8 @@ const HERE = dirname(fileURLToPath(import.meta.url));
  */
 function marksUnder(env) {
   const script = `
-    const { MARKS } = await import(${JSON.stringify(join(HERE, "..", "wizard.mjs"))});
-    const { g, unicode } = await import(${JSON.stringify(join(HERE, "..", "ui.mjs"))});
+    const { MARKS } = await import(${JSON.stringify(new URL("../wizard.mjs", import.meta.url).href)});
+    const { g, unicode } = await import(${JSON.stringify(new URL("../ui.mjs", import.meta.url).href)});
     process.stdout.write(JSON.stringify({ ...MARKS, sep: g.sep, ok: g.ok, skip: g.skip, unicode }));
   `;
   return JSON.parse(
@@ -49,7 +47,7 @@ function marksUnder(env) {
 
 test("the ASCII fallback is actually reached", () => {
   assert.equal(marksUnder({ EVESTACK_ASCII: "1" }).unicode, false);
-  assert.equal(marksUnder({ EVESTACK_ASCII: undefined }).unicode, true);
+  assert.equal(marksUnder(UNICODE_ENV).unicode, true);
 });
 
 test("no glyph on a row means two different things — ASCII", () => {
@@ -68,7 +66,7 @@ test("no glyph on a row means two different things — ASCII", () => {
 });
 
 test("no glyph on a row means two different things — Unicode", () => {
-  const m = marksUnder({ EVESTACK_ASCII: undefined });
+  const m = marksUnder(UNICODE_ENV);
 
   const onARow = [m.gutter, m.empty, m.ok, m.sep];
   assert.equal(new Set(onARow).size, onARow.length, JSON.stringify(onARow));
@@ -78,7 +76,7 @@ test("no glyph on a row means two different things — Unicode", () => {
 test("every mark is a single column in both sets", () => {
   // The list pads against printable width. A two-character mark would shift one
   // row's columns out of line with every other row's.
-  for (const env of [{ EVESTACK_ASCII: "1" }, { EVESTACK_ASCII: undefined }]) {
+  for (const env of [{ EVESTACK_ASCII: "1" }, UNICODE_ENV]) {
     const m = marksUnder(env);
     for (const [name, glyph] of Object.entries(m)) {
       if (name === "unicode") continue;

@@ -421,6 +421,7 @@ jobs:
           export DISCORD_PUBLIC_KEY="$(cat /tmp/discord-public-key.txt)"
           export TELEGRAM_BOT_TOKEN=123456789:AA-ci-probe-token-not-a-real-bot
           export TELEGRAM_WEBHOOK_SECRET_TOKEN=ci-telegram-secret
+          export TELEGRAM_ALLOWED_USER_IDS=424242
           export SLACK_BOT_TOKEN=xoxb-ci-probe-not-a-real-token
           export SLACK_SIGNING_SECRET=ci-slack-signing-secret
 
@@ -509,6 +510,7 @@ jobs:
           # check — so the probe fails loudly on a wrong secret rather than
           # skipping on a missing one.
           TELEGRAM_WEBHOOK_SECRET_TOKEN: ci-telegram-secret
+          EVESTACK_PROBE_TELEGRAM_USER_ID: "424242"
           SLACK_SIGNING_SECRET: ci-slack-signing-secret
         # Two invocations, because --only takes one substring, not a list.
         run: |
