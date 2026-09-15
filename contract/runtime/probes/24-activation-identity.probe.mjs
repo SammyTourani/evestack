@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 // Shared with an isolated PostgreSQL/WASM validation run. The normal runtime
 // suite calls this against its pgvector Postgres service, without a model key.
 export async function checkActivationIdentity(client, t) {
+  const equal = (actual, expected, label) => t.ok(actual === expected, label, { actual, expected });
   const suffix = randomUUID().replaceAll('-', '').slice(0, 12);
   const schema = `activation_${suffix}`;
   const workflow = `activation_runs_${suffix}`;
@@ -24,24 +25,24 @@ export async function checkActivationIdentity(client, t) {
     await insert('a'.repeat(32), '1'.repeat(16), null, { 'gen_ai.conversation.id': 'external-correlation', 'agent.turn.id': 'wrun_turn1' });
     const identities = async () => (await client.query(`SELECT resolved_session_id AS sid, resolved_turn_id AS tid FROM ${schema}.spans WHERE trace_id=$1 ORDER BY span_id`, ['a'.repeat(32)])).rows;
     const expected = [{ sid: 'wrun_session1', tid: 'wrun_turn1' }, { sid: 'wrun_session1', tid: 'wrun_turn1' }];
-    t.equal(JSON.stringify(await identities()), JSON.stringify(expected), 'out-of-order activation descendants resolve to the actual turn parent');
+    equal(JSON.stringify(await identities()), JSON.stringify(expected), 'out-of-order activation descendants resolve to the actual turn parent');
     const unchanged = (await client.query(`SELECT ${schema}.resolve_span_ancestry($1) AS changed`, [['a'.repeat(32)]])).rows[0];
-    t.equal(Number(unchanged.changed), 0, 're-resolving current identities performs no writes');
+    equal(Number(unchanged.changed), 0, 're-resolving current identities performs no writes');
     // Simulate a v4 installation with stored rows and missing new metadata.
     await client.query(`DROP TRIGGER spans_resolved_after_update ON ${schema}.spans;
       ALTER TABLE ${schema}.spans DROP COLUMN conversation_id;
       UPDATE ${schema}.spans SET resolved_session_id=NULL;
       UPDATE ${schema}.schema_version SET version=4 WHERE component='spans'`);
     await client.query(sql);
-    t.equal(JSON.stringify(await identities()), JSON.stringify(expected), 'v4 migration backfills stored activation identity');
+    equal(JSON.stringify(await identities()), JSON.stringify(expected), 'v4 migration backfills stored activation identity');
     await client.query(sql);
-    t.equal(JSON.stringify(await identities()), JSON.stringify(expected), 'applying the schema twice preserves attribution');
+    equal(JSON.stringify(await identities()), JSON.stringify(expected), 'applying the schema twice preserves attribution');
     await insert('b'.repeat(32), '3'.repeat(16), null, { 'agent.session.id': 'wrun_legacy', 'agent.turn.id': 'wrun_legacy_turn' });
     const legacy = (await client.query(`SELECT resolved_session_id AS sid FROM ${schema}.spans WHERE trace_id=$1`, ['b'.repeat(32)])).rows[0];
-    t.equal(legacy.sid, 'wrun_legacy', 'legacy spans retain their original session');
+    equal(legacy.sid, 'wrun_legacy', 'legacy spans retain their original session');
     await insert('c'.repeat(32), '4'.repeat(16), null, { 'gen_ai.conversation.id': 'wrun_some_other_session', 'agent.turn.id': 'wrun_missing' });
     const orphan = (await client.query(`SELECT resolved_session_id AS sid FROM ${schema}.spans WHERE trace_id=$1`, ['c'.repeat(32)])).rows[0];
-    t.equal(orphan.sid, null, 'an external conversation ID is never treated as a session ID');
+    equal(orphan.sid, null, 'an external conversation ID is never treated as a session ID');
   } finally {
     await client.query('ROLLBACK').catch(() => {});
     await client.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE; DROP SCHEMA IF EXISTS ${workflow} CASCADE`);
