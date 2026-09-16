@@ -772,6 +772,26 @@
     font-size: 15px;
     font-weight: 600;
   }
+  .channel-setup h3 { margin: 24px 0 8px; font-size: 15px; font-weight: 600; }
+  .channel-setup > label { display: block; margin: 14px 0 6px; }
+  .channel-setup > input,
+  .channel-setup > select,
+  .channel-setup > textarea {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 10px;
+    margin-bottom: 10px;
+    font: inherit;
+    background: var(--bg);
+    color: var(--text);
+  }
+  .channel-setup textarea { resize: vertical; }
+  .channel-setup details { margin-top: 18px; }
+  .channel-setup summary { cursor: pointer; font-weight: 600; }
+  .channel-setup button:disabled { opacity: .55; cursor: default; }
   .repository-setup > .routine-form {
     margin: 16px 0;
   }

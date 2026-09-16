@@ -44,6 +44,12 @@ const PUBLIC_KEYS = new Set([
   "DISCORD_ALLOWED_GUILD_IDS",
   "DISCORD_ALLOWED_USER_IDS",
   "EVESTACK_ALERT_WEBHOOK_FORMAT",
+  "EVESTACK_HEARTBEAT_CHANNEL",
+  "EVESTACK_HEARTBEAT_TARGET",
+  "EVESTACK_HEARTBEAT_CRON",
+  "EVESTACK_HEARTBEAT_FILE",
+  "EVESTACK_HEARTBEAT_QUIET_HOURS",
+  "EVESTACK_HEARTBEAT_QUIET_TIMEZONE",
 ]);
 const SECRET_KEYS = new Set([
   "OPENAI_API_KEY",
@@ -180,9 +186,48 @@ function validateSetting(key, value, allowPublic) {
     EVESTACK_EMBED_PROVIDER: ["openai", "ollama"],
     EVESTACK_MEMORY_SCOPE: ["owner", "strict", "shared"],
     EVESTACK_ALERT_WEBHOOK_FORMAT: ["slack", "discord", "webhook"],
+    EVESTACK_HEARTBEAT_CHANNEL: ["telegram", "slack", "discord"],
   };
   if (choices[key] && !choices[key].includes(value))
     throw new Error(`Invalid ${key}. Allowed: ${choices[key].join(", ")}.`);
+  if (key === "EVESTACK_HEARTBEAT_QUIET_TIMEZONE") {
+    try {
+      new Intl.DateTimeFormat("en", { timeZone: value });
+    } catch {
+      throw new Error("Use an IANA timezone for heartbeat quiet hours.");
+    }
+  }
+  if (key === "EVESTACK_HEARTBEAT_QUIET_HOURS") {
+    const match = /^(\d{2}):(\d{2})-(\d{2}):(\d{2})$/.exec(value);
+    if (
+      !match ||
+      Number(match[1]) > 23 ||
+      Number(match[3]) > 23 ||
+      Number(match[2]) > 59 ||
+      Number(match[4]) > 59 ||
+      value.slice(0, 5) === value.slice(6)
+    )
+      throw new Error(
+        "Use different quiet-hour boundaries as HH:MM-HH:MM, for example 22:00-08:00.",
+      );
+  }
+  if (key === "EVESTACK_HEARTBEAT_TARGET") {
+    let target;
+    try {
+      target = JSON.parse(value);
+    } catch {
+      throw new Error("Heartbeat target must be valid JSON.");
+    }
+    if (
+      !target ||
+      typeof target !== "object" ||
+      Array.isArray(target) ||
+      Buffer.byteLength(value) > 4096
+    )
+      throw new Error(
+        "Heartbeat target must be a JSON object of at most 4 KiB.",
+      );
+  }
   if (
     ["EVESTACK_CONTEXT_WINDOW", "EVESTACK_EMBED_DIMENSIONS"].includes(key) &&
     (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 1000000)

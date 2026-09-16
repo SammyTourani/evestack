@@ -2,6 +2,7 @@ import { deliveryStatus } from "@/lib/alert-delivery";
 import { DeliveryTest } from "@/app/monitors/delivery-test";
 import { composioApiKey, composioUserId } from "@/app/integrations/composio";
 import { RepositorySetup } from "./repository-setup";
+import { ChannelSetup } from "./channel-setup";
 export const dynamic = "force-dynamic";
 export default async function ConnectionsPage({
   searchParams,
@@ -70,15 +71,7 @@ export default async function ConnectionsPage({
           </p>
           <a href="/monitors">Open delivery status</a>
         </section>
-        <section className="workspace-section">
-          <h2>Telegram, Slack &amp; Discord</h2>
-          <p>
-            Inbound channels run in your agent process. Configure the channel
-            credentials and allowed people in your project, then send a test
-            request and find its task here.
-          </p>
-          <a href="/settings">Connection setup details</a>
-        </section>
+        <ChannelSetup />
       </div>
     </>
   );

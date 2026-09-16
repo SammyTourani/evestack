@@ -104,6 +104,7 @@ const CHANNEL_NAMES = ["telegram", "slack", "discord"];
 
 registerHooks({
   resolve(specifier, context, nextResolve) {
+    if (specifier.endsWith("/lib/heartbeat.js")) return { url: new URL("../lib/heartbeat.ts", import.meta.url).href, shortCircuit: true };
     const replacement = STUBS[specifier];
     if (replacement !== undefined) return { url: replacement, shortCircuit: true };
     for (const name of CHANNEL_NAMES) {
@@ -130,6 +131,8 @@ process.env.EVESTACK_HEARTBEAT_CHANNEL = "telegram";
 process.env.EVESTACK_HEARTBEAT_TARGET = '{"chatId":123456789}';
 process.env.EVESTACK_HEARTBEAT_FILE = HEARTBEAT_FILE;
 delete process.env.EVESTACK_HEARTBEAT_CRON;
+delete process.env.EVESTACK_HEARTBEAT_QUIET_HOURS;
+delete process.env.EVESTACK_HEARTBEAT_QUIET_TIMEZONE;
 
 const schedule = (await import("../agent/schedules/heartbeat.ts")).default;
 
@@ -213,4 +216,20 @@ test("the schedule is still registered the way the template documents", () => {
   assert.equal(globalThis.__evestackTracked.name, "heartbeat");
   assert.equal(globalThis.__evestackTracked.options.catchUp, true);
   assert.equal(globalThis.__evestackTracked.options.catchUpLimit, 3);
+});
+
+test("quiet hours and invalid quiet settings reach no channel dispatch", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: new Date("2026-09-15T23:00:00Z") });
+  process.env.EVESTACK_HEARTBEAT_QUIET_HOURS = "22:00-08:00";
+  process.env.EVESTACK_HEARTBEAT_QUIET_TIMEZONE = "UTC";
+  try {
+    const result = await fire();
+    assert.equal(result.sent.length, 0);assert.equal(result.waited.length, 0);
+    process.env.EVESTACK_HEARTBEAT_QUIET_HOURS = "invalid";
+    await assert.rejects(fire(), /HH:MM-HH:MM/);
+  } finally {
+    delete process.env.EVESTACK_HEARTBEAT_QUIET_HOURS;
+    delete process.env.EVESTACK_HEARTBEAT_QUIET_TIMEZONE;
+    t.mock.timers.reset();
+  }
 });

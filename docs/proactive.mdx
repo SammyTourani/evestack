@@ -3,34 +3,31 @@ title: Proactive agents
 description: An agent that wakes up on its own and messages you first — with budgets, approvals and an audit trail.
 ---
 
-An agent that only answers when spoken to is a chatbot. An agent that wakes up, checks on things,
-and messages you when something needs you is a different product — and it is the one that made
-personal AI assistants the most-installed category of 2026.
+A heartbeat checks for something worth your attention and can deliver a message
+through your configured channel. It runs inside your agent process and is off by
+default. Start with one useful check, inspect the exact prompt and recipient,
+then verify a real result before leaving it unattended.
 
-It is also the one that made them the most notorious. That category shipped with agents holding
-shell access and long-lived credentials, no spend limit, no record of what was approved, and in
-one widely-reported case a skills marketplace where the most-downloaded package was an
-infostealer. The capability was never the problem. The absence of everything around it was.
-
-evestack ships the same capability with the governance attached. This page is the recipe.
+For recurring work managed entirely in the dashboard, use [Routines](/docs/routines).
+This page describes the separate code-authored heartbeat under Diagnostics → Schedules.
 
 ## The five pieces
 
-Everything here already exists in the default template. Turning the heartbeat on is the only
-step that is off by default.
+The default template includes these components. Credentials, allowed senders,
+active checks and any gated tools still need your configuration.
 
 | | What it does | Where |
 | --- | --- | --- |
 | **Heartbeat** | wakes the agent on a cron, and stays quiet unless there is news | `agent/schedules/heartbeat.ts` |
 | **A channel** | where it reaches you — Telegram is the fastest to finish | `agent/channels/` |
 | **Memory** | so it remembers what it noticed last time | `@evestack/memory` |
-| **Budget caps** | a hard ceiling on what unattended work can cost | `@evestack/budget` |
+| **Budget caps** | stops further model work when its enforced limit is reached; in-flight calls can still bill | `@evestack/budget` |
 | **A gated tool** | anything destructive parks for a human, and the decision is recorded | `approval: always()` |
 
 ## Turn it on
 
 ```bash
-# 1. a channel it can reach you on (Telegram is a two-minute setup — see /docs/channels/telegram)
+# 1. a channel it can reach you on (see /docs/channels/telegram)
 TELEGRAM_BOT_TOKEN=123456789:AAH...
 TELEGRAM_WEBHOOK_SECRET_TOKEN=...
 
@@ -38,10 +35,15 @@ TELEGRAM_WEBHOOK_SECRET_TOKEN=...
 EVESTACK_HEARTBEAT_CHANNEL=telegram
 EVESTACK_HEARTBEAT_TARGET={"chatId":123456789}
 EVESTACK_HEARTBEAT_CRON=0 * * * *
+EVESTACK_HEARTBEAT_QUIET_HOURS=22:00-08:00
+EVESTACK_HEARTBEAT_QUIET_TIMEZONE=America/Toronto
 ```
 
 Then write what it should check. `HEARTBEAT.md` sits at the root of the project and is read at
 every fire, so editing it takes effect on the next wake-up — no restart, no redeploy.
+The starter file contains only commented examples. Put your active checks outside
+the HTML comment. An empty, missing or comment-only file sends no model request;
+an unreadable, oversized (over 64 KiB) or invalid UTF-8 file is a failure.
 
 ```md
 ## Checks
@@ -51,6 +53,35 @@ every fire, so editing it takes effect on the next wake-up — no restart, no re
 - If any session in the last 24 hours ended in an error, summarise what failed.
 - Anything I asked you to follow up on that has gone quiet for more than two days.
 ```
+
+## Preview before enabling
+
+```bash
+npm run heartbeat:preview
+npm run heartbeat:preview -- --at=2026-09-16T03:00:00Z --json
+```
+
+The preview reads the same bounded file, prompt builder, recipient and quiet-hour
+gate as execution. It starts no agent and sends no model or channel request.
+The three cron times use this process's timezone, which must match the deployed
+agent host. Quiet hours have their own explicit IANA timezone (UTC by default);
+setting it does not change the cron's timezone. Shared Settings controls do not
+edit this code-authored schedule.
+
+Quiet hours include the starting minute and exclude the ending minute. Windows
+can cross midnight. Both repeated readings during a daylight-saving fallback are
+quiet when they fall inside the window; skipped spring readings are never reached.
+Identical start/end times and invalid settings are refused.
+
+The gate skips new dispatches, including catch-up checked during quiet hours.
+It does not postpone them or cancel an already running turn; that turn can still
+send its reply later. The code-authored schedule log records that its handler
+finished without dispatching and the agent log explains the skip. A completed
+handler is not proof of a model result or delivery.
+
+Use `evestack configure` to preview and back up supported heartbeat environment
+changes. Restart after saving, rerun this preview in the deployed environment,
+and inspect a real task and channel receipt before leaving it unattended.
 
 ## `eve dev` does not fire schedules on a timer
 

@@ -136,6 +136,10 @@ test("duplicate or multiline source values require review; malicious and unsuppo
     { EVESTACK_MODEL: "one\nTWO=oops" },
     { EVESTACK_BASE_URL: "https://user:secret@fixture.test" },
     { EVESTACK_EMBED_DIMENSIONS: "0" },
+    { EVESTACK_HEARTBEAT_CHANNEL: "email" },
+    { EVESTACK_HEARTBEAT_QUIET_HOURS: "08:00-08:00" },
+    { EVESTACK_HEARTBEAT_QUIET_TIMEZONE: "Invalid/Zone" },
+    { EVESTACK_HEARTBEAT_TARGET: "[]" },
     { "KEY\u001b[2J": "bad" },
   ])
     assert.throws(() => configurationPlan(f.found, changes));

@@ -20,6 +20,7 @@
     "db:bootstrap": "node scripts/bootstrap.mjs",
     "db:prune": "node --env-file-if-exists=.env.local scripts/prune.mjs",
     "verify": "node --env-file-if-exists=.env.local scripts/verify.mjs",
+    "heartbeat:preview": "node --env-file-if-exists=.env.local scripts/heartbeat-preview.mjs",
     "demo:approval": "node --env-file-if-exists=.env.local scripts/approval-demo.mjs"
   },
   "dependencies": {

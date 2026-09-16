@@ -104,6 +104,10 @@ final bill.
 
 Set it to `false` to switch spend alerting off without touching your budget caps.
 
+`EVESTACK_DAILY_BUDGET_USD` is not a supported variable; it was a historical
+misspelling. Use `EVESTACK_BUDGET_DAILY_USD` for the environment budget default or
+`EVESTACK_ALERT_DAILY_SPEND_USD` for an explicit installation alert threshold.
+
 ## Signing, for the generic sink
 
 Slack and Discord authenticate by secret URL. For your own endpoint, set a shared secret and every

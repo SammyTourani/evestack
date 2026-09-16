@@ -81,8 +81,8 @@ Status: `[ ]` queued, `[-]` in progress, `[x]` verified, `[~]` implemented await
 - [~] Disclose Composio's hosted OAuth dependency; expose health/reconnect/revoke where supported.
 - [x] Read-only authorization check and repository brief draft; actual repository access remains a task-level verification.
 - [x] Notification setup/test, delivery status and affected-task links.
-- [ ] Inbound channel setup, allow-list guidance, test receipt and task links.
-- [ ] Heartbeat editable examples, preview, quiet delivery/quiet hours and execution-path explanation.
+- [x] Inbound channel setup, allow-list guidance, a manual receipt check and links to the selected task; no automated external receipt is implied.
+- [x] Heartbeat editable examples, exact prompt/recipient preview, quiet delivery/quiet hours and execution-path explanation.
 - [~] Data destinations and retention shown clearly; do not claim tenant isolation or team RBAC.
 
 ## 7. Knowledge and warning quality
@@ -242,3 +242,11 @@ These are required product learning, not claims a coding session can prove.
 - The daily spend monitor now follows Settings' saved daily cap and timezone, preserving an explicitly configured installation alert threshold. It labels the saved revision, the difference between installation spend and a per-principal cap, and unknown current enforcement.
 - A failed or partial policy read reports unknown instead of falling back to an obsolete environment value. A pre-controls installation retains a labelled environment fallback. Both local-day boundaries use the selected timezone.
 - Dashboard suite: 760 tests pass, three native suites separate. Typecheck passes. Focused tests cover saved-versus-environment values, explicit alert thresholds, missing/partial storage and timezone query parameters.
+
+### Channel and heartbeat setup checkpoint
+
+- Connections now guides Telegram, Slack and Discord setup with channel-specific signatures, allowed senders and endpoint instructions. A generated test marker survives navigation; failed history reads preserve it. Operators can select a recorded task and acknowledge their own observed channel receipt. That acknowledgement is explicitly local to the browser view, not an automated verification or durable audit.
+- The heartbeat uses one prompt builder, bounded file reader and quiet-hour gate for both execution and `npm run heartbeat:preview`. The preview contacts no agent or channel and shows the recipient, host-timezone cron samples and a separately configured quiet timezone. Quiet hours skip new dispatches, including catch-up checked during that window, without cancelling in-flight work.
+- A fresh HEARTBEAT.md contains only commented examples and triggers no model work. Missing/empty/comment-only files are inactive; read errors, invalid UTF-8, oversized files and invalid quiet settings fail explicitly. Supported env changes use the existing protected configure/restore workflow.
+- Template: 122 tests pass and typecheck passes. Tests cover overnight boundaries, both repeated DST readings, a spring gap, a half-hour zone, bounded files, actual no-dispatch behavior and executable preview parity. CLI: 163 tests pass. Dashboard production build passes. Compatibility: 25 contracts / 631 assertions pass.
+- Built-dashboard browser checks passed the three setup guides, marker retention, failed/retried history reads, task links, stale selection reset, mobile/dark layout and no script errors. The receipt acknowledgement was simulated; no real Telegram, Slack or Discord message was sent.

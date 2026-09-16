@@ -111,6 +111,11 @@ can override the file, and a custom agent can ignore template-specific variables
 Changing an embedding model requires a backed-up re-embedding migration; do not
 remove memories to get past a dimension mismatch.
 
+Supported heartbeat settings include the channel, recipient JSON, cron, file and
+quiet-hour window/timezone. In a current scaffold, run `npm run heartbeat:preview`
+to inspect the exact prompt and dispatch gate before enabling. Quiet hours skip
+new work; they do not cancel a turn that is already running.
+
 The remainder describes `doctor`.
 
 

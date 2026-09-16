@@ -3,8 +3,7 @@ import discord from "../channels/discord.js";
 import slack from "../channels/slack.js";
 import telegram from "../channels/telegram.js";
 import { tracked } from "@evestack/schedules";
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { heartbeatPrompt, heartbeatQuietState, heartbeatTarget, readHeartbeatTasks } from "../../lib/heartbeat.js";
 
 /**
  * The agent wakes up on its own and only bothers you when there is something to
@@ -99,71 +98,11 @@ import { join } from "node:path";
  * pleasant surprise. Set EVESTACK_HEARTBEAT_CHANNEL to turn it on.
  */
 
-/**
- * The reply the agent is asked to give when there is no news, and the whole of
- * the "it only speaks when there is something to say" promise.
- *
- * Spelled as a literal rather than imported. eve declares it as
- * EMPTY_DELIVERY_SENTINEL in dist/src/shared/empty-delivery.js, but its
- * `exports` map has no subpath that reaches that module (74 entries, none of
- * them `./shared`), so an import would have to dig into the package's build
- * output — which moves between releases with no type error to warn you. A
- * literal that eve's own predicate is tested against (test/heartbeat.test.mjs)
- * fails loudly instead. If eve ever exports it, import it and delete this.
- */
-const ACK = "<eve-empty-delivery/>";
-
 const CRON = process.env.EVESTACK_HEARTBEAT_CRON?.trim() || "0 * * * *";
 
 /** Which channel to speak into, resolved at MODULE LOAD rather than per fire.
  *  That is the whole of the "off means off" fix; see the note on `run`. */
 const CHANNEL = process.env.EVESTACK_HEARTBEAT_CHANNEL?.trim() || null;
-
-/**
- * The channel-specific address to post to, as JSON.
- *
- * Telegram: `{"chatId":123456789}` · Slack: `{"channelId":"C0123ABC"}` ·
- * Discord: `{"channelId":"987654321"}`. Kept as raw JSON rather than three
- * bespoke env vars because eve types the target per channel, and inventing our
- * own flattened spelling would drift the moment a channel adds a field.
- *
- * Throws rather than warns. The channel is set, so a human asked for this: a
- * heartbeat with nowhere to post is broken, not idle. It used to warn to a log
- * nobody reads and return, and the fire was still written down as `completed` —
- * which, until the fix in `fire()` below, was the only outcome this schedule
- * could ever record.
- */
-function readTarget(): Record<string, unknown> {
-  const raw = process.env.EVESTACK_HEARTBEAT_TARGET;
-  if (!raw) {
-    throw new Error(
-      "EVESTACK_HEARTBEAT_CHANNEL is set but EVESTACK_HEARTBEAT_TARGET is not, so there is " +
-        'nowhere to post. Example: {"chatId":123456789}',
-    );
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (error) {
-    throw new Error(`EVESTACK_HEARTBEAT_TARGET is not valid JSON (${String(error)})`);
-  }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error('EVESTACK_HEARTBEAT_TARGET must be a JSON object, e.g. {"chatId":123456789}');
-  }
-  return parsed as Record<string, unknown>;
-}
-
-async function readTasks(): Promise<string | null> {
-  // Read at fire time, not at boot: the point of a file is that you can edit it
-  // and have the next wake-up honour the change.
-  try {
-    const path = process.env.EVESTACK_HEARTBEAT_FILE?.trim() || join(process.cwd(), "HEARTBEAT.md");
-    const text = await readFile(path, "utf8");
-    return text.trim() || null;
-  } catch {
-    return null;
-  }
-}
 
 async function fire(
   channelName: string,
@@ -172,9 +111,14 @@ async function fire(
   // Which conversation to speak into. Every channel's target has a different
   // shape — Telegram wants a chatId, Slack a channelId — so this is JSON rather
   // than a guess, and a bad value fails loudly at the fire.
-  const target = readTarget();
+  const quiet = heartbeatQuietState();
+  if (quiet.quiet) {
+    console.log(`[evestack:heartbeat] skipped dispatch during quiet hours ${quiet.hours} (${quiet.timeZone}). No model request was sent by this fire.`);
+    return;
+  }
+  const target = heartbeatTarget();
 
-  const tasks = await readTasks();
+  const tasks = await readHeartbeatTasks();
   if (!tasks) {
     // Not a failure. The file belongs to the human, and an empty one means there
     // is genuinely nothing to check this hour.
@@ -190,12 +134,7 @@ async function fire(
   // into addressing and sending: `to(channel, target)` returns a handle whose
   // `send(message, {auth})` does the dispatch. Same two arguments, one more hop.
   const dispatch = to(channel as never, target as never).send(
-    `${tasks}\n\n---\n` +
-      `You are running as a scheduled heartbeat, not in a conversation. Work through the ` +
-      `checks above. If nothing needs the user's attention, reply with exactly ${ACK} and ` +
-      `nothing else at all — no greeting, no explanation, nothing before or after it, because ` +
-      `eve only suppresses a reply that is that marker and nothing else. Only write a real ` +
-      `message when there is something they would want to be interrupted for.`,
+    heartbeatPrompt(tasks),
     { auth: appAuth },
   );
 
