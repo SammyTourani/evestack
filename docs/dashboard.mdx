@@ -400,3 +400,23 @@ may already have a claimable replacement; only inspecting its context tells you
 whether recovery is needed. Live-session health remains unassessed. Use the CLI
 for custom schemas, live-session probes and a separately reviewed repair plan.
 Back up the database before changing queue state.
+
+### Execution environment coverage
+
+Diagnostics → Execution environments reads the operator-selected Docker socket
+with GET requests only. It shows reported state, network mode, start time, age and
+available resource samples. It does not start, stop or remove containers. Mounting
+the socket still grants the process host-level authority; this remains an explicit
+operator choice, not a privilege made safe by calling its UI read-only.
+
+Each Docker response is limited to 2 MiB and an absolute three-second deadline.
+Inspection covers at most 24 containers, prioritizing running and older-created
+ones, with six inspection workers. Omitted containers are counted and make an
+otherwise healthy network/lifetime monitor unknown. A missing sample remains
+unknown, including CPU without two valid readings. Use local Docker tools for the
+full inventory when this limit is reached.
+
+Network mode is configuration evidence. Actual outbound reachability, allowed
+destinations, host firewall policy and a custom expiration deadline are not probed.
+The default Docker backend keeps one container per session without an idle timeout;
+non-Docker backends and arbitrary host processes are outside this view.

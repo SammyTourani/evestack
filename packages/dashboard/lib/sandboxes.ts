@@ -42,19 +42,20 @@
  * very different sentences to someone checking whether their agent is leaking
  * containers.
  *
- * ── This page costs ~2 seconds, on purpose ───────────────────────────────────
+ * ── Sampling is bounded ────────────────────────────────────────────────────
  *
  * Docker reports CPU as two cumulative counters, so a percentage only exists as
  * a delta between two samples, and `?stream=false` makes the daemon take both —
- * about two seconds of wall clock. Measured: 1.97s with two containers and
- * 2.11s with six, because every container is sampled in parallel, so the cost
- * is paid once for the whole fleet rather than per row.
+ * about two seconds per batch. Six workers inspect at most 24 containers;
+ * larger inventories have explicit omitted coverage. Each response has an
+ * absolute three-second deadline and a 2 MiB cap. A slow daemon cannot turn
+ * one page render into an unbounded fan-out or an indefinitely growing body.
  *
  * `one-shot=true` returns immediately and leaves `precpu_stats` empty, which
  * makes every CPU figure null. That is the wrong trade for this page: "which
  * sandbox is pinning a core" is one of the two questions it exists to answer,
- * and a page that loads instantly and cannot answer it is not faster, it is
- * emptier. Two seconds on a page someone opens deliberately is fine.
+ * and missing counters or core counts remain unknown rather than assuming zero
+ * activity or a one-core machine.
  *
  * ── The join to a session is soft ────────────────────────────────────────────
  *
@@ -115,7 +116,16 @@ export interface Sandbox {
 export type SandboxAvailability =
   | { readonly kind: "disabled" }
   | { readonly kind: "unreachable"; readonly reason: string }
-  | { readonly kind: "ok"; readonly sandboxes: readonly Sandbox[] };
+  | {
+      readonly kind: "ok";
+      readonly sandboxes: readonly Sandbox[];
+      readonly coverage: {
+        listed: number;
+        inspected: number;
+        omitted: number;
+        limit: number;
+      };
+    };
 
 /** The socket path, or null when the operator has not opted in. */
 function dockerSocket(): string | null {
@@ -124,6 +134,9 @@ function dockerSocket(): string | null {
 }
 
 const TIMEOUT_MS = 3_000;
+const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+export const SANDBOX_INSPECTION_LIMIT = 24;
+const INSPECTION_WORKERS = 6;
 
 /**
  * One GET against the daemon.
@@ -135,33 +148,74 @@ const TIMEOUT_MS = 3_000;
  */
 function get<T>(socketPath: string, path: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout>;
+    const fail = (error: Error) => {
+      clearTimeout(timer);
+      reject(error);
+    };
     const req = request(
-      { socketPath, path, method: "GET", timeout: TIMEOUT_MS, headers: { Host: "docker" } },
+      {
+        socketPath,
+        path,
+        method: "GET",
+        timeout: TIMEOUT_MS,
+        headers: { Host: "docker" },
+      },
       (res) => {
+        res.on("error", fail);
+        res.on("aborted", () =>
+          fail(new Error("Docker ended its response before completion.")),
+        );
+        if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
+          req.destroy(
+            new Error(`Docker returned HTTP ${res.statusCode ?? "unknown"}.`),
+          );
+          return;
+        }
+        if (Number(res.headers["content-length"]) > MAX_RESPONSE_BYTES) {
+          req.destroy(new Error("Docker response exceeds the 2 MiB limit."));
+          return;
+        }
         const chunks: Buffer[] = [];
-        res.on("data", (c: Buffer) => chunks.push(c));
+        let bytes = 0;
+        res.on("data", (c: Buffer) => {
+          bytes += c.length;
+          if (bytes > MAX_RESPONSE_BYTES)
+            req.destroy(new Error("Docker response exceeds the 2 MiB limit."));
+          else chunks.push(c);
+        });
         res.on("end", () => {
+          clearTimeout(timer);
+          if (bytes > MAX_RESPONSE_BYTES) return;
           const body = Buffer.concat(chunks).toString("utf8");
-          if (res.statusCode !== undefined && res.statusCode >= 400) {
-            reject(new Error(`docker ${res.statusCode}: ${body.slice(0, 200)}`));
-            return;
-          }
           try {
             resolve(JSON.parse(body) as T);
           } catch {
-            reject(new Error(`docker returned non-JSON: ${body.slice(0, 200)}`));
+            fail(
+              new Error(
+                "Docker returned invalid JSON; response contents were not displayed.",
+              ),
+            );
           }
         });
       },
     );
-    req.on("timeout", () => req.destroy(new Error(`docker did not answer in ${TIMEOUT_MS}ms`)));
-    req.on("error", reject);
+    // Absolute deadline, including a daemon that keeps trickling body bytes.
+    timer = setTimeout(
+      () => req.destroy(new Error(`Docker response exceeded ${TIMEOUT_MS}ms.`)),
+      TIMEOUT_MS,
+    );
+    req.on("timeout", () =>
+      req.destroy(new Error(`docker did not answer in ${TIMEOUT_MS}ms`)),
+    );
+    req.on("error", fail);
     req.end();
   });
 }
 
 interface RawContainer {
   Id: string;
+  Created?: number;
   Names?: string[];
   Image?: string;
   State?: string;
@@ -176,8 +230,15 @@ interface RawInspect {
 }
 
 interface RawStats {
-  cpu_stats?: { cpu_usage?: { total_usage?: number }; system_cpu_usage?: number; online_cpus?: number };
-  precpu_stats?: { cpu_usage?: { total_usage?: number }; system_cpu_usage?: number };
+  cpu_stats?: {
+    cpu_usage?: { total_usage?: number; percpu_usage?: number[] };
+    system_cpu_usage?: number;
+    online_cpus?: number;
+  };
+  precpu_stats?: {
+    cpu_usage?: { total_usage?: number };
+    system_cpu_usage?: number;
+  };
   memory_stats?: { usage?: number; limit?: number };
   networks?: Record<string, { rx_bytes?: number; tx_bytes?: number }>;
   pids_stats?: { current?: number };
@@ -197,29 +258,63 @@ interface RawStats {
 export function cpuFraction(stats: RawStats): number | null {
   const cpu = stats.cpu_stats;
   const pre = stats.precpu_stats;
-  const used = (cpu?.cpu_usage?.total_usage ?? 0) - (pre?.cpu_usage?.total_usage ?? 0);
-  const system = (cpu?.system_cpu_usage ?? 0) - (pre?.system_cpu_usage ?? 0);
+  const values = [
+    cpu?.cpu_usage?.total_usage,
+    pre?.cpu_usage?.total_usage,
+    cpu?.system_cpu_usage,
+    pre?.system_cpu_usage,
+  ];
+  if (
+    values.some(
+      (value) =>
+        typeof value !== "number" || !Number.isFinite(value) || value < 0,
+    )
+  )
+    return null;
+  const used = cpu!.cpu_usage!.total_usage! - pre!.cpu_usage!.total_usage!;
+  const system = cpu!.system_cpu_usage! - pre!.system_cpu_usage!;
   if (system <= 0 || used < 0) return null;
-  const cores = cpu?.online_cpus ?? 1;
-  return (used / system) * cores;
+  const cores = cpu?.online_cpus ?? (Array.isArray(cpu?.cpu_usage?.percpu_usage) ? cpu.cpu_usage.percpu_usage.length : null);
+  if (typeof cores !== "number" || !Number.isFinite(cores) || cores <= 0)
+    return null;
+  const fraction = (used / system) * cores;
+  return Number.isFinite(fraction) ? fraction : null;
 }
 
 function toStats(raw: RawStats): SandboxStats {
-  const net = Object.values(raw.networks ?? {});
-  const sum = (pick: (n: { rx_bytes?: number; tx_bytes?: number }) => number | undefined) =>
-    net.length === 0 ? null : net.reduce((total, n) => total + (pick(n) ?? 0), 0);
+  const finite = (value: unknown): number | null =>
+    typeof value === "number" && Number.isFinite(value) && value >= 0
+      ? value
+      : null;
+  const net =
+    raw.networks &&
+    typeof raw.networks === "object" &&
+    !Array.isArray(raw.networks)
+      ? Object.values(raw.networks)
+      : [];
+  const sum = (
+    pick: (n: { rx_bytes?: number; tx_bytes?: number }) => number | undefined,
+  ) => {
+    if (!net.length) return null;
+    const values = net.map((n) =>
+      n && typeof n === "object" ? finite(pick(n)) : null,
+    );
+    return values.some((n) => n === null)
+      ? null
+      : finite(values.reduce<number>((total, n) => total + n!, 0));
+  };
   return {
     cpu: cpuFraction(raw),
-    memoryBytes: raw.memory_stats?.usage ?? null,
-    memoryLimitBytes: raw.memory_stats?.limit ?? null,
+    memoryBytes: finite(raw.memory_stats?.usage),
+    memoryLimitBytes: finite(raw.memory_stats?.limit),
     networkRxBytes: sum((n) => n.rx_bytes),
     networkTxBytes: sum((n) => n.tx_bytes),
-    pids: raw.pids_stats?.current ?? null,
+    pids: finite(raw.pids_stats?.current),
   };
 }
 
 /**
- * Every sandbox container on this machine, running or not.
+ * Bounded container inspection from the daemon's inventory, running or stopped.
  *
  * `all=1` on purpose: an exited sandbox is evidence, not noise. A container that
  * died holding a session is exactly what someone debugging a wedged session is
@@ -230,52 +325,103 @@ export async function listSandboxes(): Promise<SandboxAvailability> {
   const socketPath = dockerSocket();
   if (socketPath === null) return { kind: "disabled" };
 
-  const filters = encodeURIComponent(JSON.stringify({ label: [SANDBOX_LABELS.marker] }));
+  const filters = encodeURIComponent(
+    JSON.stringify({ label: [SANDBOX_LABELS.marker] }),
+  );
   let raw: RawContainer[];
   try {
-    raw = await get<RawContainer[]>(socketPath, `/containers/json?all=1&filters=${filters}`);
+    raw = await get<RawContainer[]>(
+      socketPath,
+      `/containers/json?all=1&filters=${filters}`,
+    );
+    if (
+      !Array.isArray(raw) ||
+      raw.some(
+        (c) => !c || typeof c.Id !== "string" || !/^[a-f0-9]{64}$/i.test(c.Id),
+      )
+    )
+      throw new Error("Docker returned an invalid container inventory.");
+    if (new Set(raw.map((c) => c.Id)).size !== raw.length)
+      throw new Error("Docker returned duplicate container IDs.");
   } catch (error) {
-    return { kind: "unreachable", reason: error instanceof Error ? error.message : String(error) };
+    return {
+      kind: "unreachable",
+      reason: error instanceof Error ? error.message : String(error),
+    };
   }
 
   const now = Date.now();
-  const sandboxes = await Promise.all(
-    raw.map(async (c): Promise<Sandbox> => {
-      const labels = c.Labels ?? {};
-      const running = (c.State ?? "").toLowerCase() === "running";
+  // Prioritize running and older-created containers, then a stable ID order.
+  // Omitted containers remain an explicit blind spot in both the page and alerts.
+  const oldest = (c: RawContainer) =>
+    typeof c.Created === "number" && Number.isFinite(c.Created)
+      ? c.Created
+      : Infinity;
+  raw.sort(
+    (a, b) =>
+      Number(b.State === "running") - Number(a.State === "running") ||
+      oldest(a) - oldest(b) ||
+      a.Id.localeCompare(b.Id),
+  );
+  const selected = raw.slice(0, SANDBOX_INSPECTION_LIMIT);
+  const sandboxes: Sandbox[] = [];
+  let cursor = 0;
+  const string = (value: unknown, limit = 500): string | null =>
+    typeof value === "string" && value.length <= limit ? value : null;
+  await Promise.all(
+    Array.from(
+      { length: Math.min(INSPECTION_WORKERS, selected.length) },
+      async () => {
+        while (cursor < selected.length) {
+          const c = selected[cursor++];
+          const labels = c.Labels ?? {};
+          const running = c.State === "running";
 
-      // Inspect and stats are per container and independent; a failure in
-      // either degrades that field rather than the row. A container that exits
-      // between the list and the inspect is normal, not an error.
-      const [inspect, stats] = await Promise.all([
-        get<RawInspect>(socketPath, `/containers/${c.Id}/json`).catch(() => null),
-        running
-          ? get<RawStats>(socketPath, `/containers/${c.Id}/stats?stream=false&one-shot=false`).catch(
+          // Inspect and stats are per container and independent; a failure in
+          // either degrades that field rather than the row. A container that exits
+          // between the list and the inspect is normal, not an error.
+          const [inspect, stats] = await Promise.all([
+            get<RawInspect>(socketPath, `/containers/${c.Id}/json`).catch(
               () => null,
-            )
-          : Promise.resolve(null),
-      ]);
+            ),
+            running
+              ? get<RawStats>(
+                  socketPath,
+                  `/containers/${c.Id}/stats?stream=false&one-shot=false`,
+                ).catch(() => null)
+              : Promise.resolve(null),
+          ]);
 
-      const startedAt = inspect?.State?.StartedAt ?? null;
-      const startedMs = startedAt === null ? NaN : Date.parse(startedAt);
-      return {
-        id: c.Id,
-        name: (c.Names?.[0] ?? c.Id).replace(/^\//, ""),
-        image: c.Image ?? "",
-        state: c.State ?? "unknown",
-        status: c.Status ?? "",
-        startedAt,
-        // Docker reports a zero time for a container that has never started.
-        uptimeMs: Number.isFinite(startedMs) && startedMs > 0 && running ? now - startedMs : null,
-        networkMode: inspect?.HostConfig?.NetworkMode ?? c.HostConfig?.NetworkMode ?? null,
-        sessionId: labels[SANDBOX_LABELS.sessionId] ?? null,
-        agent: labels[SANDBOX_LABELS.agent] ?? null,
-        channel: labels[SANDBOX_LABELS.channel] ?? null,
-        templateKey: labels[SANDBOX_LABELS.templateKey] ?? null,
-        role: labels[SANDBOX_LABELS.role] ?? null,
-        stats: stats === null ? null : toStats(stats),
-      };
-    }),
+          const startedAt = string(inspect?.State?.StartedAt);
+          const startedMs = startedAt === null ? NaN : Date.parse(startedAt);
+          sandboxes.push({
+            id: c.Id,
+            name: (string(c.Names?.[0]) ?? c.Id).replace(/^\//, ""),
+            image: string(c.Image) ?? "",
+            state: string(c.State) ?? "unknown",
+            status: string(c.Status) ?? "",
+            startedAt,
+            // Docker reports a zero time for a container that has never started.
+            uptimeMs:
+              Number.isFinite(startedMs) &&
+              startedMs > 0 &&
+              startedMs <= now &&
+              running
+                ? now - startedMs
+                : null,
+            networkMode:
+              string(inspect?.HostConfig?.NetworkMode, 200) ??
+              string(c.HostConfig?.NetworkMode, 200),
+            sessionId: string(labels[SANDBOX_LABELS.sessionId]),
+            agent: string(labels[SANDBOX_LABELS.agent]),
+            channel: string(labels[SANDBOX_LABELS.channel]),
+            templateKey: string(labels[SANDBOX_LABELS.templateKey]),
+            role: string(labels[SANDBOX_LABELS.role]),
+            stats: stats === null ? null : toStats(stats),
+          });
+        }
+      },
+    ),
   );
 
   // Running first, then longest-lived: the orphan that has been up for hours is
@@ -287,7 +433,16 @@ export async function listSandboxes(): Promise<SandboxAvailability> {
     return (b.uptimeMs ?? 0) - (a.uptimeMs ?? 0);
   });
 
-  return { kind: "ok", sandboxes };
+  return {
+    kind: "ok",
+    sandboxes,
+    coverage: {
+      listed: raw.length,
+      inspected: sandboxes.length,
+      omitted: raw.length - sandboxes.length,
+      limit: SANDBOX_INSPECTION_LIMIT,
+    },
+  };
 }
 
 /** How long a sandbox may live before the page calls it out. */

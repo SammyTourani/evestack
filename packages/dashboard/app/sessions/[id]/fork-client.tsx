@@ -309,7 +309,7 @@ export function ForkPanel({ sessionId }: { sessionId: string }) {
                 ) : (
                   <>
                     I understand turns 1–{fromTurn} will run again. No tool calls were recorded in
-                    them, so this should only cost model tokens.
+                    them, but replay can choose tools and cause external changes.
                   </>
                 )}
               </span>

@@ -188,3 +188,8 @@ test("a duration longer than an hour is readable", () => {
     assert.doesNotMatch(duration(ms), /^\d{3,}m/, `${ms}ms rendered as a raw minute count`);
   }
 });
+
+test("duration rounding carries into the next unit instead of showing 60 minutes or 24 hours", () => {
+  for (const [ms, expected] of [[59_999,"1m 00s"],[119_999,"2m 00s"],[3_599_999,"1h 00m"],[7_199_999,"2h 00m"],[86_399_999,"1d 0h"],[172_799_999,"2d 0h"]])
+    assert.equal(duration(ms), expected);
+});

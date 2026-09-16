@@ -276,6 +276,7 @@ export async function evaluateAlerts(): Promise<AlertResult[]> {
   /* ── the machine ─────────────────────────────────────────────────────────── */
   if (sandboxes.status === "fulfilled" && sandboxes.value.kind === "ok") {
     const boxes = sandboxes.value.sandboxes;
+    const omitted = sandboxes.value.coverage.omitted;
     const flags = concerns(boxes, new Set(boxes.map((b) => b.sessionId ?? "")));
     const networked = flags.filter((f) => f.kind === "networked");
     const long = flags.filter((f) => f.kind === "orphaned");
@@ -297,23 +298,24 @@ export async function evaluateAlerts(): Promise<AlertResult[]> {
      * collapse into `ok`.
      */
     const unexamined = flags.filter((f) => f.kind === "unreadable");
-    const unexaminedNote =
+    const unexaminedNote = (
       unexamined.length === 0
         ? ""
-        : ` ${unexamined.length} container${unexamined.length === 1 ? "" : "s"} could not be described by Docker (${unexamined.map((f) => f.sandbox.name).join(", ")}), so ${unexamined.length === 1 ? "it is" : "they are"} in neither count.`;
+        : ` ${unexamined.length} container${unexamined.length === 1 ? "" : "s"} could not be described by Docker (${unexamined.map((f) => f.sandbox.name).join(", ")}), so ${unexamined.length === 1 ? "it is" : "they are"} in neither count.`) + (omitted ? ` ${omitted} additional containers were omitted by the inspection limit; their network and lifetime state is unknown.` : "");
+    const incomplete = unexamined.length > 0 || omitted > 0;
     const running = boxes.filter((b) => b.state === "running").length;
-    const examined = running - unexamined.length;
+    const examined = running - unexamined.filter(f => f.sandbox.state === "running").length;
 
     out.push({
       id: "sandbox_networked",
       title: "Sandbox network isolation",
       severity: "page",
       state:
-        networked.length > 0 ? "firing" : unexamined.length > 0 ? "unknown" : "ok",
+        networked.length > 0 ? "firing" : incomplete ? "unknown" : "ok",
       detail:
         networked.length > 0
-          ? `${networked.length} running sandbox${networked.length === 1 ? " is" : "es are"} not on NetworkMode=none (${networked.map((f) => f.sandbox.name).join(", ")}), so code inside can reach the network.${unexaminedNote}`
-          : unexamined.length > 0
+          ? `${networked.length} running sandbox${networked.length === 1 ? " is" : "es are"} not on NetworkMode=none (${networked.map((f) => f.sandbox.name).join(", ")}). An attached network is configured; actual outbound reachability and firewall policy were not probed.${unexaminedNote}`
+          : incomplete
             ? `${examined} of ${running} running sandboxes are network-isolated.${unexaminedNote}`
             : `All ${running} running sandboxes are network-isolated.`,
       threshold: "every sandbox on `none`",
@@ -324,11 +326,11 @@ export async function evaluateAlerts(): Promise<AlertResult[]> {
       id: "sandbox_long_lived",
       title: "Long-lived sandboxes",
       severity: "info",
-      state: long.length > 0 ? "firing" : unexamined.length > 0 ? "unknown" : "ok",
+      state: long.length > 0 ? "firing" : incomplete ? "unknown" : "ok",
       detail:
         long.length > 0
           ? `${long.length} sandbox${long.length === 1 ? " has" : "es have"} been up over ${THRESHOLDS.sandboxLongLivedHours}h. eve keeps one container per session and applies no idle timeout, so they accumulate until something stops them.${unexaminedNote}`
-          : unexamined.length > 0
+          : incomplete
             ? // NOT the unqualified "no sandbox has been up past the limit"
               // sentence below: the uptime of the unexamined ones is exactly
               // the thing that could not be read, so the claim has to be

@@ -131,10 +131,13 @@ export function ago(iso: string | null, now: number = Date.now()): string {
 export function duration(ms: number | null): string {
   if (ms === null || !Number.isFinite(ms) || ms < 0) return EM_DASH;
   if (ms < 1000) return `${Math.round(ms)}ms`;
-  if (ms < 60_000) return `${(ms / 1000).toFixed(ms < 10_000 ? 2 : 1)}s`;
+  if (ms < 60_000) {
+    const seconds = (ms / 1000).toFixed(ms < 10_000 ? 2 : 1);
+    return Number(seconds) >= 60 ? "1m 00s" : `${seconds}s`;
+  }
   if (ms < 3_600_000) {
-    const minutes = Math.floor(ms / 60_000);
-    return `${minutes}m ${pad(Math.round((ms % 60_000) / 1000))}s`;
+    const seconds = Math.round(ms / 1000);
+    return seconds >= 3600 ? "1h 00m" : `${Math.floor(seconds / 60)}m ${pad(seconds % 60)}s`;
   }
   // Above an hour the seconds stop carrying information and the minute count
   // stops being readable. This tier is not an edge case on this product: eve
@@ -142,9 +145,9 @@ export function duration(ms: number | null): string {
   // and without these two branches the session page rendered a three-day-old
   // session as "5277m 07s".
   if (ms < 86_400_000) {
-    const hours = Math.floor(ms / 3_600_000);
-    return `${hours}h ${pad(Math.round((ms % 3_600_000) / 60_000))}m`;
+    const minutes = Math.round(ms / 60_000);
+    return minutes >= 1440 ? "1d 0h" : `${Math.floor(minutes / 60)}h ${pad(minutes % 60)}m`;
   }
-  const days = Math.floor(ms / 86_400_000);
-  return `${days}d ${Math.round((ms % 86_400_000) / 3_600_000)}h`;
+  const hours = Math.round(ms / 3_600_000);
+  return `${Math.floor(hours / 24)}d ${hours % 24}h`;
 }

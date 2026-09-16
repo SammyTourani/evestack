@@ -8,7 +8,9 @@ week after: the agent surviving a closed laptop, the logs not filling the disk, 
 `workflow` schema that grows forever because nothing in eve, in `@workflow/world-postgres`,
 or in evestack ever deletes from it.
 
-Three things, in the order they bite.
+Before leaving recurring work unattended, configure
+[external liveness checks and incident handling](/docs/alerts#detect-outages-from-outside-the-installation).
+The dashboard cannot notify you while its own process is down.
 
 ## Run the agent as a service
 

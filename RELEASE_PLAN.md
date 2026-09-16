@@ -103,13 +103,13 @@ Status: `[ ]` queued, `[-]` in progress, `[x]` verified, `[~]` implemented await
 - [x] Task failures link to relevant traces and recorded completed turns / explicitly successful tool spans, with coverage limits.
 - [x] Read-only CLI doctor findings available on demand alongside recovery; live session diagnosis remains explicitly separate.
 - [x] Safe reconnect distinguished from follow-up and replay that can repeat tools.
-- [ ] Replay preview and original/candidate comparison based on available evidence.
+- [x] Replay preview and original/candidate comparison based on available evidence; unrecorded tools are not a promise about replay behavior.
 - [x] User correction becomes a versioned regression case with immutable original evidence and stale-write protection.
 - [x] Show original/candidate snapshots, exact-revision manual observations and explicit unknown execution provenance; no automated pass is implied.
 - [x] Retain historical workflow/trace evidence while the agent is unavailable, including explicit partial-read failures.
-- [ ] Execution environment, network policy and lifetime displayed only when known.
-- [ ] Keep Docker inspection read-only; host controls require a narrowly authorized service.
-- [ ] Actionable incidents and external liveness-check guidance for unattended use.
+- [x] Execution environment, network mode and lifetime observations distinguish known, unavailable and omitted coverage; custom policy remains unverified.
+- [x] Keep Docker inspection read-only, bounded and explicitly opted in; no host mutation controls added.
+- [x] Actionable incidents and external liveness-check guidance for unattended use.
 
 ## 9. Shared control plane and developer adoption
 
@@ -273,3 +273,12 @@ These are required product learning, not claims a coding session can prove.
 - The interface summarizes next actions and keeps full CLI explanations/evidence expandable. An exhausted row with a replacement is distinguished from a stranded run. Live session health is not inferred from the database snapshot, and a failed recheck preserves the prior result as stale.
 - Six native PostgreSQL tests pass, including exact finding parity with the CLI, optional migration-table failure, unchanged queue rows, bounded output, unsupported schemas and enforced read-only transactions. Dashboard: 760 tests pass, five native suites run separately. Typecheck and production build pass; 25 contracts / 640 assertions pass.
 - Built-browser checks pass anonymous refusal, on-demand dispatch, shared findings, stale failure/retry, recovery integration, mobile/dark layouts and no script errors. Visual inspection led to a clearer action button, concise guidance and expandable technical detail; repeated captures passed. Runtime-image checks now exercise the bundled shared modules and their authenticated route.
+
+### Bounded environment inspection and unattended operation
+
+- All CI jobs and the runtime image passed on `a4d92c3`, including the shared queue diagnosis route from the built image.
+- Docker inspection now caps each response at 2 MiB with an absolute three-second deadline, limits inspection to 24 containers and uses six workers. Inventory/ID validation prevents malformed responses becoming API paths; all requests remain GETs. Omitted containers are counted and keep otherwise healthy network/lifetime alerts unknown.
+- Resource samples reject malformed/nonfinite data. CPU requires two valid readings and a reported core count; missing metrics stay unknown. Network mode is labelled as configuration evidence, not a verified outbound policy. Long names wrap on mobile. Inspection failures replace the result with an explicit unavailable state.
+- Transport, sandbox and alert checks: 57 tests pass against a local fixture socket, including sustained trickle/size limits, bounded concurrency, GET-only operation, unreadable data and omission propagation. Dashboard: 769 tests pass, five native suites separate; typecheck and production build pass. Compatibility: 25 contracts / 640 assertions pass. Website/docs build passes.
+- Built-browser checks pass a 28-container fixture with 24 displayed/four omitted, long names, network/lifetime flags, unavailable/recovered inventory, desktop/mobile/dark layouts and no script errors. No real host Docker socket was mounted or inspected. Visual review found and corrected duration rollover (for example, 1h 60m → 2h 00m); 12 time-formatting tests pass.
+- External monitoring guidance now distinguishes quiet transition alerts from liveness, explains status-versus-body checks and documents incident actions. It does not claim an external monitor was deployed. Replay acknowledgement no longer promises model-only cost when prior tools were unrecorded.
