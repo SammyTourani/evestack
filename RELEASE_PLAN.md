@@ -116,7 +116,7 @@ Status: `[ ]` queued, `[-]` in progress, `[x]` verified, `[~]` implemented await
 - [~] Paginated/searchable task API and complete task detail.
 - [x] MCP uses real task APIs instead of the five-session approximation.
 - [x] Read-only routine/decision views in MCP; mutation capabilities explicit and separately gated.
-- [ ] CLI links/actions share the dashboard API and preserve server credential boundaries.
+- [x] CLI links/actions share the dashboard API and preserve server credential boundaries.
 - [ ] Attach change preview, compatibility/permissions summary and attach health checks.
 - [ ] Component release manifest with supported version combinations.
 - [ ] Upgrade preview that preserves user configuration and reports manual conflicts.
@@ -229,3 +229,10 @@ These are required product learning, not claims a coding session can prove.
 - Native PostgreSQL recovery/regression suite: 12 tests pass for bounded evidence, separation between tasks, concurrent edits, stale candidates, retry deduplication, retained revisions, atomic rollback and downgrade refusal. Dashboard: 756 tests pass, three native suites separate; production build passes. Compatibility: 25 contracts / 627 assertions pass.
 - Browser verification passed authenticated creation, retained fields after failed delivery, task-title selection, candidate preview changes, manual observation history, new-revision isolation, stale edits, mobile/dark layout and no JavaScript errors.
 - Removed schema-wide deletion advice from trace/fact error messages and observability documentation. The evestack schema contains durable operator data, so repair guidance now requires a matching image and a backed-up component-specific procedure.
+
+### Terminal and coding-agent access checkpoint
+
+- All CI jobs, including Windows and macOS, and the runtime image passed on `ac25cf6`.
+- Added authenticated `tasks`, `routines` and `readiness` CLI commands. Tasks support search/cursors, detail, saved recovery, explicit start/reply from a bounded message file and cooperative stop. Remote credentials require HTTPS, redirect following is disabled, unrelated flags are refused and mutations never retry. An accepted request is not reported as task completion.
+- CLI: 163 tests pass, covering actual HTTP authentication, route encoding, flag/file validation, size limits, timeout/lost-response uncertainty and routing. Against the built fixture dashboard, the CLI read a paginated task list, detail, recovery fingerprints, routine history and all six setup checks. Offline agent/model uncertainty remained visible; no real provider call was made.
+- MCP adds read-only recovery, readiness, memory/review and regression-case tools over the same routes. Ownership, pagination, evidence coverage, stale-review hashes and exact-revision manual observations are retained. Full MCP suite: 112 tests pass, including no-control access, route traversal and invalid-argument refusal.

@@ -228,6 +228,115 @@ test("routine and decision reads retain uncertainty and use only GET", async () 
   assert.ok(seen.every((request) => request.method === "GET"));
 });
 
+test("recovery, readiness, memory and regression tools preserve evidence in read-only mode", async () => {
+  const evidence = {
+    ok: true,
+    recovery: {
+      coverage: { turns: { truncated: true } },
+      readErrors: ["Trace store unavailable"],
+    },
+    evidenceHash: "source-fingerprint",
+  };
+  const memories = {
+    rows: [{ id: "42", principalId: null, hash: "current-memory" }],
+    total: 80,
+    nextOffset: 30,
+  };
+  const reviews = {
+    reviews: [{ hash: "previous-memory", verdict: "correction_proposed" }],
+    limit: 20,
+  };
+  const caseData = {
+    versions: [{ revision: 2 }],
+    reviews: [
+      {
+        caseRevision: 1,
+        verdict: "observed_pass",
+        candidateHash: "old-candidate",
+      },
+    ],
+  };
+  const { call, last, seen } = await dashboard({
+    env: { EVESTACK_MCP_ALLOW_CONTROL: "0", EVESTACK_MCP_ALLOW_APPROVALS: "0" },
+    routes: {
+      [`/api/tasks/${SESSION_ID}/recovery`]: evidence,
+      "/api/readiness": {
+        checks: [{ id: "model", status: "unknown", ready: false }],
+      },
+      "/api/memories": memories,
+      "/api/memories/42/review": reviews,
+      "/api/regressions": { cases: [{ id: "case-one" }], nextOffset: 40 },
+      "/api/regressions/case-one": caseData,
+    },
+  });
+  assert.deepEqual(
+    (await call("get_task_recovery", { sessionId: SESSION_ID }))
+      .structuredContent,
+    evidence,
+  );
+  assert.equal(
+    (await call("check_readiness", { check: "model" })).structuredContent
+      .checks[0].ready,
+    false,
+  );
+  assert.equal(new URLSearchParams(last().search).get("check"), "model");
+  assert.deepEqual(
+    (
+      await call("list_memories", {
+        q: "source & owner",
+        offset: 20,
+        limit: 10,
+      })
+    ).structuredContent,
+    memories,
+  );
+  const query = new URLSearchParams(last().search);
+  assert.equal(query.get("q"), "source & owner");
+  assert.equal(query.get("offset"), "20");
+  assert.equal(query.get("limit"), "10");
+  assert.deepEqual(
+    (await call("get_memory_reviews", { memoryId: "42" })).structuredContent,
+    reviews,
+  );
+  assert.equal(
+    (await call("list_regressions", { offset: 20 })).structuredContent
+      .nextOffset,
+    40,
+  );
+  assert.equal(new URLSearchParams(last().search).get("offset"), "20");
+  assert.deepEqual(
+    (await call("get_regression", { caseId: "case-one" })).structuredContent,
+    caseData,
+  );
+  assert.equal(seen.length, 6);
+  assert.ok(seen.every((request) => request.method === "GET"));
+});
+
+test("new evidence tools reject traversal, invalid checks and out-of-range pages before HTTP", async () => {
+  const { call, seen } = await dashboard();
+  for (const [name, args] of [
+    ["get_task_recovery", { sessionId: ".." }],
+    ["get_memory_reviews", { memoryId: "." }],
+    ["get_regression", { caseId: ".." }],
+    ["check_readiness", { check: "run-a-model" }],
+    ["list_memories", { limit: 101 }],
+    ["list_memories", { q: "x".repeat(201) }],
+    ["list_regressions", { offset: -1 }],
+  ]) {
+    const response = await call(name, args).catch(error => {
+      assert.equal(error.code, -32602);
+      return { error: true };
+    });
+    assert.ok(
+      response.isError || response.error,
+      `${name} must refuse invalid input`,
+    );
+  }
+  assert.equal(seen.length, 0);
+  await call("get_task_recovery", { sessionId: "task/x?other=y" });
+  assert.equal(seen.at(-1).path, "/api/tasks/task%2Fx%3Fother%3Dy/recovery");
+});
+
 // ---------------------------------------------------------------------------
 // promote_session_to_eval refuses rather than hand back source that will not compile
 // ---------------------------------------------------------------------------

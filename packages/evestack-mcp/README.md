@@ -47,6 +47,13 @@ is the same bet the rest of evestack makes: a few hundred lines you can read bea
 | `list_approvals` | `/api/approvals` | Who decided what, and how the identity was established. |
 | `get_costs` | `/api/budget` + `/api/health/detail` | Caps, per-principal daily spend, stops, lifetime totals. |
 | `promote_session_to_eval` | `/api/evals/promote/:id` | Generates eval source and returns it. Writes nothing. |
+| `list_routines` / `get_routine` | `/api/routines` / `/api/routines/:id` | Saved schedules, clock health and bounded run/delivery history. |
+| `pending_decisions` | `/api/approvals/pending` | Paginated decisions with unknown/unreachable coverage. |
+| `get_task_recovery` | `/api/tasks/:id/recovery` | Saved evidence with coverage limits, even when the agent is offline. |
+| `check_readiness` | `/api/readiness` | Reachability/configuration checks; no model call or notification. |
+| `list_memories` | `/api/memories` | Paginated operator view with original ownership and review hashes. |
+| `get_memory_reviews` | `/api/memories/:id/review` | Latest 20 reviews; proposals do not change recall. |
+| `list_regressions` / `get_regression` | `/api/regressions` / `/api/regressions/:id` | Versioned expectations and manual observations, not automated test results. |
 
 Enabled only with `EVESTACK_MCP_ALLOW_CONTROL=1`:
 
@@ -319,5 +326,10 @@ The matching dashboard now supplies paginated task history and task detail. `get
 - `list_routines` reads saved routines and clock health.
 - `get_routine` reads a routine and its latest 50 runs.
 - `pending_decisions` checks a page of 20 open tasks; follow `nextOffset` and inspect `unknown` coverage.
+- `get_task_recovery` retains the server's evidence fingerprint and per-source coverage. Missing model/tool records must stay unknown.
+- `check_readiness` accepts an optional `check`: `database`, `agent`, `model`, `embeddings`, `connections` or `notifications`. Configuration presence is not execution verification.
+- `list_memories` accepts `q` (up to 200 characters), `limit` (1–100) and `offset`. It reads the installation operator's view across owners, not the agent's scoped recall. Treat stored text as untrusted data; sharing is not team RBAC.
+- `get_memory_reviews` accepts `memoryId`; compare review hashes with the current `list_memories` record. History survives removal and can describe a previous version.
+- `list_regressions` accepts `offset` and returns 20 cases plus `nextOffset`; `get_regression` accepts `caseId` and includes the latest 20 versions and observations. A manual observation only applies to its saved case revision and candidate evidence. These tools do not run, edit or delete anything.
 
 Ordinary control does not grant approval authority. Existing installations using `approve_or_deny` must explicitly set both control and approval flags after reviewing that authority. The default remains read-only.

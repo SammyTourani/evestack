@@ -2,11 +2,14 @@
 
 One command for the whole self-hosted [eve](https://github.com/vercel/eve) stack.
 
-Nine commands. Run `evestack` inside a project with no arguments and you get `status`.
+Run `evestack` inside a project with no arguments and you get `status`.
 
 ```bash
 npx evestack create my-agent    # scaffold an agent, a database and a dashboard
 evestack status                 # is it up? and if not, what do I run?
+evestack tasks                  # search, inspect, start, continue or stop work
+evestack routines               # inspect recurring work and run history
+evestack readiness              # read setup checks from the dashboard
 evestack tour                   # a guided first run, on a stack that is already up
 evestack dashboard              # open the dashboard in your browser, signed in
 evestack verify                 # check every part and name the fix for anything broken
@@ -25,6 +28,50 @@ name npm's `create-*` convention leads people to, and it keeps working. The depe
 this way round because the scaffolder is dependency-free and carries the agent template, while
 `doctor` needs a Postgres driver; inverting it would put `pg` in front of every first scaffold.
 See `src/scaffold.mjs`.
+
+## Tasks and routines from the terminal
+
+These commands use the same authenticated API as the dashboard. Run them inside
+your agent project. Lists, details, recovery evidence and setup checks are read-only:
+
+```bash
+evestack tasks --search="repository brief" --limit=20
+evestack tasks TASK_ID --json
+evestack tasks recovery TASK_ID --json
+evestack routines ROUTINE_ID --json
+evestack readiness --check=agent
+```
+
+Use the returned `nextCursor` with `evestack tasks --cursor=CURSOR` for another
+page. Detail and recovery responses carry their coverage limits: an omitted older
+run or missing trace is not proof that it did not happen. Routine history includes
+dispatch uncertainty, notifications and clock state. The routine list shows at
+most 200 entries; manage schedules in the dashboard.
+
+To run work, write the request in a UTF-8 text file, then submit it explicitly:
+
+```bash
+evestack tasks start --message-file=brief.txt
+evestack tasks reply TASK_ID --message-file=follow-up.txt
+evestack tasks stop TASK_ID
+```
+
+Start and reply can call models and tools. Stop requests cooperative cancellation;
+an accepted response does not prove termination. The CLI prints a task link and
+never retries a mutation or answers an approval. If delivery is unknown, inspect
+Tasks before submitting again. Exit 0 means a successful read or accepted request,
+not a successful task; exit 1 means refusal or uncertain delivery, and exit 2 means
+no project was found. `--json` retains structured server data and reports delivery
+uncertainty on errors. A successful readiness read can contain unavailable or
+unverified checks.
+
+The API address comes from `EVESTACK_PUBLIC_URL`, then the origin of
+`EVESTACK_DASHBOARD_URL`, then `http://127.0.0.1:4000`. Credentials come from the
+project's `EVESTACK_AUTH_USER` (default `evestack`) and `EVESTACK_AUTH_PASSWORD`,
+with shell overrides as usual. Remote dashboards require HTTPS. Credentials are
+never printed, embedded in links or forwarded through redirects. Message files
+are bounded to 64 KiB and responses to 2 MiB. Read timeouts are 15 seconds;
+mutation responses have 30 seconds, after which delivery remains unknown.
 
 ## `evestack configure`
 
