@@ -129,19 +129,19 @@ function protectWindowsPath(path, directory, created = false) {
     $ErrorActionPreference = 'Stop'
     $p = $env:EVESTACK_CONFIG_PRIVATE_PATH
     $who = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
-    $current = Get-Acl -LiteralPath $p
+    if ($env:EVESTACK_CONFIG_PRIVATE_DIRECTORY -eq '1') { $current = [System.IO.Directory]::GetAccessControl($p) } else { $current = [System.IO.File]::GetAccessControl($p) }
     if ($env:EVESTACK_CONFIG_JUST_CREATED -ne '1' -and $current.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $who.Value) { throw 'Existing backup path is not owned by current user' }
     if ($env:EVESTACK_CONFIG_PRIVATE_DIRECTORY -eq '1') {
-      $acl = New-Object System.Security.AccessControl.DirectorySecurity
-      $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($who,'FullControl','ContainerInherit,ObjectInherit','None','Allow')
+      $acl = [System.Security.AccessControl.DirectorySecurity]::new()
+      $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($who,'FullControl','ContainerInherit,ObjectInherit','None','Allow')
     } else {
-      $acl = New-Object System.Security.AccessControl.FileSecurity
-      $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($who,'FullControl','Allow')
+      $acl = [System.Security.AccessControl.FileSecurity]::new()
+      $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($who,'FullControl','Allow')
     }
     $acl.SetOwner($who)
     $acl.SetAccessRuleProtection($true,$false)
     $acl.AddAccessRule($rule)
-    Set-Acl -LiteralPath $p -AclObject $acl
+    if ($env:EVESTACK_CONFIG_PRIVATE_DIRECTORY -eq '1') { [System.IO.Directory]::SetAccessControl($p,$acl) } else { [System.IO.File]::SetAccessControl($p,$acl) }
   `;
   const result = spawnSync("powershell.exe",["-NoProfile","-NonInteractive","-Command",script],{
     encoding:"utf8",timeout:15000,
