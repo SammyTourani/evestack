@@ -1,32 +1,9 @@
 /**
- * Start, stream, follow up, cancel: the four things /chat claims, driven from
- * outside the browser over the exact routes the browser uses.
- *
- * probe 14 covers what the two mutations REFUSE, and says in its own header
- * what it cannot reach: "a long-running turn that cancel interrupts
- * mid-flight". That is the half the product sells, and it is also the half
- * with a warning attached. README.md:181-183:
- *
- *   Cancellation is cooperative. The cancel route returns 202 immediately but
- *   the in-flight model call keeps streaming - we measured ~90 seconds. Do not
- *   build a stop button that assumes silence.
- *
- * So the thing to pin is not "the turn stops". It is the shape of the promise:
- *
- *   - the 202 comes back fast, because it is an acknowledgement and not a join;
- *   - it does NOT claim the turn ended, in its status vocabulary or anywhere
- *     else in the body;
- *   - the turn has not, in fact, ended at the moment it returns;
- *   - and the session survives, because this is a stop button and not a kill.
- *
- * That last one is the difference between /chat and `Agent Runs can only
- * watch`: after cancelling you can still talk to the same session.
- *
- * NOT MODEL-DEPENDENT, despite starting a real turn. Every assertion is about
- * protocol and lifecycle. Nothing here reads what the model said, how long it
- * took, or whether it called a tool, and the one timing assertion is guarded
- * on the route having reported an active turn to cancel in the first place -
- * so on a stack with no provider it declines to measure rather than flaking.
+ * Drive start, stream, follow-up and cancellation through the browser's routes.
+ * A 202 acknowledges a request; it does not prove a turn stopped. A terminal
+ * event can arrive immediately or later, depending on the runtime/provider.
+ * Pin acknowledgement vocabulary and continued access to durable history,
+ * without requiring a minimum delay before termination.
  */
 const DASHBOARD = process.env.EVESTACK_PROBE_DASHBOARD_URL?.replace(/\/$/, "") ?? null;
 const AGENT = process.env.EVESTACK_PROBE_AGENT_URL?.replace(/\/$/, "") ?? null;
@@ -40,7 +17,7 @@ const LONG_TASK =
 /** The vocabulary chat-client.tsx switches on. Anything else is a new state. */
 const CANCEL_STATUS = new Set(["accepted", "no_active_turn"]);
 
-/** Terminal turn events. Their absence right after the 202 is the point. */
+/** Terminal events the task workspace can render after an acknowledgement. */
 const TERMINAL = new Set(["turn.cancelled", "turn.completed", "turn.failed", "session.failed"]);
 
 async function call(path, init = {}) {
@@ -73,12 +50,14 @@ async function collect(sessionId, windowMs, startIndex = 0) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), windowMs);
   const types = [];
+  let opened = false;
   try {
     const response = await call(
       `/api/control/sessions/${encodeURIComponent(sessionId)}/stream?format=ndjson&startIndex=${startIndex}`,
       { signal: controller.signal },
     );
     if (!response.ok || !response.body) return { status: response.status, types };
+    opened = true;
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
@@ -100,8 +79,8 @@ async function collect(sessionId, windowMs, startIndex = 0) {
     }
     return { status: response.status, types };
   } catch {
-    // Aborting the read is how the window ends; it is not a failure.
-    return { status: 200, types };
+    // Only our timer ending an opened stream is an expected read boundary.
+    return { status: opened && controller.signal.aborted ? 200 : 0, types };
   } finally {
     clearTimeout(timer);
   }
@@ -112,11 +91,8 @@ export default {
   title: "cancel acknowledges without claiming the turn stopped, and the session survives it",
   needs: ["dashboard", "agent"],
   why:
-    "Cancellation is the one control the README warns about: the 202 is an acknowledgement and " +
-    "the model keeps streaming for up to about ninety seconds. Nothing had ever cancelled a turn " +
-    "that was actually running, so neither the acknowledgement nor the survival of the session " +
-    "was checked. A stop button that is really a request, presented as a stop, is how an operator " +
-    "concludes the product ignored them.",
+    "Cancellation acceptance must not claim termination. The stream may end immediately or " +
+    "continue; the operator must still be able to inspect durable history and the follow-up response.",
 
   async available() {
     const missing = [];
@@ -200,7 +176,7 @@ export default {
     // route cannot support, and the page would be right to render silence.
     t.ok(
       !/cancelled|stopped|done|finished/i.test(JSON.stringify(cancelled)),
-      "and never says the turn has stopped, because it has not",
+      "and never claims the acknowledgement proves the turn stopped",
       { expected: "an acknowledgement", actual: JSON.stringify(cancelled) },
     );
     t.ok(ackMs < 15_000, `the acknowledgement is fast, not a join (${ackMs}ms)`, {
@@ -209,33 +185,17 @@ export default {
     });
     t.note(`cancel acknowledged in ${ackMs}ms with status ${cancelled.status}`);
 
-    /* ── the ~90 seconds README warns about ──────────────────────────────── */
-
     if (cancelled.status === "accepted") {
-      // There WAS a turn to cancel, so the warning is in scope. Read the
-      // stream for a moment: the turn must not already be over. Asserted in
-      // this direction on purpose - it cannot flake on a slow model, and it
-      // goes red exactly when someone makes cancellation synchronous, which is
-      // the day README:181-183 and the chat banner both need rewriting.
       const after = await collect(sessionId, 3_000, -1);
-      const ended = after.types.some((type) => TERMINAL.has(type));
-      t.ok(
-        !ended,
-        "the turn is still going three seconds after the 202: cancellation is cooperative",
-        {
-          expected: "no terminal turn event yet",
-          actual:
-            `saw ${after.types.join(", ")}. If cancellation is now immediate that is an ` +
-            "improvement, but README.md:181-183, the chat banner and this probe all describe " +
-            "the old behaviour and have to change together.",
-        },
-      );
-      t.note(`3s after cancel the stream carried: ${after.types.join(", ") || "(nothing)"}`);
+      t.ok(after.status === 200, "the durable stream remains readable after acceptance", {
+        expected: "200", actual: String(after.status),
+      });
+      const ended = after.types.filter((type) => TERMINAL.has(type));
+      t.note(ended.length
+        ? `A terminal event was already recorded: ${ended.join(", ")}. No minimum cancellation delay is promised.`
+        : "No terminal event was observed in the next three seconds; cancellation remains unconfirmed.");
     } else {
-      t.note(
-        "no active turn at cancel time, so the cooperative-tail assertion was not run - " +
-          "expected on a stack with no model provider",
-      );
+      t.note("No active turn at cancellation time; the route correctly reported that state.");
     }
 
     /* ── a stop button, not a kill ───────────────────────────────────────── */

@@ -222,9 +222,9 @@ Written down so they don't cost you any.
   found and patched it; Vercel fixed it upstream in 0.30.0. Pin `eve` `>=0.30.0`.
 - **Adding `agent/instrumentation.ts` disables eve's zero-config trace spool**, so `eve traces`
   stops working. The dashboard replaces it; delete the file to get it back.
-- **Cancellation is cooperative.** The cancel route returns 202 immediately but the in-flight
-  model call keeps streaming — we measured ~90 seconds. Don't build a stop button that assumes
-  silence.
+- **Cancellation is cooperative.** The cancel route returns a 202 acknowledgement. A terminal event
+  may arrive quickly or the in-flight call may continue. Keep inspecting the task until its
+  state confirms termination; acceptance alone does not prove it stopped.
 - **A failed turn still records `status = 'completed'`.** The stream emits `turn.failed`; the
   workflow row disagrees, because the workflow handled the error. `$eve.model` is only written
   once a model call reports usage, so its absence on a finished turn is the surviving evidence.

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { DecisionCard } from "@/components/decision-card";
 import { ResultMarkdown } from "@/components/markdown";
+import { TaskRecoveryPanel } from "@/components/task-recovery";
 import { TaskBudget } from "@/components/task-budget";
 import type { InputRequest } from "@/lib/agent-client";
 import { CONNECTION_DRAFT_KEY, MEMORY_DRAFT_KEY } from "@/lib/task-examples";
@@ -610,8 +611,6 @@ export function ChatClient({
         </div>
       </div>
 
-      {sessionId && <TaskBudget sessionId={sessionId} status={status} />}
-
       {error && (
         <div role="alert" className={styles.error}>
           {error}
@@ -639,10 +638,13 @@ export function ChatClient({
 
       {status === "cancelling" && (
         <div className={styles.notice}>
-          Cancellation is cooperative — the model call already in flight keeps
-          streaming until it finishes on its own. This can take a while.
+          Cancellation requested. The in-flight call may continue until the
+          runtime stops it. Waiting for a terminal event to confirm the outcome.
         </div>
       )}
+
+      {sessionId && <TaskBudget sessionId={sessionId} status={status} />}
+      {sessionId && <TaskRecoveryPanel sessionId={sessionId} status={status} reconnect={reconnect} />}
 
       <div className={styles.transcript}>
         {entries.length === 0 && (

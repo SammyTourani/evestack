@@ -46,16 +46,16 @@ configured price is labeled `unpriced`, never silently rendered as free.
 
 ## Cooperative cancellation
 
-`POST /eve/v1/session/:id/cancel` returns `202` immediately, but the in-flight model call keeps
-running. We measured a cancelled turn continuing to stream for roughly 90 seconds, with the
-event order:
+`POST /eve/v1/session/:id/cancel` returns a `202` acknowledgement. It does not confirm
+that the task stopped. Depending on the runtime and provider, a terminal event can
+arrive quickly or the in-flight model call may continue. Earlier measurements
+observed a long streaming tail, while current runtime probes also observe immediate
+terminal events. Neither timing is a guarantee.
 
-```
-message.completed → step.completed → turn.completed → session.waiting → turn.cancelled → session.waiting
-```
-
-`turn.cancelled` arrives *after* a `session.waiting`, not before. Don't build a stop button
-that assumes silence follows a 202.
+The dashboard keeps showing cancellation as requested until it receives a terminal
+event. If the stream closes or the response is uncertain, reconnect to the same task
+and inspect its state before requesting another action. Reconnecting does not resend
+the task's request.
 
 ## Approvals ride the ordinary follow-up route
 

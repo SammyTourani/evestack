@@ -647,3 +647,23 @@ test("memory read and review routes reject invalid bounds before reaching storag
     assert.equal((await reviewMemory(request, { params: Promise.resolve({ id: "1" }) })).status, 400);
   }
 });
+
+test('setup and recovery queries reject unsupported checks and oversized task ids',async()=>{
+  const {GET:readiness}=await import('../app/api/readiness/route.ts');
+  const {GET:recovery}=await import('../app/api/tasks/[id]/recovery/route.ts');
+  const {GET:promote}=await import('../app/api/evals/promote/[id]/route.ts');
+  assert.equal((await readiness(new Request('http://localhost/api/readiness?check=execute-tools'))).status,400);
+  const context={params:Promise.resolve({id:'a'.repeat(301)})};
+  for(const handler of [recovery,promote])assert.equal((await handler(new Request('http://localhost/api/tasks/invalid'),context)).status,400);
+});
+
+test('a regression export refuses a transcript tail instead of presenting it as a complete replay',async()=>{
+  const {GET:promote}=await import('../app/api/evals/promote/[id]/route.ts');
+  const originalFetch=globalThis.fetch,originalPool=globalThis.__evestackPool;
+  try {
+    globalThis.__evestackPool={query:async()=>({rows:[{title:'Large task'}]})};
+    globalThis.fetch=async()=>new Response(Array.from({length:4096},(_,i)=>JSON.stringify({type:'message.received',data:{message:'fixture request',turnId:`turn-${i}`}})).join('\n')+'\n',{headers:{'x-eve-stream-tail-index':'5000','content-type':'application/x-ndjson'}});
+    const response=await promote(new Request('http://localhost/api/evals/promote/large?format=json'),{params:Promise.resolve({id:'large'})});
+    assert.equal(response.status,409);assert.equal((await response.json()).code,'transcript_truncated');
+  } finally {globalThis.fetch=originalFetch;globalThis.__evestackPool=originalPool;}
+});

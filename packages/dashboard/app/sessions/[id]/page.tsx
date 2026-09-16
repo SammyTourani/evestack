@@ -296,14 +296,14 @@ export default async function SessionDetailPage(
           className={CONTROL}
           href={`/api/evals/promote/${encodeURIComponent(session.id)}`}
         >
-          Promote to eval
+          Download regression draft
         </a>
         <span className="text-small text-text-faint">
           {facts.some(
             (fact) =>
               fact.outcome === "failed" || fact.outcome === "no_model_call",
           )
-            ? "This session has a failed turn — promoting it gives you the regression test for the bug."
+            ? "This task has a failed turn. Download its messages as a draft, then add assertions for the behavior you expected. The draft has not been run."
             : "Downloads a draft evals/*.eval.ts replaying this session's real messages."}
         </span>
       </div>

@@ -1,6 +1,6 @@
 import { readRecentEvents } from "@/lib/agent-client";
 import { generateEval } from "@/lib/promote-eval";
-import { getSession } from "@/lib/queries";
+import { query } from "@/lib/db";
 import { handleRouteError, jsonError } from "../../../control/_http";
 
 export const dynamic = "force-dynamic";
@@ -23,15 +23,19 @@ export async function GET(
 ): Promise<Response> {
   try {
     const { id } = await context.params;
-    if (!id) return jsonError("Missing session id.", 400, "bad_request");
+    if (!id || id.length > 300) return jsonError("Invalid session id.", 400, "bad_request");
 
-    const session = await getSession(id);
+    const [session] = await query<{ title: string | null }>(
+      "SELECT attributes->>'$eve.title' AS title FROM workflow.workflow_runs WHERE id=$1 AND attributes->>'$eve.type'='session'", [id],
+    );
     if (!session) return jsonError(`No session ${id}.`, 404, "not_found");
 
     // 4096 rather than the default lookback: a promoted eval must replay the
     // session from its first message, and a chatty session with tool calls
     // produces far more events than turns.
-    const { events } = await readRecentEvents(id, { lookback: 4096, signal: request.signal });
+    const { events, startIndex } = await readRecentEvents(id, { lookback: 4096, signal: request.signal });
+    if (startIndex > 0)
+      return jsonError("This transcript exceeds the 4,096-event read window. A complete replay draft cannot be generated from this tail. Export the full transcript from the agent before creating a regression case.", 409, "transcript_truncated");
 
     const generated = generateEval({ sessionId: id, title: session.title, events });
 

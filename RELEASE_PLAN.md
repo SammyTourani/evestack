@@ -71,8 +71,8 @@ Status: `[ ]` queued, `[-]` in progress, `[x]` verified, `[~]` implemented await
 
 ## 6. Setup, settings, spend and connections
 
-- [~] One readiness surface: database, agent, model, embeddings, connections and notifications.
-- [ ] Resume incomplete setup and recheck individual failures.
+- [x] One readiness surface distinguishes verified, configured, unavailable and unknown results for database, agent, model, embeddings, connections and notifications.
+- [x] Recheck individual setup items, label a previous result after a failed check and link to each remaining setup action.
 - [~] Model/provider settings explain actual configuration source, capabilities and restart requirements.
 - [x] Budget enforcement, remaining budget, unknown prices, per-principal scope and fail-open/closed policy visible.
 - [x] Budget edits affect the enforcing process, with validation and a reported activation revision.
@@ -100,13 +100,13 @@ Status: `[ ]` queued, `[-]` in progress, `[x]` verified, `[~]` implemented await
 
 ## 8. Recovery, evidence and regression improvement
 
-- [ ] Task failures link to relevant traces and recorded last successful work.
+- [x] Task failures link to relevant traces and recorded completed turns / explicitly successful tool spans, with coverage limits.
 - [ ] Read-only doctor findings available alongside recovery guidance.
-- [ ] Safe reconnect/resume distinguished from replay that repeats tools.
+- [x] Safe reconnect distinguished from follow-up and replay that can repeat tools.
 - [ ] Replay preview and original/candidate comparison based on available evidence.
 - [ ] User correction can become a versioned regression case.
 - [ ] Show regression draft/results with explicit baseline/candidate and execution provenance.
-- [ ] Retain historical evidence when the agent is unavailable where storage supports it.
+- [x] Retain historical workflow/trace evidence while the agent is unavailable, including explicit partial-read failures.
 - [ ] Execution environment, network policy and lifetime displayed only when known.
 - [ ] Keep Docker inspection read-only; host controls require a narrowly authorized service.
 - [ ] Actionable incidents and external liveness-check guidance for unattended use.
@@ -204,3 +204,12 @@ These are required product learning, not claims a coding session can prove.
 - Dashboard removal locks and checks the current record and records the original owner in the same transaction. An audit write failure rolls the removal back. The interface keeps stale-review drafts and explains uncertain removal responses.
 - Native PostgreSQL: seven tests pass for legacy ownership, proposal isolation, concurrent changes/deletes, vector-only changes, audit rollback and retained history. These tests are included in CI alongside routine durability.
 - Dashboard: 752 tests pass, two native suites run separately; production build passes. Browser verification of the built memory page passed proposal handoff, stale review/delete rejection, deletion ownership/audit, mobile layout and no JavaScript errors. Template memory tests: 24 pass. Memory documentation and template error messages now prescribe backup and re-embedding instead of dropping the memory table.
+
+### Readiness and recovery checkpoint
+
+- Settings now separates a successful probe from configuration presence, exposes six individual checks, and preserves the last result with an explicit stale warning if rechecking fails. Checks do not invoke a model or send notifications. Model and embedding execution still need a real task.
+- The task workspace reads bounded workflow and trace evidence directly from Postgres, independent of agent availability. It links recorded failures, completed turns and explicit successful tool spans, and exposes retained response text with coverage limits. Mobile recovery details are collapsible and the actual connection error appears first.
+- Native PostgreSQL: six recovery tests pass, including missing trace schema without schema creation, cross-task separation, unknown versus successful tool status, missing model evidence and truncation. Configuration/HTTP readiness tests pass; the full dashboard suite passes 755 tests with three native suites separate. Production build and all 25 compatibility contracts / 623 assertions pass.
+- Browser checks cover individual check failure/recovery, unknown/configured distinctions, offline-agent evidence access, desktop/mobile layout and no JavaScript errors.
+- Regression downloads now refuse an incomplete transcript tail instead of generating a misleading replay. Export remains an unexecuted draft whose assertions require review.
+- Memory checkpoint `c2d2881` passed the runtime-image build, but CI found an omitted registry rebuild and an old cancellation probe that demanded a minimum streaming tail. Registry output is synchronized. The probe and user-facing copy now allow immediate or delayed termination and require an acknowledgement plus readable history, without claiming a 202 proves termination. Verification of this correction in CI is pending.

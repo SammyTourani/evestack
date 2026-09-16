@@ -1,6 +1,6 @@
 ---
 title: The dashboard
-description: The open replacement for Agent Runs — and it drives the agent, not just watches it.
+description: Run tasks, review evidence and decisions, and manage recurring work on your own infrastructure.
 ---
 
 ## Start with a task
@@ -87,7 +87,7 @@ report as a faster one.
 
 ## Control
 
-This is where evestack diverges from Agent Runs, which is read-only:
+The dashboard provides these controls:
 
 - **Start a session** and stream the reply straight from the dashboard
 - **Send a follow-up** to an existing session
@@ -95,8 +95,10 @@ This is where evestack diverges from Agent Runs, which is read-only:
   for the actual protocol underneath
 - **Cancel a run** — read [the cooperative-cancellation note](/docs/architecture#cooperative-cancellation)
   before building anything that assumes a cancel is instant
-- **Promote a session to an eval** — turn any run, especially one that went wrong, into a real
-  `evals/*.eval.ts` replaying its actual messages
+- **Download a regression draft** — export a task's actual messages into an
+  `evals/*.eval.ts` draft. Add assertions for the expected behavior before running it;
+  this is not a verified regression test. Transcripts beyond the 4,096-event read window
+  are refused instead of silently exporting an incomplete conversation
   ([how to run one](#running-the-evals))
 - **Replay a session into a new one** — re-send its messages with one turn rewritten. Read
   [Replaying a session](#replaying-a-session) first; it re-runs the original's tool calls
@@ -307,8 +309,35 @@ dashboard together. The container runs as a non-root user; the process inside it
 and what keeps it off your network is the compose port mapping, `127.0.0.1:4000:4000`. See
 [Self-hosting](/docs/self-hosting) before exposing it beyond your own machine.
 
-## It reads your database, nothing else
+## Where data is read and sent
 
-No API calls to evestack, no telemetry, no external service in the loop. Its required
-environment variables are `WORKFLOW_POSTGRES_URL` and the `EVESTACK_AUTH_*` pair — point the
-first at your Postgres and everything on the observe side is a SQL read.
+Workflow evidence, exported traces, reviews, routines and control settings are stored
+in your Postgres. Live conversations and decisions use your agent's HTTP API. Model
+requests use the provider configured in that agent. Connections uses Composio's hosted
+account authorization when enabled; notifications go to the operator's configured
+webhooks. Dashboard credentials identify the installation, not isolated teammates.
+
+### Setup checks and recovery
+
+Settings distinguishes a successful database or agent health probe from a configured
+key or destination. Model and embedding readiness remains unverified until actual
+agent work demonstrates it. Recheck each item independently; these checks neither
+start a model call nor send a notification. Use Connections for explicit grant and
+delivery checks. `GET /api/readiness?check=agent` returns the same authenticated view;
+supported checks are `database`, `agent`, `model`, `embeddings`, `connections`, and
+`notifications`. Omit the parameter to check all six.
+
+Every existing task's workspace includes **Saved evidence & recovery**. It reads up
+to 100 recent workflow turns and 50 recent matching spans directly from Postgres,
+with separate coverage and truncation notices. It shows the latest observed failure,
+recorded completed turn, explicitly successful finished tool span and retained model
+response text when available. Trace text may be partial or intermediate; an explicit
+tool success does not independently verify its external effect. The authenticated
+`GET /api/tasks/:id/recovery` provides the same bounded evidence without contacting
+the agent or creating database objects.
+
+Reconnecting reads the existing durable conversation. Follow-up requests can execute
+tools, and replay runs earlier messages again in another task after a tool preview.
+A failed evidence read is reported as unavailable. For deeper local forensics, run
+`npx evestack doctor` in your agent project. Pause affected routines while investigating
+an ambiguous external effect; automatic repeat execution can make the ambiguity worse.

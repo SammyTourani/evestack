@@ -1,4 +1,5 @@
 import { readReadiness } from "@/lib/readiness";
+import { ReadinessChecks } from "@/components/readiness-checks";
 import { BudgetSettings } from "@/components/budget-settings";
 export const dynamic = "force-dynamic";
 
@@ -17,23 +18,7 @@ export default async function SettingsPage() {
           Check again
         </a>
       </div>
-      <div className="workspace-grid">
-        {state.checks.map((check) => (
-          <section key={check.name} className="workspace-section">
-            <h2>{check.name}</h2>
-            <p
-              className={
-                check.ready
-                  ? "status status-completed"
-                  : "status status-pending"
-              }
-            >
-              {check.ready ? "Available / configured" : "Needs setup"}
-            </p>
-            <p>{check.detail}</p>
-          </section>
-        ))}
-      </div>
+      <ReadinessChecks initialChecks={state.checks} />
       <section className="workspace-section">
         <h2>Model &amp; embeddings</h2>
         <p>

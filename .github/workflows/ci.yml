@@ -327,11 +327,11 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r --if-present run build
 
-      - name: routine and memory durability on native PostgreSQL
+      - name: routine, memory and recovery checks on native PostgreSQL
         working-directory: packages/dashboard
         env:
           EVESTACK_TEST_POSTGRES_URL: postgres://evestack:evestack@localhost:5433/evestack
-        run: node --import ./test/register-ts-resolve.mjs --test test/routines-postgres.test.mjs test/memory-postgres.test.mjs
+        run: node --import ./test/register-ts-resolve.mjs --test test/routines-postgres.test.mjs test/memory-postgres.test.mjs test/recovery-postgres.test.mjs
 
       # A SECOND database, seeded, that the probes read — and that the agent
       # never touches.
