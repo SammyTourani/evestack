@@ -101,7 +101,7 @@ Status: `[ ]` queued, `[-]` in progress, `[x]` verified, `[~]` implemented await
 ## 8. Recovery, evidence and regression improvement
 
 - [x] Task failures link to relevant traces and recorded completed turns / explicitly successful tool spans, with coverage limits.
-- [ ] Read-only doctor findings available alongside recovery guidance.
+- [x] Read-only CLI doctor findings available on demand alongside recovery; live session diagnosis remains explicitly separate.
 - [x] Safe reconnect distinguished from follow-up and replay that can repeat tools.
 - [ ] Replay preview and original/candidate comparison based on available evidence.
 - [x] User correction becomes a versioned regression case with immutable original evidence and stale-write protection.
@@ -120,7 +120,7 @@ Status: `[ ]` queued, `[-]` in progress, `[x]` verified, `[~]` implemented await
 - [ ] Attach change preview, compatibility/permissions summary and attach health checks.
 - [x] Component release manifest with selected version combinations and storage guards; deployment verification remains separate.
 - [x] Upgrade preview that preserves user configuration and reports manual conflicts.
-- [~] Backup/restore procedure verified with disposable data; service start/stop/state guidance. Native storage rehearsal passes; pgvector verification awaits CI.
+- [x] Backup/restore procedure verified with disposable data, including pgvector in CI; service start/stop/state guidance.
 - [x] Guided removal with explicit data choices and no implicit destructive defaults.
 - [ ] Registry dry-run/install verification and standalone/component compatibility notes.
 
@@ -265,3 +265,11 @@ These are required product learning, not claims a coding session can prove.
 - Rehearsed `pg_dump`/`pg_restore` against disposable PostgreSQL 17.10 using 17.11 clients: all rows across 22 tables, eight sequences, indexes and constraints match; additive operator SQL preserves the restored history. A truncated archive fails and leaves no partial tables. The test imports no agent, scheduler or delivery worker.
 - The native fixture lacks pgvector, so this local rehearsal uses numeric arrays for its memory values. CI runs the same test with a required vector extension and HNSW index; that result remains pending.
 - Removal guidance now starts with stopping work and retaining data, distinguishes generated from attached Compose files, explains standalone dashboards and configuration backups, and requires exact resource identification before permanent removal.
+
+### Read-only queue diagnosis
+
+- All CI jobs and the runtime image passed on `0877285`. The restore rehearsal ran with zero skipped tests and pgvector/HNSW in CI; the local numeric-array fallback is no longer the only storage evidence.
+- Task recovery and Diagnostics now offer an on-demand queue diagnosis using the CLI's existing query and finding modules. Postgres enforces a read-only repeatable snapshot, individual statements and the overall query sequence are bounded, and candidate/display truncation is explicit. Missing or changed schemas return unavailable; no agent call or repair module runs.
+- The interface summarizes next actions and keeps full CLI explanations/evidence expandable. An exhausted row with a replacement is distinguished from a stranded run. Live session health is not inferred from the database snapshot, and a failed recheck preserves the prior result as stale.
+- Six native PostgreSQL tests pass, including exact finding parity with the CLI, optional migration-table failure, unchanged queue rows, bounded output, unsupported schemas and enforced read-only transactions. Dashboard: 760 tests pass, five native suites run separately. Typecheck and production build pass; 25 contracts / 640 assertions pass.
+- Built-browser checks pass anonymous refusal, on-demand dispatch, shared findings, stale failure/retry, recovery integration, mobile/dark layouts and no script errors. Visual inspection led to a clearer action button, concise guidance and expandable technical detail; repeated captures passed. Runtime-image checks now exercise the bundled shared modules and their authenticated route.

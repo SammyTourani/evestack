@@ -385,3 +385,18 @@ tools, and replay runs earlier messages again in another task after a tool previ
 A failed evidence read is reported as unavailable. For deeper local forensics, run
 `npx evestack doctor` in your agent project. Pause affected routines while investigating
 an ambiguous external effect; automatic repeat execution can make the ambiguity worse.
+
+**Check the installation's job queue** in the recovery panel runs a separate,
+on-demand database diagnosis. The same view is in Diagnostics → Queue diagnosis,
+and the authenticated `GET /api/doctor` exposes its report. It reuses the CLI's
+queue queries and finding rules, inside a server-enforced read-only transaction.
+It never unlocks jobs, resets attempts, starts a task or contacts an agent.
+
+This is an installation snapshot, not a verdict about the current task. It reads
+the standard `graphile_worker` and `workflow` schemas, caps each detail list at
+20 candidates, bounds query time and labels incomplete or unavailable coverage.
+A failed recheck retains the prior result with a stale warning. An exhausted row
+may already have a claimable replacement; only inspecting its context tells you
+whether recovery is needed. Live-session health remains unassessed. Use the CLI
+for custom schemas, live-session probes and a separately reviewed repair plan.
+Back up the database before changing queue state.

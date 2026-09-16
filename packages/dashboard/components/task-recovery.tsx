@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { TaskRecovery } from "@/lib/task-recovery";
 import { ResultMarkdown } from "./markdown";
+import { QueueDiagnosisPanel } from "./queue-diagnosis";
 
 export function TaskRecoveryPanel({ sessionId, status, reconnect }: { sessionId: string; status: string; reconnect: () => void }) {
   const [result, setResult] = useState<TaskRecovery | null>(null);
@@ -47,6 +48,7 @@ export function TaskRecoveryPanel({ sessionId, status, reconnect }: { sessionId:
       <a href={`/regressions/new?task=${encodeURIComponent(sessionId)}`}>Save a correction as a regression case</a>
       <a href={`/sessions/${encodeURIComponent(sessionId)}`}>Open diagnostics &amp; replay preview</a>
     </div>
+    <details><summary>Check the installation's job queue</summary><QueueDiagnosisPanel /></details>
     <details><summary>How to recover safely</summary>
     <p>Reconnecting reads this task's durable conversation without sending your request again. A new follow-up can execute tools. Replay starts another task and runs earlier messages again, so it can repeat side effects; inspect and confirm its tool preview first.</p>
     <p>For local diagnosis, run <code>npx evestack doctor</code> in your agent project. Check a provider error or budget stop before retrying. Saved workflow and trace evidence can be inspected while the agent is offline; live conversation recovery needs it to reconnect.</p></details>

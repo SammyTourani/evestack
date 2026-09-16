@@ -64,6 +64,9 @@ on:
       - "packages/dashboard/**"
       - "packages/evestack-schedules/**"
       - "packages/evestack-budget/**"
+      - "packages/evestack-cli/src/queue.mjs"
+      - "packages/evestack-cli/src/findings.mjs"
+      - "packages/evestack-cli/src/format.mjs"
       - "templates/default/agent/skills/**"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
@@ -349,6 +352,8 @@ jobs:
           set -euo pipefail
           code="$(curl -s -o /dev/null -w '%{http_code}' http://localhost:4000/api/health/detail)"
           [ "$code" = "401" ] || { echo "::error::/api/health/detail answered $code with no credential, expected 401"; exit 1; }
+          code="$(curl -s -o /dev/null -w '%{http_code}' http://localhost:4000/api/doctor)"
+          [ "$code" = "401" ] || { echo "::error::/api/doctor answered $code with no credential, expected 401"; exit 1; }
           echo "401 as expected — the 200s below mean something"
 
       # ---------------------------------------------------------------------
@@ -363,6 +368,7 @@ jobs:
           # from the runtime image, where missing dist/ or SQL fails at request time.
           curl -sf "${A[@]}" http://localhost:4000/api/settings/budget > /tmp/budget-settings.json
           curl -sf "${A[@]}" http://localhost:4000/api/routines > /tmp/routines.json
+          curl -sf "${A[@]}" http://localhost:4000/api/doctor > /tmp/queue-diagnosis.json
           curl -sf -XPOST "${A[@]}" -H 'content-type: application/json' \
             -d '{"cron":"0 9 * * 1-5","timeZone":"America/Toronto"}' \
             http://localhost:4000/api/routines/preview > /tmp/routine-preview.json
@@ -370,6 +376,8 @@ jobs:
             const budget = require("/tmp/budget-settings.json");
             const routines = require("/tmp/routines.json");
             const preview = require("/tmp/routine-preview.json");
+            const doctor = require("/tmp/queue-diagnosis.json");
+            if (!doctor.ok || !doctor.diagnosis?.readOnly || doctor.diagnosis.coverage?.agent !== "not_probed" || !Number.isInteger(doctor.diagnosis.counts?.jobs)) throw new Error("Shared queue diagnosis modules missing or unusable in image");
             if (!budget.ok || !Array.isArray(budget.consumers) || !budget.defaults) throw new Error("Budget settings contract missing from image");
             if (!routines.ok || !Array.isArray(routines.routines) || !routines.clock) throw new Error("Routine contract missing from image");
             if (!preview.ok || preview.times?.length !== 3 || preview.times.some(t => !Number.isFinite(Date.parse(t.utc)))) throw new Error("Routine preview failed in image");

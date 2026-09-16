@@ -1,4 +1,5 @@
 const SECTIONS = [
+  ["/diagnostics/doctor", "Queue diagnosis", "Read-only CLI doctor findings for durable jobs; no repair is executed."],
   [
     "/overview",
     "Activity & performance",

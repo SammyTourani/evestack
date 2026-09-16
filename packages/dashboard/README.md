@@ -22,6 +22,13 @@ an agent or dispatcher. The operator procedure is in
 
 ## Run the dashboard
 
+Queue diagnosis (`/diagnostics/doctor`, `GET /api/doctor`) reuses the CLI's pure
+`queue.mjs`, `findings.mjs` and `format.mjs` modules. Next bundles these imports
+into the dashboard; it does not execute the CLI or import its repair module.
+The image workflow watches and exercises those dependencies. Queries run in one
+read-only transaction against standard schemas, with bounded statements and
+candidate lists; live agent health is explicitly unprobed.
+
 Self-hosted observability and control plane for eve agents: sessions, cost,
 approvals with audit, memory, schedules and evals, read from your own Postgres.
 
