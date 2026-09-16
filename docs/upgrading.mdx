@@ -117,7 +117,7 @@ runtime requirements and versioned storage guards. The source repository's
 A recorded manifest is a reference, not proof of installed dependencies, running
 services or publication. Check the registry and deployment before updating it.
 
-Back up Postgres and verify a restore before migrations. The evestack schema
+Use [Backup and restore](/docs/backup-restore) before migrations. The evestack schema
 contains durable routines, settings, memory reviews, regression cases and audit
 history as well as traces/facts. Use a matching version and a component-specific
 repair; do not drop the entire schema to make an older dashboard start.
@@ -360,12 +360,13 @@ that was tested. Moving one a long way without the other is untested rather than
 you are several releases behind, move both, from the same release, and run `npm run verify`
 afterwards.
 
-Nothing here rewrites your data. The one destructive operation in this area is
-`docker compose down -v`, which deletes the Postgres volume — every session, trace and memory
-with it — and it is never part of an upgrade. It is only ever needed to make a *new* database
-password take effect (`EVESTACK_DB_PASSWORD` in `.env`, which Compose interpolates into
-`POSTGRES_PASSWORD`), because Postgres applies that variable once, when the volume is first
-created.
+Dashboard startup can apply additive schema migrations. Back up the whole
+database before upgrading and respect component version guards. Never use
+`docker compose down -v` as an upgrade or password-rotation step; it deletes the
+database volume. `POSTGRES_PASSWORD` initializes a new volume only. For an existing
+database, rotate the role password through an authenticated Postgres session
+(for example, interactive `psql`'s `\password`) and update the corresponding private
+application configuration together, then restart and verify affected services.
 
 ---
 

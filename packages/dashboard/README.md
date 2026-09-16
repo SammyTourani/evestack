@@ -1,5 +1,27 @@
 # @evestack/dashboard
 
+## Database restore rehearsal (contributors)
+
+`test/backup-postgres.test.mjs` creates and drops only uniquely named disposable
+databases under a test server. Set `EVESTACK_TEST_POSTGRES_URL` to that server's
+admin connection, and either `EVESTACK_TEST_PG_BIN` to a directory containing
+matching `pg_dump`/`pg_restore` clients or `EVESTACK_TEST_PG_CONTAINER` to the exact
+Docker PostgreSQL service container. The latter executes its own client tools
+against loopback port 5432. `EVESTACK_TEST_REQUIRE_VECTOR=1` makes missing pgvector
+a failure; CI sets it. These are test harness settings, not deployment options.
+Run from this package with:
+
+```bash
+node --import ./test/register-ts-resolve.mjs --test test/backup-postgres.test.mjs
+```
+
+It compares archived/restored rows, sequences, indexes and constraints, checks
+additive schema reapplication and a truncated-archive rollback, and never starts
+an agent or dispatcher. The operator procedure is in
+[Backup and restore](../../docs/backup-restore.mdx).
+
+## Run the dashboard
+
 Self-hosted observability and control plane for eve agents: sessions, cost,
 approvals with audit, memory, schedules and evals, read from your own Postgres.
 

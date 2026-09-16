@@ -131,6 +131,7 @@ on advertising them.
 - [Composio auth](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/composio-auth.mdx)
 - [Memory](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/memory.mdx)
 - [Self-hosting](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/self-hosting.mdx)
+- [Backup and restore](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/backup-restore.mdx)
 - [Upgrading](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/upgrading.mdx)
 - [Uninstall](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/uninstall.mdx)
 - [Proactive agents](https://raw.githubusercontent.com/SammyTourani/evestack/main/docs/proactive.mdx)

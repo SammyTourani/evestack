@@ -19,6 +19,7 @@
     "---Run it in production---",
     "self-hosting",
     "operations",
+    "backup-restore",
     "upgrading",
     "uninstall",
     "support",

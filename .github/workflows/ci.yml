@@ -333,6 +333,14 @@ jobs:
           EVESTACK_TEST_POSTGRES_URL: postgres://evestack:evestack@localhost:5433/evestack
         run: node --import ./test/register-ts-resolve.mjs --test test/routines-postgres.test.mjs test/memory-postgres.test.mjs test/recovery-postgres.test.mjs
 
+      - name: whole-database backup and isolated restore with pgvector
+        working-directory: packages/dashboard
+        env:
+          EVESTACK_TEST_POSTGRES_URL: postgres://evestack:evestack@localhost:5433/evestack
+          EVESTACK_TEST_PG_CONTAINER: ${{ job.services.postgres.id }}
+          EVESTACK_TEST_REQUIRE_VECTOR: '1'
+        run: node --import ./test/register-ts-resolve.mjs --test test/backup-postgres.test.mjs
+
       # A SECOND database, seeded, that the probes read — and that the agent
       # never touches.
       #

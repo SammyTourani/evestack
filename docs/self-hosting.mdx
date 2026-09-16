@@ -526,7 +526,7 @@ It is your database, which is the whole trade. Everything durable is in the one 
 | Schema | Owner | Holds |
 | --- | --- | --- |
 | `workflow`, `workflow_drizzle`, `graphile_worker` | `@workflow/world-postgres` | Durable sessions, runs, events, steps, hooks, waits, stream chunks |
-| `evestack` | evestack | `memories` (pgvector), `approvals`, the memory-deletion audit log, ingested spans |
+| `evestack` | evestack | Memories/vectors, approvals, reviews/audit, spans/facts, routines/runs/notifications, budgets and regression cases |
 
 So a database-level dump is the backup — `pg_dump` of the whole database, not of a schema, and
 not a copy of the container. The `evestack-pgdata` volume is the other thing to know exists:
@@ -534,8 +534,9 @@ not a copy of the container. The `evestack-pgdata` volume is the other thing to 
 
 Two schema-specific notes. `evestack.approvals` is retained forever by design — it is the row
 someone wants a year later, when they ask why the agent deleted the thing it deleted. And the
-agent's `evestack.memories` table is created lazily on the first `remember` call, so a restore
-into an empty database is fine; the table comes back on use, HNSW index and all.
+agent's `evestack.memories` table is created lazily on the first `remember` call.
+If it already contains data, the archive must restore that data and its vector
+index. Recreating an empty table later does not recover old memories.
 
 A third that is easy to assume the wrong way round: **the `workflow` schema has no retention at
 all.** `evestack.spans` expires on a 30-day window and prunes itself, which makes it natural to
@@ -545,8 +546,9 @@ measured. [Operations](/docs/operations#retention-the-workflow-schema-is-never-p
 opt-in pruning procedure and, more importantly, what is safe to delete and what eve still needs.
 
 <Note>
-  A backup you have never restored is a hypothesis. Restoring into a scratch database and pointing
-  a throwaway agent at it costs one container and answers the question.
+  Follow [Backup and restore](/docs/backup-restore) to rehearse the archive in an
+  isolated database. Keep it disconnected from agents and schedulers while
+  inspecting it: restored jobs can resume external actions on startup.
 </Note>
 
 ### The trace spool expires; your database does not

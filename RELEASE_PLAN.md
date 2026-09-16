@@ -120,8 +120,8 @@ Status: `[ ]` queued, `[-]` in progress, `[x]` verified, `[~]` implemented await
 - [ ] Attach change preview, compatibility/permissions summary and attach health checks.
 - [x] Component release manifest with selected version combinations and storage guards; deployment verification remains separate.
 - [x] Upgrade preview that preserves user configuration and reports manual conflicts.
-- [ ] Backup/restore procedure verified with disposable data; service start/stop/state guidance.
-- [ ] Guided removal with explicit data choices and no implicit destructive defaults.
+- [~] Backup/restore procedure verified with disposable data; service start/stop/state guidance. Native storage rehearsal passes; pgvector verification awaits CI.
+- [x] Guided removal with explicit data choices and no implicit destructive defaults.
 - [ ] Registry dry-run/install verification and standalone/component compatibility notes.
 
 ## 10. Public release and product promise
@@ -257,3 +257,11 @@ These are required product learning, not claims a coding session can prove.
 - The generated release manifest checks component versions, template dependencies, Postgres image majors and storage guards. It ships in new projects and is checked in CI. Candidate versions are CLI 0.7.0, scaffolder 0.13.0, dashboard 0.5.0, budget 0.4.0, Composio 0.3.0, MCP 0.4.0 and OpenSandbox 0.4.1; schedules stays 0.2.1 because its runtime is unchanged. No artifact is published by this checkpoint.
 - CLI: 168 tests pass. Scaffolder: 246 pass, one optional runtime test skipped. Compatibility: 25 contracts / 632 assertions pass. Template sync, registry generation, lockfile resolution and manifest consistency pass.
 - CI on `69b1e61` found a missing budget build before dashboard unit tests and a fleet probe that reopened its fixture while the engine could still finish it. The job now builds the dependency first; the probe waits for the real turn to settle before reopening it. These corrections await verification on the next exact commit.
+
+### Backup, restore and removal preparation
+
+- All CI jobs, including Windows/macOS, and the runtime image passed on `a8014a4`. This verifies the dashboard build ordering and fleet fixture corrections.
+- Added a whole-database archive/restore guide covering configuration, roles/extensions, data inventory, paused activation and component compatibility. Restored databases remain disconnected from workers until pending tasks, uncertain dispatches and notification receipts are reviewed. Removed advice to delete a database volume for password rotation.
+- Rehearsed `pg_dump`/`pg_restore` against disposable PostgreSQL 17.10 using 17.11 clients: all rows across 22 tables, eight sequences, indexes and constraints match; additive operator SQL preserves the restored history. A truncated archive fails and leaves no partial tables. The test imports no agent, scheduler or delivery worker.
+- The native fixture lacks pgvector, so this local rehearsal uses numeric arrays for its memory values. CI runs the same test with a required vector extension and HNSW index; that result remains pending.
+- Removal guidance now starts with stopping work and retaining data, distinguishes generated from attached Compose files, explains standalone dashboards and configuration backups, and requires exact resource identification before permanent removal.

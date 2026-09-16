@@ -1,373 +1,164 @@
 ---
-title: Uninstall
-description: Removing a project, and the four things that survive deleting its directory — with the exact names, and the two list commands that lie to you.
+title: Stop or remove an installation
+description: Choose whether to keep your data, identify the exact project resources, and remove only what you intend.
 ---
 
-<Warning>
-  **There is no `evestack uninstall`.** `evestack --help` lists seven commands and none of them
-  removes anything. Nothing here is automated, and that is the honest state of it rather than a
-  design position — this page exists because removal was undocumented and the evidence was five
-  orphaned Postgres volumes on one development machine, four of them belonging to projects whose
-  directories no longer existed.
+There is no `evestack uninstall` command. Choose the outcome first:
 
-  Everything below **destroys data and does not ask twice**. `docker compose down -v` deletes the
-  Postgres volume: every session, every trace, every memory, every approval record and every
-  schedule in that project, gone, with no undo and no backup taken for you.
-</Warning>
+| Outcome | Action | Data retained |
+| --- | --- | --- |
+| Stop spending and pause work | Pause routines, disable triggers, stop the agent and dashboard | Database, code and configuration |
+| Remove containers, keep the installation recoverable | Stop the agent, then take the correct Compose project down without `-v` | Database volume and project files |
+| Permanently remove one installation | Verify a backup, remove its exact containers/volume, then its files | Only the backups you chose to retain |
+| Reclaim shared disk space | Inspect images, caches and models individually | Depends on what you explicitly remove |
 
-## What removal actually involves
+## 1. Identify the installation
 
-A project is not installed anywhere. It is a directory, plus things Docker holds on its behalf,
-plus caches that belong to other tools. Deleting the directory removes the first of those and
-none of the rest.
+Keep the project directory until you have identified its resources. The Compose
+file's `name:` value ties the installation to its containers and volume. Preserve
+that value when moving or recovering a project; do not derive a new name and
+assume it refers to the same data.
 
-| Thing | Who owns it | Removed by deleting the project directory? | Measured size |
-| --- | --- | --- | --- |
-| the project directory (`node_modules`, `.eve/`, your agent code) | you | yes | ~300 MB, mostly `node_modules` |
-| the `<project>_evestack-pgdata` volume | Docker | **no** | 68–78 MB light, 147.2 MB measured on a busy one |
-| `ghcr.io/sammytourani/evestack-dashboard:<tag>` | Docker | **no** | 1.05 GB unpacked |
-| `pgvector/pgvector:pg17` | Docker | **no** | 646 MB |
-| the eve base image | Docker | **no** | 665 MB |
-| `eve-sandbox-template:<hash>`, one per project | Docker | **no** | 665 MB apparent, **~66 kB unique** per extra one |
-| session sandbox containers | Docker | **no** | ~20 kB writable layer each, but they persist |
-| `~/.npm/_npx` | npm | **no** | 99 MB when this was written; 2.2 GB on the same machine later |
-| Ollama models (`qwen3`, `nomic-embed-text`) | Ollama | **no** | several GB |
-
-The last two are not evestack's to delete and are named here only because nothing else names them
-as a consequence of having run evestack.
-
-<Note>
-  **Read that last column as an order of magnitude, not as your machine.** Every figure in it was
-  measured, but three of them move: the volume grows with your sessions, `~/.npm/_npx` grows with
-  every `npx` invocation of anything, and the dashboard image changes size per tag. The commands in
-  each section below print the real number for *your* machine, which is the one to act on.
-
-  The sandbox-template row is the one worth reading carefully, because `docker images` reports it
-  misleadingly. Each `eve-sandbox-template` shows a **665 MB** size, but that is almost entirely
-  layers shared with the eve base image; `docker system df -v` breaks the two apart, and the
-  `UNIQUE SIZE` column is what you actually get back:
-
-  ```
-  REPOSITORY             SIZE    SHARED SIZE   UNIQUE SIZE
-  eve-sandbox-template   665MB   665.3MB       65.77kB
-  eve-sandbox-template   665MB   665.3MB       65.77kB
-  ghcr.io/vercel/eve     665MB   665.3MB       33.42kB
-  ```
-
-  So removing three orphaned sandbox templates recovers about **200 kB**, not 2 GB. Removing the
-  eve base image underneath them is where the 665 MB is — and nothing does that while a sandbox
-  template still references those layers.
-</Note>
-
-## Two list commands that lie, and the rule that follows
-
-<Warning>
-  `docker ps --filter name=X` and `docker volume ls --filter name=X` are **substring** matches, not
-  equality. `--filter name=agent` matches `my-agent`, `agent-2`, and a container called
-  `payments-agent-prod` that belongs to something else entirely.
-
-  This is not theoretical here: a bulk delete driven by one of those filters destroyed a live
-  container in this project's own history. The data was recoverable; it should not have had to be.
-
-  **So every removal on this page is two steps, and the first one is a list.** Read the whole
-  output, decide with your eyes, then remove by exact name. Do not pipe a `--filter name=` result
-  into `rm`, `rmi` or `docker rm`, in a script or otherwise.
-</Warning>
-
-## 1. Take one project down, from inside it
-
-Do this **before** you delete the directory. The compose file is the only thing that knows the
-project's Compose identity, and once it is gone Docker will not associate the leftovers with it —
-that is what produced the four orphans.
-
-<Warning>
-  **First: which compose file is this?** Everything below runs `docker compose` with no `-f`, which
-  means *whatever `docker-compose.yml` is in the directory*. In a project from `evestack create`
-  that is evestack's file and this is correct. In a project from **`evestack attach`** it may not
-  be: when the project already had a `docker-compose.yml` of its own, attach refuses to overwrite
-  it and writes **`docker-compose.evestack.yml`** beside it instead. Bare `docker compose` there
-  reads *their* file, resolves *their* project name, and `down -v` deletes *their* volumes.
-
-  Measured, in a directory holding both files:
-
-  ```
-  $ docker compose --profile dashboard config --volumes
-  their-precious-data
-  ```
-
-  Not one evestack resource in the answer. So look before anything else:
-
-  ```bash
-  ls docker-compose*.yml
-  ```
-
-  If `docker-compose.evestack.yml` is there, **add `-f docker-compose.evestack.yml` to every
-  `docker compose` command on this page**, and read [attach's own dashboard](#the-attached-dashboard-is-not-a-compose-service)
-  below — an attached project's dashboard is not a Compose service at all.
-</Warning>
+For a generated project:
 
 ```bash
-cd ~/my-agent
-
-# The project name and the real volume name, both as Docker stores them.
-# `config --volumes` alone prints `evestack-pgdata`, which is the key inside the
-# file and is the same string in every evestack project — not a name you can act on.
-docker compose --profile dashboard config --format json \
-  | node -p "const c=JSON.parse(require('fs').readFileSync(0,'utf8')); \
-c.name + '\n' + Object.keys(c.volumes||{}).map(v => '  ' + c.name + '_' + v).join('\n')"
-
-# and the containers, named exactly
+docker compose config --services
+docker compose config --volumes
 docker compose --profile dashboard ps -a
 ```
 
-Read both. The volume name that command prints is the one — and the only one — that the rest of
-this page is about.
-
-Then, keeping the data:
+For an attached project, inspect the files first. If attach wrote
+`docker-compose.evestack.yml` beside an existing Compose file, use it explicitly:
 
 ```bash
-# containers and network go; the Postgres volume stays
-docker compose --profile dashboard down --remove-orphans
+docker compose -f docker-compose.evestack.yml config --services
+docker compose -f docker-compose.evestack.yml config --volumes
+docker compose -f docker-compose.evestack.yml ps -a
 ```
 
-Or destroying it:
-
-```bash
-# the same, plus the volume — every session, trace, memory, approval and schedule
-docker compose --profile dashboard down -v --remove-orphans
-```
-
-`--profile dashboard` matters, and it is not optional. Without it Compose does not consider the
-dashboard service part of this run and its container is left behind — **and `--remove-orphans`
-does not catch it**, because Compose knows that service, it just filtered it out. Measured on
-Compose v5.1.0, against a two-service project whose second service is profile-gated:
-
-```
-$ docker compose down --remove-orphans
- Network probe_default  Removing
- Network probe_default  Resource is still in use
-$ docker ps -a --format '{{.Names}}'
-probe-dashboard-1
-```
-
-The container survives, the network cannot be removed because the container is still attached to
-it, and nothing said the word "orphan". Re-run the same command **with** `--profile dashboard` and
-both go.
-
-### The attached dashboard is not a Compose service
-
-`evestack attach` writes a compose file for **Postgres only**. Its dashboard is started by the
-`docker run` command attach prints, so no `docker compose down` of any kind touches it — it is
-not in the file, it carries no Compose project label, and it will still be there after the
-compose project is gone.
-
-It is named after the same Compose project name the volume is, with `-dashboard` on the end, so
-you can find it exactly:
-
-```bash
-# list first — read the name, then use the name you read
-docker ps -a --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}' | grep -- -dashboard
-
-docker rm -f <the-name-you-just-read>
-```
-
-Finally the directory:
-
-```bash
-rm -rf ~/my-agent
-```
-
-<Note>
-  `.env` and `.env.local` in there hold a generated Postgres password, a dashboard sign-in
-  password and a trace-ingest token, all at mode `0600`. `rm -rf` is enough — none of them is
-  registered anywhere else — but if you keep a backup of the directory, those three secrets are in
-  it.
-</Note>
-
-## 2. If the directory is already gone
-
-The volume name is the only surviving reference, and it is derived rather than random:
-
-```
-<compose project name>_evestack-pgdata
-```
-
-where the Compose project name is the directory's basename, slugged, plus the first six hex
-characters of the SHA-256 of the directory's **absolute path**. The path is in there deliberately —
-two projects both called `my-agent` would otherwise be one Compose project sharing one database,
-which happened twice before the hash was added. It also means **moving a project directory orphans
-its volume**, which is a second way to arrive at this section.
-
-List what is there, read it, and remove by full name:
-
-```bash
-# every evestack Postgres volume on this machine, with its size
-docker system df -v | grep evestack-pgdata
-
-# or the full picture, unfiltered, if you want to see everything
-docker volume ls
-```
-
-If you remember where the project used to live, you can name its volume exactly:
-
-```bash
-node -p "const p=require('node:path').resolve('/Users/you/old-project'); \
-(p.split(/[\\\\/]/).filter(Boolean).pop().toLowerCase().replace(/[^a-z0-9_-]+/g,'-').replace(/^[^a-z0-9]+/,'')||'evestack') \
-+ '-' + require('node:crypto').createHash('sha256').update(p).digest('hex').slice(0,6) + '_evestack-pgdata'"
-```
-
-For the path in that example it prints exactly this, and you can check the derivation by running
-it yourself:
-
-```
-old-project-c94571_evestack-pgdata
-```
-
-**Check it against the list above before you act on it.** The one-liner reconstructs a name; it
-does not confirm one exists. If the name it prints is not in `docker volume ls`, do not go looking
-for the nearest match — the two ways to get a near miss are a path that is not byte-for-byte the
-one the project was scaffolded at (a symlinked `/tmp`, a different capitalisation, a trailing
-slash: `create` hashes the argument it was given, and `resolve()` here strips a trailing slash it
-may not have), and a project that was scaffolded somewhere else entirely. Both mean you have the
-wrong directory, not the wrong volume.
-
-Then:
-
-```bash
-docker volume rm old-project-c94571_evestack-pgdata
-```
-
-`docker volume rm` refuses a volume a container still uses, which is a useful second opinion: if it
-refuses, something is still running and you are about to delete a live project's database.
-
-## 3. The images, once no project needs them
-
-Only do this when you have removed every evestack project on the machine — these are shared, so
-removing them while another project exists just means it pulls or rebuilds them again.
-
-```bash
-# list first, with sizes, and read it
-docker images ghcr.io/sammytourani/evestack-dashboard
-docker images pgvector/pgvector
-
-# then remove the exact tags you saw — substitute the tags from YOUR output,
-# these two are only the shape of the command.
-#
-# THE-TAG-YOU-SAW is deliberately not a version number. Do not "fix" it to one:
-# the publish gate scans the tree for evestack-dashboard:<digit>… and requires
-# every hit to equal packages/dashboard/package.json, so a real version here is
-# either a duplicate of the pin or a release blocker. It was 0.3.1 once and
-# would have failed the 0.4.0 release at tag-push time. A placeholder also fails
-# loudly if pasted verbatim — docker answers "No such image" instead of removing
-# whichever version you happened to have.
-docker rmi ghcr.io/sammytourani/evestack-dashboard:THE-TAG-YOU-SAW
-docker rmi pgvector/pgvector:pg17
-```
+Use that same `-f` choice on **every** subsequent Compose command. A bare
+`docker compose` in an attached project may operate on the original application's
+services and data. `config --volumes` lists logical volume keys; inspect Docker's
+volume names and Compose labels to confirm the actual volume before deleting it.
 
 <Warning>
-  **`pgvector/pgvector:pg17` is a public Postgres image, not an evestack one.** Anything else on
-  the machine may be using it — another project's database, something you pulled by hand — and
-  `docker rmi` on it takes it away from them too. `docker rmi` refuses while a container still
-  references it, which catches the common case, but a stopped project you intend to start again
-  is not protected. Check what depends on it before removing it:
-
-  ```bash
-  docker ps -a --filter ancestor=pgvector/pgvector:pg17 \
-    --format 'table {{.Names}}\t{{.Status}}'
-  ```
-
-  If that lists anything you did not scaffold, leave the image alone. It costs 646 MB and it will
-  be re-pulled on demand; a database you cannot start is worth more than the disk.
+  Docker's `--filter name=` matches substrings. It can select another application
+  with a similar name. List resources, inspect their labels and remove by exact
+  name. Never pipe a name-filter result into a deletion command.
 </Warning>
 
-Naming the repository as an argument, rather than `--filter name=`, is the point: `docker images
-<repo>` matches that repository and nothing else.
+## 2. Stop work and keep the data
 
-### The per-project sandbox image
+Pause routines in the dashboard and disable inbound webhooks or bot delivery if
+needed. Stop the agent through its terminal, systemd service or launchd job, and
+prevent its supervisor from immediately starting it again. See
+[Operations](/docs/operations#run-the-agent-as-a-service). Stopping a dashboard
+alone does not stop the agent, existing model calls or its code-authored schedules.
 
-eve builds an `eve-sandbox-template:<hash>` image per project on first run and **nothing removes
-it** — not `docker compose down -v`, not deleting the project directory, not any evestack command.
-Three orphaned ones were on the development machine when this was written. The commands are in
-[Local setup](/docs/local-setup#what-grows-and-the-one-thing-nothing-cleans-up); the short version
-is that `--filter reference='eve-sandbox-template:*'` matches the *whole* reference as a glob, so
-it names that repository exactly and leaves only the tag open — unlike `--filter name=`.
+For a generated project, stop the dashboard and database containers:
 
-Do it when no project is running. The tag carries no hint of which project it belongs to, and a
-live project simply rebuilds its own on the next turn.
+```bash
+docker compose --profile dashboard stop
+```
 
-### Session sandbox containers
+To also remove their containers and network while retaining named volumes:
 
-The Docker sandbox keeps one long-lived container per durable session, with no idle timeout, so
-they accumulate for as long as sessions do. List them and read the list before removing anything:
+```bash
+docker compose --profile dashboard down
+```
+
+Neither command includes `-v`. Keep the project files and volume. Restarting the
+installation later can resume durable work, so review pending jobs first.
+
+An attached dashboard may be a standalone container started by the printed
+`docker run` command. Compose does not manage it. Find it in the inventory and
+stop its **exact** name separately:
 
 ```bash
 docker ps -a --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
+docker stop EXACT-DASHBOARD-CONTAINER
 ```
 
-## 4. The caches that are not evestack's
+Replace the placeholder only after inspection. Do the same for any session
+sandbox containers you intend to stop. A container's session or project labels
+are stronger evidence than a similar-looking name.
 
-**`npx`.** Every `npx create-evestack` and `npx evestack` leaves a full install under
-`~/.npm/_npx` — 99 MB on a machine that had run the scaffolder a few times, 2.2 GB on the same
-machine after a month of `npx` use of everything else. `npm cache clean --force` does not touch
-it. It is shared with every other tool you run through `npx`, so `du -sh` first and expect most
-of it not to be evestack's.
+## 3. Permanently remove this installation
+
+First follow [Backup and restore](/docs/backup-restore). Verify a restore while
+Postgres is still available. Decide whether you also need copies of agent code,
+private configuration, skill files and files kept inside session sandboxes.
+
+Then stop the agent and remove its exact dashboard/container resources. For a
+**reviewed generated Compose project whose listed volumes all belong to this
+installation**, this command also deletes its non-external volumes:
 
 ```bash
-du -sh ~/.npm/_npx     # look first
-rm -rf ~/.npm/_npx     # safe: it is a cache, and npx refills it on demand
+# Permanent deletion: run only after checking this project's services and volumes.
+docker compose --profile dashboard down -v
 ```
 
-**Ollama.** If you took the $0 local-model path, the models are still on your machine and nothing
-in evestack references them. They are yours and may be in use by something else, so list before
-removing:
+For an attached project, use the reviewed `-f` file and inspect its contents.
+Do not delete a shared or externally supplied database. Remove a standalone
+attached dashboard by exact name after stopping it:
 
 ```bash
+docker rm EXACT-STOPPED-DASHBOARD-CONTAINER
+```
+
+A deleted volume loses tasks, memories, approval/review history, routines,
+notification attempts, budget policies and regression cases. A filesystem copy
+of the project does not contain those database records.
+
+Remove the project directory only after its resources and backups are accounted
+for. Review private configuration backups under `~/.evestack/config-backups` as
+well: `evestack configure` stores them outside the project, and they retain old
+secrets. Select only backups belonging to the removed project; other projects
+may use the same backup directory. Revoke provider tokens, bot credentials or
+hosted OAuth connections that are no longer needed. Deleting local files does
+not revoke them at the provider.
+
+### If the project directory is already gone
+
+Inspect the full inventory and each candidate's Compose labels or mount details:
+
+```bash
+docker volume ls
+docker ps -a --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
+docker volume inspect EXACT-VOLUME-NAME
+docker inspect EXACT-CONTAINER-NAME --format '{{json .Mounts}}'
+```
+
+If ownership is uncertain, retain it until identified. Once confirmed, backed up
+and detached from its intended containers, remove only the exact volume:
+
+```bash
+docker volume rm EXACT-CONFIRMED-VOLUME-NAME
+```
+
+A refusal because a container still references it is a reason to inspect that
+container, not to force deletion.
+
+## 4. Optional cleanup of shared resources
+
+These belong to the host and may serve other projects. Leaving them installed
+is a valid choice.
+
+```bash
+docker system df -v
+docker images ghcr.io/sammytourani/evestack-dashboard
+docker images pgvector/pgvector
+docker images --filter 'reference=eve-sandbox-template:*'
 ollama list
-ollama rm qwen3
-ollama rm nomic-embed-text
+npm list -g --depth=0
 ```
 
-**The globally installed CLI**, if you installed one rather than using `npx`:
+Inspect dependencies before removing an exact image tag, stopped sandbox or
+model. `pgvector/pgvector` is shared by applications beyond Eve Stack. Sandbox
+images share most layers, so their displayed total sizes are not the space each
+removal will recover. Avoid broad `docker system prune --volumes` commands.
 
-```bash
-npm ls -g --depth=0 | grep evestack   # confirm it is there and named exactly
-npm rm -g evestack
-```
-
-## 5. Check your work
-
-Nothing evestack-shaped should be left. Each of these prints nothing on a clean machine:
-
-```bash
-docker ps -a --format '{{.Names}}\t{{.Image}}' | grep -E 'evestack|pgvector|eve-sandbox'
-docker volume ls --format '{{.Name}}' | grep evestack-pgdata
-docker images --format '{{.Repository}}:{{.Tag}}' | grep -E 'evestack|pgvector|eve-sandbox'
-```
-
-<Warning>
-  **These three are a question, not a to-do list, and the difference matters most here.** They are
-  deliberately wide — wider than evestack — so that nothing hides from them. `pgvector` in
-  particular matches on the *image* column, so every container on the machine running
-  `pgvector/pgvector` prints, whoever owns it. Run on the machine this page was written on, the
-  first line printed a container belonging to no evestack project at all:
-
-  ```
-  evestack-audit-pg       pgvector/pgvector:pg17
-  evestack-postgres-1     pgvector/pgvector:pg17
-  evestack-dashboard-1    evestack-dashboard
-  ```
-
-  Only the second and third are a scaffolded project's. The first is a database somebody started
-  by hand and is still using.
-
-  So do **not** read "whatever these print, delete it". Read each line, decide whether it is one of
-  the projects you removed above, and act only on the ones you recognise — by the exact name
-  printed, one command at a time. A line you cannot account for is a reason to stop and look, not
-  a reason to run `rm`.
-</Warning>
-
-<Note>
-  **What is deliberately not here:** a script. Every candidate one has to select things by pattern,
-  and a pattern is the failure mode this page is written around. The lists above are short enough
-  to read, and reading them is the safeguard.
-</Note>
+The npm `~/.npm/_npx` cache is shared with every tool run through `npx`; removing
+an installation does not require clearing it. If you installed the CLI globally
+and no longer want it, `npm uninstall -g evestack` removes that CLI installation.
+It does not remove project files or database volumes.
