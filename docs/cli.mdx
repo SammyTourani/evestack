@@ -285,9 +285,9 @@ nothing is answering yet.
 evestack skills [--dir=PATH] [--print] [--force] [--json]
 ```
 
-Writes the evestack skill pack — `SKILL.md` plus four reference files — where your coding agent
-will find it, so it knows this project without being told. The same pack the landing page's
-**Set up your agent** button copies. Full detail in [Set up with an agent](/docs/agent-setup).
+Writes the setup pack bundled with this CLI release: `SKILL.md` plus four reference files.
+The website's **Set up your agent** button follows the deployed site version and may differ.
+Full detail in [Set up with an agent](/docs/agent-setup).
 
 | Flag | Effect |
 | --- | --- |
@@ -296,13 +296,16 @@ will find it, so it knows this project without being told. The same pack the lan
 | `--force` | Overwrite files that already exist. Without it, one existing file stops the run and nothing is written. |
 | `--json` | Report what was written, as JSON. |
 
-The pack is fetched from the site rather than bundled into this package, so it cannot ship stale —
-which is the trade: it needs a network connection, and says so plainly when it does not have one.
+The default works offline after CLI installation and reports its source and version.
+`EVESTACK_PACK_URL` explicitly chooses a custom server, which is marked version-unverified.
+Remote HTTPS (or loopback HTTP) is required, with no redirects, a 15-second timeout and a
+1 MiB response limit. Existing files require `--force`; linked destination files/directories
+are refused. If a filesystem write fails partway through, inspect the destination before retrying.
 
 | Code | Meaning |
 | --- | --- |
 | `0` | Installed, or printed. |
-| `1` | Could not fetch the pack, or refused to overwrite. |
+| `1` | Could not load the pack, or refused to write. |
 | `2` | Bad arguments. |
 
 ## `evestack attach`
@@ -319,6 +322,17 @@ line for everything it writes.
 | `[dir]` | The project to attach to. Defaults to the current directory. |
 | `--yes` / `-y` | Skip the confirmation. Required when stdin is not a terminal — it will not guess at a project it did not create. |
 | `--dry-run` / `-n` | Print the plan and write nothing. |
+
+The preview names detected compatibility, files, ports and trace-export changes.
+Trace export can include prompts and tool inputs; decide whether that destination
+is appropriate before applying. Existing instrumentation is preserved.
+
+After applying, start the services using the printed commands, then run
+`evestack status` and `evestack readiness` against that dashboard. Readiness
+labels unavailable and unverified checks; follow [the first-task guide](/docs/first-task)
+to verify a real model/source result. `attach` writing files does not establish
+that the services are running. Keep its undo instructions and the private
+configuration backup when [removing the attachment](/docs/uninstall).
 
 ## `evestack doctor`
 

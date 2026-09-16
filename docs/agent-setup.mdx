@@ -36,22 +36,34 @@ there is loadable by the agent you are *building*, not only readable by the agen
 build it. Everywhere else it lands in `.claude/skills`, which is created if you have never made
 one.
 
-### Pointing it somewhere else
+### Version-matched setup files
 
-`EVESTACK_PACK_URL` overrides where the pack is fetched from. It defaults to
-`https://evestack.vercel.app/agent-pack.json`, and you will only need it if you are testing a
-fork, running against a local build of this site, or serving the pack from your own mirror:
+By default, the CLI installs the pack bundled with its own release. It works offline after
+installation, checks the bundled file fingerprints and reports the CLI version. The pack is
+regenerated from `skills/evestack` during testing and packing, rather than maintained as a
+second source. It records the selected runtime combination; it does not verify deployed versions.
+
+Existing files are preserved unless you pass `--force`. Symlinks within the chosen destination
+are refused, and all file paths are checked before writing. If an operating-system write fails
+partway through, inspect the destination before retrying.
+
+### A custom or newer pack
+
+`EVESTACK_PACK_URL` explicitly selects a remote pack, for example a local website build or a
+reviewed mirror. Its content may differ from your installed CLI. The result reports a custom
+source with no verified version match; unset the variable to return to the bundled pack.
 
 ```bash
 EVESTACK_PACK_URL=http://localhost:3000/agent-pack.json npx evestack skills
 ```
 
-<Note>
-  The pack is fetched from the site rather than bundled into the CLI. That is deliberate: a copy
-  vendored into a published package drifts from the source, and a stale pack means your agent
-  confidently repeats something that stopped being true a release ago. The cost is that
-  `evestack skills` needs a network connection — which `npx` already needed to run it at all.
-</Note>
+Remote servers require HTTPS; HTTP is allowed on loopback for development. URL credentials and
+redirects are refused. Fetches have a 15-second timeout and a 1 MiB body limit. A pack has at
+most 50 files of 256 KiB each, with duplicate and escaping target paths rejected.
+
+The website's pasteable pack follows the deployed website version. Choose the CLI's bundled
+pack when matching an installed release matters. These are setup instructions, not permission
+grants or proof that an agent has understood them.
 
 ## Every URL, and what each is for
 

@@ -1,19 +1,8 @@
 import { agentPackFiles } from "@/lib/agent-pack";
 
-/* /agent-pack.json — the pack as a file tree, for `npx evestack skills`.
- *
- * The CLI writes a real skill DIRECTORY (SKILL.md beside references/*.md),
- * because that structure is the mechanism rather than a convention: the
- * description routes and the references stay out of context until the model
- * asks. So it needs the files, not the pasteable concatenation at /agent.md.
- *
- * Fetching this rather than bundling a copy inside the CLI package is a
- * deliberate trade. The alternative is a second copy of the pack living under
- * packages/evestack-cli, synced by a prepack step — and a synced copy that
- * drifts is the failure this repository pays for most often. `npx evestack
- * skills` already required the network to fetch the package it is running, so
- * the requirement is not new; an offline global install gets a clear error
- * naming this URL. */
+/* The deployed website's pack as a file tree. CLI releases bundle their matching
+   setup files by default; this endpoint remains available for explicit custom
+   pack URLs and programmatic consumers of the website version. */
 export const dynamic = "force-static";
 
 export async function GET() {
@@ -22,7 +11,8 @@ export async function GET() {
     JSON.stringify(
       {
         name: "evestack",
-        source: "https://github.com/SammyTourani/evestack/tree/main/skills/evestack",
+        source:
+          "https://github.com/SammyTourani/evestack/tree/main/skills/evestack",
         files,
       },
       null,

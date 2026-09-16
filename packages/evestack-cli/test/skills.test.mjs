@@ -11,12 +11,30 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  existsSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, posix, win32 } from "node:path";
 
-import { projectCommand, scaffoldCommand, COMMANDS, USAGE, unknownCommand } from "../src/cli.mjs";
-import { defaultTarget, parseSkillsArgs, safeJoin, SKILLS_USAGE, skills } from "../src/skills.mjs";
+import {
+  projectCommand,
+  scaffoldCommand,
+  COMMANDS,
+  USAGE,
+  unknownCommand,
+} from "../src/cli.mjs";
+import {
+  defaultTarget,
+  parseSkillsArgs,
+  safeJoin,
+  SKILLS_USAGE,
+  skills,
+} from "../src/skills.mjs";
 
 function tmp(prefix = "evestack-skills-") {
   return mkdtempSync(join(tmpdir(), prefix));
@@ -69,7 +87,10 @@ test("--dir without a value is refused, never guessed", () => {
 
 test("the default target is agent/skills only inside an eve project", () => {
   const bare = tmp();
-  assert.equal(defaultTarget(bare).dir, join(bare, ".claude", "skills", "evestack"));
+  assert.equal(
+    defaultTarget(bare).dir,
+    join(bare, ".claude", "skills", "evestack"),
+  );
 
   const project = tmp();
   mkdirSync(join(project, "agent", "skills"), { recursive: true });
@@ -98,10 +119,16 @@ test("a real install writes the tree, and refuses to overwrite it afterwards", a
   try {
     const dir = join(tmp(), "evestack");
 
-    const first = await skills([`--dir=${dir}`], { stdout: sink(), stderr: sink() });
+    const first = await skills([`--dir=${dir}`], {
+      stdout: sink(),
+      stderr: sink(),
+    });
     assert.equal(first, 0);
     assert.match(readFileSync(join(dir, "SKILL.md"), "utf8"), /description: x/);
-    assert.equal(readFileSync(join(dir, "references", "cli.md"), "utf8"), "# cli\n");
+    assert.equal(
+      readFileSync(join(dir, "references", "cli.md"), "utf8"),
+      "# cli\n",
+    );
 
     // Second run must not clobber: someone may have edited the skill.
     const stderr = sink();
@@ -111,7 +138,13 @@ test("a real install writes the tree, and refuses to overwrite it afterwards", a
     assert.match(stderr.text(), /--force/);
 
     // …and --force is the way through.
-    assert.equal(await skills([`--dir=${dir}`, "--force"], { stdout: sink(), stderr: sink() }), 0);
+    assert.equal(
+      await skills([`--dir=${dir}`, "--force"], {
+        stdout: sink(),
+        stderr: sink(),
+      }),
+      0,
+    );
   } finally {
     delete process.env.EVESTACK_PACK_URL;
     await pack.close();
@@ -140,7 +173,10 @@ test("an unreachable pack fails with the URL in the message, not a stack trace",
   process.env.EVESTACK_PACK_URL = "http://127.0.0.1:1/agent-pack.json";
   try {
     const stderr = sink();
-    const code = await skills([`--dir=${join(tmp(), "x")}`], { stdout: sink(), stderr });
+    const code = await skills([`--dir=${join(tmp(), "x")}`], {
+      stdout: sink(),
+      stderr,
+    });
     assert.equal(code, 1);
     assert.match(stderr.text(), /Could not reach http:\/\/127\.0\.0\.1:1/);
     assert.match(stderr.text(), /agent\.md/);
@@ -158,7 +194,10 @@ test("--print writes every file to stdout and touches nothing", async () => {
   try {
     const dir = join(tmp(), "evestack");
     const stdout = sink();
-    const code = await skills(["--print", `--dir=${dir}`], { stdout, stderr: sink() });
+    const code = await skills(["--print", `--dir=${dir}`], {
+      stdout,
+      stderr: sink(),
+    });
     assert.equal(code, 0);
     // The destination matters as much as the content, so each file is named.
     assert.match(stdout.text(), /===== SKILL\.md =====/);
@@ -203,11 +242,22 @@ test("the whole install banner reaches the stream the caller supplied", async ()
 
     // Every part of the banner, not just the two lines that used to make it.
     assert.match(text, /Skill installed/, "the heading went somewhere else");
-    assert.match(text, /your agent now knows evestack/, "and so did its subtitle");
+    assert.match(
+      text,
+      /custom setup files; version match unverified/,
+      "and so did its subtitle",
+    );
     assert.match(text, /SKILL\.md/, "the per-file rows went somewhere else");
     assert.match(text, /references\/cli\.md/);
-    assert.ok(text.includes(dir), "the reader is never told where it was written");
-    assert.match(text, /npx evestack create/, "the one line meant to be typed went somewhere else");
+    assert.ok(
+      text.includes(dir),
+      "the reader is never told where it was written",
+    );
+    assert.match(
+      text,
+      /npx evestack create/,
+      "the one line meant to be typed went somewhere else",
+    );
 
     // Ordering, which two interleaved write sequences cannot promise. A reader
     // gets the heading, then what was written, then where, then what to type.
@@ -223,7 +273,11 @@ test("the whole install banner reaches the stream the caller supplied", async ()
     // `forStream` contract from ui.mjs:216-233, and the reason a captured
     // report can be compared and matched rather than only looked at.
     // eslint-disable-next-line no-control-regex
-    assert.doesNotMatch(text, /\x1b\[/, "escape sequences leaked into a non-TTY stream");
+    assert.doesNotMatch(
+      text,
+      /\x1b\[/,
+      "escape sequences leaked into a non-TTY stream",
+    );
   } finally {
     delete process.env.EVESTACK_PACK_URL;
     await pack.close();
@@ -253,22 +307,45 @@ test("the whole install banner reaches the stream the caller supplied", async ()
 test("a Windows target accepts the files it is supposed to", () => {
   const root = "C:\\Users\\sam\\.claude\\skills\\evestack";
   assert.equal(safeJoin(root, "SKILL.md", win32), `${root}\\SKILL.md`);
-  assert.equal(safeJoin(root, "references/cli.md", win32), `${root}\\references\\cli.md`);
-  assert.equal(safeJoin(root, "references\\cli.md", win32), `${root}\\references\\cli.md`);
+  assert.equal(
+    safeJoin(root, "references/cli.md", win32),
+    `${root}\\references\\cli.md`,
+  );
+  assert.equal(
+    safeJoin(root, "references\\cli.md", win32),
+    `${root}\\references\\cli.md`,
+  );
   // The default target is exactly this shape, so the bug covered the whole
   // command and not an exotic --dir.
-  assert.equal(safeJoin("C:\\p\\agent\\skills\\evestack", "SKILL.md", win32), "C:\\p\\agent\\skills\\evestack\\SKILL.md");
+  assert.equal(
+    safeJoin("C:\\p\\agent\\skills\\evestack", "SKILL.md", win32),
+    "C:\\p\\agent\\skills\\evestack\\SKILL.md",
+  );
 });
 
 test("a Windows target still refuses what it is supposed to", () => {
   const root = "C:\\Users\\sam\\.claude\\skills\\evestack";
-  for (const escape of ["../../escaped.md", "..\\..\\escaped.md", "a\\..\\..\\..\\escaped.md"]) {
-    assert.throws(() => safeJoin(root, escape, win32), /outside the target directory/, escape);
+  for (const escape of [
+    "../../escaped.md",
+    "..\\..\\escaped.md",
+    "a\\..\\..\\..\\escaped.md",
+  ]) {
+    assert.throws(
+      () => safeJoin(root, escape, win32),
+      /outside the target directory/,
+      escape,
+    );
   }
   // A different drive is absolute and contains no `..` at all, so a `..` test
   // alone would let it through. This is what `isAbsolute` is for.
-  assert.throws(() => safeJoin(root, "D:\\evil.md", win32), /outside the target directory/);
-  assert.throws(() => safeJoin(root, "C:\\Windows\\evil.md", win32), /outside the target directory/);
+  assert.throws(
+    () => safeJoin(root, "D:\\evil.md", win32),
+    /outside the target directory/,
+  );
+  assert.throws(
+    () => safeJoin(root, "C:\\Windows\\evil.md", win32),
+    /outside the target directory/,
+  );
 });
 
 test("a trailing slash on --dir is a path, not an escape attempt", () => {
@@ -276,8 +353,14 @@ test("a trailing slash on --dir is a path, not an escape attempt", () => {
   // completion, which appends the separator, produced the same false refusal on
   // POSIX that Windows got for every path.
   assert.equal(safeJoin("/tmp/x/", "SKILL.md", posix), "/tmp/x/SKILL.md");
-  assert.equal(safeJoin("/tmp/x//", "references/cli.md", posix), "/tmp/x/references/cli.md");
-  assert.equal(safeJoin("C:\\p\\evestack\\", "SKILL.md", win32), "C:\\p\\evestack\\SKILL.md");
+  assert.equal(
+    safeJoin("/tmp/x//", "references/cli.md", posix),
+    "/tmp/x/references/cli.md",
+  );
+  assert.equal(
+    safeJoin("C:\\p\\evestack\\", "SKILL.md", win32),
+    "C:\\p\\evestack\\SKILL.md",
+  );
 });
 
 test("a name that merely begins with two dots is not an escape", () => {
@@ -303,8 +386,14 @@ test("a real install writes through the guard, and a real escape still stops it"
   try {
     // A trailing separator, which is what shell completion gives you.
     const dir = `${join(tmp(), "evestack")}/`;
-    assert.equal(await skills([`--dir=${dir}`], { stdout: sink(), stderr: sink() }), 0);
-    assert.equal(readFileSync(join(dir, "references", "cli.md"), "utf8"), "# cli\n");
+    assert.equal(
+      await skills([`--dir=${dir}`], { stdout: sink(), stderr: sink() }),
+      0,
+    );
+    assert.equal(
+      readFileSync(join(dir, "references", "cli.md"), "utf8"),
+      "# cli\n",
+    );
   } finally {
     delete process.env.EVESTACK_PACK_URL;
     await pack.close();

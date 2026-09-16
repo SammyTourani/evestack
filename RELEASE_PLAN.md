@@ -13,46 +13,46 @@ Status: `[ ]` queued, `[-]` in progress, `[x]` verified, `[~]` implemented await
 
 - [x] Prior security/compatibility fixes on a clean branch; exact baseline CI green.
 - [x] npm trusted publishing, strongest publishing MFA, repository protection and private vulnerability reports configured.
-- [ ] Keep additive schema changes restart-safe; document their rollback/data implications.
-- [ ] Keep credentials, generated local data and test fixtures out of committed artifacts.
-- [ ] Review each change for authentication, origin checks, bounded input and truthful failure states.
+- [x] Keep additive schema changes restart-safe; document their rollback/data implications.
+- [x] Keep credentials, generated local data and test fixtures out of committed artifacts.
+- [x] Review each change for authentication, origin checks, bounded input and truthful failure states.
 
 ## 2. Task workspace and reliability
 
 - [x] Preserve new-task and follow-up drafts when delivery fails; distinguish rejected from uncertain delivery.
 - [x] Retain approvals on submission failure; prevent duplicate decision submissions.
-- [~] Report cancellation failures and offer an explicit recovery action.
+- [x] Report cancellation failures and offer an explicit recovery action.
 - [x] Render readable Markdown/code with safe links and no raw HTML execution.
-- [~] Connect new task, recent tasks, conversation, result, cost and evidence.
-- [~] Use task outcome as primary status; retain runtime lifecycle in details.
-- [~] Fix session breadcrumb and preserve old deep links.
-- [~] Add explicit reconnect/retry states without silently repeating side effects.
-- [~] Provide result links and evidence using actual recorded data.
+- [x] Connect new task, recent tasks, conversation, result, cost and evidence.
+- [x] Use task outcome as primary status; retain runtime lifecycle in details.
+- [x] Fix session breadcrumb and preserve old deep links.
+- [x] Add explicit reconnect/retry states without silently repeating side effects.
+- [x] Provide result links and evidence using actual recorded data.
 - [x] Support saving a task prompt as a routine.
 
 ## 3. Navigation, Today and mobile
 
 - [x] Primary navigation: Today, Tasks, Routines, Connections, Knowledge.
-- [~] Secondary Settings and Diagnostics preserve metrics, traces, monitors and sandbox inspection.
-- [~] Today: pending decisions, blocked work, recent results, upcoming routines and readiness.
-- [~] First-use checklist with a useful editable repository maintenance brief.
+- [x] Secondary Settings and Diagnostics preserve metrics, traces, monitors and sandbox inspection.
+- [x] Today: pending decisions, blocked work, recent results, upcoming routines and readiness.
+- [x] First-use checklist with a useful editable repository maintenance brief.
 - [x] Mobile menu with keyboard support, visible sign out and no page overflow.
 - [x] Mobile task cards; retain full table for detailed analysis.
-- [ ] Empty/loading/error states with a concrete next action.
-- [ ] Accessible labels, focus, live feedback, responsive layout and dark mode.
+- [x] Release-critical empty/loading/error states with a concrete next action.
+- [x] Keyboard labels/focus, live feedback, responsive layout and dark mode in the exercised release flows; this is not a full accessibility certification.
 
 ## 4. Decisions and audit
 
 - [x] Real pending approval API/queue, including unreachable/unknown state.
 - [x] Shared decision component in queue and task workspace.
 - [x] Show exact proposed tool/input, request wording and available choices.
-- [ ] Pending counts and links to the affected task.
+- [x] Pending counts and links to the affected task.
 - [x] Keep historical decisions and attribution provenance accessible.
 - [x] Do not imply shared installation credentials identify individual teammates.
 
 ## 5. Routines
 
-- [ ] Versioned additive routines/run schema and bounded queries.
+- [x] Versioned additive routines/run schema and bounded queries.
 - [x] Create/edit/archive/pause/resume, explicit timezone, next-three preview.
 - [x] Daily, weekly and five-field cron schedules using one preview/dispatch evaluator.
 - [x] DST gap/repeat behavior tested, including non-hour offsets.
@@ -63,8 +63,8 @@ Status: `[ ]` queued, `[-]` in progress, `[x]` verified, `[~]` implemented await
 - [x] Bounded latest-occurrence catch-up; skipped occurrences visible.
 - [x] Ambiguous dispatch stays visible and never automatically repeats.
 - [x] Reconcile run state with the actual task; approvals keep a run active.
-- [~] Explicit Node-only clock startup, build guard, shutdown and clock health.
-- [~] Routine history, task/result links, error and next-action copy.
+- [x] Explicit Node-only clock startup, build guard, shutdown and clock health.
+- [x] Routine history, task/result links, error and next-action copy.
 - [x] Editable read-only brief example; test before enabling unattended work.
 - [x] Preserve code-authored schedules and heartbeat as separate execution paths.
 - [x] Reuse configured notification delivery with deduplication; no arbitrary prompt-controlled destination.
@@ -73,17 +73,17 @@ Status: `[ ]` queued, `[-]` in progress, `[x]` verified, `[~]` implemented await
 
 - [x] One readiness surface distinguishes verified, configured, unavailable and unknown results for database, agent, model, embeddings, connections and notifications.
 - [x] Recheck individual setup items, label a previous result after a failed check and link to each remaining setup action.
-- [~] Model/provider settings explain actual configuration source, capabilities and restart requirements.
+- [x] Model/provider settings explain actual configuration source, capabilities and restart requirements.
 - [x] Budget enforcement, remaining budget, unknown prices, per-principal scope and fail-open/closed policy visible.
 - [x] Budget edits affect the enforcing process, with validation and a reported activation revision.
 - [x] Provider/channel configuration has a terminal preview, fingerprint check, private backup, atomic env replacement and restore path; saving explicitly requires subsequent restart and verification.
 - [x] Repository connection flow preserves the selected task, identifies its account and explains where scopes must be reviewed.
-- [~] Disclose Composio's hosted OAuth dependency; expose health/reconnect/revoke where supported.
+- [x] Disclose Composio's hosted OAuth dependency; expose health/reconnect/revoke where supported.
 - [x] Read-only authorization check and repository brief draft; actual repository access remains a task-level verification.
 - [x] Notification setup/test, delivery status and affected-task links.
 - [x] Inbound channel setup, allow-list guidance, a manual receipt check and links to the selected task; no automated external receipt is implied.
 - [x] Heartbeat editable examples, exact prompt/recipient preview, quiet delivery/quiet hours and execution-path explanation.
-- [~] Data destinations and retention shown clearly; do not claim tenant isolation or team RBAC.
+- [x] Data destinations and retention shown clearly; do not claim tenant isolation or team RBAC.
 
 ## 7. Knowledge and warning quality
 
@@ -113,32 +113,32 @@ Status: `[ ]` queued, `[-]` in progress, `[x]` verified, `[~]` implemented await
 
 ## 9. Shared control plane and developer adoption
 
-- [~] Paginated/searchable task API and complete task detail.
+- [x] Paginated/searchable task API and complete task detail.
 - [x] MCP uses real task APIs instead of the five-session approximation.
 - [x] Read-only routine/decision views in MCP; mutation capabilities explicit and separately gated.
 - [x] CLI links/actions share the dashboard API and preserve server credential boundaries.
-- [ ] Attach change preview, compatibility/permissions summary and attach health checks.
+- [x] Attach change preview, compatibility/permissions summary and attach health checks.
 - [x] Component release manifest with selected version combinations and storage guards; deployment verification remains separate.
 - [x] Upgrade preview that preserves user configuration and reports manual conflicts.
 - [x] Backup/restore procedure verified with disposable data, including pgvector in CI; service start/stop/state guidance.
 - [x] Guided removal with explicit data choices and no implicit destructive defaults.
-- [ ] Registry dry-run/install verification and standalone/component compatibility notes.
+- [x] Registry inspection/install verification and standalone/component compatibility notes; `eve registry view` previews items, while `attach --dry-run` previews attachment changes.
 
 ## 10. Public release and product promise
 
 - [x] Website shows the recurring-work use case, real prerequisites and a representative result.
 - [x] Update screenshots and walkthrough to the shipped interface.
 - [x] Fix README platform, runtime pin and verification-count drift.
-- [ ] Version-matched docs and coding-agent pack; no claims beyond implemented behavior.
-- [ ] Release notes cover features, security fixes, upgrade steps and limitations.
+- [x] Version-matched docs and coding-agent pack; no claims beyond implemented behavior.
+- [x] Release notes cover features, security fixes, upgrade steps and limitations.
 - [x] Bump changed published runtime packages; synchronize template/registry/CLI dependencies.
-- [ ] Verify packaged tarballs and clean generated-project installation.
-- [ ] Check supported Node platforms, full tests/typecheck/build, workflow checks and dependency audit.
-- [ ] Browser verification of new-task failure/retry, decision failure/retry, routine CRUD/run/pause, mobile and dark mode.
+- [x] Verify packaged tarballs and clean generated-project installation.
+- [x] Check supported Node platforms, tests/typecheck/build and workflows on the implementation checkpoints; production dependency audit is clean. Require the final commit checks below as well.
+- [x] Browser verification of new-task failure/retry, decision failure/retry, routine CRUD/run/pause, mobile and dark mode.
 - [x] Native PostgreSQL concurrency/dispatch recovery verification.
 - [ ] Live provider/source smoke run with bounded spend and explicit result inspection when credentials are available.
-- [ ] Signed commits, current PR description and green CI on the final exact commit.
-- [ ] Concrete release candidate summary; disclose any unmet gate before publishing.
+- [ ] Final acceptance: signed candidate commit, current PR description, and every CI job plus image build green on that exact commit. The PR live checks are the final record.
+- [x] Concrete release candidate summary; disclose any unmet gate before publishing.
 
 ## 11. Validation after candidate delivery
 
@@ -300,3 +300,17 @@ These are required product learning, not claims a coding session can prove.
 - Desktop/mobile/dark visual checks passed; the product explanation is now visible in the phone hero. The new walkthrough link meets the 44px touch target. Existing interactive website behavior remains covered by all 32 passing Playwright checks and a fresh production build.
 - CLI: 168 tests passed; scaffolder: 246 passed, one optional runtime check skipped. Expanded documented-path coverage to coding-agent references and rendered docs URLs: 25 contracts / 651 assertions pass without lowering coverage floors. Documentation-order tests now use section markers rather than cross-link occurrence.
 - Exact CI and dashboard image passed on skill checkpoint `d271e4d`. No credentials were found in this checkout, shell or the scoped Eve Stack workspaces; live-provider validation remains an unmet gate. Operator directed us to choose the best approach; no credentials or live result were invented.
+
+
+### Packaged setup instructions and final installation rehearsal
+
+- Exact CI and dashboard image passed on public-onboarding commit `6d07ab9`.
+- The CLI now bundles five version-matched setup files generated from the source skill. Loading checks its CLI version and file SHA-256 values; an explicit custom URL is labeled unversioned. Remote reads reject redirects/URL credentials, require HTTPS except loopback, and cap time/body/file counts. Destination preflight rejects existing symlinks and duplicate/escaping paths; default writes refuse overwrites.
+- CLI: 176 tests passed. Seven actual pnpm tarballs passed resolved-dependency, required-file, template-manifest and private-artifact checks. The final CLI tarball was installed and all five offline setup files matched current source with network access disabled in the test.
+- A clean installed CLI generated a project and installed the actual candidate packages. The project passed typecheck and production build. A local registry fixture served only unpublished Eve Stack packages; third-party dependencies came from npm. Eve resolved to 0.54.5 within `^0.54.3`; all 18 applicable upstream contracts / 298 assertions passed against it, with seven checkout-only contracts explicitly skipped. The locked 0.54.3 checkout passes all 25 contracts / 656 assertions.
+- All seven registry items installed into a stock Eve project, with ten files matching the generated registry exactly and a passing typecheck. The stock authentication file was preserved without overwrite and deliberately replaced only in the disposable fixture. Interactive provider/channel setup was skipped. The packaged CLI's attach preview also passed against this project; the existing 31 attach behavior checks cover no-write previews, credentials, rollback guidance and conflicts.
+- The final public build and all 32 website browser checks passed. Built-dashboard checks passed nine surfaces, failed task/follow-up delivery, decision retry, routine create/edit/pause and test-before-enable, budget activation/stale writes, skill file-change review, keyboard/mobile/dark views and no script errors. The extended script's selector was narrowed after the skill review gained a nested disclosure; the product had saved correctly.
+- A built-server access check exercised all 24 changed API routes: anonymous requests returned 401, all 14 write handlers refused foreign origins, and applicable body limits returned 413. The whole-database backup/restore and additive-schema history are covered by the native PostgreSQL CI job, including required pgvector/HNSW restoration.
+- Production audit: zero reported advisories across 688 production dependencies. This is a dated audit result, not a future security guarantee.
+- Added per-package candidate changelog sections. The dashboard publication workflow requires an exact version heading; its 0.5.0 notes are now present before any publishing action. The release guide explains dependency order, reviewed main ancestry, OIDC artifacts, staged publication and post-publication verification.
+- Live model/source execution, an applied memory correction with recomputed embedding, actual external channel receipt, and first-user/real scheduled-occurrence observation remain unverified. No model or Composio credentials were available in the scoped Eve Stack projects. The candidate is prepared for those checks, not declared proven in unattended production.

@@ -15,6 +15,7 @@
   "files": [
     "bin",
     "src",
+    "agent-pack.json",
     "README.md",
     "LICENSE"
   ],
@@ -33,7 +34,7 @@
   "scripts": {
     "typecheck": "node scripts/check.mjs",
     "prepack": "node scripts/prepack.mjs",
-    "test": "node scripts/check.mjs && node --test test/*.test.mjs"
+    "test": "node scripts/sync-skill-pack.mjs && node scripts/check.mjs && node --test test/*.test.mjs"
   },
   "dependencies": {
     "create-evestack": "workspace:*",

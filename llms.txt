@@ -19,7 +19,8 @@ not a fork, and does not claim to be the first self-hosted eve project.
 ## For coding agents
 
 `https://evestack.vercel.app/agent.md` serves the setup pack from `skills/evestack`, including its
-reference files. `npx evestack skills` installs those files locally. The full documentation
+reference files. `npx evestack skills` installs the pack bundled with its CLI release; the
+website pack follows the deployed website and may differ. The full documentation
 corpus is `https://evestack.vercel.app/llms-full.txt`; this file is the index.
 
 `@evestack/mcp` uses the dashboard HTTP APIs for task history, routines, decisions, readiness,

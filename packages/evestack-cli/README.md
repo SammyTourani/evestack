@@ -329,6 +329,15 @@ Not yet verified: a run against a long-lived production queue. The read-only aud
 out of (`contract/runtime/repro/scan-wedged-jobs.mjs`) has been run against real data — 186 job rows,
 95 runs, 2 genuinely dead jobs, 0 stranded runs — but that was the script, not this package.
 
+## Setup pack version
+
+`evestack skills` installs setup instructions bundled with this CLI release and works offline
+once the CLI is installed. The report includes the source and CLI version. `--force` is needed
+to replace existing files; symlinks within the chosen destination are refused.
+`EVESTACK_PACK_URL` explicitly selects a custom HTTPS (or loopback HTTP) server. Remote packs
+may differ from the installed release and are marked version-unverified. See
+[agent setup](https://evestack.vercel.app/docs/agent-setup) for bounds and override behavior.
+
 ## License
 
 Apache-2.0

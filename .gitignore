@@ -17,6 +17,7 @@ node_modules/
 # It was tracked, and drifted: the committed copy was missing agent/tools/composio.ts
 # and all of evals/ that templates/default has had for several commits.
 packages/create-evestack/template/
+packages/evestack-cli/agent-pack.json
 dist/
 .next/
 *.tsbuildinfo

@@ -15,14 +15,12 @@ something scripting these commands is a **minor**, not a patch.
   `@evestack/mcp@0.2.0`. That is deliberate and load-bearing in two places: the string
   is also a valid `npm install` spec (`npm i create-evestack@0.8.0`), and
   `.github/workflows/publish-dashboard.yml` extracts release notes by matching the
-  heading literally. See [RELEASING.md](RELEASING.md#tag-convention) for the convention
-  and for the two tags that predate it.
-- Most releases have **no tag** — a minority of the headings below have one. A heading is
-  therefore the *name a tag would have*, not proof one exists. RELEASING.md lists the tags
-  that exist, and `git tag` is the check that is never stale.
-- **Dates are `America/Los_Angeles`**, the timezone every commit in this repository is
-  stamped in. npm records its `time` field in UTC; those timestamps are converted here,
-  so a date can be one day earlier than the value `npm view <pkg> time` prints.
+  heading literally. See [RELEASING.md](RELEASING.md#publish-in-dependency-order).
+- A heading names the intended tag; it is not proof the tag, npm package or image exists.
+  Check current GitHub and registry state before using an unpublished version.
+- Historical publication dates use `America/Los_Angeles`. npm records `time` in UTC,
+  so a date can differ from the value `npm view <pkg> time` prints. Candidate entries
+  stay marked unreleased until publication is verified.
 - Commit hashes are given for anything a reader might want to check. `git show <hash>`;
   the commit messages in this repository are long and carry the measurements.
 
@@ -93,6 +91,18 @@ candidate version is not proof its npm package or image is available.
 - **Quiet heartbeats.** An exact prompt/recipient preview and explicit quiet-hour
   gate share execution logic. Fresh scaffold examples are inactive until edited;
   quiet hours prevent new dispatches without cancelling work already running.
+- **Skill provenance and changes.** Installed paths, declared metadata and ignored
+  permission-looking keys are visible. New reviews retain per-file fingerprints,
+  showing added/changed/removed paths; legacy reviews keep their history without
+  an invented file baseline. Reviews do not grant permissions or suppress findings.
+- **Matching setup instructions.** The CLI bundles its release's setup pack and
+  installs it offline, checking version and file fingerprints. Explicit custom
+  URLs remain available with bounded downloads and an unverified-version label.
+  Installation refuses linked targets and protects existing files by default.
+- **A concrete first-use path.** Updated website, screenshots and setup guides
+  show a repository brief, evidence review and a tested recurring run. Examples
+  are labeled, runtime/platform guidance matches the candidate, and provider,
+  hosting and integration costs remain explicit.
 
 > **A publish can sit STAGED, and it looks exactly like a failure.** Both of these answered
 > `+ create-evestack@0.12.0` and then `npm view` kept saying `0.11.2` — because npm had
@@ -251,8 +261,7 @@ candidate version is not proof its npm package or image is available.
   docs/troubleshooting.mdx carries the repair.
 
 - **`@evestack/dashboard` and `@evestack/budget`** both learned the `chatgpt` provider
-  alongside `create-evestack@0.12.0`, and neither is versioned for it yet — they only affect a
-  project that has already chosen that provider, so they can follow rather than block.
+  alongside `create-evestack@0.12.0`; those changes are included in this candidate.
   The dashboard change is the one worth reading: **every provider arrives at `findPrice`
   under two different names**, and the table only ever answered to one of them.
   `@evestack/budget` builds its key from the environment (`chatgpt/gpt-5.6-sol`); the
@@ -271,7 +280,18 @@ candidate version is not proof its npm package or image is available.
 The `npm create` entry point. Carries `templates/default` inside it, so a change to the
 template ships as a change to this package.
 
-### create-evestack@0.12.1 — unreleased
+### create-evestack@0.13.0 — unreleased
+
+Supersedes the planned 0.12.1 patch. The template includes owner-scoped memory,
+channel allow-lists, per-principal Composio identities, budget activation reporting,
+quiet heartbeat previews and the selected component manifest. Generated projects
+use dashboard 0.5.0, budget 0.4.0 and Composio 0.3.0. Existing projects need the
+documented upgrade and backup procedure; scaffolding does not migrate them.
+
+Noninteractive generation protects credentials, validates package identifiers and
+uses native Windows command execution. A fresh candidate-tarball installation,
+dependency install, typecheck and production build passed. Live provider and
+external channel validation remain separate release gates.
 
 #### Changed
 
@@ -839,14 +859,17 @@ not correspond to any commit in this repository. Do not install it.
 
 ## `evestack`
 
-The CLI — `create`, `status`, `tour`, `open`, `verify`, `attach`, `doctor`. Depends on
-`create-evestack`, so it publishes last.
+The CLI creates projects and operates tasks, routines, readiness, configuration,
+upgrades and diagnostics. It depends on the scaffolder and publishes after it.
 
-### evestack@0.6.1 — unreleased
+### evestack@0.7.0 — unreleased
 
-Carries `create-evestack@0.12.1`, which it pins exactly. Nothing in the CLI itself changed —
-`evestack open` was already correct, and already advertised properly by `evestack status`. What
-changed is the one screen that undersold it.
+Supersedes the planned 0.6.1 patch and carries `create-evestack@0.13.0` exactly.
+Adds authenticated task/routine/readiness commands, protected configuration
+preview/apply/restore, and a read-only upgrade comparison. Mutations do not retry
+after uncertain delivery. Setup instructions are bundled with the CLI and install
+offline with version and file-integrity checks. Custom pack downloads and target
+writes are bounded. `dashboard` is the primary opening command; `open` remains an alias.
 
 ### evestack@0.6.0 — 2026-09-14
 
@@ -968,6 +991,13 @@ until `0.1.0` landed.
 The MCP server. Standalone — nothing else published names it, so it can go out at any
 point in the release order.
 
+### @evestack/mcp@0.4.0 — unreleased
+
+Reads the dashboard's paginated task APIs and exposes routines, readiness, pending
+decisions, recovery, memory reviews and versioned regression cases. Results retain
+coverage limits and unknown states. Runtime control and approval decisions require
+separate explicit capabilities; enabling one does not silently grant the other.
+
 ### @evestack/mcp@0.3.0 — 2026-08-09
 
 Cut as a minor, not the patch this was first queued as. It was a patch while the change
@@ -1018,6 +1048,14 @@ First release (51d2b85), alongside the fix to the trace tier that had never work
 
 Spend caps. A **template dependency** — it must exist on npm before `create-evestack`
 does.
+
+### @evestack/budget@0.4.0 — unreleased
+
+Checks configured caps before a new turn and subsequent steps, validates pricing
+and rejects nonfinite totals. Optional durable settings use revision checks and
+append-only history; the enforcing agent rereads them and reports activation.
+Unknown pricing and storage failures follow explicit policies. Upgrade opted-in
+agents with dashboard 0.5.0; a saved policy alone does not prove enforcement.
 
 ### @evestack/budget@0.3.0 — 2026-09-14
 
@@ -1107,6 +1145,14 @@ First release, with the eve contract suite (30c296d).
 
 Composio tool access. A **template dependency**.
 
+### @evestack/composio@0.3.0 — unreleased
+
+Scopes hosted tool routing to the current principal with bounded identity caches.
+Connection management and multi-tool execution require human approval by default.
+Shared-identity and approval overrides are explicit compatibility choices. Existing
+shared grants need deliberate migration; an active grant does not prove repository
+scope, permission or a successful tool result.
+
 ### @evestack/composio@0.2.1 — 2026-08-13
 
 Tagged `@evestack/composio@0.2.1`.
@@ -1186,6 +1232,14 @@ First release, out of the work that added schedules, skills, fleet health and at
 ## `@evestack/sandbox-opensandbox`
 
 The OpenSandbox backend adapter. Standalone.
+
+### @evestack/sandbox-opensandbox@0.4.1 — unreleased
+
+Implements the current sandbox lifecycle contract: explicit stop preserves a
+reattachable workspace, and delete checks cancellation before issuing a kill.
+Stop failures propagate without silently deleting the workspace. Legacy shutdown
+cleanup reports a failed fallback rather than swallowing both failures. Adapter
+tests cover the contract; no new live OpenSandbox service run is claimed.
 
 ### @evestack/sandbox-opensandbox@0.4.0 — 2026-08-09
 
@@ -1355,6 +1409,37 @@ First release (952f0f9).
 `ghcr.io/sammytourani/evestack-dashboard:<version>` (`linux/amd64` and `linux/arm64`),
 built and pushed by `.github/workflows/publish-dashboard.yml` on a tag push. The version
 here is the image tag. Dates are the git tag's, not npm's.
+
+### @evestack/dashboard@0.5.0 — unreleased
+
+A task workspace for a solo operator: Today, Tasks, Routines, Connections and
+Knowledge, with Settings and Diagnostics still available. Readable results link
+to recorded evidence and cost; failed requests retain drafts, and uncertain
+external delivery remains visible.
+
+- Durable routines have timezone previews, tested DST behavior, revision snapshots,
+  concurrent-worker claims, a test-before-enable gate, bounded catch-up and visible
+  uncertain dispatch. Notification retries retain stable delivery identifiers.
+- Pending decisions show the actual proposed tool/input and preserve failures for
+  retry. Shared installation credentials do not identify individual teammates.
+- Readiness distinguishes configured, verified, unknown and unavailable checks.
+  Budget controls show revisions and reported activation. Guided connections and
+  inbound-channel receipt checks explain their verification limits.
+- Memory reviews retain owners and correction proposals without silently changing
+  embeddings. Skills show declared provenance and per-file changes since review.
+  Corrections become immutable regression evidence with manual, revision-bound observations.
+- Recovery combines historical evidence and read-only queue diagnosis. Docker
+  inspection is opt-in, GET-only, bounded and explicit about omitted containers.
+- Cross-site ingest checks, bounded requests, and updated Next.js close the
+  documented security findings. Mobile navigation, focus and dark layouts were
+  exercised against the built dashboard.
+
+Back up the whole database and private configuration before upgrading. Storage
+changes are additive and guarded; old images may refuse newer schema markers.
+Use the documented restore procedure instead of dropping schemas, and inspect
+pending work before starting workers on a restored database. Upgrade opted-in
+budget agents with this image. Live model/source results and external channel
+receipt remain release gates; fixture checks do not establish them.
 
 ### @evestack/dashboard@0.4.0 — 2026-08-11
 

@@ -198,8 +198,9 @@ production.
 evestack skills [--dir=PATH] [--print] [--force] [--json]
 ```
 
-Installs this pack — the one you are reading — into the user's own agent, so it persists instead
-of living in one conversation. Suggest it once you have been pasted somewhere durable is useful.
+Installs the setup pack bundled with the installed CLI, with its version and file fingerprints.
+It works offline after CLI installation. The website pack may differ; `EVESTACK_PACK_URL` is
+an explicit custom-server override, with no verified version match.
 
 | Flag | Effect |
 | --- | --- |
@@ -211,8 +212,8 @@ of living in one conversation. Suggest it once you have been pasted somewhere du
 The default target is chosen, not guessed: inside a scaffolded project `agent/skills` is a real
 runtime location that eve scans, so the pack becomes loadable by the agent being *built*.
 
-It fetches the pack from the site rather than carrying a bundled copy, so it cannot go stale —
-which means it needs a network connection. Exit `1` names the URL if it cannot reach it.
+The bundled pack requires no network after CLI installation. A custom URL requires HTTPS
+(or loopback HTTP), does not follow redirects, and is bounded to 15 seconds and 1 MiB.
 
 ## `evestack attach`
 
