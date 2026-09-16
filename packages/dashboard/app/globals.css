@@ -986,3 +986,15 @@
     outline-offset: 3px;
   }
 }
+
+.regression-form, .regression-fields, .regression-picker { display: grid; gap: 0.65rem; min-width: 0; }
+.regression-form { margin-top: 1rem; }
+.regression-picker { margin: 1rem 0; }
+.regression-form label, .regression-picker label { font-weight: 550; }
+.regression-form input, .regression-form textarea, .regression-form select, .regression-picker input, .regression-picker select {
+  width: 100%; min-width: 0; max-width: 100%; padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border); border-radius: 0.5rem; background: var(--bg); color: inherit; font: inherit;
+}
+.regression-form button, .regression-picker button { justify-self: start; }
+.regression-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.regression-evidence { min-width: 0; overflow-wrap: anywhere; }

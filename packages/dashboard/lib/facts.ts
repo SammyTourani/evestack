@@ -1,3 +1,4 @@
+import { regressionSchemaTarget } from "./regressions";
 import { query } from "./db";
 import { costUsd, isPriced } from "./pricing";
 import { ensureTraceSchema, parseSchemaTarget, traceSchemaTarget } from "./traces";
@@ -141,13 +142,14 @@ export async function schemaVersionsAhead(): Promise<string[]> {
   const targets: Record<string, number> = {
     spans: traceSchemaTarget(),
     facts: factSchemaTarget(),
+    regressions: regressionSchemaTarget(),
   };
   const rows = await query<{ component: string; version: number }>(
     "SELECT component, version FROM evestack.schema_version",
   );
   return rows
     // A component this build knows nothing about is not a downgrade. Only the
-    // two whose files carry a guard can be compared against anything.
+    // supported components whose files carry a guard can be compared.
     .filter((row) => Object.hasOwn(targets, row.component))
     .filter((row) => Number(row.version) > targets[row.component])
     .map((row) => `${row.component} is at v${row.version}, this build installs v${targets[row.component]}`);

@@ -104,8 +104,8 @@ Status: `[ ]` queued, `[-]` in progress, `[x]` verified, `[~]` implemented await
 - [ ] Read-only doctor findings available alongside recovery guidance.
 - [x] Safe reconnect distinguished from follow-up and replay that can repeat tools.
 - [ ] Replay preview and original/candidate comparison based on available evidence.
-- [ ] User correction can become a versioned regression case.
-- [ ] Show regression draft/results with explicit baseline/candidate and execution provenance.
+- [x] User correction becomes a versioned regression case with immutable original evidence and stale-write protection.
+- [x] Show original/candidate snapshots, exact-revision manual observations and explicit unknown execution provenance; no automated pass is implied.
 - [x] Retain historical workflow/trace evidence while the agent is unavailable, including explicit partial-read failures.
 - [ ] Execution environment, network policy and lifetime displayed only when known.
 - [ ] Keep Docker inspection read-only; host controls require a narrowly authorized service.
@@ -220,3 +220,12 @@ These are required product learning, not claims a coding session can prove.
 - `evestack configure` previews supported provider, memory, connection, notification and inbound-channel env settings. It redacts credentials, rejects stale previews across both env files, preserves unrelated content, refuses tracked/unignored files and takes an owner-protected backup outside the project before replacing the file. Restore is previewed and backed up too. A lock serializes CLI writers; external editors should not edit during apply.
 - Secrets use a bounded JSON file instead of command-line values. Duplicate/multiline/interpolated settings need manual review. Wildcard channel access requires an explicit flag. The command reports shell overrides and leaves activation unverified until restart and an actual task or receipt test.
 - CLI suite: 153 tests pass locally, including preview/apply/restore, stale and concurrent edits, Git protection, symlinks, redaction, UTF-8 validation, corrupted backups and literal shell text. Windows uses an explicit owner-only ACL; that platform path awaits CI execution.
+
+### Regression case and data-preservation checkpoint
+
+- Configuration commit `70963dd` passed the required checks but failed the advisory Windows job. `c7aaa90` added diagnostics and explicit creation ownership; the remaining error was Windows PowerShell loading an incompatible security module. `8add6d7` uses native Windows ACL APIs and the Windows job now passes, as does required CI. Permission protection was retained throughout.
+- Saved corrections now capture actual task evidence and expected behavior. Later tasks can be selected by title and compared against the immutable original. Manual observations are tied to the exact case revision; editing the expectation leaves it unreviewed until a new observation. No task or eval is executed by this workflow.
+- Regression writes validate current evidence fingerprints and serialize version edits; repeated create/review request IDs do not duplicate records. Schema guards follow the repository's transactional convention and running writers recheck the marker before saving. Health detects an unsupported regression schema.
+- Native PostgreSQL recovery/regression suite: 12 tests pass for bounded evidence, separation between tasks, concurrent edits, stale candidates, retry deduplication, retained revisions, atomic rollback and downgrade refusal. Dashboard: 756 tests pass, three native suites separate; production build passes. Compatibility: 25 contracts / 627 assertions pass.
+- Browser verification passed authenticated creation, retained fields after failed delivery, task-title selection, candidate preview changes, manual observation history, new-revision isolation, stale edits, mobile/dark layout and no JavaScript errors.
+- Removed schema-wide deletion advice from trace/fact error messages and observability documentation. The evestack schema contains durable operator data, so repair guidance now requires a matching image and a backed-up component-specific procedure.

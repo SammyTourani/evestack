@@ -9,9 +9,9 @@
 -- W3 onwards wants. So the join is done once, on write, and the charts read
 -- columns.
 --
--- These tables hold NOTHING you cannot rebuild. `DROP SCHEMA evestack CASCADE`
--- must never cost a durable session, and it does not cost one here: every value
--- below is derived from `workflow.workflow_runs`, `workflow.workflow_steps`,
+-- These specific fact tables hold derived data. Other tables in evestack hold
+-- durable memory, reviews, routines and controls, so dropping the whole schema
+-- is not a repair procedure. Every fact value below is derived from `workflow.workflow_runs`, `workflow.workflow_steps`,
 -- `evestack.spans` and `evestack.budget_events`. That is also the migration
 -- strategy — see the version guard at the top, which drops and rebuilds rather
 -- than trying to ALTER a derived table into a new shape.
@@ -142,7 +142,7 @@ BEGIN
   SELECT version INTO installed FROM evestack.schema_version WHERE component = 'facts';
   IF COALESCE(installed, 0) > target THEN
     RAISE EXCEPTION
-      'evestack fact tables are at schema version %, and this build of evestack only understands version %. Nothing was applied: an older image must leave a newer database alone rather than half-downgrade it. Run the image that installed version %, or drop the evestack schema to rebuild the fact layer from scratch.',
+      'evestack fact tables are at schema version %, and this build of evestack only understands version %. Nothing was applied: an older image must leave a newer database alone rather than half-downgrade it. Run the image that installed version %. Back up the database before any component repair; the evestack schema also holds durable operator data.',
       installed, target, installed
       USING ERRCODE = 'EV001';
   END IF;

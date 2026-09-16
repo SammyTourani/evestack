@@ -217,7 +217,7 @@ async function printVersion(stdout) {
 }
 
 /** Every verb this binary answers to, for the router and for did-you-mean. */
-export const COMMANDS = ["create", "status", "tour", "dashboard", "verify", "skills", "attach", "doctor"];
+export const COMMANDS = ["create", "status", "tour", "dashboard", "verify", "configure", "skills", "attach", "doctor"];
 
 /**
  * Edit distance, capped at 2.

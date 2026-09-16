@@ -8,9 +8,9 @@
 -- ─ Why this file breaks the rule the other sql/ files obey ────────────────────
 --
 -- `workflow` belongs to @workflow/world-postgres. evestack reads it and never
--- writes it, and everything evestack creates lives in the `evestack` schema so
--- that `DROP SCHEMA evestack CASCADE` costs nothing durable. This file is the
--- single exception, and it is narrow on purpose:
+-- writes its data, and evestack-owned tables live in its own schema. Those
+-- include durable operator records, not just derived telemetry. This index file
+-- is the exception to the namespace rule, and it is narrow on purpose:
 --
 --   * CREATE INDEX IF NOT EXISTS only. No table, no column, no constraint, no
 --     trigger, no data. An index changes no row and no query result — drop

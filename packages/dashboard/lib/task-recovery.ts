@@ -30,7 +30,7 @@ export function recoveryEvidence(turns: RecoveryTurn[], spans: RecoverySpan[], s
   const response = spans.find((span) => span.response_text);
   return {
     failure: failed ? { id: failed.id, status: failed.status, code: failed.error_code ?? (failed.completed_at && !failed.model ? "no_recorded_model_call" : failed.status), href: turnLink(failed.id) } : null,
-    completedTurn: completed ? { id: completed.id, completedAt: completed.completed_at?.toISOString() ?? null, href: turnLink(completed.id) } : null,
+    completedTurn: completed ? { id: completed.id, model: completed.model, completedAt: completed.completed_at?.toISOString() ?? null, href: turnLink(completed.id) } : null,
     successfulAction: action ? { name: action.name, completedAt: action.end_time!.toISOString(), href: spanLink(action.span_id) } : null,
     traceError: error ? { name: error.name, message: error.status_message, href: spanLink(error.span_id) } : null,
     response: response ? { text: response.response_text!, truncated: response.response_truncated, href: spanLink(response.span_id) } : null,

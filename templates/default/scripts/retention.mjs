@@ -270,7 +270,7 @@ SELECT (SELECT count(*) FROM prunable)   AS sessions,
  *
  * Run after a prune, and only then. `evestack.fact_turn` and
  * `evestack.fact_tool_call` are the dashboard's fact layer; its own file opens
- * with "These tables hold NOTHING you cannot rebuild", every column being
+ * describes these two tables as derived data, every column being
  * derived from `workflow.workflow_runs`, `workflow.workflow_steps` and
  * `evestack.spans`. `evestack.refresh_facts` is an upsert keyed on `run_id` and
  * never deletes a `fact_turn` row, so without this the charts keep counting

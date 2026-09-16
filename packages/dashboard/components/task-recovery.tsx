@@ -44,6 +44,7 @@ export function TaskRecoveryPanel({ sessionId, status, reconnect }: { sessionId:
       <button type="button" onClick={reconnect}>Reconnect to this task</button>
       <button type="button" disabled={busy} onClick={() => setRefresh((value) => value+1)}>Refresh saved evidence</button>
       <a href="/settings">Recheck agent &amp; database</a>
+      <a href={`/regressions/new?task=${encodeURIComponent(sessionId)}`}>Save a correction as a regression case</a>
       <a href={`/sessions/${encodeURIComponent(sessionId)}`}>Open diagnostics &amp; replay preview</a>
     </div>
     <details><summary>How to recover safely</summary>

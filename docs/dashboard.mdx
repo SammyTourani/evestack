@@ -103,6 +103,45 @@ The dashboard provides these controls:
 - **Replay a session into a new one** — re-send its messages with one turn rewritten. Read
   [Replaying a session](#replaying-a-session) first; it re-runs the original's tool calls
 
+## Saved regression cases
+
+Use **Save a correction as a regression case** in a task's recovery panel, or open
+`/regressions`. Select the original task by title and record what was wrong plus
+the behavior and evidence you expect. Saving captures the bounded Postgres evidence
+shown in the preview; it does not execute a task or change the agent.
+
+Run a candidate task separately, then find it by title in the case. The comparison
+shows the original snapshot and candidate preview, including available model data,
+response text and coverage limits. Record an **operator-observed pass**,
+**operator-observed failure**, or **needs further review**, with supporting notes.
+These labels are manual judgments, not automated eval results or proof of an
+isolated execution environment. Partial traces and unknown agent build information
+stay explicit. The same task cannot serve as both the original and the candidate.
+
+An edit creates a new case revision while preserving the original snapshot and
+older reviews. A review belongs only to the revision it evaluated. Concurrent case
+edits or changed candidate evidence reject the stale write, and request IDs prevent
+an uncertain create/review retry from silently duplicating that operation. Each case
+shows the latest 20 revisions and observations; older records remain in Postgres.
+
+Authenticated APIs:
+
+| Route | Behavior |
+| --- | --- |
+| `GET /api/regressions?offset=0` | Latest 20 case heads with `nextOffset` |
+| `POST /api/regressions` | Create a case from an actual task evidence hash and correction |
+| `GET /api/regressions/:id` | Current revision, captured baseline and bounded history |
+| `POST /api/regressions/:id` | Append an edited expectation against the current revision |
+| `POST /api/regressions/:id/reviews` | Append a manual judgment against a candidate snapshot and exact revision |
+| `GET /api/tasks/:id/recovery` | Read bounded evidence and its fingerprint for a preview |
+
+Cases, revisions, observation notes and snapshots are retained in the `evestack`
+schema and backups. Shared dashboard credentials name an installation; proxy
+attribution is only as trustworthy as the proxy. Back up the database before an
+upgrade, and run the matching dashboard when the schema version changes. Older
+running writers refuse a newer regression schema. Removing a task or pruning traces
+does not remove already captured regression snapshots.
+
 ## Running the evals
 
 Save a promoted file into `evals/` in the agent project, then:

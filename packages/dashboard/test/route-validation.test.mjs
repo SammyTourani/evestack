@@ -667,3 +667,15 @@ test('a regression export refuses a transcript tail instead of presenting it as 
     assert.equal(response.status,409);assert.equal((await response.json()).code,'transcript_truncated');
   } finally {globalThis.fetch=originalFetch;globalThis.__evestackPool=originalPool;}
 });
+
+test('regression endpoints reject invalid cases, revisions and unsupported automatic judgments',async()=>{
+  const {POST:createCase,GET:listCases}=await import('../app/api/regressions/route.ts');
+  const {POST:editCase}=await import('../app/api/regressions/[id]/route.ts');
+  const {POST:review}=await import('../app/api/regressions/[id]/reviews/route.ts');
+  const context={params:Promise.resolve({id:'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'})};
+  const post=body=>new Request('http://localhost/api/regressions',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+  assert.equal((await createCase(post({id:'invalid'}))).status,400);
+  assert.equal((await listCases(new Request('http://localhost/api/regressions?offset=-1'))).status,400);
+  assert.equal((await editCase(post({revision:0}),context)).status,400);
+  assert.equal((await review(post({id:'aaaaaaaa-bbbb-cccc-dddd-ffffffffffff',revision:1,verdict:'automated_pass'}),context)).status,400);
+});

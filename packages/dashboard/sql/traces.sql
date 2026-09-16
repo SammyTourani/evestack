@@ -3,8 +3,8 @@
 -- Lives in its own schema on purpose. `workflow` belongs to world-postgres: it
 -- owns those migrations and holds durable session state, so evestack only ever
 -- reads it. Everything evestack writes goes here, which means an eve upgrade
--- cannot collide with these tables and `DROP SCHEMA evestack CASCADE` costs
--- nothing but replayable telemetry.
+-- cannot collide with these tables. The shared evestack schema also contains
+-- durable memory, reviews, routines and controls; never drop it to repair traces.
 --
 -- Every statement is guarded, so this file is safe to run on every boot.
 -- Re-running never drops or rewrites an existing table; adding a column later
@@ -99,7 +99,7 @@ BEGIN
   SELECT version INTO installed FROM evestack.schema_version WHERE component = 'spans';
   IF COALESCE(installed, 0) > target THEN
     RAISE EXCEPTION
-      'evestack.spans is at schema version %, and this build of evestack only understands version %. Nothing was applied: an older image must leave a newer database alone rather than half-downgrade it. Run the image that installed version %, or drop the evestack schema to rebuild the trace tier from scratch.',
+      'evestack.spans is at schema version %, and this build of evestack only understands version %. Nothing was applied: an older image must leave a newer database alone rather than half-downgrade it. Run the image that installed version %. Back up the database before any component repair; the evestack schema also holds durable operator data.',
       installed, target, installed
       USING ERRCODE = 'EV001';
   END IF;

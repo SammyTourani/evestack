@@ -111,7 +111,11 @@ export default async function EvalPreviewPage(props: PageProps<"/evals/[id]">) {
    */
   let events: readonly EveStreamEvent[];
   try {
-    ({ events } = await readRecentEvents(session.id, { lookback: LOOKBACK }));
+    const transcript = await readRecentEvents(session.id, { lookback: LOOKBACK });
+    if (transcript.startIndex > 0) {
+      return <>{header}<p className={styles.warn}>This transcript exceeds the 4,096-event read window. A complete replay draft cannot be generated from this tail.</p><p><a href={`/regressions/new?task=${encodeURIComponent(session.id)}`}>Save a correction with bounded workflow evidence</a>, or export the full transcript from the agent before writing the eval.</p></>;
+    }
+    events = transcript.events;
   } catch (error) {
     return (
       <>

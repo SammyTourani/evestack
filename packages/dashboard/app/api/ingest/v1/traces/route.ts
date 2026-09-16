@@ -292,7 +292,8 @@ export async function POST(request: Request): Promise<Response> {
         "[evestack] REFUSING ALL TRACE INGEST: this dashboard is older than its database, " +
           "so sql/traces.sql was not applied and spans are not being written. Every OTLP " +
           "batch is answered 503 and your exporter will retry until this is fixed. Run the " +
-          "newer dashboard image, or drop the evestack schema to rebuild the trace tier. " +
+          "matching newer dashboard image. Back up Postgres before repairing individual components; " +
+          "do not drop the evestack schema, which also stores durable operator data. " +
           "This line is printed once per process; /api/health reports the same state as " +
           `degraded / schema-too-new. Postgres said: ${describe(error)}`,
       );
