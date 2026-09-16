@@ -46,7 +46,7 @@ const SCAFFOLD_COMMANDS = new Set(["create", "attach"]);
  * What it shares with the other four is that it owns `--dir`, `--print` and
  * `--force`, none of which doctor's parser has ever heard of.
  */
-const PROJECT_COMMANDS = new Set(["status", "verify", "dashboard", "open", "tour", "skills"]);
+const PROJECT_COMMANDS = new Set(["status", "verify", "dashboard", "open", "tour", "skills", "configure"]);
 
 /**
  * Which scaffolder command this argv is, or null for everything else.
@@ -83,6 +83,7 @@ export const USAGE = `evestack — the whole eve stack, on your own machine
   evestack status            is it up? what do I run?
   evestack tour              a guided first run, on a stack that is already up
   evestack verify            check every part and name the fix for anything broken
+  evestack configure         preview, back up and save provider/channel settings
   evestack skills            teach your coding agent this project
   evestack attach [dir]      add evestack to an eve project you already have
   evestack doctor            a run stopped moving — read-only forensics
@@ -265,6 +266,7 @@ async function runProjectCommand(name, argv, { stdout, stderr }) {
     // The name `dashboard` replaced. Same module, same exported function.
     open: () => import("./project.mjs"),
     skills: () => import("./skills.mjs"),
+    configure: () => import("./configure.mjs"),
   };
   try {
     const module = await MODULES[name]();

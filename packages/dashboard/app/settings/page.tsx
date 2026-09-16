@@ -29,8 +29,10 @@ export default async function SettingsPage() {
           environment values alone does not activate a model.
         </p>
         <p>
-          Review your project's <code>agent/agent.ts</code> and environment
-          configuration. Restart the agent after provider or credential changes.
+          Use <code>npx evestack configure --help</code> in your agent project
+          to preview provider or channel edits and save a private backup before
+          applying them. Review <code>agent/agent.ts</code> for custom behavior.
+          Restart the agent after provider or credential changes.
           Server deployments need provider credentials available to that server.
         </p>
         <a href="/chat?example=repository-brief">Run a useful first task</a>

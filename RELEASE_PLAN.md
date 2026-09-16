@@ -76,7 +76,7 @@ Status: `[ ]` queued, `[-]` in progress, `[x]` verified, `[~]` implemented await
 - [~] Model/provider settings explain actual configuration source, capabilities and restart requirements.
 - [x] Budget enforcement, remaining budget, unknown prices, per-principal scope and fail-open/closed policy visible.
 - [x] Budget edits affect the enforcing process, with validation and a reported activation revision.
-- [ ] Provider and channel configuration have a safe edit/activation path.
+- [x] Provider/channel configuration has a terminal preview, fingerprint check, private backup, atomic env replacement and restore path; saving explicitly requires subsequent restart and verification.
 - [x] Repository connection flow preserves the selected task, identifies its account and explains where scopes must be reviewed.
 - [~] Disclose Composio's hosted OAuth dependency; expose health/reconnect/revoke where supported.
 - [x] Read-only authorization check and repository brief draft; actual repository access remains a task-level verification.
@@ -213,3 +213,10 @@ These are required product learning, not claims a coding session can prove.
 - Browser checks cover individual check failure/recovery, unknown/configured distinctions, offline-agent evidence access, desktop/mobile layout and no JavaScript errors.
 - Regression downloads now refuse an incomplete transcript tail instead of generating a misleading replay. Export remains an unexecuted draft whose assertions require review.
 - Memory checkpoint `c2d2881` passed the runtime-image build, but CI found an omitted registry rebuild and an old cancellation probe that demanded a minimum streaming tail. Registry output is synchronized. The probe and user-facing copy now allow immediate or delayed termination and require an acknowledgement plus readable history, without claiming a 202 proves termination. Verification of this correction in CI is pending.
+
+### Configuration checkpoint
+
+- Both CI and the runtime-image build passed on `83a79d6`, including the corrected cancellation probe and registry checks.
+- `evestack configure` previews supported provider, memory, connection, notification and inbound-channel env settings. It redacts credentials, rejects stale previews across both env files, preserves unrelated content, refuses tracked/unignored files and takes an owner-protected backup outside the project before replacing the file. Restore is previewed and backed up too. A lock serializes CLI writers; external editors should not edit during apply.
+- Secrets use a bounded JSON file instead of command-line values. Duplicate/multiline/interpolated settings need manual review. Wildcard channel access requires an explicit flag. The command reports shell overrides and leaves activation unverified until restart and an actual task or receipt test.
+- CLI suite: 153 tests pass locally, including preview/apply/restore, stale and concurrent edits, Git protection, symlinks, redaction, UTF-8 validation, corrupted backups and literal shell text. Windows uses an explicit owner-only ACL; that platform path awaits CI execution.

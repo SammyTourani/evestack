@@ -319,6 +319,11 @@ webhooks. Dashboard credentials identify the installation, not isolated teammate
 
 ### Setup checks and recovery
 
+For local configuration changes, use `npx evestack configure` in the agent project.
+It previews supported provider/channel settings, redacts credentials, backs up the
+current env file and applies only the reviewed fingerprint. It does not restart
+processes or claim activation; restart and verify before relying on new settings.
+
 Settings distinguishes a successful database or agent health probe from a configured
 key or destination. Model and embedding readiness remains unverified until actual
 agent work demonstrates it. Recheck each item independently; these checks neither

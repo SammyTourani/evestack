@@ -2,7 +2,7 @@
 
 One command for the whole self-hosted [eve](https://github.com/vercel/eve) stack.
 
-Eight commands. Run `evestack` inside a project with no arguments and you get `status`.
+Nine commands. Run `evestack` inside a project with no arguments and you get `status`.
 
 ```bash
 npx evestack create my-agent    # scaffold an agent, a database and a dashboard
@@ -10,6 +10,7 @@ evestack status                 # is it up? and if not, what do I run?
 evestack tour                   # a guided first run, on a stack that is already up
 evestack dashboard              # open the dashboard in your browser, signed in
 evestack verify                 # check every part and name the fix for anything broken
+evestack configure              # preview, back up and save provider/channel settings
 evestack skills                 # teach your coding agent this project
 evestack attach .               # add evestack to an eve project you already have
 evestack doctor                 # a run stopped moving — read-only forensics
@@ -25,7 +26,46 @@ this way round because the scaffolder is dependency-free and carries the agent t
 `doctor` needs a Postgres driver; inverting it would put `pg` in front of every first scaffold.
 See `src/scaffold.mjs`.
 
-The rest of this file is about `doctor`, which is the part that is neither a wrapper nor a probe.
+## `evestack configure`
+
+Preview a provider/model change from inside the project:
+
+```bash
+evestack configure --set=EVESTACK_PROVIDER=openai --set=EVESTACK_MODEL=YOUR_MODEL
+```
+
+For credentials, create a private JSON file containing the desired settings and
+pass `--from-file=/absolute/path/settings.json`. Do not put credentials in `--set`
+or shell history. JSON values are single-line strings; `null` removes an override.
+The preview shows changed keys, redacts secrets, and prints a fingerprint. Repeat
+the same options with `--apply --expect=FINGERPRINT` to save that exact preview.
+Delete the input file after use or retain it under your own secret-storage policy.
+
+Apply checks both `.env` and `.env.local` for changes, refuses Git-tracked or
+unignored env files, and takes a private backup outside the project before an
+atomic replacement. Existing comments and unrelated values remain intact. A lock
+serializes edits through this CLI; avoid editing the same file in another tool
+while applying. Invalid UTF-8, duplicate assignments, multiline values and env
+interpolation require manual review. Wildcard channel allow-lists require the
+explicit `--allow-public-channel` option.
+
+Backups live under `~/.evestack/config-backups`, are scoped to the project's real
+path, and retain old secrets. POSIX files use `0600` inside `0700` directories;
+Windows applies an owner-only ACL and refuses to save if it cannot protect it.
+Use the printed backup ID with `evestack configure --restore=BACKUP_ID` to preview
+a restore, then apply its new fingerprint. A restore takes another backup first.
+This backs up environment configuration only, not Postgres or the entire project.
+
+Saving does not restart anything or establish activation. Restart the agent;
+recreate a compose dashboard when its environment changed, then run
+`evestack verify`. Inspect a real task, connection check, inbound channel message
+or notification receipt as appropriate. Shell, supervisor and container settings
+can override the file, and a custom agent can ignore template-specific variables.
+Changing an embedding model requires a backed-up re-embedding migration; do not
+remove memories to get past a dimension mismatch.
+
+The remainder describes `doctor`.
+
 
 ## `evestack doctor`
 
