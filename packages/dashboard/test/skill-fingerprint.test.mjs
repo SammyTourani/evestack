@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { skillFingerprint } from "../lib/skill-fingerprint.ts";
+import {
+  skillFingerprint,
+  compareSkillFiles,
+} from "../lib/skill-fingerprint.ts";
 import { listSkills } from "../lib/skills.ts";
 import { scanSkill } from "../lib/skill-scan.ts";
 
@@ -69,4 +72,58 @@ test("bundled safety guidance avoids self-triggering while quoted attacks remain
       (finding) => finding.ruleId === "injection.conceal",
     ),
   );
+});
+
+test("per-file baselines distinguish added, changed and removed files without retaining their content", () => {
+  const file = (path, text) => ({
+    path,
+    text,
+    bytes: Buffer.byteLength(text),
+    kind: "text",
+  });
+  const skill = {
+    name: "fixture",
+    kind: "package",
+    rootPath: "/fixture",
+    problems: [],
+    files: [
+      file("SKILL.md", "PRIVATE ORIGINAL"),
+      file("remove.md", "Old note"),
+      file("same.md", "Unchanged"),
+    ],
+  };
+  const previous = skillFingerprint(skill);
+  const current = skillFingerprint({
+    ...skill,
+    files: [
+      file("SKILL.md", "PRIVATE CHANGED"),
+      file("new.md", "New note"),
+      file("same.md", "Unchanged"),
+    ],
+  });
+  assert.deepEqual(compareSkillFiles(current.manifest, previous.manifest), {
+    available: true,
+    added: ["new.md"],
+    changed: ["SKILL.md"],
+    removed: ["remove.md"],
+  });
+  assert.doesNotMatch(
+    JSON.stringify(previous.manifest),
+    /PRIVATE|Old note|Unchanged/,
+  );
+  assert.deepEqual(compareSkillFiles(current.manifest, current.manifest), {
+    available: true,
+    added: [],
+    changed: [],
+    removed: [],
+  });
+  for (const old of [
+    undefined,
+    null,
+    {},
+    [{ path: "SKILL.md", hash: "bad" }],
+    Array(201).fill(previous.manifest[0]),
+    [previous.manifest[0], previous.manifest[0]],
+  ])
+    assert.equal(compareSkillFiles(current.manifest, old).available, false);
 });

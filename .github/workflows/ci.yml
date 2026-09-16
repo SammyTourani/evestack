@@ -331,14 +331,14 @@ jobs:
         working-directory: packages/dashboard
         env:
           EVESTACK_TEST_POSTGRES_URL: postgres://evestack:evestack@localhost:5433/evestack
-        run: node --import ./test/register-ts-resolve.mjs --test test/routines-postgres.test.mjs test/memory-postgres.test.mjs test/recovery-postgres.test.mjs test/doctor-postgres.test.mjs
+        run: node --import ./test/register-ts-resolve.mjs --test test/routines-postgres.test.mjs test/memory-postgres.test.mjs test/recovery-postgres.test.mjs test/doctor-postgres.test.mjs test/skill-reviews-postgres.test.mjs
 
       - name: whole-database backup and isolated restore with pgvector
         working-directory: packages/dashboard
         env:
           EVESTACK_TEST_POSTGRES_URL: postgres://evestack:evestack@localhost:5433/evestack
           EVESTACK_TEST_PG_CONTAINER: ${{ job.services.postgres.id }}
-          EVESTACK_TEST_REQUIRE_VECTOR: '1'
+          EVESTACK_TEST_REQUIRE_VECTOR: "1"
         run: |
           : "${EVESTACK_TEST_PG_CONTAINER:?Postgres service container is required}"
           node --import ./test/register-ts-resolve.mjs --test test/backup-postgres.test.mjs

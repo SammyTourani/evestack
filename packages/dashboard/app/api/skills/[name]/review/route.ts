@@ -1,5 +1,5 @@
 import { getSkill } from "@/lib/skills";
-import { skillFingerprint } from "@/lib/skill-fingerprint";
+import { skillFingerprint, compareSkillFiles } from "@/lib/skill-fingerprint";
 import { readSkillReview, recordSkillReview } from "@/lib/skill-reviews";
 import { identifyApprover } from "@/lib/approvals";
 import {
@@ -21,6 +21,7 @@ export async function GET(_request: Request, context: Context) {
     return jsonOk({
       fingerprint,
       review,
+      changes: compareSkillFiles(fingerprint.manifest, review?.file_manifest),
       stale: Boolean(review && review.content_hash !== fingerprint.hash),
     });
   } catch (error) {
@@ -65,8 +66,14 @@ export async function POST(request: Request, context: Context) {
       String(body.verdict),
       body.note.trim(),
       identifyApprover(request),
+      fingerprint.manifest,
     );
-    return jsonOk({ review: await readSkillReview(name, fingerprint.source) });
+    const review = await readSkillReview(name, fingerprint.source);
+    return jsonOk({
+      review,
+      fingerprint,
+      changes: compareSkillFiles(fingerprint.manifest, review?.file_manifest),
+    });
   } catch (error) {
     return handleRouteError(error, request);
   }

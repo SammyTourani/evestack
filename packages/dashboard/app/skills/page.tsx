@@ -116,6 +116,57 @@ function SkillCard({ skill, scan }: { skill: Skill; scan: ScanResult }) {
         </div>
       )}
 
+      <details className={styles.findings} style={{ overflowWrap: "anywhere" }}>
+        <summary>Source, declared version &amp; permissions</summary>
+        <p className={styles.why}>
+          Installed source: <code>{skill.rootPath}</code>. A local path and
+          content hash identify what was read; they do not authenticate its
+          publisher.
+        </p>
+        <p className={styles.why}>
+          Declared version:{" "}
+          {skill.metadata?.version?.slice(0, 200) || "not provided"}. License:{" "}
+          {skill.license || "not provided"}. Metadata is supplied by the skill
+          author and has not been independently verified.
+        </p>
+        {skill.metadata && Object.keys(skill.metadata).length > 0 && (
+          <dl>
+            {Object.entries(skill.metadata)
+              .slice(0, 20)
+              .map(([key, value]) => (
+                <div key={key}>
+                  <dt>{key.slice(0, 100)}</dt>
+                  <dd
+                    style={{ overflowWrap: "anywhere", marginInlineStart: 0 }}
+                  >
+                    {value.slice(0, 1000)}
+                    {value.length > 1000 ? "… (shortened)" : ""}
+                  </dd>
+                </div>
+              ))}
+          </dl>
+        )}
+        {skill.metadata && Object.keys(skill.metadata).length > 20 && (
+          <p>
+            Showing the first 20 metadata fields. Open JSON for the full read
+            snapshot.
+          </p>
+        )}
+        <p className={styles.why}>
+          Skills provide instructions. Their text or declared capabilities do
+          not grant tools or enforce network limits. Actual access and approval
+          requirements come from the agent's tools, sandbox and connection
+          configuration.
+        </p>
+        {skill.ignoredFrontmatterKeys.length > 0 && (
+          <p className={styles.why}>
+            Frontmatter keys ignored by the runtime:{" "}
+            {skill.ignoredFrontmatterKeys.join(", ")}. Permission-looking keys
+            here do not restrict execution.
+          </p>
+        )}
+      </details>
+
       <details className={styles.findings}>
         <summary>
           {verdictSummary(scan)}

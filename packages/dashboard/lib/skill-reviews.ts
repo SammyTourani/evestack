@@ -1,5 +1,6 @@
 import { getPool } from "./db";
 import type { ApproverIdentity } from "./approvals";
+import type { SkillFileFingerprint } from "./skill-fingerprint";
 
 let ready: Promise<void> | null = null;
 async function ensureReviews() {
@@ -16,7 +17,8 @@ async function ensureReviews() {
           verdict text NOT NULL CHECK(verdict IN ('reviewed','needs_changes')), note text NOT NULL,
           actor text, actor_via text NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
         );
-        CREATE INDEX IF NOT EXISTS skill_review_source ON evestack.skill_reviews(name,source_hash,id DESC)`);
+        CREATE INDEX IF NOT EXISTS skill_review_source ON evestack.skill_reviews(name,source_hash,id DESC);
+        ALTER TABLE evestack.skill_reviews ADD COLUMN IF NOT EXISTS file_manifest jsonb`);
         await client.query("COMMIT");
       } catch (error) {
         await client.query("ROLLBACK").catch(() => {});
@@ -35,7 +37,7 @@ export async function readSkillReview(name: string, source: string) {
   return (
     (
       await getPool().query(
-        "SELECT content_hash,verdict,note,actor,actor_via,created_at FROM evestack.skill_reviews WHERE name=$1 AND source_hash=$2 ORDER BY id DESC LIMIT 1",
+        "SELECT content_hash,verdict,note,actor,actor_via,created_at,file_manifest FROM evestack.skill_reviews WHERE name=$1 AND source_hash=$2 ORDER BY id DESC LIMIT 1",
         [name, source],
       )
     ).rows[0] ?? null
@@ -48,10 +50,20 @@ export async function recordSkillReview(
   verdict: string,
   note: string,
   identity: ApproverIdentity,
+  manifest?: SkillFileFingerprint[],
 ) {
   await ensureReviews();
   await getPool().query(
-    "INSERT INTO evestack.skill_reviews(name,source_hash,content_hash,verdict,note,actor,actor_via) VALUES($1,$2,$3,$4,$5,$6,$7)",
-    [name, source, hash, verdict, note, identity.approver, identity.via],
+    "INSERT INTO evestack.skill_reviews(name,source_hash,content_hash,verdict,note,actor,actor_via,file_manifest) VALUES($1,$2,$3,$4,$5,$6,$7,$8)",
+    [
+      name,
+      source,
+      hash,
+      verdict,
+      note,
+      identity.approver,
+      identity.via,
+      manifest ? JSON.stringify(manifest) : null,
+    ],
   );
 }

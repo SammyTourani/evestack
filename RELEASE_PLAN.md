@@ -95,7 +95,7 @@ Status: `[ ]` queued, `[-]` in progress, `[x]` verified, `[~]` implemented await
 - [x] Explain removal from recall versus retained audit copies; expose supported retention controls.
 - [x] Skill finding review bound to exact file hash; changes reopen review.
 - [x] Resolve bundled safety-skill false positive without exempting quoted attacks globally.
-- [ ] Show skill source/version/capabilities and changes since review when evidence exists.
+- [x] Show skill source/version/capabilities and changes since review when evidence exists.
 - [x] Explain scanning versus enforcement; preserve scanner self-tests.
 
 ## 8. Recovery, evidence and regression improvement
@@ -282,3 +282,12 @@ These are required product learning, not claims a coding session can prove.
 - Transport, sandbox and alert checks: 57 tests pass against a local fixture socket, including sustained trickle/size limits, bounded concurrency, GET-only operation, unreadable data and omission propagation. Dashboard: 769 tests pass, five native suites separate; typecheck and production build pass. Compatibility: 25 contracts / 640 assertions pass. Website/docs build passes.
 - Built-browser checks pass a 28-container fixture with 24 displayed/four omitted, long names, network/lifetime flags, unavailable/recovered inventory, desktop/mobile/dark layouts and no script errors. No real host Docker socket was mounted or inspected. Visual review found and corrected duration rollover (for example, 1h 60m → 2h 00m); 12 time-formatting tests pass.
 - External monitoring guidance now distinguishes quiet transition alerts from liveness, explains status-versus-body checks and documents incident actions. It does not claim an external monitor was deployed. Replay acknowledgement no longer promises model-only cost when prior tools were unrecorded.
+
+### Skill provenance and review changes (September 16)
+
+- Skills expose installed source, declared version/license/metadata and ignored permission-looking frontmatter. Author declarations do not authenticate publishers or grant access.
+- New reviews append per-file fingerprints without file contents. Added/changed/removed paths compare against the last review; legacy rows retain their whole-content hash and explicitly lack a per-file baseline. Schema update is additive under the existing transaction lock.
+- Native PostgreSQL: four migration/history checks and the database archive/restore rehearsal pass. Local restore uses the documented numeric-array fallback; the preceding pgvector CI rehearsal passed without skips.
+- Dashboard production build, 770 non-database tests and 25 compatibility contracts / 640 assertions pass. Six native database groups are excluded from that fast-test count and run separately.
+- Browser checks use actual disposable file changes: stale saves reject with the draft retained; additions/edits/removals are visible; source metadata and permissions caveats remain readable on desktop/mobile/dark views. No browser script errors.
+- Exact CI and dashboard-image builds passed for the preceding queue (`a4d92c3`) and execution-environment (`e4d12c1`) checkpoints. This new checkpoint awaits its own CI verification.

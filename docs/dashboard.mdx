@@ -270,6 +270,22 @@ verdict, so you can tell a scanner that is working from one that is merely quiet
 A clean verdict is not proof of safety and the page says so in as many words. It is pattern
 matching over files; a skill that fetches its instructions at runtime has nothing for it to read.
 
+Open **Source, declared version & permissions** to inspect the installed path, author-supplied
+version, license and metadata. These do not authenticate a publisher. Permission-looking
+frontmatter that the runtime ignores is identified explicitly; actual tool access, approvals
+and network restrictions come from the agent configuration.
+
+**Content review** records an outcome and reason against the exact content and installed source.
+New reviews store per-file SHA-256 fingerprints, so **Changes since the last review** lists added,
+changed and removed files. Previous file contents are not stored by this review. Older reviews
+keep their whole-content hash and history but have no per-file baseline; the page says when it
+cannot reconstruct a change. Changing a file reopens review, and saving from an outdated page
+is rejected. A review neither suppresses scanner findings nor grants permission to execute.
+
+The nullable `evestack.skill_reviews.file_manifest` column is added on first review access. Older
+rows remain intact. Include the table in a whole-database backup; rolling back application code
+does not require dropping the column or deleting review history.
+
 **Point it at the right directory.** The page reads, in order: `EVESTACK_SKILLS_DIR`, then
 `<cwd>/agent/skills`, then the skills bundled with the evestack template. In a container the
 first two do not exist unless you arrange them, so it falls through to the third — and because
