@@ -138,6 +138,9 @@ LABEL org.opencontainers.image.source="https://github.com/SammyTourani/evestack"
 # as the per-package directories.
 COPY --from=deps --chown=node:node /repo/node_modules /repo/node_modules
 COPY --from=deps --chown=node:node /repo/packages/dashboard/node_modules /repo/packages/dashboard/node_modules
+COPY --from=deps --chown=node:node /repo/packages/evestack-budget/node_modules /repo/packages/evestack-budget/node_modules
+COPY --from=build --chown=node:node /repo/packages/evestack-budget/package.json /repo/packages/evestack-budget/package.json
+COPY --from=build --chown=node:node /repo/packages/evestack-budget/dist /repo/packages/evestack-budget/dist
 COPY --from=deps --chown=node:node /repo/packages/evestack-schedules/node_modules /repo/packages/evestack-schedules/node_modules
 
 # @evestack/schedules is a `workspace:*` symlink target, so the real directory

@@ -1,13 +1,18 @@
 # The `evestack` CLI
 
-One command, eight verbs. `-h`/`--help` and `-V`/`--version` work anywhere, and **asking for
+Project and task commands. `-h`/`--help` and `-V`/`--version` work anywhere, and **asking for
 help never writes, starts or opens anything.**
 
 ```
 evestack create [name]     scaffold an agent, a database and a dashboard
+evestack dashboard         open the dashboard in your browser, signed in
 evestack status            is it up? what do I run?
+evestack tasks             list, inspect, start, continue or stop work
+evestack routines          read recurring work and run history
+evestack readiness         check setup from the dashboard
+evestack configure         preview, back up and save supported settings
+evestack upgrade           compare the installed project with the bundled template
 evestack tour              a guided first run, on a stack that is already up
-evestack open              the dashboard URL and its password, in a browser
 evestack verify            check every part and name the fix for anything broken
 evestack skills            teach your coding agent this project
 evestack attach [dir]      add evestack to an eve project you already have
@@ -18,6 +23,53 @@ A bare `evestack` inside a project runs `status`. Outside one it prints the comm
 exits `0` — typing the program's name is not an error. An unrecognised command gets one
 suggestion when there is a close match (`evestack verfiy` → *Did you mean `evestack verify`?*)
 and never a guess when there is not.
+
+## Tasks, routine history and readiness
+
+```bash
+evestack tasks --search="repository brief" --limit=20
+evestack tasks TASK_ID --json
+evestack tasks recovery TASK_ID --json
+evestack routines ROUTINE_ID --json
+evestack readiness --check=agent
+```
+
+These commands read the dashboard's authenticated API. Use the returned
+`nextCursor` with `tasks --cursor=CURSOR` for another page; keep the same search.
+Task and recovery data include their coverage limits. Routine lists contain at
+most 200 entries, with bounded per-routine run/delivery history. Readiness can
+successfully report an unavailable or unverified component.
+
+Explicit task actions can invoke models and tools:
+
+```bash
+evestack tasks start --message-file=brief.txt
+evestack tasks reply TASK_ID --message-file=follow-up.txt
+evestack tasks stop TASK_ID
+```
+
+Messages must be UTF-8 files up to 64 KiB. The CLI prints the task link and never
+automatically retries a mutation or answers an approval. A lost response means
+delivery is unknown: inspect Tasks before submitting again. Stop is cooperative;
+acceptance does not prove cancellation or task completion. `--json` retains the
+server's structured result. Exit 0 means the read or request was accepted, 1 means
+refusal or uncertain delivery, and 2 means no project was found.
+
+The address comes from `EVESTACK_PUBLIC_URL`, then the origin of
+`EVESTACK_DASHBOARD_URL`, then loopback port 4000. It uses the installation's
+`EVESTACK_AUTH_USER`/`EVESTACK_AUTH_PASSWORD` from project settings and shell
+overrides. Remote dashboards require HTTPS. Redirects are not followed and
+credentials are not printed or embedded in task links.
+
+## Configuration and upgrades
+
+`evestack configure` previews supported provider/channel changes without saving them. Applying
+requires the preview fingerprint and creates a private backup; it does not restart services.
+Use `evestack configure --help` for apply/restore arguments and recheck setup after a restart.
+`evestack upgrade` is a read-only comparison with this CLI's bundled template. It reports file
+hash differences and dependency changes for manual review; it does not fetch, install or merge.
+The generated `evestack-release.json` records selected components, not deployed-state proof.
+Full reference: https://evestack.vercel.app/docs/cli.
 
 ## Picking the right diagnostic
 
@@ -146,8 +198,9 @@ production.
 evestack skills [--dir=PATH] [--print] [--force] [--json]
 ```
 
-Installs this pack — the one you are reading — into the user's own agent, so it persists instead
-of living in one conversation. Suggest it once you have been pasted somewhere durable is useful.
+Installs the setup pack bundled with the installed CLI, with its version and file fingerprints.
+It works offline after CLI installation. The website pack may differ; `EVESTACK_PACK_URL` is
+an explicit custom-server override, with no verified version match.
 
 | Flag | Effect |
 | --- | --- |
@@ -159,8 +212,8 @@ of living in one conversation. Suggest it once you have been pasted somewhere du
 The default target is chosen, not guessed: inside a scaffolded project `agent/skills` is a real
 runtime location that eve scans, so the pack becomes loadable by the agent being *built*.
 
-It fetches the pack from the site rather than carrying a bundled copy, so it cannot go stale —
-which means it needs a network connection. Exit `1` names the URL if it cannot reach it.
+The bundled pack requires no network after CLI installation. A custom URL requires HTTPS
+(or loopback HTTP), does not follow redirects, and is bounded to 15 seconds and 1 MiB.
 
 ## `evestack attach`
 

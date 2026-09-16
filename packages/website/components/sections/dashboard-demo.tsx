@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { cn } from "@/lib/utils";
 import {
   baseSessions,
@@ -47,7 +54,11 @@ type Tab = (typeof TABS)[number];
 
 const INTEGRATIONS = [
   { name: "GitHub", slug: "github", detail: "evestack · webhooks + checks" },
-  { name: "OpenAI", slug: "openai", detail: "openai/gpt-5-mini · key sk-…4f2a" },
+  {
+    name: "OpenAI",
+    slug: "openai",
+    detail: "openai/gpt-5-mini · key sk-…4f2a",
+  },
   { name: "Slack", slug: "slack", detail: "#agent-runs · notifications" },
 ] as const;
 
@@ -62,7 +73,7 @@ const CHAT = [
   { role: "user" as const, text: "What did the deploy email session cost?" },
   {
     role: "assistant" as const,
-    text: "Deploy summary email ran 3 turns with 5 tool calls in 18.2s, costing $0.0034 in model spend. Infrastructure: $0.00.",
+    text: "In this example, the deploy summary has 3 turns and 5 tool calls over 18.2s, with $0.0034 estimated model spend. Hosting costs are separate.",
   },
 ];
 const CHAT_WORDS = CHAT.map((m) => m.text.split(" "));
@@ -94,7 +105,8 @@ const FLASH_MS = 300; // row highlight at flip-to-running AND at completion
 const LIVE_N = Math.min(LIVE_PLAN.length, liveSessions.length);
 /* a pass is "active" until the last row's completion flash fades */
 const PASS_ACTIVE =
-  Math.max(...LIVE_PLAN.slice(0, LIVE_N).map((p) => p.at + HOLD_MS + p.count)) + FLASH_MS;
+  Math.max(...LIVE_PLAN.slice(0, LIVE_N).map((p) => p.at + HOLD_MS + p.count)) +
+  FLASH_MS;
 
 /* Settled feed = SSR / reduced-motion truth: every live row completed at
    full values. rowsAt(PASS_ACTIVE) lands on exactly this frame, so the
@@ -132,7 +144,8 @@ const rowsAt = (now: number): LiveRow[] =>
   });
 
 const fmtInt = (n: number) => n.toLocaleString("en-US");
-const fmtTokens = (n: number) => (n >= 10_000 ? `${Math.round(n / 1000)}K` : fmtInt(n));
+const fmtTokens = (n: number) =>
+  n >= 10_000 ? `${Math.round(n / 1000)}K` : fmtInt(n);
 const fmtCost = (n: number) => (n === 0 ? "$0.00" : `$${n.toFixed(4)}`);
 
 function Tile({
@@ -149,7 +162,12 @@ function Tile({
   return (
     <div className={cn("bg-background-100 p-4 max-md:py-2.5", className)}>
       <p className="font-mono text-label-12 uppercase text-gray-700">{label}</p>
-      <p className={cn("mt-1 font-mono text-heading-24 tabular-nums max-md:text-heading-20", ok ? "text-ok" : "text-gray-1000")}>
+      <p
+        className={cn(
+          "mt-1 font-mono text-heading-24 tabular-nums max-md:text-heading-20",
+          ok ? "text-ok" : "text-gray-1000",
+        )}
+      >
         {value}
       </p>
     </div>
@@ -161,7 +179,9 @@ function StatusPill({ status }: { status: SessionStatus }) {
     <span
       className={cn(
         "inline-flex h-5 items-center rounded-full border px-2 font-mono text-label-12",
-        status === "running" ? "border-blue-700/40 text-blue-700" : "border-ok/40 text-ok",
+        status === "running"
+          ? "border-blue-700/40 text-blue-700"
+          : "border-ok/40 text-ok",
       )}
     >
       {status}
@@ -202,12 +222,22 @@ function SessionRow({
       >
         <span className="truncate text-copy-14 text-gray-1000">{s.title}</span>
         <StatusPill status={s.status} />
-        <span className={cn(NUM_CELL, "hidden text-gray-900 md:block")}>{s.turns}</span>
-        <span className="hidden truncate font-mono text-mono-13 text-gray-700 md:block">{s.model}</span>
-        <span className={cn(NUM_CELL, "hidden text-gray-900 md:block")}>{fmtInt(s.tokensIn)}</span>
-        <span className={cn(NUM_CELL, "hidden text-gray-900 md:block")}>{fmtInt(s.tokensOut)}</span>
+        <span className={cn(NUM_CELL, "hidden text-gray-900 md:block")}>
+          {s.turns}
+        </span>
+        <span className="hidden truncate font-mono text-mono-13 text-gray-700 md:block">
+          {s.model}
+        </span>
+        <span className={cn(NUM_CELL, "hidden text-gray-900 md:block")}>
+          {fmtInt(s.tokensIn)}
+        </span>
+        <span className={cn(NUM_CELL, "hidden text-gray-900 md:block")}>
+          {fmtInt(s.tokensOut)}
+        </span>
         <span className={cn(NUM_CELL, "text-gray-900")}>{fmtCost(s.cost)}</span>
-        <span className="hidden text-right font-mono text-mono-13 text-gray-700 md:block">{s.started}</span>
+        <span className="hidden text-right font-mono text-mono-13 text-gray-700 md:block">
+          {s.started}
+        </span>
       </button>
       <div
         id={panelId}
@@ -223,7 +253,11 @@ function SessionRow({
             {Array.from({ length: s.turns }, (_, i) => (
               <p key={i} className="text-gray-900">
                 <span className="text-gray-600">#{i + 1} TURN</span>{" "}
-                <span className={s.status === "running" ? "text-blue-700" : "text-ok"}>
+                <span
+                  className={
+                    s.status === "running" ? "text-blue-700" : "text-ok"
+                  }
+                >
                   [{s.status}]
                 </span>{" "}
                 {s.model}
@@ -231,8 +265,8 @@ function SessionRow({
             ))}
             <p className="tabular-nums text-gray-700">
               DURATION {s.durationS.toFixed(1)}s · IN {fmtInt(s.tokensIn)} · OUT{" "}
-              {fmtInt(s.tokensOut)} · CACHED {fmtInt(s.cached)} · TOOLS {s.tools} · COST{" "}
-              {fmtCost(s.cost)}
+              {fmtInt(s.tokensOut)} · CACHED {fmtInt(s.cached)} · TOOLS{" "}
+              {s.tools} · COST {fmtCost(s.cost)}
             </p>
           </div>
         </div>
@@ -241,7 +275,13 @@ function SessionRow({
   );
 }
 
-function ChatBubble({ role, children }: { role: "user" | "assistant"; children: React.ReactNode }) {
+function ChatBubble({
+  role,
+  children,
+}: {
+  role: "user" | "assistant";
+  children: React.ReactNode;
+}) {
   return role === "user" ? (
     <p className="ml-auto max-w-[75%] rounded-lg rounded-br-sm bg-gray-100 px-3 py-2 text-copy-14 text-gray-1000">
       {children}
@@ -286,13 +326,19 @@ export function DashboardDemo() {
   const [everSeen, setEverSeen] = useState(false);
   const [reduced, setReduced] = useState(false);
   const [tab, setTab] = useState<Tab>("Chat");
-  const [indicator, setIndicator] = useState<{ x: number; w: number } | null>(null);
+  const [indicator, setIndicator] = useState<{ x: number; w: number } | null>(
+    null,
+  );
   const [panelH, setPanelH] = useState<number | null>(null);
   const [rows, setRows] = useState<LiveRow[]>(settledRows);
   const [expanded, setExpanded] = useState<string | null>(null);
   /* chat: shown = fully rendered messages; streamWords > 0 = message
      CHAT[shown] is streaming. Settled (SSR) = everything visible. */
-  const [chat, setChat] = useState({ shown: CHAT.length, thinking: false, streamWords: 0 });
+  const [chat, setChat] = useState({
+    shown: CHAT.length,
+    thinking: false,
+    streamWords: 0,
+  });
   /* integrations: 0 = pending, 1 = connecting, 2 = connected (SSR: all 2) */
   const [conn, setConn] = useState<number[]>([2, 2, 2]);
 
@@ -334,13 +380,18 @@ export function DashboardDemo() {
      moving. ── */
   useEffect(() => {
     const root = rootRef.current;
-    if (!root || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    if (!root || window.matchMedia("(prefers-reduced-motion: reduce)").matches)
+      return;
     stopRef.current = false;
 
     const FIRST_TOTAL = 700 + PASS_ACTIVE;
     const prog = { elapsed: 0, total: FIRST_TOTAL };
 
-    const timer = (ms: number, onFrame: ((t: number) => void) | null, onDone: () => void) => {
+    const timer = (
+      ms: number,
+      onFrame: ((t: number) => void) | null,
+      onDone: () => void,
+    ) => {
       let last = performance.now();
       let elapsed = 0;
       const step = (now: number) => {
@@ -350,7 +401,8 @@ export function DashboardDemo() {
           elapsed += d;
           prog.elapsed += d;
           const bar = barRef.current;
-          if (bar) bar.style.transform = `scaleX(${Math.min(prog.elapsed / prog.total, 1)})`;
+          if (bar)
+            bar.style.transform = `scaleX(${Math.min(prog.elapsed / prog.total, 1)})`;
         }
         last = now;
         const t = Math.min(elapsed / ms, 1);
@@ -406,7 +458,11 @@ export function DashboardDemo() {
         if (!entry.isIntersecting) return;
         io.disconnect();
         if (barRef.current) barRef.current.style.opacity = "1";
-        timer(window.matchMedia("(max-width: 47.999rem)").matches ? 250 : 700, null, pass);
+        timer(
+          window.matchMedia("(max-width: 47.999rem)").matches ? 250 : 700,
+          null,
+          pass,
+        );
       },
       /* rootMargin, not just threshold. On a phone this panel is ~650px of an
          852px viewport, so `threshold: 0.1` alone only fires once 65px of it
@@ -444,11 +500,16 @@ export function DashboardDemo() {
     const stopped = { v: false };
     const rafBox = { id: 0 };
     const timer = makeTimer(stopped, rafBox);
-    const wait = (ms: number) => new Promise<void>((res) => timer(ms, null, res));
+    const wait = (ms: number) =>
+      new Promise<void>((res) => timer(ms, null, res));
     /* Chat leads, so it also needs the longest dwell: its script has to finish
        playing before the rotation moves on, or the first thing a visitor sees
        is a conversation cut off mid-sentence. */
-    const DWELL: Record<Tab, number> = { Chat: 15000, Sessions: 12000, Integrations: 9000 };
+    const DWELL: Record<Tab, number> = {
+      Chat: 15000,
+      Sessions: 12000,
+      Integrations: 9000,
+    };
 
     (async () => {
       await wait(2500); // let the sessions stream get going first
@@ -480,14 +541,19 @@ export function DashboardDemo() {
     const stopped = { v: false };
     const rafBox = { id: 0 };
     const timer = makeTimer(stopped, rafBox, false); // never hover-frozen
-    const wait = (ms: number) => new Promise<void>((res) => timer(ms, null, res));
+    const wait = (ms: number) =>
+      new Promise<void>((res) => timer(ms, null, res));
     const stream = (idx: number) =>
       new Promise<void>((res) => {
         const words = CHAT_WORDS[idx].length;
         setChat({ shown: idx, thinking: false, streamWords: 1 });
         timer(
           words * 68,
-          (t) => setChat((c) => ({ ...c, streamWords: Math.max(1, Math.ceil(t * words)) })),
+          (t) =>
+            setChat((c) => ({
+              ...c,
+              streamWords: Math.max(1, Math.ceil(t * words)),
+            })),
           () => {
             setChat({ shown: idx + 1, thinking: false, streamWords: 0 });
             res();
@@ -523,7 +589,8 @@ export function DashboardDemo() {
     const stopped = { v: false };
     const rafBox = { id: 0 };
     const timer = makeTimer(stopped, rafBox, false); // never hover-frozen
-    const wait = (ms: number) => new Promise<void>((res) => timer(ms, null, res));
+    const wait = (ms: number) =>
+      new Promise<void>((res) => timer(ms, null, res));
     const mark = (i: number, phase: number) =>
       setConn((c) => c.map((p, j) => (j === i ? phase : p)));
 
@@ -615,10 +682,16 @@ export function DashboardDemo() {
       />
       <div className="flex h-12 items-center gap-4 border-b border-border-subtle px-4 md:h-11">
         <p className="flex shrink-0 items-center gap-2 font-mono text-mono-13 text-gray-1000">
-          <span aria-hidden className="text-blue-700">▚</span>
+          <span aria-hidden className="text-blue-700">
+            ▚
+          </span>
           evestack
         </p>
-        <div role="tablist" aria-label="Dashboard views" className="relative flex h-full items-center">
+        <div
+          role="tablist"
+          aria-label="Dashboard views"
+          className="relative flex h-full items-center"
+        >
           {TABS.map((t, i) => (
             <button
               key={t}
@@ -635,13 +708,17 @@ export function DashboardDemo() {
               onKeyDown={(e) => {
                 if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
                 e.preventDefault();
-                const j = (i + (e.key === "ArrowRight" ? 1 : -1) + TABS.length) % TABS.length;
+                const j =
+                  (i + (e.key === "ArrowRight" ? 1 : -1) + TABS.length) %
+                  TABS.length;
                 pickTab(TABS[j]);
                 tabRefs.current[j]?.focus();
               }}
               className={cn(
                 "flex h-full items-center px-2 text-copy-14 transition-colors",
-                tab === t ? "text-gray-1000" : "text-gray-700 hover:text-gray-900",
+                tab === t
+                  ? "text-gray-1000"
+                  : "text-gray-700 hover:text-gray-900",
               )}
             >
               {t}
@@ -653,7 +730,10 @@ export function DashboardDemo() {
             className="absolute bottom-0 h-0.5 bg-gray-1000 transition-[transform,width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none"
             style={
               indicator
-                ? { width: indicator.w, transform: `translateX(${indicator.x}px)` }
+                ? {
+                    width: indicator.w,
+                    transform: `translateX(${indicator.x}px)`,
+                  }
                 : { width: 0 }
             }
           />
@@ -678,16 +758,36 @@ export function DashboardDemo() {
           }}
         >
           <div data-panel-anim>
-            <div tabIndex={0} role="region" aria-label="Demo dashboard sessions" className="overflow-x-auto">
+            <div
+              tabIndex={0}
+              role="region"
+              aria-label="Demo dashboard sessions"
+              className="overflow-x-auto"
+            >
               <div className="min-w-0 bg-background-100 md:min-w-[760px]">
                 <div className="grid grid-cols-2 gap-px border-b border-border-subtle bg-border-subtle md:grid-cols-5">
                   <Tile label="Sessions" value={fmtInt(stats.sessions)} />
                   <Tile label="Turns" value={fmtInt(stats.turns)} />
-                  <Tile label="Tokens in/out" value={`${fmtTokens(stats.tokensIn)}/${fmtTokens(stats.tokensOut)}`} />
-                  <Tile label="Model spend" value={`$${stats.spend.toFixed(2)}`} />
-                  <Tile label="Infrastructure" value="$0.00" ok className="col-span-2 md:col-span-1" />
+                  <Tile
+                    label="Tokens in/out"
+                    value={`${fmtTokens(stats.tokensIn)}/${fmtTokens(stats.tokensOut)}`}
+                  />
+                  <Tile
+                    label="Model spend"
+                    value={`$${stats.spend.toFixed(2)}`}
+                  />
+                  <Tile
+                    label="Hosting costs"
+                    value="Separate"
+                    className="col-span-2 md:col-span-1"
+                  />
                 </div>
-                <div className={cn(ROW_GRID, "h-9 font-mono text-label-12 uppercase text-gray-700")}>
+                <div
+                  className={cn(
+                    ROW_GRID,
+                    "h-9 font-mono text-label-12 uppercase text-gray-700",
+                  )}
+                >
                   <span>Session</span>
                   <span>Status</span>
                   <span className="hidden text-right md:block">Turns</span>
@@ -744,16 +844,24 @@ export function DashboardDemo() {
             panelRefs.current.Chat = el;
           }}
         >
-          <div data-panel-anim className="flex min-h-[300px] flex-col justify-end gap-3 p-4">
+          <div
+            data-panel-anim
+            className="flex min-h-[300px] flex-col justify-end gap-3 p-4"
+          >
             {/* the streaming bubble IS the final bubble (same key) — it fills
                 in place instead of being swapped out, so nothing jumps */}
-            {CHAT.slice(0, chat.streamWords > 0 ? chat.shown + 1 : chat.shown).map((m, i) => {
+            {CHAT.slice(
+              0,
+              chat.streamWords > 0 ? chat.shown + 1 : chat.shown,
+            ).map((m, i) => {
               const streaming = chat.streamWords > 0 && i === chat.shown;
               return (
                 <div key={i} className="chat-row">
                   <div>
                     <ChatBubble role={m.role}>
-                      {streaming ? CHAT_WORDS[i].slice(0, chat.streamWords).join(" ") : m.text}
+                      {streaming
+                        ? CHAT_WORDS[i].slice(0, chat.streamWords).join(" ")
+                        : m.text}
                       {streaming ? (
                         <span
                           aria-hidden
@@ -769,7 +877,9 @@ export function DashboardDemo() {
               <div className="chat-row" aria-hidden>
                 <div>
                   <div className="mr-auto flex items-center gap-2.5">
-                    <span className="mt-0.5 shrink-0 font-mono text-copy-14 leading-none text-blue-700">▚</span>
+                    <span className="mt-0.5 shrink-0 font-mono text-copy-14 leading-none text-blue-700">
+                      ▚
+                    </span>
                     <span className="flex items-center gap-1.5 rounded-lg rounded-bl-sm border border-border-subtle bg-background-100 px-3 py-2.5">
                       {[0, 1, 2].map((d) => (
                         <span
@@ -783,9 +893,16 @@ export function DashboardDemo() {
                 </div>
               </div>
             ) : null}
-            <p aria-hidden className="mt-2 flex items-center justify-between rounded-lg border border-border-default bg-background-100 px-3 py-2.5">
-              <span className="text-copy-14 text-gray-600">Message your agent…</span>
-              <span className="rounded border border-border-subtle px-1.5 font-mono text-label-12 text-gray-600">⏎</span>
+            <p
+              aria-hidden
+              className="mt-2 flex items-center justify-between rounded-lg border border-border-default bg-background-100 px-3 py-2.5"
+            >
+              <span className="text-copy-14 text-gray-600">
+                Message your agent…
+              </span>
+              <span className="rounded border border-border-subtle px-1.5 font-mono text-label-12 text-gray-600">
+                ⏎
+              </span>
             </p>
           </div>
         </div>
@@ -800,7 +917,10 @@ export function DashboardDemo() {
             panelRefs.current.Integrations = el;
           }}
         >
-          <div data-panel-anim className="flex min-h-[300px] flex-col justify-center gap-2 p-4">
+          <div
+            data-panel-anim
+            className="flex min-h-[300px] flex-col justify-center gap-2 p-4"
+          >
             {INTEGRATIONS.map(({ name, slug, detail }, i) => {
               const phase = conn[i];
               return (
@@ -808,18 +928,32 @@ export function DashboardDemo() {
                   key={name}
                   className={cn(
                     "flex items-center justify-between gap-3 rounded-lg border bg-background-100 px-4 py-3 transition-[opacity,transform,border-color] duration-400 motion-reduce:transition-none",
-                    phase === 0 ? "translate-y-2 opacity-0" : "translate-y-0 opacity-100",
-                    phase === 2 ? "border-border-subtle" : "border-border-default",
+                    phase === 0
+                      ? "translate-y-2 opacity-0"
+                      : "translate-y-0 opacity-100",
+                    phase === 2
+                      ? "border-border-subtle"
+                      : "border-border-default",
                   )}
                 >
                   <div className="flex min-w-0 items-center gap-3">
-                    <span aria-hidden className="logo-tile h-8 w-8 shrink-0 rounded-lg">
+                    <span
+                      aria-hidden
+                      className="logo-tile h-8 w-8 shrink-0 rounded-lg"
+                    >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={`/logos/${slug}.svg`} alt="" className="h-[62%] w-[62%]" loading="lazy" />
+                      <img
+                        src={`/logos/${slug}.svg`}
+                        alt=""
+                        className="h-[62%] w-[62%]"
+                        loading="lazy"
+                      />
                     </span>
                     <div className="min-w-0">
                       <p className="text-copy-14 text-gray-1000">{name}</p>
-                      <p className="truncate font-mono text-mono-13 text-gray-700">{detail}</p>
+                      <p className="truncate font-mono text-mono-13 text-gray-700">
+                        {detail}
+                      </p>
                     </div>
                   </div>
                   {phase === 2 ? (
@@ -827,7 +961,10 @@ export function DashboardDemo() {
                       key="connected"
                       className="flex shrink-0 animate-[connect-pop_0.35s_cubic-bezier(0.175,0.885,0.32,1.275)] items-center gap-2 font-mono text-label-12 text-ok motion-reduce:animate-none"
                     >
-                      <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-ok" />
+                      <span
+                        aria-hidden
+                        className="h-1.5 w-1.5 rounded-full bg-ok"
+                      />
                       connected
                     </span>
                   ) : (
@@ -835,7 +972,10 @@ export function DashboardDemo() {
                       key="connecting"
                       className="flex shrink-0 items-center gap-2 font-mono text-label-12 text-warn"
                     >
-                      <span aria-hidden className="h-1.5 w-1.5 animate-pulse rounded-full bg-warn motion-reduce:animate-none" />
+                      <span
+                        aria-hidden
+                        className="h-1.5 w-1.5 animate-pulse rounded-full bg-warn motion-reduce:animate-none"
+                      />
                       connecting…
                     </span>
                   )}

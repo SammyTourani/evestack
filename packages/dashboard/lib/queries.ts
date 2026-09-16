@@ -299,7 +299,8 @@ export interface SessionCursor {
 }
 
 /** `YYYY-MM-DDTHH:MM:SS.ffffff`, exactly what the SELECT's `to_char` emits. */
-const CURSOR_TIMESTAMP = /^(\d{4,})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.\d{6}$/;
+const CURSOR_TIMESTAMP =
+  /^(\d{4,})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.\d{6}$/;
 
 /**
  * Shape AND calendar.
@@ -378,7 +379,10 @@ export function parseSessionCursor(raw: string): SessionCursor {
  * and never a wrong row, and the alternative — over-fetching one row on every
  * page to know — costs a row on every page instead. Pay it at the end.
  */
-export function nextSessionCursor(rows: readonly SessionRow[], limit: number): string | null {
+export function nextSessionCursor(
+  rows: readonly SessionRow[],
+  limit: number,
+): string | null {
   if (rows.length === 0 || rows.length < limit) return null;
   return rows[rows.length - 1].cursor;
 }
@@ -412,6 +416,7 @@ export function nextSessionCursor(rows: readonly SessionRow[], limit: number): s
 export async function listSessions(
   limit = 100,
   cursor: SessionCursor | null = null,
+  search = "",
 ): Promise<SessionRow[]> {
   await ensureQueryIndexes();
   const rows = await query<Record<string, unknown>>(
@@ -480,10 +485,11 @@ export async function listSessions(
       -- $2 IS NULL is the first page. Both halves of the cursor are bound as
       -- text and cast here, so no JS Date ever touches a naive-UTC column.
       AND ($2::text IS NULL OR (s.created_at, s.id) < ($2::timestamp, $3::text))
+      AND ($4::text = '' OR position(lower($4) in lower(coalesce(s.attributes->>'$eve.title', '') || ' ' || s.id)) > 0)
     ORDER BY s.created_at DESC, s.id DESC
     LIMIT $1
     `,
-    [limit, cursor?.createdAt ?? null, cursor?.id ?? null],
+    [limit, cursor?.createdAt ?? null, cursor?.id ?? null, search],
   );
 
   return rows.map((r) => ({
@@ -492,7 +498,9 @@ export async function listSessions(
     title: (r.title as string) ?? null,
     trigger: (r.trigger as string) ?? null,
     createdAt: new Date(r.created_at as string).toISOString(),
-    completedAt: r.completed_at ? new Date(r.completed_at as string).toISOString() : null,
+    completedAt: r.completed_at
+      ? new Date(r.completed_at as string).toISOString()
+      : null,
     turnCount: NUM(r.turn_count),
     inputTokens: NUM(r.input_tokens),
     outputTokens: NUM(r.output_tokens),
@@ -550,7 +558,17 @@ export async function listSessions(
  * neither rather than being split or double-counted, and those turns report
  * `null` — the same as no trace at all.
  */
-export async function getSessionTree(sessionId: string): Promise<TurnRow[]> {
+export async function getSessionTree(
+  sessionId: string,
+  latestLimit?: number,
+): Promise<TurnRow[]> {
+  if (
+    latestLimit !== undefined &&
+    (!Number.isSafeInteger(latestLimit) ||
+      latestLimit < 1 ||
+      latestLimit > 10000)
+  )
+    throw new Error("Invalid task run limit.");
   // `evestack.spans` is created lazily by the trace ingest path, so a dashboard
   // that has never received a span would otherwise 42P01 on the join below.
   // Called here as well as inside ensureQueryIndexes because that one swallows
@@ -567,6 +585,8 @@ export async function getSessionTree(sessionId: string): Promise<TurnRow[]> {
           OR attributes->>'$eve.parent' = $1
           OR id = $1)
         AND attributes->>'$eve.type' IS NOT NULL
+      ORDER BY created_at DESC, id DESC
+      LIMIT $2
     ),
     -- Traces that resolve to exactly one turn. That turn is necessarily one of
     -- this session's runs: the trace was reached from runs, and it carries only
@@ -607,9 +627,9 @@ export async function getSessionTree(sessionId: string): Promise<TurnRow[]> {
            tc.invocations AS tool_invocations
     FROM runs r
     LEFT JOIN tool_calls tc ON tc.turn_id = r.id
-    ORDER BY r.created_at ASC
+    ORDER BY r.created_at ASC, r.id ASC
     `,
-    [sessionId],
+    [sessionId, latestLimit ?? null],
   );
 
   return rows.map(toTurnRow);
@@ -630,8 +650,12 @@ export async function getSessionTree(sessionId: string): Promise<TurnRow[]> {
  */
 export function toTurnRow(r: Record<string, unknown>): TurnRow {
   const a = (r.attributes ?? {}) as Record<string, string>;
-  const started = r.started_at ? new Date(r.started_at as string).getTime() : null;
-  const done = r.completed_at ? new Date(r.completed_at as string).getTime() : null;
+  const started = r.started_at
+    ? new Date(r.started_at as string).getTime()
+    : null;
+  const done = r.completed_at
+    ? new Date(r.completed_at as string).getTime()
+    : null;
   const input = NUM(a["$eve.input_tokens"]);
   const output = NUM(a["$eve.output_tokens"]);
   const cacheRead = NUM(a["$eve.cache_read_tokens"]);
@@ -645,8 +669,12 @@ export function toTurnRow(r: Record<string, unknown>): TurnRow {
     model: a["$eve.model"] ?? null,
     subagent: a["$eve.subagent"] ?? null,
     createdAt: new Date(r.created_at as string).toISOString(),
-    startedAt: r.started_at ? new Date(r.started_at as string).toISOString() : null,
-    completedAt: r.completed_at ? new Date(r.completed_at as string).toISOString() : null,
+    startedAt: r.started_at
+      ? new Date(r.started_at as string).toISOString()
+      : null,
+    completedAt: r.completed_at
+      ? new Date(r.completed_at as string).toISOString()
+      : null,
     durationMs: started !== null && done !== null ? done - started : null,
     inputTokens: input,
     outputTokens: output,
@@ -655,11 +683,15 @@ export function toTurnRow(r: Record<string, unknown>): TurnRow {
     toolsOffered: NUM_OR_NULL(a["$eve.tool_count"]),
     toolInvocations: NUM_OR_NULL(r.tool_invocations),
     errorCode: (r.error_code as string) ?? null,
-    costUsd: costUsd(a["$eve.model"] ?? null, input, output, cacheRead, cacheWrite),
+    costUsd: costUsd(
+      a["$eve.model"] ?? null,
+      input,
+      output,
+      cacheRead,
+      cacheWrite,
+    ),
     noModelCall:
-      (a["$eve.type"] === "turn") &&
-      !a["$eve.model"] &&
-      r.completed_at !== null,
+      a["$eve.type"] === "turn" && !a["$eve.model"] && r.completed_at !== null,
   };
 }
 
@@ -671,7 +703,9 @@ export function toTurnRow(r: Record<string, unknown>): TurnRow {
  * through, so the value would have been a number with nothing to mean. It was
  * computed, selected an extra `to_char` for, and read by nobody.
  */
-export async function getSession(sessionId: string): Promise<Omit<SessionRow, "cursor"> | null> {
+export async function getSession(
+  sessionId: string,
+): Promise<Omit<SessionRow, "cursor"> | null> {
   const [row] = await query<Record<string, unknown>>(
     `SELECT id, status, attributes, created_at, completed_at
      FROM workflow.workflow_runs WHERE id = $1`,
@@ -692,7 +726,9 @@ export async function getSession(sessionId: string): Promise<Omit<SessionRow, "c
     title: a["$eve.title"] ?? null,
     trigger: a["$eve.trigger"] ?? null,
     createdAt: new Date(row.created_at as string).toISOString(),
-    completedAt: row.completed_at ? new Date(row.completed_at as string).toISOString() : null,
+    completedAt: row.completed_at
+      ? new Date(row.completed_at as string).toISOString()
+      : null,
     turnCount: turns.length,
     ...rollup(turns),
     includingSubagents: rollup(beneath),
@@ -700,7 +736,9 @@ export async function getSession(sessionId: string): Promise<Omit<SessionRow, "c
 }
 
 function rollup(runs: TurnRow[]): SessionRollup {
-  const models = [...new Set(runs.map((t) => t.model).filter((m): m is string => !!m))];
+  const models = [
+    ...new Set(runs.map((t) => t.model).filter((m): m is string => !!m)),
+  ];
   return {
     inputTokens: runs.reduce((s, t) => s + t.inputTokens, 0),
     outputTokens: runs.reduce((s, t) => s + t.outputTokens, 0),
@@ -797,7 +835,10 @@ export async function getTotals(): Promise<{
  * free one — was previously only checkable against a live Postgres, so on any
  * machine without one it was checkable nowhere.
  */
-export function priceOf(parts: string[]): { costUsd: number; unpricedModels: string[] } {
+export function priceOf(parts: string[]): {
+  costUsd: number;
+  unpricedModels: string[];
+} {
   const { usd, unpriced } = sumCostParts(parts);
   return { costUsd: usd, unpricedModels: unpriced };
 }
@@ -824,7 +865,13 @@ function sumCostParts(parts: string[]): { usd: number; unpriced: string[] } {
     // five fields yields "" here, which must read as "no model" rather than as
     // a model named the empty string.
     const model = fields.length > 4 ? fields.slice(0, -4).join("|") : "";
-    total += costUsd(model || null, NUM(input), NUM(output), NUM(cacheRead), NUM(cacheWrite));
+    total += costUsd(
+      model || null,
+      NUM(input),
+      NUM(output),
+      NUM(cacheRead),
+      NUM(cacheWrite),
+    );
     // Asked per element, not per distinct model afterwards, because this is the
     // only place that still holds the exact string costUsd() was given. A caller
     // reconstructing it from `models` is the indirection that let a confident

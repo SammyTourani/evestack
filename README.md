@@ -4,230 +4,191 @@
 
 ### Run AI agents on your own machine.
 
-One command gives you the whole stack. Your conversations are saved in a database you own, code
-runs in a safe sandbox, and a dashboard lets you watch every agent and approve anything risky
-before it happens. Free, open source, and nothing phones home.
+An open source workspace for recurring AI work. Run a task, check its evidence,
+and schedule a repeat on infrastructure you control.
 
 [![CI](https://github.com/SammyTourani/evestack/actions/workflows/ci.yml/badge.svg)](https://github.com/SammyTourani/evestack/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/evestack?color=2563eb&label=evestack)](https://www.npmjs.com/package/evestack)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](./LICENSE)
 
-**[See it running →](https://evestack.vercel.app)** · **[Docs →](https://evestack.vercel.app/docs)** · **[Changelog →](./CHANGELOG.md)**
+**[Product walkthrough](https://evestack.vercel.app)** · **[Docs](https://evestack.vercel.app/docs)** · **[Changelog](./CHANGELOG.md)**
 
 </div>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset=".github/dashboard-dark.webp">
-  <img alt="The evestack dashboard's Sessions page: a banner reading '8 sessions wedged — a turn started and never finished, nothing in eve will notice or retry it', above a searchable table of 250 real agent runs with outcome, trigger, model, provider, environment and turn count across openai, anthropic, ollama and acme providers, two rows marked failed in red among the rest." src=".github/dashboard-light.webp">
+  <img alt="Eve Stack Tasks page showing recent work, outcomes and estimated spend. Example data from a local release test instance." src=".github/dashboard-light.webp">
 </picture>
 
+*The shipped dashboard with example data from a local release test instance.*
+
+## Start with one useful job
+
+A repository maintenance brief is a small, checkable first task: what changed this week,
+what needs attention, and links supporting each finding. Connect one repository, inspect
+the result, then save the request as a routine and run a test before enabling repeats.
+
+[Follow the first-task walkthrough](https://evestack.vercel.app/docs/first-task).
+
+Eve Stack is built for a technical operator willing to run the services. It packages the
+[eve](https://github.com/vercel/eve) agent framework with a task workspace and operational
+controls. It is a distribution, not a fork of the runtime.
+
 ## Quickstart
+
+You need **Node 24+**, **Docker running**, and a model API key, or a local model with enough
+memory. Model usage, connected services, hardware and hosting may cost money.
 
 ```bash
 npx evestack create my-agent
 ```
 
-Four questions — where, which model, tools, and whether to bring it up — all asked before any
-work starts. Answering **yes** to the last one starts Postgres, creates the schema, pulls the
-dashboard and then offers to start the agent, so there is nothing left to paste. Answering
-**no** — or running under `--yes`, or with Docker not running — leaves all of that to you, and
-it prints the four commands that do it, after a `cd`:
+The CLI asks for a directory, model provider, tools and whether to start services. It creates
+project credentials and offers to start Postgres, bootstrap its schema and pull the dashboard,
+then offers to run the agent. If you decline startup, use `--yes`, or Docker is unavailable,
+it prints the remaining commands:
 
 ```bash
 cd my-agent
-docker compose up -d postgres              # durable sessions
-npm run db:bootstrap                       # create the workflow schema
-docker compose --profile dashboard up -d   # the dashboard
-npm run dev                                # the agent — holds this terminal
+docker compose up -d postgres
+npm run db:bootstrap
+docker compose --profile dashboard up -d
+npm run dev
 ```
 
-Either way it finishes by drawing the parts with the ports **your** machine actually had free.
-[The quickstart](https://evestack.vercel.app/docs/quickstart) walks that manual path line by
-line.
+Open the dashboard at the printed address; ports are selected from those available on your
+machine. Sign in with the project credentials, then check **Settings**. A configured provider
+is not yet proof of a working model call. [Quickstart details](https://evestack.vercel.app/docs/quickstart).
 
-In another terminal:
+In another terminal, from inside the project:
 
 ```bash
-npx evestack status                        # is it up? and if not, what to run
-npx evestack tour                          # a guided first run: one message, followed
-                                           # through the terminal, Postgres and the dashboard
+npx evestack status       # service state and next actions
+npx evestack verify       # setup checks
+npx evestack dashboard    # open the dashboard
+npx evestack tour         # guided first message
 ```
 
-`npx evestack verify` is the thorough version — every part, with the command that fixes anything
-broken. All three work from anywhere inside the project.
+`npx create-evestack my-agent` uses the same scaffolder. Install `evestack` globally if you
+want the CLI on your PATH. `npm run dashboard` also opens an existing project's dashboard.
 
-`npx` because nothing has installed the command yet: scaffolding runs it once and leaves nothing
-on your PATH. `npm i -g evestack` drops the `npx ` from every line above, and is worth it if you
-run more than one of these.
+## Your workspace
 
-The scaffolder generates your credentials and prints them once; `evestack open` prints them
-again and opens the dashboard. Every route is behind that credential — the dashboard starts runs
-and approves shell commands, so it fails closed.
+| Area | What it helps you do |
+| --- | --- |
+| **Today** | Find pending decisions, recent results, routine state and setup checks |
+| **Tasks** | Start work, read Markdown results, continue a conversation and inspect recorded evidence |
+| **Routines** | Preview schedules in your timezone, test a run, enable repeats and investigate uncertain dispatch |
+| **Connections** | Check account authorization and prepare a task for the selected repository |
+| **Knowledge** | Inspect memory ownership, propose corrections and review skill changes |
+| **Settings** | Check readiness, manage opted-in budgets and inspect notification delivery |
+| **Diagnostics** | Investigate queue health, traces, estimated costs and execution environments |
 
-The dashboard step is a **pull**, not a build: `ghcr.io/sammytourani/evestack-dashboard` is
-published for `linux/amd64` and `linux/arm64`, ~230 MB compressed per platform, at the tag the
-scaffolder pins. A `docker compose pull` that 404s means that tag has not been published yet —
-[CHANGELOG.md](./CHANGELOG.md) names the release that is pending, and a checkout can always
-`docker compose build dashboard` instead.
+Task and decision drafts survive failed submissions. Ambiguous delivery is shown so you can
+inspect existing work before repeating it. Routine dispatch uses durable claims and request
+deduplication; an unknown dispatch pauses for investigation. Regression cases preserve
+versioned evidence and manual observations, without claiming an automated correctness verdict.
 
-Already have an eve project? `npx evestack attach .` adds evestack to it without overwriting
-anything, and prints an undo line for everything it writes.
+[Dashboard guide](https://evestack.vercel.app/docs/dashboard) ·
+[Routines](https://evestack.vercel.app/docs/routines) ·
+[CLI](https://evestack.vercel.app/docs/cli) ·
+[MCP](https://evestack.vercel.app/docs/mcp)
 
-## What you get
+## Data, cost and operating boundaries
 
-| | | |
-| --- | --- | --- |
-| **Sessions** | Every run on your machine — turns, subagent trees, tokens, cached reads, tool counts | [docs](docs/dashboard.mdx) |
-| **Cost** | Priced per turn from token counts. A model with no configured price shows `unpriced`, never a silent $0.00 | [docs](docs/architecture.mdx) |
-| **Monitors** | p50/p75/p95/p99 turn latency, failure rates, throughput — computed in Postgres over a rolling window | [docs](docs/dashboard.mdx) |
-| **Traces** | OpenTelemetry spans per session: model calls, tool calls, arguments and results | [docs](docs/observability.mdx) |
-| **Control** | Start a session, stream the reply, send a follow-up, cancel a run — from the browser | [docs](docs/dashboard.mdx) |
-| **Approvals** | Gated tool calls park the session and wait for a human, with an audit log of who decided what | [docs](docs/dashboard.mdx) |
-| **Memory** | Semantic recall on the Postgres you already run, via pgvector. No vector service. Needs an embeddings provider — OpenAI, or Ollama locally; Anthropic has none | [docs](docs/memory.mdx) |
-| **Schedules** | Durable cron with a history of every fire, and a pause switch that needs no redeploy | [docs](docs/proactive.mdx) |
-| **Evals** | Promote any real session — especially one that went wrong — into an `evals/*.eval.ts` | [docs](docs/dashboard.mdx) |
-| **Integrations** | 1,000+ toolkits via Composio; the managed-OAuth ones are one click | [docs](docs/composio-auth.mdx) |
-| **Skills** | Inspect what the agent has loaded, and scan skills before it does | [docs](docs/dashboard.mdx) |
-| **`evestack doctor`** | Read-only forensics for a durable job that is stuck. Prints the SQL; never writes | [docs](docs/cli.mdx) |
+Eve Stack has no software subscription fee. Your Postgres database stores workflow history
+and configured memory/trace data. You own its retention, backups and access controls.
 
-## Built on eve
+- Prompts reach your configured model provider. A local provider keeps model calls local;
+  optional Composio and external tools can still send data outside your network.
+- Composio is hosted and holds OAuth tokens for connected accounts. It is off until configured.
+  Review consent and account scopes before running a connected task.
+- Approvals apply to tools configured to request them. Read-only wording in a prompt is not an
+  enforced permission profile. Sandbox isolation depends on backend, mounts, network and tools.
+- Budgets apply to agents that load the budget hook. Unknown prices and unobserved activation
+  are explicit; in-flight calls can still incur charges.
+- Cancellation is cooperative. A successful cancellation request does not prove the call stopped.
+- Shared installation credentials do not identify individual teammates or provide tenant isolation.
+- Notifications can be delivered twice after an uncertain acknowledgement. Confirm actual receipt.
 
-Under the hood, evestack runs on [eve](https://github.com/vercel/eve), Vercel's open-source agent
-framework. evestack is **not a fork** — it ships as an eve registry, so it adds to eve rather than
-diverging from it, and it is pinned to upstream by a contract suite of **22 checks / 508
-assertions** that runs on every commit and against every new eve release. When eve ships, evestack
-tracks it in days.
+[Connections and data access](https://evestack.vercel.app/docs/composio-auth) ·
+[Operations](https://evestack.vercel.app/docs/operations) ·
+[Backup and restore](https://evestack.vercel.app/docs/backup-restore)
 
-That suite is not decorative. It is how we caught eve 0.31 removing `continuationToken` from the
-HTTP session bodies — which broke every new chat and every fork — while both `tsc` and the static
-contracts stayed green. Only the live seam probes saw it. `docs/upgrading.mdx` has the story.
+### Local models and memory
 
-## Why self-host
+`EVESTACK_PROVIDER=ollama` selects a local model. Check available RAM before loading it alongside
+Docker, Postgres and the dashboard. Do not assume an 8 GB laptop can run a useful chat model
+and embeddings at the same time.
 
-|  | Managed | evestack |
-| --- | --- | --- |
-| Runs on | Vercel | your machine, VPS or cluster |
-| Session state | Vercel Workflows | your Postgres |
-| Run history | purged after 1–30 days depending on plan, then billed at $0.50/GB-month ([pricing](https://vercel.com/docs/workflows/pricing)) | a table you `SELECT` |
-| Observability | 12 hours to 30 days depending on plan ([limits](https://vercel.com/docs/observability/observability-plus#limitations)) | your disk, your retention |
-| Dashboard | Agent Runs — read-only | included, and it drives the agent |
-| Memory | no first-party store | included, same Postgres |
-| Your data | Vercel's platform | inside your network |
+Memory needs a separate embeddings model. For Ollama, pull `nomic-embed-text` as well as the
+chat model; for Anthropic chat, configure a supported embeddings provider separately.
+[Local setup](https://evestack.vercel.app/docs/local-setup) and
+[memory](https://evestack.vercel.app/docs/memory) describe the configuration.
 
-Off-platform the only thing that costs money is model tokens, and [Ollama](#local-models) takes
-that to zero. One exception: Composio is a hosted third party and holds the OAuth tokens for
-accounts you connect. It's off unless you set `COMPOSIO_API_KEY` — see
-[docs/composio-auth.mdx](docs/composio-auth.mdx).
+## Adopt one component
 
-## Take one piece instead
-
-evestack ships as an eve registry, so an existing project can take a single part:
+Existing eve projects can preview a dashboard attachment with the CLI, or install individual
+registry components:
 
 ```bash
 eve registry add @evestack=https://raw.githubusercontent.com/SammyTourani/evestack/main/registry/r/{name}.json
 eve add @evestack/memory
 ```
 
-Seven items: `memory`, `instrumentation`, `docker-sandbox`, `basic-auth`, and Slack, Telegram
-and Discord channels. See [docs/registry.mdx](docs/registry.mdx).
+The registry includes `memory`, `instrumentation`, `docker-sandbox`, `basic-auth`, and Slack,
+Telegram and Discord channels. [Registry guide](https://evestack.vercel.app/docs/registry).
 
-## Local models
+## Versions and verification
 
-`EVESTACK_PROVIDER=ollama` runs the whole stack for nothing. Three things matter, and only two of
-them are set for you: `modelContextWindowTokens` must be declared (eve sizes compaction from the
-AI Gateway catalog, and a local model isn't in it), and `OLLAMA_BASE_URL` takes the bare host with
-no `/api`. The third is yours: **the embedding model is a second pull.** `ollama pull
-nomic-embed-text` (274 MB) is what makes `remember` and `recall` work — a chat model is not an
-embedding model — and everything else runs without it. `npm run verify` checks for it by name.
+[release-manifest.json](./release-manifest.json) records the selected component versions for
+this source checkout, including Eve `^0.54.3`, exact Workflow Postgres `5.0.0-beta.42`, PostgreSQL
+17 and the dashboard image. It is not proof of publication or deployment. Packages and the
+container image are versioned independently; check actual registry versions before upgrading.
 
-**Check your RAM first.** On an 8 GB laptop already running Docker, Postgres, the dashboard and
-the agent, loading qwen3 took over three minutes to answer "say ok" and the machine eventually
-shut down. Budget **both model sizes + 4 GB** free — a `remember` call needs the chat model and
-the 274 MB embedding model, not one of them. evestack never picks a local model on its own — you
-have to ask for it.
+Keep the Workflow Postgres dependency exact. Its beta tag can change runtime compatibility.
+Use `npm run db:bootstrap` rather than calling the upstream bootstrap CLI without the generated
+environment-loading script. Back up the database before an upgrade; never drop the `evestack`
+schema to bypass a version guard.
 
-## Requirements, and what is actually tested
-
-Node 24, Docker, and a model API key (or Ollama).
-
-"Node 24" is the floor, and there is now a tested range above it — all seven published packages
-declare `"engines": { "node": ">=24" }`, as do the root manifest and the template a scaffold
-gets, and CI installs both 24 and the current major on the two jobs cheap enough to matrix
-(`typecheck` and `registry`). The other four Linux jobs still pin 24. The rest, stated plainly
-because the code contains platform branches that might suggest otherwise:
-
-| | |
+| Platform | Verification scope |
 | --- | --- |
-| **Linux x86-64** | Tested. Every job in `.github/workflows/ci.yml` runs on `ubuntu-latest` bar the non-blocking `macos` one, and it is the only platform the runtime tier runs on at all |
-| **Linux arm64** | The dashboard image is built and published for it; the CLI and template are not tested there |
-| **macOS** | Partly tested. A non-blocking `macos-latest` job runs typecheck, the contract tier and the POSIX file-mode tests. The runtime tier cannot follow it — that needs a Docker daemon the runner does not have |
-| **Windows** | **Untested.** Twelve `process.platform === "win32"` branches ship, and the only one with a test is exercised by passing `"win32"` in as an argument on Linux. Use WSL2 |
-| **Postgres** | `pgvector/pgvector:pg17`, which is what both compose files run and what CI starts |
+| Linux x86-64 | Required CI, native PostgreSQL, runtime checks and dashboard image |
+| Linux arm64 | Dashboard image build; full CLI/runtime suite is not run on arm64 |
+| macOS | Node 24 build/typecheck/contracts and platform tests in a non-blocking CI job; local browser checks |
+| Windows | Node 24 build/typecheck and CLI/scaffolder platform checks, including native ACL tests, in a non-blocking CI job; interactive wizard and full Docker runtime not covered |
+| Node | Minimum 24; selected Linux checks run on 24 and 26 |
+| PostgreSQL | PostgreSQL 17 with pgvector; backup/restore rehearsal in CI |
 
-[docs/support.mdx](docs/support.mdx) has the rest of the support statement — which versions get
-fixes (the newest, and only the newest), what a `0.x` bump promises, and where each of the
-twelve Windows branches is. [docs/upgrading.mdx](docs/upgrading.mdx) is how you move an existing
-project forward: new dashboard image, new template, new eve pin.
+[Support](https://evestack.vercel.app/docs/support) explains limits.
+[RELEASE_PLAN.md](./RELEASE_PLAN.md) records exact-commit checks and remaining launch gates.
+Local browser fixtures do not prove live provider, repository or external message delivery.
+A first-time installation and useful scheduled occurrence remain real-user validation steps.
 
 ## Repository layout
 
+```text
+templates/default/             generated agent project
+packages/evestack-cli/         evestack CLI
+packages/create-evestack/      scaffolder
+packages/dashboard/            task workspace and operator controls
+packages/evestack-budget/      opted-in model spend caps
+packages/evestack-schedules/   code-authored durable schedules
+packages/evestack-composio/    hosted connection integration
+packages/evestack-mcp/         dashboard APIs as MCP tools
+packages/sandbox-opensandbox/  optional sandbox backend
+packages/website/              product website and docs
+contract/                      runtime compatibility checks
+registry/                      installable eve components
+skills/evestack/               coding-agent setup pack
 ```
-templates/default/             the agent that gets scaffolded
-packages/evestack-cli/         the `evestack` command          -> npm: evestack
-packages/create-evestack/      the scaffolder both names run   -> npm: create-evestack
-packages/dashboard/            Next.js control plane           -> ghcr.io/sammytourani/evestack-dashboard
-packages/evestack-budget/      dollar spend caps               -> npm: @evestack/budget
-packages/evestack-schedules/   durable cron with history       -> npm: @evestack/schedules
-packages/evestack-composio/    one-click tool auth             -> npm: @evestack/composio
-packages/evestack-mcp/         the dashboard as MCP tools      -> npm: @evestack/mcp
-packages/sandbox-opensandbox/  OpenSandbox sandbox backend     -> npm: @evestack/sandbox-opensandbox
-packages/website/              the landing page and docs
-contract/                      the suite that pins eve's behaviour
-registry/                      the @evestack eve registry
-```
 
-`evestack create` and `npx create-evestack` run the same code, so a bug is fixed once. The
-dashboard ships as a container rather than an npm package. Release order is in
-[RELEASING.md](./RELEASING.md), and what actually changed in each of those releases is in
-[CHANGELOG.md](./CHANGELOG.md) — grouped by package rather than by date, because the seven npm
-packages and the one container image above are versioned independently.
-
-## Things that cost us time
-
-Written down so they don't cost you any.
-
-- **Pin `@workflow/world-postgres` to an exact version — not `@latest`, and not `@beta`
-  either.** npm `latest` is the 4.x line and eve rejects it outright, which is the easy half.
-  `beta` is the trap: it looks right and it is a moving dist-tag, and upstream ships World
-  **spec** breaks inside `5.0.0-beta.*` with no semver signal. Measured against eve 0.30.8:
-  `world-postgres@5.0.0-beta.32` → `@workflow/world@5.0.0-beta.25` → spec 5 → boots, while
-  `@5.0.0-beta.34` → `world@5.0.0-beta.27` → spec 6 → dies at startup. The tag moved `.34` →
-  `.35` inside one afternoon. `templates/default` pins `5.0.0-beta.32` exactly; `^` and `~` both
-  still admit `.34`.
-- **Forward both `/eve/` and `/.well-known/workflow/`** through your proxy, unrewritten. Forward
-  only the first and sessions start, then stall when callbacks can't get back.
-- **In production, loopback gets a 401 too — that's correct.** From eve 0.30 `localDev()` grants
-  only inside `eve dev`, so a built server needs Basic credentials from every host. On 0.29.x it
-  was the reverse *and exploitable*: `localDev()` matched an unanchored `/^127\./` against the
-  attacker-controlled `Host` header, so `127.evil.com` got an unauthenticated principal. We
-  found and patched it; Vercel fixed it upstream in 0.30.0. Pin `eve` `>=0.30.0`.
-- **Adding `agent/instrumentation.ts` disables eve's zero-config trace spool**, so `eve traces`
-  stops working. The dashboard replaces it; delete the file to get it back.
-- **Cancellation is cooperative.** The cancel route returns 202 immediately but the in-flight
-  model call keeps streaming — we measured ~90 seconds. Don't build a stop button that assumes
-  silence.
-- **A failed turn still records `status = 'completed'`.** The stream emits `turn.failed`; the
-  workflow row disagrees, because the workflow handled the error. `$eve.model` is only written
-  once a model call reports usage, so its absence on a finished turn is the surviving evidence.
-- **Watch your provider's daily cap.** An OpenAI account with no payment method allows 50
-  requests per day, and the failure arrives as an opaque `MODEL_CALL_FAILED`.
-
-We also found [vercel/eve#1658](https://github.com/vercel/eve/issues/1658) — denying a tool
-approval permanently fails the durable session (p1, open).
+See [RELEASING.md](./RELEASING.md) for publication order,
+[CONTRIBUTING.md](./CONTRIBUTING.md) for development and [SECURITY.md](./SECURITY.md) for reporting.
 
 ## License
 
-Apache-2.0, same as eve. See [NOTICE](./NOTICE).
+Apache-2.0. See [LICENSE](./LICENSE) and [NOTICE](./NOTICE).
 
-eve is a trademark of Vercel. evestack is an independent project, not affiliated with or
+eve is a trademark of Vercel. Eve Stack is an independent project, not affiliated with or
 endorsed by Vercel.

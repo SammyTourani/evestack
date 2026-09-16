@@ -1,4 +1,9 @@
-import { Badge, OutcomeBadge, type Outcome, type Tone } from "@/components/ui/badge";
+import {
+  Badge,
+  OutcomeBadge,
+  type Outcome,
+  type Tone,
+} from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Placeholder } from "@/components/ui/feedback";
 import { formatMetric } from "@/components/ui/format";
@@ -6,7 +11,12 @@ import { StatTile } from "@/components/ui/stat";
 import { CONTROL } from "@/components/ui/style";
 import { getSession, getSessionTree } from "@/lib/queries";
 import { duration, stamp } from "@/lib/time";
-import { listModelCalls, listToolCalls, type ModelCall, type ToolCall } from "@/lib/traces";
+import {
+  listModelCalls,
+  listToolCalls,
+  type ModelCall,
+  type ToolCall,
+} from "@/lib/traces";
 import { DatabaseError } from "@/app/db-error";
 
 import {
@@ -24,6 +34,7 @@ import {
 import { ForkPanel } from "./fork-client";
 import { Timeline } from "./timeline";
 import { TurnPane } from "./turn-pane";
+import { sessionOutcome } from "../rollup";
 
 export const dynamic = "force-dynamic";
 
@@ -55,7 +66,10 @@ interface PageData {
 }
 
 async function load(id: string): Promise<PageData | null> {
-  const [session, rows] = await Promise.all([getSession(id), getSessionTree(id)]);
+  const [session, rows] = await Promise.all([
+    getSession(id),
+    getSessionTree(id),
+  ]);
   if (!session) return null;
 
   const facts = await listTurnFacts(session.id);
@@ -73,7 +87,9 @@ async function load(id: string): Promise<PageData | null> {
   // common case — 1,552 of the seeded month's 1,922 turns — and it is the
   // difference between one indexed lookup and a scan of every trace the
   // session touched.
-  const anySpans = flat.some((node) => node.fact && node.fact.spanCoverage !== "none");
+  const anySpans = flat.some(
+    (node) => node.fact && node.fact.spanCoverage !== "none",
+  );
   const [modelCalls, spanToolCalls] = anySpans
     ? await Promise.all([listModelCalls(session.id), listToolCalls(session.id)])
     : [[] as ModelCall[], [] as ToolCall[]];
@@ -112,8 +128,13 @@ const STATUS_TONE: Readonly<Record<string, Tone>> = {
   cancelled: "neutral",
 };
 
-export default async function SessionDetailPage(props: PageProps<"/sessions/[id]">) {
-  const [{ id }, search] = await Promise.all([props.params, props.searchParams]);
+export default async function SessionDetailPage(
+  props: PageProps<"/sessions/[id]">,
+) {
+  const [{ id }, search] = await Promise.all([
+    props.params,
+    props.searchParams,
+  ]);
 
   let data: PageData | null;
   try {
@@ -138,20 +159,34 @@ export default async function SessionDetailPage(props: PageProps<"/sessions/[id]
   }
 
   const { session, flat, tree } = data;
-  const facts = flat.map((node) => node.fact).filter((fact): fact is TurnFact => fact !== null);
+  const facts = flat
+    .map((node) => node.fact)
+    .filter((fact): fact is TurnFact => fact !== null);
   const turns = flat.filter((node) => node.run.type !== "subagent");
   const subagents = flat.length - turns.length;
 
   // Turn time, not session time. Subagents are excluded because a subagent runs
   // INSIDE its caller's turn — adding both counts the same seconds twice.
-  const turnTimeMs = turns.reduce((sum, node) => sum + (node.fact?.durationMs ?? 0), 0);
-  const inputTokens = facts.reduce((sum, fact) => sum + (fact.inputTokens ?? 0), 0);
-  const outputTokens = facts.reduce((sum, fact) => sum + (fact.outputTokens ?? 0), 0);
+  const turnTimeMs = turns.reduce(
+    (sum, node) => sum + (node.fact?.durationMs ?? 0),
+    0,
+  );
+  const inputTokens = facts.reduce(
+    (sum, fact) => sum + (fact.inputTokens ?? 0),
+    0,
+  );
+  const outputTokens = facts.reduce(
+    (sum, fact) => sum + (fact.outputTokens ?? 0),
+    0,
+  );
   const spend = facts.reduce((sum, fact) => sum + (fact.costUsd ?? 0), 0);
   const unpricedTurns = facts.filter((fact) => fact.priced === false).length;
-  const spannedTurns = facts.filter((fact) => fact.spanCoverage !== "none").length;
+  const spannedTurns = facts.filter(
+    (fact) => fact.spanCoverage !== "none",
+  ).length;
   const maxDurationMs = facts.reduce<number | null>(
-    (max, fact) => (fact.durationMs === null ? max : Math.max(max ?? 0, fact.durationMs)),
+    (max, fact) =>
+      fact.durationMs === null ? max : Math.max(max ?? 0, fact.durationMs),
     null,
   );
 
@@ -159,35 +194,45 @@ export default async function SessionDetailPage(props: PageProps<"/sessions/[id]
   const selected = flat.find((node) => node.run.id === requested) ?? flat[0];
 
   const wallClockMs =
-    new Date(session.completedAt ?? Date.now()).getTime() - new Date(session.createdAt).getTime();
+    new Date(session.completedAt ?? Date.now()).getTime() -
+    new Date(session.createdAt).getTime();
 
   return (
     <>
       <nav className="mb-2.5 flex items-center gap-2 text-small text-text-faint">
-        <a href="/" className="text-text-dim hover:text-text">
-          Sessions
+        <a href="/sessions" className="text-text-dim hover:text-text">
+          Tasks
         </a>
         <span>/</span>
         <span>this run</span>
       </nav>
 
       <h1 className="m-0 text-title font-medium text-text">
-        {session.title ?? <span className="text-text-faint">Untitled session</span>}
+        {session.title ?? (
+          <span className="text-text-faint">Untitled session</span>
+        )}
       </h1>
 
       <div className="mt-2 mb-6 flex flex-wrap items-center gap-x-3.5 gap-y-2 text-small text-text-dim">
+        {sessionOutcome(facts.map((fact) => fact.outcome)) && (
+          <OutcomeBadge
+            outcome={sessionOutcome(facts.map((fact) => fact.outcome))!}
+          />
+        )}
         <Badge
           tone={STATUS_TONE[session.status] ?? "neutral"}
           title="eve keeps the session run open until it times out, so an idle session reads as running."
         >
-          {session.status}
+          runtime: {session.status}
         </Badge>
         {session.trigger && (
           <span>
             trigger <span className="font-mono">{session.trigger}</span>
           </span>
         )}
-        <span title={session.createdAt}>started {stamp(session.createdAt, "second")}</span>
+        <span title={session.createdAt}>
+          started {stamp(session.createdAt, "second")}
+        </span>
         {/* Wall clock, deliberately small and deliberately not called latency.
             An open session's span is the time a person has had the tab open. */}
         <span
@@ -203,7 +248,9 @@ export default async function SessionDetailPage(props: PageProps<"/sessions/[id]
               ? `open ${duration(wallClockMs)} so far`
               : "still open"}
         </span>
-        <span className="font-mono text-text-faint break-all">{session.id}</span>
+        <span className="font-mono text-text-faint break-all">
+          {session.id}
+        </span>
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
@@ -218,7 +265,9 @@ export default async function SessionDetailPage(props: PageProps<"/sessions/[id]
           label="Spend"
           value={spend}
           unit="cost"
-          priced={facts.some((fact) => fact.priced === true) || unpricedTurns === 0}
+          priced={
+            facts.some((fact) => fact.priced === true) || unpricedTurns === 0
+          }
         />
       </div>
 
@@ -226,27 +275,35 @@ export default async function SessionDetailPage(props: PageProps<"/sessions/[id]
         <OutcomeMix facts={facts} />
         {subagents > 0 && (
           <span>
-            {subagents} subagent run{subagents === 1 ? "" : "s"}, nested below their caller
+            {subagents} subagent run{subagents === 1 ? "" : "s"}, nested below
+            their caller
           </span>
         )}
       </div>
 
       {unpricedTurns > 0 && (
         <p className="mt-2 mb-0 text-small text-warn">
-          {unpricedTurns} turn{unpricedTurns === 1 ? "" : "s"} ran on a model with no configured
-          price, so {unpricedTurns === 1 ? "its" : "their"} spend is not in that total — it is
-          unknown, not zero. Set <code>EVESTACK_PRICING</code> to price{" "}
+          {unpricedTurns} turn{unpricedTurns === 1 ? "" : "s"} ran on a model
+          with no configured price, so {unpricedTurns === 1 ? "its" : "their"}{" "}
+          spend is not in that total — it is unknown, not zero. Set{" "}
+          <code>EVESTACK_PRICING</code> to price{" "}
           {unpricedTurns === 1 ? "it" : "them"}.
         </p>
       )}
 
       <div className="mt-5 flex flex-wrap items-center gap-3">
-        <a className={CONTROL} href={`/api/evals/promote/${encodeURIComponent(session.id)}`}>
-          Promote to eval
+        <a
+          className={CONTROL}
+          href={`/api/evals/promote/${encodeURIComponent(session.id)}`}
+        >
+          Download regression draft
         </a>
         <span className="text-small text-text-faint">
-          {facts.some((fact) => fact.outcome === "failed" || fact.outcome === "no_model_call")
-            ? "This session has a failed turn — promoting it gives you the regression test for the bug."
+          {facts.some(
+            (fact) =>
+              fact.outcome === "failed" || fact.outcome === "no_model_call",
+          )
+            ? "This task has a failed turn. Download its messages as a draft, then add assertions for the behavior you expected. The draft has not been run."
             : "Downloads a draft evals/*.eval.ts replaying this session's real messages."}
         </span>
       </div>
@@ -285,7 +342,8 @@ export default async function SessionDetailPage(props: PageProps<"/sessions/[id]
             waterfall={buildWaterfall(
               {
                 startedAt: selected.fact?.startedAt ?? selected.run.startedAt,
-                durationMs: selected.fact?.durationMs ?? selected.run.durationMs,
+                durationMs:
+                  selected.fact?.durationMs ?? selected.run.durationMs,
               },
               data.stepsByRun.get(selected.run.id) ?? [],
               data.toolsByRun.get(selected.run.id) ?? [],
@@ -294,7 +352,9 @@ export default async function SessionDetailPage(props: PageProps<"/sessions/[id]
             toolCalls={data.toolsByRun.get(selected.run.id) ?? []}
             modelCalls={data.modelCallsByTurn.get(selected.run.id) ?? []}
             toolPayloads={data.toolPayloads}
-            requestedMissing={requested !== null && requested !== selected.run.id}
+            requestedMissing={
+              requested !== null && requested !== selected.run.id
+            }
           />
         </div>
       )}
@@ -315,14 +375,16 @@ function coverageCaption(spanned: number, total: number): string {
   // "Runs", not "turns": this pane lists subagent runs too, so its denominator
   // is deliberately a different number from the `Turns` tile above it. Calling
   // both of them turns is how a reader concludes the tile is wrong.
-  if (spanned === 0) return `No spans on any of the ${total} runs; steps and costs are complete.`;
+  if (spanned === 0)
+    return `No spans on any of the ${total} runs; steps and costs are complete.`;
   if (spanned === total) return `Spans on all ${total} runs.`;
   return `Spans on ${spanned} of ${total} runs — the rest have steps and costs only.`;
 }
 
 function OutcomeMix({ facts }: { facts: readonly TurnFact[] }) {
   const counts = new Map<Outcome, number>();
-  for (const fact of facts) counts.set(fact.outcome, (counts.get(fact.outcome) ?? 0) + 1);
+  for (const fact of facts)
+    counts.set(fact.outcome, (counts.get(fact.outcome) ?? 0) + 1);
   if (counts.size === 0) return null;
   return (
     <span

@@ -21,7 +21,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ENTRY = join(dirname(fileURLToPath(import.meta.url)), "..", "index.mjs");
 
@@ -115,9 +115,22 @@ test("pointing create at a FILE is explained, not an errno", () => {
 });
 
 test("a directory that cannot be created is explained, not an errno", () => {
-  // `npx create-evestack /etc/foo`: nothing exists at the path and there is no
-  // permission to make it, so the guard passes and mkdirSync throws EACCES.
-  const result = run(["/etc/evestack-should-not-be-creatable", "--yes"]);
+  // Inject the filesystem's refusal: /etc is writable on some runners and
+  // does not represent a protected directory on Windows.
+  const parent = mkdtempSync(join(tmpdir(), "evestack-denied-"));
+  const target = join(parent, "denied");
+  const preload = join(parent, "deny-mkdir.mjs");
+  writeFileSync(preload, `
+    import fs from "node:fs";
+    import { syncBuiltinESMExports } from "node:module";
+    const mkdir = fs.mkdirSync;
+    fs.mkdirSync = (path, ...args) => {
+      if (path === ${JSON.stringify(target)}) throw Object.assign(new Error("permission denied"), { code: "EACCES" });
+      return mkdir(path, ...args);
+    };
+    syncBuiltinESMExports();
+  `);
+  const result = spawnSync(process.execPath, ["--import", pathToFileURL(preload).href, ENTRY, target, "--yes"], { encoding: "utf8" });
   const output = `${result.stdout}${result.stderr}`;
   assert.equal(result.status, 1);
   assert.match(output, /Could not create/);

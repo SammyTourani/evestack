@@ -934,7 +934,17 @@ async function post(
   sentAt: string,
 ): Promise<{ ok: boolean; status: number | null; error: string | null }> {
   const body = renderBody(transitions, sink.kind, dashboardUrl, sentAt);
+  return postNotificationBody(sink, body);
+}
+
+/** Shared transport for operator-configured destinations; never accepts a model-authored URL. */
+export async function postNotificationBody(
+  sink: Sink,
+  body: string,
+  deliveryId?: string,
+): Promise<{ ok: boolean; status: number | null; error: string | null }> {
   const headers: Record<string, string> = { "content-type": "application/json" };
+  if (deliveryId) headers["x-evestack-notification-id"] = deliveryId;
 
   if (sink.kind === "webhook" && sink.secret !== null) {
     const timestamp = String(Date.now());
@@ -949,14 +959,27 @@ async function post(
       body,
       signal: AbortSignal.timeout(POST_TIMEOUT_MS),
     });
-    if (response.ok) return { ok: true, status: response.status, error: null };
+    if (response.ok) { await response.body?.cancel(); return { ok: true, status: response.status, error: null }; }
     // The body is where Slack and Discord say WHY — "invalid_payload",
     // "no_service". A bare status code sends the operator to the wrong problem.
-    const text = await response.text().catch(() => "");
+    const reader = response.body?.getReader();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    try {
+      while (reader && size < 2048) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const part = value.subarray(0, 2048 - size);
+        chunks.push(part);
+        size += part.length;
+      }
+    } catch { /* Keep the status and any response prefix already received. */ }
+    finally { await reader?.cancel().catch(() => {}); }
+    const text = scrubUrls(Buffer.concat(chunks).toString("utf8")).slice(0, 200);
     return {
       ok: false,
       status: response.status,
-      error: `HTTP ${response.status}${text ? `: ${text.slice(0, 200)}` : ""}`,
+      error: `HTTP ${response.status}${text ? `: ${text}` : ""}`,
     };
   } catch (error) {
     return {

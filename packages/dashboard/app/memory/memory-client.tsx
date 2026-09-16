@@ -1,7 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { MemoryRow } from "@/lib/memories";
+import type { MemoryReview } from "@/lib/memory-reviews";
+import { MemoryReviewPanel } from "./memory-review";
 import { stamp } from "@/lib/time";
 import { truncationNote } from "./truncation";
 import styles from "./memory.module.css";
@@ -20,34 +23,48 @@ export function MemoryList({
   rows,
   total,
   searching = false,
+  reviews = [],
 }: {
   rows: readonly MemoryRow[];
   /** Matching rows in the database, which is not `rows.length` — see ./truncation.ts. */
   total: number;
   searching?: boolean;
+  reviews?: readonly MemoryReview[];
 }) {
   const [removed, setRemoved] = useState<ReadonlySet<string>>(new Set());
   const [confirming, setConfirming] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const deleteLock = useRef(false);
+  const router = useRouter();
 
-  async function remove(id: string) {
+  async function remove(row: MemoryRow) {
+    if (deleteLock.current) return;
+    deleteLock.current = true;
+    const id = row.id;
     setBusy(id);
     setError(null);
     try {
       const response = await fetch(`/api/memories/${encodeURIComponent(id)}`, {
         method: "DELETE",
+        headers: { "if-match": `"${row.hash}"` },
       });
       if (!response.ok) {
-        const body = (await response.json().catch(() => null)) as { error?: string } | null;
+        const body = (await response.json().catch(() => null)) as {
+          error?: string;
+        } | null;
         throw new Error(body?.error ?? `Delete failed (${response.status}).`);
       }
       setRemoved((prev) => new Set(prev).add(id));
       setConfirming(null);
+      router.refresh();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Delete failed.");
+      setError(
+        `${cause instanceof Error ? cause.message : "The removal response was not received."} Reload this page to confirm whether the memory was removed before trying again.`,
+      );
     } finally {
       setBusy(null);
+      deleteLock.current = false;
     }
   }
 
@@ -56,23 +73,49 @@ export function MemoryList({
   // from the screen and from the table, so a footnote that took `total` from
   // the server unchanged would start over-counting the moment anything is
   // forgotten.
-  const note = truncationNote(visible.length, total - removed.size, searching);
+  const note = truncationNote(
+    visible.length,
+    total - rows.filter((row) => removed.has(row.id)).length,
+    searching,
+  );
 
   return (
     <>
-      {error && <p className={styles.error}>{error}</p>}
-      <ul className={styles.list}>
+      {error && (
+        <p role="alert" className={styles.error}>
+          {error}
+          {" "}<a href="/memory">Reload memories</a>
+        </p>
+      )}
+      <ul className={styles.list} aria-label="Remembered facts">
         {visible.map((row) => (
           <li key={row.id} className={styles.item}>
             <div className={styles.content}>{row.content}</div>
             <div className={styles.meta}>
               <span className="mono">#{row.id}</span>
               <span className={styles.dot}>•</span>
-              <span title={row.createdAt}>{stamp(row.createdAt, "second")}</span>
+              <span title={row.createdAt}>
+                {stamp(row.createdAt, "second")}
+              </span>
+              <span className={styles.dot}>•</span>
+              <span>
+                Owner:{" "}
+                {row.principalId === null
+                  ? "unknown (legacy)"
+                  : row.principalId === "anonymous"
+                    ? "installation / anonymous"
+                    : row.principalId}
+              </span>
+              {row.tags.includes("shared") && (
+                <span className={styles.tag}>shared for recall</span>
+              )}
               {row.sessionId && (
                 <>
                   <span className={styles.dot}>•</span>
-                  <a className="mono" href={`/sessions/${encodeURIComponent(row.sessionId)}`}>
+                  <a
+                    className="mono"
+                    href={`/sessions/${encodeURIComponent(row.sessionId)}`}
+                  >
                     saved in {row.sessionId.slice(-8)}
                   </a>
                 </>
@@ -110,32 +153,37 @@ export function MemoryList({
                   <button
                     type="button"
                     className={styles.danger}
-                    disabled={busy === row.id}
-                    onClick={() => remove(row.id)}
+                    disabled={busy !== null}
+                    onClick={() => remove(row)}
                   >
-                    {busy === row.id ? "deleting…" : "really delete"}
+                    {busy === row.id ? "Removing…" : "Remove memory"}
                   </button>
                   <button
                     type="button"
                     className={styles.cancel}
                     onClick={() => setConfirming(null)}
                   >
-                    keep
+                    Keep memory
                   </button>
                 </span>
               ) : (
                 <button
                   type="button"
                   className={styles.forget}
+                  disabled={busy !== null}
                   onClick={() => {
                     setConfirming(row.id);
                     setError(null);
                   }}
                 >
-                  forget
+                  Remove from recall
                 </button>
               )}
             </div>
+            <MemoryReviewPanel
+              memory={row}
+              latest={reviews.find((review) => review.memoryId === row.id)}
+            />
           </li>
         ))}
       </ul>

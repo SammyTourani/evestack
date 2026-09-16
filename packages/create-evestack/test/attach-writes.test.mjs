@@ -31,6 +31,9 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { shellQuote } from "../shared.mjs";
+import { authPasswordFlag, dashboardRunCommand, signInSummary } from "../attach.mjs";
+
 const ENTRY = join(dirname(fileURLToPath(import.meta.url)), "..", "index.mjs");
 
 /**
@@ -392,7 +395,7 @@ test("the printed dashboard command mounts the project's own skills", () => {
   const command = dashboardCommand(result.stdout);
   assert.match(command, /-e EVESTACK_SKILLS_DIR=\/agent-skills/, command);
   assert.ok(
-    command.includes(`${join(dir, "agent", "skills")}:/agent-skills:ro`),
+    command.includes(`${shellQuote(join(dir, "agent", "skills"))}:/agent-skills:ro`),
     `the mount is missing or not read-only:\n${command}`,
   );
 });
@@ -537,8 +540,8 @@ test("a project with no repository above it gets one, listed in the undo", () =>
   assert.equal(run(dir, "git", ["rev-parse", "--is-inside-work-tree"]).stdout.trim(), "true");
   // The whole point: eve's walk now stops here instead of in $HOME.
   assert.equal(
-    run(dir, "git", ["rev-parse", "--show-toplevel"]).stdout.trim(),
-    realpathSync(dir),
+    realpathSync.native(run(dir, "git", ["rev-parse", "--show-toplevel"]).stdout.trim()),
+    realpathSync.native(dir),
     "the repository is not rooted at the project",
   );
   // Reversible, and said so where the rest of the footprint is said.
@@ -605,8 +608,8 @@ test("a bare repository above the project is fenced off, not deferred to", () =>
 
   assert.equal(existsSync(join(dir, ".git")), true, "the enclosing repository was deferred to");
   assert.equal(
-    run(dir, "git", ["rev-parse", "--show-toplevel"]).stdout.trim(),
-    realpathSync(dir),
+    realpathSync.native(run(dir, "git", ["rev-parse", "--show-toplevel"]).stdout.trim()),
+    realpathSync.native(dir),
     "eve's walk still leaves the project",
   );
   assert.match(output, /rm -rf \.git/, output);
@@ -759,4 +762,148 @@ test("npm and yarn workspaces count as a workspace root too", () => {
   // No .npmrc at all here, so the quiet line is the whole of what gets said.
   assert.match(output, /Dev snapshots come from the workspace root/, output);
   assert.doesNotMatch(output, /Move the secret/, output);
+});
+
+/* -------------------------------------------------------------------------- */
+/* the dashboard password, and who is reading the finish screen                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Two of the three places attach puts a credential are files, and both are 0600
+ * and git-ignored — the tests above are entirely about that. The third is
+ * stdout, and it had no gate at all.
+ *
+ * THE PART THAT IS SPECIFIC TO attach, and the reason this is not a copy of the
+ * equivalent test in credentials.test.mjs: attach never writes
+ * EVESTACK_AUTH_PASSWORD to any file. It is minted per run beside
+ * `plan.dashboardPassword`, deliberately (those are the dashboard's credentials,
+ * not the agent's), so the finish screen is the ONLY copy that will ever exist.
+ * `npx create-evestack attach | tee attach.log` therefore does not copy a
+ * credential into a log, it makes the log the sole custodian of one — for a
+ * control plane that starts agent runs and approves gated shell commands.
+ *
+ * Which also means the withheld branch cannot point at .env.local the way
+ * `create`'s does. The assertions below pin that it does not claim to.
+ *
+ * These run the real bin through spawnSync, which pipes stdout, so the
+ * withholding branch is reached by construction rather than by faking a flag.
+ */
+test("the finish screen does not print the dashboard password into a pipe", () => {
+  const dir = eveProject();
+  const result = attach(dir);
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+
+  // No file holds it, so the value itself cannot be read back. What CAN be
+  // pinned is the shape: attach generates base64url of 18 bytes, i.e. a 24-
+  // character run, and before the gate the finish screen carried it twice — in
+  // the sign-in line and in `-e EVESTACK_AUTH_PASSWORD='…'`.
+  assert.doesNotMatch(
+    result.stdout,
+    /EVESTACK_AUTH_PASSWORD='[A-Za-z0-9_-]{20,}'/,
+    `attach printed a generated dashboard password into a pipe:\n${result.stdout}`,
+  );
+  assert.doesNotMatch(
+    result.stdout,
+    /Sign in at \S+ with \S+ \/ [A-Za-z0-9_-]{20,}/,
+    `the sign-in line printed the password into a pipe:\n${result.stdout}`,
+  );
+
+  // And it must not tell the reader to look in a file that does not have it.
+  // `create` can say .env.local; attach cannot, and saying so would send
+  // somebody to `grep` a file whose every line is about something else.
+  const signIn = /^\s*Sign in at .*$/m.exec(result.stdout)?.[0] ?? "";
+  assert.ok(signIn, `no sign-in line was printed at all:\n${result.stdout}`);
+  assert.doesNotMatch(signIn, /\.env\.local/, signIn);
+  assert.match(signIn, /re-run attach in a terminal/, signIn);
+});
+
+/**
+ * The `docker run` block keeps the flag, with a placeholder in it.
+ *
+ * Dropping the flag would be worse than printing the value: the dashboard fails
+ * CLOSED without EVESTACK_AUTH_* — 503 on every route but four GETs — so a
+ * command missing it starts a container that answers nothing and the reader has
+ * no idea why. A visible placeholder needs one substitution and says so.
+ */
+test("the printed docker run requires a password before starting Docker", () => {
+  const dir = eveProject();
+  const result = attach(dir);
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+  const command = dashboardCommand(result.stdout);
+
+  assert.match(command, /-e EVESTACK_AUTH_PASSWORD=/, command);
+  assert.match(command, /EVESTACK_AUTH_PASSWORD:\?Set/, command);
+  assert.match(command, /-e EVESTACK_AUTH_USER=evestack/, "the user is not a secret and stays");
+});
+
+test("on a terminal both lines carry the real value", () => {
+  // The positive half, which the piped tests above cannot see. A gate that
+  // withheld the password everywhere would pass them and break the product:
+  // attach generates this value and nothing else ever will.
+  const plan = {
+    target: mkdtempSync(join(tmpdir(), "evestack-attach-plan-")),
+    dashboardPort: 4000,
+    dashboardUser: "evestack",
+    dashboardPassword: "s3cr3t-not-a-real-one",
+    dbUrl: "postgres://evestack:x@127.0.0.1:5433/evestack",
+    envFileName: ".env.local",
+    ingestToken: null,
+  };
+
+  assert.match(signInSummary(plan, { show: true }), /s3cr3t-not-a-real-one/);
+  assert.doesNotMatch(signInSummary(plan, { show: false }), /s3cr3t-not-a-real-one/);
+
+  assert.equal(authPasswordFlag(plan, { show: true }), "-e EVESTACK_AUTH_PASSWORD='s3cr3t-not-a-real-one'");
+  assert.doesNotMatch(authPasswordFlag(plan, { show: false }), /s3cr3t-not-a-real-one/);
+
+  const shown = dashboardRunCommand(plan, { show: true });
+  assert.match(shown.join("\n"), /-e EVESTACK_AUTH_PASSWORD='s3cr3t-not-a-real-one'/);
+  // The port, the image and the log ceiling are the same either way: this gate
+  // touches exactly one line of the command.
+  const withheld = dashboardRunCommand(plan, { show: false });
+  assert.equal(withheld.length, shown.length);
+  assert.deepEqual(
+    withheld.filter((l) => !l.includes("EVESTACK_AUTH_PASSWORD")),
+    shown.filter((l) => !l.includes("EVESTACK_AUTH_PASSWORD")),
+  );
+});
+
+/**
+ * The way back, for the one legitimate case.
+ *
+ * An automated setup that genuinely wants the generated password out of stdout
+ * — and has somewhere to put it — says so, once, on purpose. That is the whole
+ * difference between this and a value that lands in a log because nobody chose
+ * anything.
+ */
+test("EVESTACK_PRINT_SECRETS puts the old behaviour back", () => {
+  const dir = eveProject();
+  const result = spawnSync(process.execPath, [ENTRY, "attach", dir, "--yes"], {
+    cwd: dir,
+    encoding: "utf8",
+    env: { ...process.env, EVESTACK_PRINT_SECRETS: "1" },
+  });
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+  assert.match(
+    result.stdout,
+    /EVESTACK_AUTH_PASSWORD='[A-Za-z0-9_-]{20,}'/,
+    `the override did not restore the printed password:\n${result.stdout}`,
+  );
+});
+
+test("the withheld auth argument cannot install a known placeholder password", { skip: process.platform === "win32" ? "Tests the printed POSIX shell command" : false }, () => {
+  const flag = authPasswordFlag({ dashboardPassword: "unused" }, { show: false });
+  const script = `set -- ${flag}; printf '%s' "$2"`;
+  for (const password of [undefined, ""]) {
+    const env = { ...process.env };
+    if (password === undefined) delete env.EVESTACK_AUTH_PASSWORD;
+    else env.EVESTACK_AUTH_PASSWORD = password;
+    const result = spawnSync("/bin/sh", ["-c", script], { env, encoding: "utf8" });
+    assert.notEqual(result.status, 0);
+    assert.equal(result.stdout, "");
+  }
+  const password = 'random value with spaces and $(not-executed)';
+  const result = spawnSync("/bin/sh", ["-c", script], { env: { ...process.env, EVESTACK_AUTH_PASSWORD: password }, encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, `EVESTACK_AUTH_PASSWORD=${password}`);
 });

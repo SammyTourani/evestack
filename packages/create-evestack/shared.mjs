@@ -37,7 +37,7 @@ export const REPO = "https://github.com/SammyTourani/evestack";
  * steps and from the generated compose header. Printing a pull command that
  * 404s, with nothing saying so, is worse than the clone-and-build it replaced.
  */
-export const DASHBOARD_IMAGE_TAG = "0.4.0";
+export const DASHBOARD_IMAGE_TAG = "0.5.0";
 export const DASHBOARD_IMAGE = `ghcr.io/sammytourani/evestack-dashboard:${DASHBOARD_IMAGE_TAG}`;
 /*
  * `DASHBOARD_IMAGE_PUBLISHED` lived here and is gone.
@@ -276,6 +276,30 @@ export async function makePrompter(nonInteractive) {
     stdinClosed = true;
   });
 
+  /**
+   * Ctrl-C during a readline prompt has to QUIT, and it did not.
+   *
+   * A readline interface with `terminal: true` turns SIGINT into its own
+   * `close` event rather than killing the process. `ask` races `question()`
+   * against that close and hands back its fallback — which is correct for a
+   * pipe that ended, and completely wrong for a person pressing Ctrl-C. The
+   * wizard then walked on with DEFAULTS it was never given: pressing Ctrl-C at
+   * "Enable tool sign-in via Composio?" recorded a yes, carried on to the
+   * review screen, and finished by printing `readline was closed` — an internal
+   * message, from a run the reader had already tried to abandon.
+   *
+   * The raw-mode picker in wizard.mjs has always handled its own Ctrl-C,
+   * because raw mode stops the terminal generating SIGINT at all. This is the
+   * same exit for the other half of the wizard, so the key means one thing
+   * everywhere. 130 is the shell convention for SIGINT.
+   */
+  rl?.on("SIGINT", () => {
+    stdinClosed = true;
+    rl.close();
+    process.stdout.write("\n");
+    process.exit(130);
+  });
+
   const ask = async (q, fallback = "") => {
     if (!rl || stdinClosed) return fallback;
     // Guard the EOF case explicitly: after stdin closes, question() never
@@ -296,7 +320,48 @@ export async function makePrompter(nonInteractive) {
     return a === "" ? def : a.startsWith("y");
   };
 
-  return { ask, confirm, closed: () => stdinClosed, close: () => rl?.close() };
+  /**
+   * Hand stdin to something that wants to read keys itself, and take it back.
+   *
+   * A readline interface over a TTY owns stdin completely: it puts the terminal
+   * in raw mode, attaches its own `keypress` handler, and keeps the stream
+   * flowing. A second reader attached underneath it does not take over, it
+   * competes — and the way that surfaced was brutal. The arrow-key picker ran
+   * fine, then the NEXT `ask()` never settled, Node printed "Detected unsettled
+   * top-level await" and the wizard exited between two questions with a
+   * half-written scaffold and no error of its own.
+   *
+   * So the interface is paused and its listeners are lifted for the duration,
+   * then put back exactly as they were. Restoring rather than re-creating
+   * matters: `rl` holds the history and the `close` handler that `closed()`
+   * depends on, and a fresh interface would lose the EOF tracking every prompt
+   * after it relies on.
+   */
+  const borrowStdin = async (run) => {
+    if (!rl) return run();
+    // ONLY the `keypress` listeners move. The `data` listener under them is the
+    // pump that turns bytes into keypress events, installed once by
+    // `emitKeypressEvents` behind an internal guard — so removing it does not
+    // hand the stream over, it switches key decoding off for the rest of the
+    // process. `emitKeypressEvents` then declines to reinstall it (the guard is
+    // already set), the borrower's listener is attached to an event nothing
+    // emits any more, and the wizard hangs on a list that never responds to a
+    // keystroke. Observed exactly that: no output, no error, no exit.
+    const keypress = process.stdin.rawListeners("keypress");
+    const wasRaw = process.stdin.isRaw;
+    rl.pause();
+    process.stdin.removeAllListeners("keypress");
+    try {
+      return await run();
+    } finally {
+      process.stdin.removeAllListeners("keypress");
+      for (const listener of keypress) process.stdin.on("keypress", listener);
+      if (process.stdin.isRaw !== wasRaw) process.stdin.setRawMode(wasRaw);
+      rl.resume();
+    }
+  };
+
+  return { ask, confirm, borrowStdin, closed: () => stdinClosed, close: () => rl?.close() };
 }
 
 /* -------------------------------------------------------------------------- */

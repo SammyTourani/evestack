@@ -113,6 +113,16 @@ export async function GET(
     // A negative startIndex is relative to the tail; SSE ids must be absolute.
     const firstIndex = startIndex < 0 ? Math.max(0, tailIndex + 1 + startIndex) : startIndex;
 
+    // Eve 0.54 bounds includeTailIndex responses at the captured tail. Use that
+    // request only to check existence and resolve a relative position, then
+    // open the live stream from the absolute index. Reusing the snapshot would
+    // close the browser connection before later events arrive.
+    await upstream.body.cancel();
+    upstream = await openEventStream(id, { startIndex: firstIndex, signal: request.signal });
+    if (!upstream.body) {
+      return jsonError("The agent returned an empty event stream.", 502, "invalid_response");
+    }
+
     const headers = new Headers({
       "cache-control": "no-store, no-transform",
       // Tells nginx and friends not to buffer, which would defeat streaming.
@@ -202,26 +212,33 @@ function toServerSentEvents(
 
     async pull(controller) {
       try {
-        const { done, value } = await reader.read();
-        if (done) {
-          buffered = "";
-          closed = true;
-          stopHeartbeat();
-          controller.close();
-          return;
-        }
-
-        buffered += decoder.decode(value, { stream: true });
-        let newline = buffered.indexOf("\n");
-        while (newline !== -1) {
-          const line = buffered.slice(0, newline).trim();
-          buffered = buffered.slice(newline + 1);
-          // eve primes the stream with a bare newline to flush headers.
-          if (line.length > 0) {
-            controller.enqueue(encoder.encode(`id: ${index}\ndata: ${line}\n\n`));
-            index += 1;
+        // A pull must enqueue something, close, or keep reading. Returning
+        // after a priming newline or a partial JSON line can leave a pending
+        // browser read asleep until the 15-second heartbeat wakes it again.
+        while (!closed) {
+          const { done, value } = await reader.read();
+          if (done) {
+            buffered = "";
+            closed = true;
+            stopHeartbeat();
+            controller.close();
+            return;
           }
-          newline = buffered.indexOf("\n");
+
+          const beforeIndex = index;
+          buffered += decoder.decode(value, { stream: true });
+          let newline = buffered.indexOf("\n");
+          while (newline !== -1) {
+            const line = buffered.slice(0, newline).trim();
+            buffered = buffered.slice(newline + 1);
+            // eve primes the stream with a bare newline to flush headers.
+            if (line.length > 0) {
+              controller.enqueue(encoder.encode(`id: ${index}\ndata: ${line}\n\n`));
+              index += 1;
+            }
+            newline = buffered.indexOf("\n");
+          }
+          if (index > beforeIndex) return;
         }
       } catch (error) {
         closed = true;

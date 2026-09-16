@@ -143,11 +143,16 @@ passed to `bash` and what came back exist only on spans.
 | Duration and status | yes, per run | yes, per span |
 | System prompt, message history | **no** | yes |
 | Tool arguments and results | **no** | yes |
-| Safe to drop | no — durable session state | yes, it is replayable telemetry |
+| Retention | durable session state; use a reviewed pruning policy | exported trace rows can be pruned under a retention policy; historical evidence may be lost |
 
 The two schemas are separated on purpose. `workflow` belongs to world-postgres and evestack only
 ever reads it; everything evestack writes goes to `evestack`. An eve upgrade cannot collide with
-these tables, and `DROP SCHEMA evestack CASCADE` costs telemetry and never a durable session.
+these table definitions. The `evestack` schema also stores remembered facts,
+reviews, routines, budget settings and regression cases. **Do not drop the whole
+schema to repair or downgrade the trace tier.** Run the matching dashboard image,
+back up Postgres, and use a component-specific recovery or retention procedure.
+Exported traces may no longer be available from the agent after its own retention
+window, so do not assume deleted trace evidence can always be reconstructed.
 
 The exporter is one file, and the template ships it:
 

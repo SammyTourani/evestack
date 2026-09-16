@@ -858,11 +858,20 @@ function isoFromUnixNano(nano: string | null): string | null {
 
 // --- Reads -------------------------------------------------------------------
 
+// A session can own several activation traces. Anchor correlation to a known
+// session/turn first: a caller-supplied conversation ID is not a session ID.
+const SESSION_SPANS = `session_id = $1 OR root_session_id = $1 OR resolved_session_id = $1
+  OR conversation_id IN (
+    SELECT conversation_id FROM evestack.spans
+    WHERE conversation_id IS NOT NULL
+      AND (session_id = $1 OR root_session_id = $1 OR resolved_session_id = $1)
+  )`;
+
 const SELECT_SPAN = `
   SELECT trace_id, span_id, parent_span_id, name, kind,
          start_time, end_time, duration_ms, status_code, status_message,
          attributes, resource, events, scope_name,
-         session_id, root_session_id, turn_id, resolved_turn_id
+         session_id, root_session_id, turn_id, resolved_turn_id, resolved_session_id
   FROM evestack.spans
 `;
 
@@ -882,7 +891,7 @@ function toSpanRow(raw: Record<string, unknown>): SpanRow {
     resource: (raw.resource as Record<string, unknown>) ?? {},
     events: (raw.events as SpanEvent[]) ?? [],
     scopeName: (raw.scope_name as string) ?? null,
-    sessionId: (raw.session_id as string) ?? null,
+    sessionId: (raw.session_id as string) ?? (raw.resolved_session_id as string) ?? null,
     rootSessionId: (raw.root_session_id as string) ?? null,
     turnId: (raw.turn_id as string) ?? null,
     resolvedTurnId: (raw.resolved_turn_id as string) ?? null,
@@ -943,7 +952,7 @@ export const listSpansBySession = cache(
       `${SELECT_SPAN}
      WHERE trace_id IN (
        SELECT DISTINCT trace_id FROM evestack.spans
-       WHERE session_id = $1 OR root_session_id = $1
+       WHERE ${SESSION_SPANS}
      )
      ORDER BY start_unix_nano, span_id
      LIMIT $2`,
@@ -978,7 +987,7 @@ export async function countSpansBySession(sessionId: string): Promise<number> {
     `SELECT COUNT(*)::text AS total FROM evestack.spans
       WHERE trace_id IN (
         SELECT DISTINCT trace_id FROM evestack.spans
-        WHERE session_id = $1 OR root_session_id = $1
+        WHERE ${SESSION_SPANS}
       )`,
     [sessionId],
   );
@@ -1111,7 +1120,7 @@ async function listCallSpans(sessionId: string, family: SpanFamily): Promise<Spa
   const rows = await query<Record<string, unknown>>(
     `WITH RECURSIVE owned AS (
        SELECT DISTINCT trace_id FROM evestack.spans
-       WHERE session_id = $1 OR root_session_id = $1
+       WHERE ${SESSION_SPANS}
      ),
      chain AS (
        SELECT c.trace_id, c.span_id, c.parent_span_id

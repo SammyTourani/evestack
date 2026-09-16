@@ -89,21 +89,24 @@ To repeat a still-firing alert, set `EVESTACK_ALERT_RENOTIFY_MINUTES=60`. It is 
 
 `EVESTACK_ALERT_DAILY_SPEND_USD` is the install-wide daily spend the alert is judged against.
 
-With it unset, the alert falls back to `@evestack/budget`'s `EVESTACK_BUDGET_DAILY_USD` (default
-`10`) so that it works out of the box — and it **says so in the alert text**, because the two are
-not the same measure. The budget cap is per principal; this alert sums every priced turn on the
-install. On the single-user install that self-hosting usually means they are the same number; with
-two users the install crosses $10 while neither person is near their own limit.
+With it unset, the alert uses the daily cap saved in Settings, or the dashboard's
+`EVESTACK_BUDGET_DAILY_USD` (default `10`) when no saved policy exists. The alert
+names that source and revision. It uses the policy's timezone for both boundaries
+of the local day, including daylight-saving changes. A failed or partial policy
+read makes the result unknown; it does not silently revive an old environment cap.
 
-<Warning>
-  This monitor spent its entire existence stuck at *not checked*. It read
-  `EVESTACK_DAILY_BUDGET_USD` — the same four words in a different order from the variable that
-  exists — so on every install ever made it reported "no cap is configured" while `@evestack/budget`
-  enforced its $10/day default a process away. A check that cannot fire is worse than a missing
-  one, because the page counts it among the ones that passed.
-</Warning>
+The fallback budget cap is per principal; the alert sums priced, recorded turns
+across the installation. Its detail names that difference. Set an explicit
+installation threshold when that comparison is unsuitable. A saved cap does not
+prove every attached agent is enforcing it; inspect the observed revisions in
+Settings. Recorded costs do not verify complete trace delivery or the provider's
+final bill.
 
 Set it to `false` to switch spend alerting off without touching your budget caps.
+
+`EVESTACK_DAILY_BUDGET_USD` is not a supported variable; it was a historical
+misspelling. Use `EVESTACK_BUDGET_DAILY_USD` for the environment budget default or
+`EVESTACK_ALERT_DAILY_SPEND_USD` for an explicit installation alert threshold.
 
 ## Signing, for the generic sink
 
@@ -125,12 +128,12 @@ a captured POST replays forever. Reject anything older than your own tolerance.
 
 ## Honest limits
 
-- **If the dashboard is down, nothing is delivered, and nothing here can tell you so.** That is a
-  genuine limit of any in-process notifier, not an oversight. The payload carries `sentAt` so a
-  receiver that cares can alert on silence — the one check that has to live outside the thing it
-  watches.
-- **The dashboard is an optional compose profile** (`profiles: ["full", "dashboard"]`). `docker
-  compose up` without a profile starts Postgres and the agent and no notifier at all.
+- **If the dashboard is down, it cannot send its own outage notification.** Monitor it from a
+  separate process or host. Healthy monitors send no transitions, so silence from the webhook
+  is not a liveness signal. Use the external checks below.
+- **The dashboard is an optional Compose profile.** A generated project's plain `docker compose
+  up` starts Postgres; the dashboard needs `--profile dashboard`. The agent is a separately
+  supervised process. Verify all three services rather than assuming one command started them.
 - **It is deliberately not delivered through your agent's channel.** evestack already has a path
   that reaches a human — the [heartbeat](/docs/proactive) — and it is the wrong one for this.
   Three of the nine monitors (`wedged`, `no_spans_while_active`, `turn_failure_rate`) fire exactly
@@ -187,3 +190,48 @@ All three take the dashboard's ordinary credentials, including HTTP Basic:
 ```bash
 curl -u "$EVESTACK_AUTH_USER:$EVESTACK_AUTH_PASSWORD" http://localhost:4000/api/alerts
 ```
+
+## Detect outages from outside the installation
+
+Run an independent monitor on a different host or service when unattended work
+matters. Route its notifications independently of the agent and the dashboard it
+watches. Start with a one-minute interval, a short request timeout and an alert
+after three consecutive failures; choose a tighter or longer window for your own
+availability requirement. Record the last successful probe and include a recovery
+notice so an old outage does not remain ambiguous.
+
+| Check | Successful result | What it does not prove |
+| --- | --- | --- |
+| `GET /api/health` | HTTP 200 and JSON `ok: true` | A model, tool, channel or routine can complete work |
+| `GET /api/readiness?check=agent` | Authenticated JSON contains the agent check with `ready: true` | Provider credentials, tool permissions or external receipt |
+| `GET /api/routines` | Authenticated response and a running, recently ticking clock when routines are enabled | A scheduled task produced a useful result |
+| A specific routine's history and notification receipt | Expected occurrence completed, result inspected, intended destination observed | Later occurrences will also succeed |
+
+Readiness returns HTTP 200 for a successfully collected report even when a
+check says `unavailable`; inspect the JSON, not just the status. Treat timeouts,
+invalid bodies, unexpected redirects and authentication failures as a failed or
+unknown check. `/api/health` is intentionally public and contains little detail;
+the other routes require installation credentials. Keep those in the monitor's
+secret store and use HTTPS or a private network. A shared credential can grant
+more access than a read-only probe needs; restrict the monitor's proxy path/methods
+if it must be isolated from dashboard controls.
+
+Do not poll `POST /api/alerts`, send test notifications repeatedly, or start model
+tasks as a substitute for a liveness probe. Reserve bounded real-task tests for
+planned smoke checks. The model heartbeat is a scheduled agent task and depends
+on the very agent and provider an outage may have disabled.
+
+## Respond to an incident
+
+| Symptom | First action |
+| --- | --- |
+| Dashboard or database unavailable | Check the supervisor, Postgres health and disk space. Preserve logs and data; do not delete the volume to repair it. |
+| Agent unavailable but saved tasks remain readable | Inspect the agent process and credentials. Use saved task evidence and queue diagnosis before considering restart or replay. |
+| Budget stop or unknown model price | Check the saved policy and agent's observed revision. Resolve pricing or raise the cap deliberately; a restart is not a budget decision. |
+| Routine dispatch is `unknown` | Keep it paused. Check the destination and actual task history before resolving it; replay may duplicate an accepted action. |
+| Notification failed or acknowledgement was lost | Inspect its durable attempt ID and destination. Confirm receipt before manually retrying. |
+| Sandbox coverage is incomplete | Use the local Docker inventory for omitted containers. Missing inspection is not proof of isolation or cleanup. |
+
+After recovery, rerun the failed probe, inspect one affected task and observe the
+next intended occurrence. Record whether the result was useful, not just whether
+a process restarted. For database recovery, follow [Backup and restore](/docs/backup-restore).

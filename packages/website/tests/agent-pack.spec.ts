@@ -12,7 +12,9 @@ import { agentPack, site } from "@/lib/copy";
  * plausible landed on the clipboard. */
 
 test.describe("agent pack routes", () => {
-  test("/agent.md serves a complete, self-contained pack", async ({ request }) => {
+  test("/agent.md serves a complete, self-contained pack", async ({
+    request,
+  }) => {
     const response = await request.get("/agent.md");
     expect(response.status()).toBe(200);
     expect(response.headers()["content-type"]).toContain("text/plain");
@@ -28,7 +30,12 @@ test.describe("agent pack routes", () => {
     // the case this exists for, so a reference that is linked rather than
     // included is a broken pack, not a smaller one.
     expect(body).toContain("## `SKILL.md`");
-    for (const reference of ["cli", "build-an-agent", "dashboard", "troubleshooting"]) {
+    for (const reference of [
+      "cli",
+      "build-an-agent",
+      "dashboard",
+      "troubleshooting",
+    ]) {
       expect(body, `references/${reference}.md must be inlined`).toContain(
         `## \`references/${reference}.md\``,
       );
@@ -45,16 +52,32 @@ test.describe("agent pack routes", () => {
     expect(body).toContain("beta");
   });
 
-  test("/llms-full.txt serves every doc page in reading order", async ({ request }) => {
+  test("/llms-full.txt serves every doc page in reading order", async ({
+    request,
+  }) => {
     const response = await request.get("/llms-full.txt");
     expect(response.status()).toBe(200);
 
     const body = await response.text();
 
     // meta.json order, not alphabetical: introduction before troubleshooting.
-    const order = ["/docs/index", "/docs/quickstart", "/docs/architecture", "/docs/troubleshooting"];
-    const positions = order.map((slug) => body.indexOf(slug));
-    expect(positions.every((p) => p > -1), `missing one of ${order.join(", ")}`).toBe(true);
+    const order = [
+      "/docs/index",
+      "/docs/quickstart",
+      "/docs/first-task",
+      "/docs/architecture",
+      "/docs/troubleshooting",
+    ];
+    // Cross-links can mention a later page before its content. Only source
+    // markers delimit the actual concatenated sections.
+    const sections = [
+      ...body.matchAll(/^<!-- https?:\/\/[^\s]+\/docs\/([^\s]+) -->$/gm),
+    ].map((match) => `/docs/${match[1]}`);
+    const positions = order.map((slug) => sections.indexOf(slug));
+    expect(
+      positions.every((p) => p > -1),
+      `missing one of ${order.join(", ")}`,
+    ).toBe(true);
     expect(positions).toEqual([...positions].sort((a, b) => a - b));
 
     // Nested sections ship too — docs/channels/* is the only one, and a
@@ -65,7 +88,9 @@ test.describe("agent pack routes", () => {
     expect(body.length).toBeGreaterThan(150_000);
   });
 
-  test("/llms.txt still points agents at both companions", async ({ request }) => {
+  test("/llms.txt still points agents at both companions", async ({
+    request,
+  }) => {
     const body = await (await request.get("/llms.txt")).text();
     expect(body).toContain("/agent.md");
     expect(body).toContain("/llms-full.txt");
@@ -94,7 +119,9 @@ test.describe("the copy control", () => {
     await expect(button).toContainText(agentPack.label, { timeout: 5000 });
   });
 
-  test("hovering the button opens the menu, and crossing the gap keeps it open", async ({ page }) => {
+  test("hovering the button opens the menu, and crossing the gap keeps it open", async ({
+    page,
+  }) => {
     /* Hover-open, added 2026-08-11. Two failure modes worth pinning, because
        both look fine in a screenshot and are infuriating in use:
 
@@ -113,18 +140,40 @@ test.describe("the copy control", () => {
     await expect(menu).toHaveAttribute("data-open", /.*/, { timeout: 2000 });
     await expect(menu).not.toHaveAttribute("inert", /.*/);
 
-    // Travel from the button down to the LAST row, crossing the gap.
-    await menu.locator("[data-agent-menu-item]").last().hover();
+    // Move the actual pointer across the gap. Locator.hover() first asks the
+    // browser to scroll the target into view; on Linux that centered this
+    // already visible row and scrubbed the hero away before moving the mouse.
+    // Keyboard reachability/viewport changes are checked separately below.
+    const last = menu.locator("[data-agent-menu-item]").last();
+    await expect(last).toBeVisible();
+    const box = await last.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.y).toBeGreaterThanOrEqual(0);
+    expect(box!.y + box!.height).toBeLessThanOrEqual(
+      page.viewportSize()!.height,
+    );
+    const scrollBefore = await page.evaluate(() => scrollY);
+    await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2, {
+      steps: 12,
+    });
     await page.waitForTimeout(400);
-    await expect(menu, "crossing the gap must not close it").toHaveAttribute("data-open", /.*/);
+    await expect(menu, "crossing the gap must not close it").toHaveAttribute(
+      "data-open",
+      /.*/,
+    );
+    expect(await page.evaluate(() => scrollY)).toBe(scrollBefore);
 
     // Leaving closes it, and it goes inert again.
     await page.mouse.move(60, 60);
-    await expect(menu).not.toHaveAttribute("data-open", /.*/, { timeout: 2000 });
+    await expect(menu).not.toHaveAttribute("data-open", /.*/, {
+      timeout: 2000,
+    });
     await expect(menu).toHaveAttribute("inert", /.*/);
   });
 
-  test("on touch, where there is no hover, tapping still works", async ({ browser }) => {
+  test("on touch, where there is no hover, tapping still works", async ({
+    browser,
+  }) => {
     /* This is the bug hover-open shipped with, found on an iPhone 13 profile:
        a tap emits pointerenter, pointerup, THEN pointerleave, because the
        pointer stops existing when the finger lifts. So the tap opened the menu
@@ -132,7 +181,10 @@ test.describe("the copy control", () => {
        every phone. The hover handlers are gated on (hover: hover) now, and
        focus only opens for :focus-visible so the tap's own focus cannot
        re-introduce it. */
-    const ctx = await browser.newContext({ ...devices["iPhone 13"], colorScheme: "dark" });
+    const ctx = await browser.newContext({
+      ...devices["iPhone 13"],
+      colorScheme: "dark",
+    });
     const page = await ctx.newPage();
     await page.goto("/");
     const menu = page.locator("[data-agent-menu]").first();
@@ -143,30 +195,42 @@ test.describe("the copy control", () => {
 
     // …and it is a toggle there, since there is no pointer-leave to close it.
     await page.getByLabel(agentPack.menuLabel).first().tap();
-    await expect(menu).not.toHaveAttribute("data-open", /.*/, { timeout: 2000 });
+    await expect(menu).not.toHaveAttribute("data-open", /.*/, {
+      timeout: 2000,
+    });
     await ctx.close();
   });
 
   test("every destination carries its own mark", async ({ page }) => {
     await page.goto("/");
     await page.locator("#hero").locator('[data-agent-pack="primary"]').hover();
-    const items = page.locator("[data-agent-menu]").first().locator("[data-agent-menu-item]");
+    const items = page
+      .locator("[data-agent-menu]")
+      .first()
+      .locator("[data-agent-menu-item]");
     await expect(items).toHaveCount(3);
     for (let i = 0; i < 3; i++) {
       await expect(items.nth(i).locator("svg").first()).toBeVisible();
     }
   });
 
-  test("the menu opens, lists every destination, and closes on Escape", async ({ page }) => {
+  test("the menu opens, lists every destination, and closes on Escape", async ({
+    page,
+  }) => {
     await page.goto("/");
-    const caret = page.getByRole("button", { name: agentPack.menuLabel }).first();
+    const caret = page
+      .getByRole("button", { name: agentPack.menuLabel })
+      .first();
 
     await caret.click();
     await expect(caret).toHaveAttribute("aria-expanded", "true");
 
-    const menu = page.getByRole("menu");
+    // Keep the same node after Escape removes it from the accessibility tree.
+    const menu = page.locator("#hero [data-agent-menu]");
     for (const item of agentPack.menu) {
-      await expect(menu.getByRole("menuitem", { name: new RegExp(item.label) })).toBeVisible();
+      await expect(
+        menu.getByRole("menuitem", { name: new RegExp(item.label) }),
+      ).toBeVisible();
     }
 
     await page.keyboard.press("Escape");
@@ -185,13 +249,44 @@ test.describe("the copy control", () => {
        scrolling scrubs the disassembly instead of moving the page. Clipped
        means unreachable, which is why the flip exists. */
     await page.goto("/");
-    await page.getByRole("button", { name: agentPack.menuLabel }).first().click();
+    await page
+      .getByRole("button", { name: agentPack.menuLabel })
+      .first()
+      .click();
 
     const box = await page.getByRole("menu").boundingBox();
     expect(box).not.toBeNull();
     const viewport = page.viewportSize()!;
     expect(box!.y).toBeGreaterThanOrEqual(0);
     expect(box!.y + box!.height).toBeLessThanOrEqual(viewport.height);
+  });
+
+  test("an open hero menu remains reachable after the viewport gets shorter", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    const root = page.locator('#hero [data-agent-pack="primary"]');
+    await root.getByRole("button", { name: agentPack.menuLabel }).click();
+    const menu = root.getByRole("menu");
+    await menu.getByRole("menuitem").last().focus();
+    await page.setViewportSize({ width: 1440, height: 700 });
+    await expect(menu).toHaveAttribute("data-drop", "up");
+    await menu.getByRole("menuitem").last().focus();
+    await expect(menu).toHaveAttribute("data-open", /.*/);
+    await expect
+      .poll(async () =>
+        menu.evaluate((element) => {
+          const rect = element.getBoundingClientRect();
+          return rect.top >= 0 && rect.bottom <= innerHeight;
+        }),
+      )
+      .toBe(true);
+    expect(
+      await page
+        .locator("[data-hero-pane]")
+        .evaluate((element) => element.scrollTop),
+    ).toBe(0);
+    expect(await page.evaluate(() => scrollY)).toBe(0);
   });
 });
 
@@ -204,57 +299,52 @@ test.describe("the closing CTA carries all three ways to start", () => {
     await page.goto("/");
     const closing = page.locator("#get-started");
 
-    await expect(closing.getByRole("button", { name: `Copy "${site.command}"` })).toBeVisible();
+    await expect(
+      closing.getByRole("button", { name: `Copy "${site.command}"` }),
+    ).toBeVisible();
     await expect(closing.locator('[data-agent-pack="primary"]')).toBeVisible();
-    await expect(closing.getByRole("link", { name: /Star on GitHub/ })).toBeVisible();
+    await expect(
+      closing.getByRole("link", { name: /Star on GitHub/ }),
+    ).toBeVisible();
 
     // The pack button here is a real one, not a decorative copy: it opens.
     await closing.locator('[data-agent-pack="primary"]').hover();
-    await expect(closing.locator("[data-agent-menu]")).toHaveAttribute("data-open", /.*/, {
-      timeout: 2000,
-    });
+    await expect(closing.locator("[data-agent-menu]")).toHaveAttribute(
+      "data-open",
+      /.*/,
+      {
+        timeout: 2000,
+      },
+    );
   });
 
-  test("its menu opens upward, since it sits at the foot of the page", async ({ page }) => {
+  test("its menu opens upward, since it sits at the foot of the page", async ({
+    page,
+  }) => {
     /* The flip matters more here than in the hero: there is footer below, and
        a menu dropping down at the bottom of the document would hang off the
        viewport with nothing to scroll to. */
     await page.goto("/");
-    await page.mouse.move(700, 450);
-    const top = await page.evaluate(
-      () => (document.querySelector("#get-started") as HTMLElement).offsetTop,
-    );
-    while ((await page.evaluate(() => window.scrollY)) < top - 200) {
-      await page.mouse.wheel(0, 800);
-      await page.waitForTimeout(30);
-    }
     const closing = page.locator("#get-started");
-    /* Park the pointer off the control before hovering it.
-
-       This is defensive hygiene, NOT a fix, and the distinction is recorded here
-       because an earlier version of this comment claimed to be the fix and was
-       wrong. The reasoning was: the wheel loop above scrolls the page under a
-       stationary pointer at (700, 450), the centre of the 1440x900 viewport, and
-       this section centres its CTA row — so the button can come to rest under
-       that exact point, and hover() would then move the pointer somewhere it
-       already is, dispatching no pointerenter, so the control (which opens only
-       from onPointerEnter) never opens.
-
-       That story is plausible and it is not what is happening: the test still
-       failed twice in a row with this line in place. Ruled out by evidence, not
-       by argument: suppressRef is set only by Escape or click-outside and this
-       test does neither; canHover would break the sibling test above, which
-       never fails; the reported data-drop="down" is the untouched initial value
-       of `dropUp` (recomputed only in a layout effect gated on `open`), so it
-       means never-measured rather than measured-and-wrong, and the geometry
-       assertions below were never reached.
-
-       The real cause is still unknown. See playwright.config.ts, where the suite
-       is given retries in CI, for the honest accounting. */
+    const trigger = closing.locator('[data-agent-pack="primary"]');
+    // Put the trigger near the viewport's bottom to exercise the upward flip.
+    // Repeated wheel events left smooth scrolling in flight, and could put the
+    // trigger near the top instead; the old test never asserted the direction.
+    await trigger.evaluate((element) => {
+      window.scrollTo({
+        top:
+          window.scrollY +
+          element.getBoundingClientRect().bottom -
+          window.innerHeight +
+          24,
+        behavior: "instant",
+      });
+    });
     await page.mouse.move(20, 450);
-    await closing.locator('[data-agent-pack="primary"]').hover();
+    await trigger.hover();
     const menu = closing.locator("[data-agent-menu]");
     await expect(menu).toHaveAttribute("data-open", /.*/, { timeout: 2000 });
+    await expect(menu).toHaveAttribute("data-drop", "up");
 
     const box = await menu.boundingBox();
     const viewport = page.viewportSize()!;
@@ -284,7 +374,9 @@ test.describe("the closing CTA carries all three ways to start", () => {
     }
   });
 
-  test("no-JS still offers the command, and a route to the pack", async ({ browser }) => {
+  test("no-JS still offers the command, and a route to the pack", async ({
+    browser,
+  }) => {
     /* The menu ships INERT and stays inert without JS, which is correct and is
        not a bug to route around: a control that cannot open should not be
        advertising tabbable links. My first version of this test asserted the
@@ -299,7 +391,9 @@ test.describe("the closing CTA carries all three ways to start", () => {
     const page = await ctx.newPage();
     await page.goto("/");
 
-    await expect(page.locator("#get-started").getByText(site.command)).toBeVisible();
+    await expect(
+      page.locator("#get-started").getByText(site.command),
+    ).toBeVisible();
     await expect(
       page.getByRole("link", { name: /Set up with your agent/ }),
       "a no-JS visitor still has a way to the pack",

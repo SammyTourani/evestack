@@ -1,6 +1,10 @@
 import type { Config } from "./config.js";
 import { VERSION } from "./version.js";
-import { DashboardClient, DashboardError, DashboardUnreachableError } from "./dashboard.js";
+import {
+  DashboardClient,
+  DashboardError,
+  DashboardUnreachableError,
+} from "./dashboard.js";
 import {
   INTERNAL_ERROR,
   INVALID_PARAMS,
@@ -34,7 +38,12 @@ import { fitToolPayload } from "./truncate.js";
  */
 
 const PREFERRED_PROTOCOL_VERSION = "2025-11-25";
-const SUPPORTED_PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
+const SUPPORTED_PROTOCOL_VERSIONS = [
+  "2025-11-25",
+  "2025-06-18",
+  "2025-03-26",
+  "2024-11-05",
+];
 
 const SERVER_INFO = {
   name: "evestack",
@@ -77,7 +86,8 @@ export class McpServer {
     this.#client = new DashboardClient(config);
     this.#tools = new Map();
     for (const tool of TOOLS) {
-      if (this.#tools.has(tool.name)) throw new Error(`Duplicate tool name '${tool.name}'.`);
+      if (this.#tools.has(tool.name))
+        throw new Error(`Duplicate tool name '${tool.name}'.`);
       // Fail at startup, not at call time, if a schema uses a keyword the
       // hand-rolled validator does not enforce — an unenforced constraint that
       // still appears in tools/list is a lie to the model.
@@ -88,7 +98,11 @@ export class McpServer {
 
   /** Tools an MCP client is allowed to see. The safety gate lives here. */
   get advertisedTools(): ToolDefinition[] {
-    return TOOLS.filter((tool) => !tool.mutating || this.#config.allowControl);
+    return TOOLS.filter(
+      (tool) =>
+        (!tool.mutating || this.#config.allowControl) &&
+        (!tool.approvalAuthority || this.#config.allowApprovals),
+    );
   }
 
   async handle(request: JsonRpcRequest): Promise<HandlerResult> {
@@ -119,9 +133,13 @@ export class McpServer {
         this.#assertInitialized(request.method);
         return { response: await this.#callTool(request.params) };
       default:
-        throw new RpcError(METHOD_NOT_FOUND, `Method not found: ${request.method}`, {
-          supported: ["initialize", "ping", "tools/list", "tools/call"],
-        });
+        throw new RpcError(
+          METHOD_NOT_FOUND,
+          `Method not found: ${request.method}`,
+          {
+            supported: ["initialize", "ping", "tools/list", "tools/call"],
+          },
+        );
     }
   }
 
@@ -160,7 +178,10 @@ export class McpServer {
 
   #initialize(params: unknown): unknown {
     const parsed = paramsObject(params);
-    const requested = typeof parsed.protocolVersion === "string" ? parsed.protocolVersion : null;
+    const requested =
+      typeof parsed.protocolVersion === "string"
+        ? parsed.protocolVersion
+        : null;
 
     // Spec: echo the client's version when we support it, otherwise answer with
     // ours and let the client decide whether to disconnect. Not an error case.
@@ -170,8 +191,10 @@ export class McpServer {
         : PREFERRED_PROTOCOL_VERSION;
 
     const clientInfo = paramsObject(parsed.clientInfo);
-    const name = typeof clientInfo.name === "string" ? clientInfo.name : "unknown-client";
-    const version = typeof clientInfo.version === "string" ? clientInfo.version : "0";
+    const name =
+      typeof clientInfo.name === "string" ? clientInfo.name : "unknown-client";
+    const version =
+      typeof clientInfo.version === "string" ? clientInfo.version : "0";
     this.#client.identifyClient(name, version);
 
     log(
@@ -194,7 +217,10 @@ export class McpServer {
     if (parsed.cursor !== undefined && parsed.cursor !== null) {
       // The whole list fits in one page, so this server never issues a cursor.
       // Per the pagination spec an unrecognized one is -32602, not an empty page.
-      throw new RpcError(INVALID_PARAMS, "Invalid cursor: this server returns all tools in one page.");
+      throw new RpcError(
+        INVALID_PARAMS,
+        "Invalid cursor: this server returns all tools in one page.",
+      );
     }
 
     return {
@@ -212,7 +238,10 @@ export class McpServer {
     const parsed = paramsObject(params);
     const name = parsed.name;
     if (typeof name !== "string" || name.length === 0) {
-      throw new RpcError(INVALID_PARAMS, "Expected 'name' to be a non-empty tool name.");
+      throw new RpcError(
+        INVALID_PARAMS,
+        "Expected 'name' to be a non-empty tool name.",
+      );
     }
 
     const tool = this.#tools.get(name);
@@ -247,6 +276,18 @@ export class McpServer {
       );
     }
 
+    if (tool.approvalAuthority && !this.#config.allowApprovals) {
+      throw new RpcError(
+        INVALID_PARAMS,
+        `Tool '${name}' is disabled: ordinary task control does not include authority to answer human decisions. The operator must explicitly enable EVESTACK_MCP_ALLOW_APPROVALS=1.`,
+        {
+          reason: "approvals_disabled",
+          tool: name,
+          enableWith: "EVESTACK_MCP_ALLOW_APPROVALS=1",
+          available: this.advertisedTools.map((entry) => entry.name),
+        },
+      );
+    }
     const args = validateArguments(name, parsed.arguments, tool.inputSchema);
 
     try {
@@ -270,12 +311,16 @@ export class McpServer {
             ...(error instanceof DashboardError
               ? { code: error.failure.code, status: error.failure.status }
               : {}),
-            ...(error instanceof ToolFailure && error.detail ? { detail: error.detail } : {}),
+            ...(error instanceof ToolFailure && error.detail
+              ? { detail: error.detail }
+              : {}),
           },
           true,
         );
       }
-      log(`tool ${name} threw: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
+      log(
+        `tool ${name} threw: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,
+      );
       throw new RpcError(INTERNAL_ERROR, `Tool '${name}' failed unexpectedly.`);
     }
   }

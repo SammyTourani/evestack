@@ -32,6 +32,12 @@ export const dynamic = "force-dynamic";
  * check is repeated here so that the policy for the one route with a
  * non-standard credential is written where the route is, not only in a file
  * two directories up.
+ *
+ * The other half of that policy lives in proxy.ts and cannot be moved here: a
+ * request that got in on the operator's browser cookie rather than on the token
+ * is checked for a foreign Origin there, because the cookie is the one
+ * credential a third-party page can borrow. This file's contribution to the
+ * same defence is the content-type requirement below — see the POST handler.
  */
 
 // google.rpc.Code, the status vocabulary OTLP borrows for error bodies.
@@ -57,6 +63,61 @@ const PROTOBUF_TYPES = [
   "application/x-google-protobuf",
 ];
 
+/** What OTLP/HTTP's JSON encoding is required to declare, and the only thing
+ * this route will read a body from. See requireJsonContentType. */
+const JSON_TYPE = "application/json";
+
+/**
+ * The `type/subtype` of a content-type header, with every parameter dropped.
+ *
+ * The check below was first written as `contentType.includes(JSON_TYPE)`, and a
+ * substring test against a header that carries parameters is not a test of what
+ * was declared — it is a hole the exact size of the check. The CORS safelist,
+ * which is the entire reason this route reads the header at all, decides on the
+ * ESSENCE and ignores everything after the first `;`. So all four of these are
+ * requests a hostile page can send with NO preflight, and all four contain the
+ * substring that was being matched on:
+ *
+ *     text/plain;charset=application/json
+ *     text/plain;charset="application/json"
+ *     multipart/form-data; boundary=application/json
+ *     application/x-www-form-urlencoded; x=application/json
+ *
+ * None of them is even malformed: RFC 2046 allows `/` inside a multipart
+ * boundary, and a parameter value may be a quoted string. Measured against this
+ * handler with the substring spelling, with the token presented: 200 and the
+ * body parsed, for every one of the four.
+ *
+ * Parameters a real exporter sends — `application/json; charset=utf-8` — are
+ * dropped rather than refused, which is the whole point of comparing the
+ * essence instead of the header text. Lower-casing has already happened at the
+ * call site, so only whitespace is trimmed here.
+ */
+function contentTypeEssence(header: string): string {
+  return (header.split(";")[0] ?? "").trim();
+}
+
+/**
+ * Whether a POST must declare JSON before its body is read at all.
+ *
+ * On by default, and the variable exists only because this route is reachable
+ * by exporters nobody here wrote. An SDK that posts OTLP/JSON while declaring
+ * nothing used to be accepted — JSON.parse never looked at the header — and a
+ * dashboard upgrade that starts answering 415 to a working exporter is a worse
+ * outcome than the hole it closes, for the one operator who has one. Set
+ * EVESTACK_INGEST_REQUIRE_JSON=off to get the old behaviour back; the Origin
+ * check in proxy.ts is then the only thing between a same-site page and a
+ * forged span, which is a real control but a single one.
+ *
+ * Spelled the same way EVESTACK_TRUSTED_PROXY reads its off values, so an
+ * operator who has met one of these variables can guess the other.
+ */
+function requireJsonContentType(): boolean {
+  const raw = process.env.EVESTACK_INGEST_REQUIRE_JSON?.trim().toLowerCase();
+  if (!raw) return true;
+  return !(raw === "0" || raw === "false" || raw === "off" || raw === "no");
+}
+
 function status(code: number, message: string, httpStatus: number, headers?: HeadersInit) {
   return Response.json({ code, message }, { status: httpStatus, headers });
 }
@@ -79,7 +140,11 @@ function status(code: number, message: string, httpStatus: number, headers?: Hea
 let schemaRefusalLogged = false;
 
 export async function POST(request: Request): Promise<Response> {
-  if (!ingestAuthorized(request)) {
+  // `=== null` rather than `!`: ingestAuthorized reports WHICH credential got
+  // the request in (proxy.ts spends that on the cross-site check), so it now
+  // returns an object or null. An object is always truthy, which is why the
+  // "no" side of it is null and not false.
+  if (ingestAuthorized(request) === null) {
     return status(UNAUTHENTICATED, INGEST_UNAUTHENTICATED_MESSAGE, 401);
   }
 
@@ -98,6 +163,52 @@ export async function POST(request: Request): Promise<Response> {
         `declared ${contentType}. Use OTLPHttpJsonTraceExporter from @vercel/otel ` +
         "(or set OTEL_EXPORTER_OTLP_PROTOCOL=http/json) instead of the protobuf exporter. " +
         "Nothing was stored.",
+      415,
+    );
+  }
+
+  // Anything that is not JSON is refused before the body is read, and this is a
+  // security control rather than tidiness about media types.
+  //
+  // A cross-origin `fetch` can only set three content-types without asking
+  // permission first — text/plain, application/x-www-form-urlencoded and
+  // multipart/form-data. Those are the CORS-simple ones: no preflight, the
+  // request goes straight out, and with `credentials: "include"` the operator's
+  // session cookie goes with it. Everything else, application/json included,
+  // makes the browser send an OPTIONS preflight, and this dashboard answers no
+  // preflight anywhere — it emits no Access-Control-Allow-Origin at all — so a
+  // page that has to ask never gets to POST.
+  //
+  // What that replaces: this handler declared JSON in its documentation and its
+  // README table, and then parsed whatever arrived. The protobuf list above
+  // refuses three names; `text/plain` carrying `{"resourceSpans":[…]}` went
+  // straight to JSON.parse and was stored. So the one shape a hostile page can
+  // send was the one shape not checked.
+  //
+  // proxy.ts refuses the same request on its Origin, and this is deliberately
+  // the second lock rather than the only one: it holds for a caller with no
+  // Origin header to compare, and it holds if this handler is ever reached by a
+  // path the proxy's matcher does not cover.
+  //
+  // Nothing that speaks OTLP/HTTP JSON is affected. That encoding's contract
+  // requires this exact content-type, OTLPHttpJsonTraceExporter sets it, and
+  // every POST in app/api/ingest/README.md and in the runtime contract probe
+  // (contract/runtime/probes/13-trace-ingest.probe.mjs, which defaults its
+  // `contentType` to application/json) already sends it. The GET probe carries
+  // no body and is not subject to this. The protobuf branch stays above this
+  // one so that the exporter mistake people actually make keeps its own message
+  // naming the fix.
+  // The ESSENCE, not the header text: `contentTypeEssence` above records the
+  // four CORS-simple spellings a substring match lets through, and why they are
+  // the ones that matter here.
+  if (requireJsonContentType() && contentTypeEssence(contentType) !== JSON_TYPE) {
+    return status(
+      INVALID_ARGUMENT,
+      `This endpoint reads OTLP/HTTP with JSON encoding, so a POST must declare ` +
+        `\`content-type: ${JSON_TYPE}\`; this request declared ` +
+        `${contentType ? `\`${contentType}\`` : "no content-type at all"}. ` +
+        "If that is an exporter you cannot change, set EVESTACK_INGEST_REQUIRE_JSON=off " +
+        "on the dashboard to accept it. Nothing was stored.",
       415,
     );
   }
@@ -147,8 +258,11 @@ export async function POST(request: Request): Promise<Response> {
   try {
     payload = JSON.parse(text);
   } catch {
-    // A protobuf exporter that omits or mislabels its content-type lands here.
-    // Say so, because "Unexpected token" would send the reader hunting in the
+    // A protobuf exporter that MISLABELS its content-type as JSON lands here —
+    // and so does one that declares nothing at all, but only where
+    // EVESTACK_INGEST_REQUIRE_JSON=off has turned the check above off; with the
+    // default that exporter is answered 415 before its body is read. Say which
+    // it is, because "Unexpected token" would send the reader hunting in the
     // wrong place entirely.
     return status(
       INVALID_ARGUMENT,
@@ -178,7 +292,8 @@ export async function POST(request: Request): Promise<Response> {
         "[evestack] REFUSING ALL TRACE INGEST: this dashboard is older than its database, " +
           "so sql/traces.sql was not applied and spans are not being written. Every OTLP " +
           "batch is answered 503 and your exporter will retry until this is fixed. Run the " +
-          "newer dashboard image, or drop the evestack schema to rebuild the trace tier. " +
+          "matching newer dashboard image. Back up Postgres before repairing individual components; " +
+          "do not drop the evestack schema, which also stores durable operator data. " +
           "This line is printed once per process; /api/health reports the same state as " +
           `degraded / schema-too-new. Postgres said: ${describe(error)}`,
       );
@@ -251,7 +366,10 @@ export async function POST(request: Request): Promise<Response> {
  * counts, both look like an exporter that has stopped working.
  */
 export async function GET(request: Request): Promise<Response> {
-  if (!ingestAuthorized(request)) {
+  // See the POST above for why this compares against null. No content-type rule
+  // here: a GET carries no body, and the cross-site checks are write-only
+  // because a read cannot change anything.
+  if (ingestAuthorized(request) === null) {
     return status(UNAUTHENTICATED, INGEST_UNAUTHENTICATED_MESSAGE, 401);
   }
 

@@ -26,13 +26,18 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`}>
       <body>
+        <a className="skip-link" href="#main-content">
+          Skip to content
+        </a>
         {/*
           The chrome is a client component so it can read the pathname — for the
           active link, and to render nothing at all on /signin. See app/nav.tsx.
           The layout itself stays a server component and calls no dynamic API.
         */}
         <Nav />
-        <main className="shell">{children}</main>
+        <main id="main-content" tabIndex={-1} className="shell">
+          {children}
+        </main>
       </body>
     </html>
   );

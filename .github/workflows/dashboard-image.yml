@@ -63,6 +63,10 @@ on:
     paths:
       - "packages/dashboard/**"
       - "packages/evestack-schedules/**"
+      - "packages/evestack-budget/**"
+      - "packages/evestack-cli/src/queue.mjs"
+      - "packages/evestack-cli/src/findings.mjs"
+      - "packages/evestack-cli/src/format.mjs"
       - "templates/default/agent/skills/**"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
@@ -75,6 +79,15 @@ on:
   # a break that appears only once two independently-green PRs are both in.
   push:
     branches: [main]
+
+# Stated, not inherited — see the same block in ci.yml for the full reasoning.
+# The short version: with no block the token is whatever the repository default
+# is, and this workflow runs on `pull_request`, so a fork's PR would hand that
+# token to a `docker build` and a `pnpm install` of the whole template. Nothing
+# here needs to write anything: the image is loaded into the local daemon and
+# thrown away with the runner, and the verdict is the job's own exit code.
+permissions:
+  contents: read
 
 concurrency:
   group: dashboard-image-${{ github.ref }}
@@ -113,9 +126,17 @@ jobs:
       INGEST_TOKEN: probe-ingest-token-not-a-secret
 
     steps:
-      - uses: actions/checkout@v4
+      # SHA-pinned rather than tagged, and the checkout credential dropped
+      # rather than left in `.git/config` — ci.yml's first checkout carries the
+      # long version of both. Here the second one is doubly worth having: this
+      # job hands the whole repository to `docker build`, and a Dockerfile's
+      # build context is a place where a leftover credential is very easy to
+      # copy into a layer without anyone noticing.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       # The agent schema, before anything reads it.
       #
@@ -134,8 +155,8 @@ jobs:
       # Scoped to the template. This job never compiles anything — the image
       # builds itself — so a full workspace install and build would be a minute
       # spent on packages nothing here touches.
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
@@ -154,7 +175,7 @@ jobs:
           echo "workflow schema present"
 
       - name: build the image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           # The repository ROOT, exactly as publish-dashboard.yml does it, for
           # the reason the Dockerfile's header spends thirty lines on:
@@ -331,6 +352,8 @@ jobs:
           set -euo pipefail
           code="$(curl -s -o /dev/null -w '%{http_code}' http://localhost:4000/api/health/detail)"
           [ "$code" = "401" ] || { echo "::error::/api/health/detail answered $code with no credential, expected 401"; exit 1; }
+          code="$(curl -s -o /dev/null -w '%{http_code}' http://localhost:4000/api/doctor)"
+          [ "$code" = "401" ] || { echo "::error::/api/doctor answered $code with no credential, expected 401"; exit 1; }
           echo "401 as expected — the 200s below mean something"
 
       # ---------------------------------------------------------------------
@@ -340,6 +363,25 @@ jobs:
         run: |
           set -euo pipefail
           A=(-u "$AUTH_USER:$AUTH_PASSWORD")
+
+          # Exercise the budget workspace dependency and the new routine schema
+          # from the runtime image, where missing dist/ or SQL fails at request time.
+          curl -sf "${A[@]}" http://localhost:4000/api/settings/budget > /tmp/budget-settings.json
+          curl -sf "${A[@]}" http://localhost:4000/api/routines > /tmp/routines.json
+          curl -sf "${A[@]}" http://localhost:4000/api/doctor > /tmp/queue-diagnosis.json
+          curl -sf -XPOST "${A[@]}" -H 'content-type: application/json' \
+            -d '{"cron":"0 9 * * 1-5","timeZone":"America/Toronto"}' \
+            http://localhost:4000/api/routines/preview > /tmp/routine-preview.json
+          node -e '
+            const budget = require("/tmp/budget-settings.json");
+            const routines = require("/tmp/routines.json");
+            const preview = require("/tmp/routine-preview.json");
+            const doctor = require("/tmp/queue-diagnosis.json");
+            if (!doctor.ok || !doctor.diagnosis?.readOnly || doctor.diagnosis.coverage?.agent !== "not_probed" || !Number.isInteger(doctor.diagnosis.counts?.jobs)) throw new Error("Shared queue diagnosis modules missing or unusable in image");
+            if (!budget.ok || !Array.isArray(budget.consumers) || !budget.defaults) throw new Error("Budget settings contract missing from image");
+            if (!routines.ok || !Array.isArray(routines.routines) || !routines.clock) throw new Error("Routine contract missing from image");
+            if (!preview.ok || preview.times?.length !== 3 || preview.times.some(t => !Number.isFinite(Date.parse(t.utc)))) throw new Error("Routine preview failed in image");
+          '
 
           # queries.ts -> sql/query-indexes.sql. It also imports ensureTraceSchema,
           # so this single request applies sql/traces.sql as a side effect.

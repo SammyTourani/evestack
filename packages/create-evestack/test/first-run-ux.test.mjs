@@ -17,6 +17,7 @@
  * seams are for: a prompt loop that takes an injected reader, a pure
  * elapsed-to-note function, and a pure provider-to-sentence function.
  */
+import { shimPath } from "./helpers/scaffold-shims.mjs";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
@@ -227,19 +228,6 @@ const ENTRY = join(dirname(fileURLToPath(import.meta.url)), "..", "index.mjs");
  * A PATH where the package manager is a stub, so the slow networked step does
  * not run. git is deliberately NOT stubbed: it is the thing under test.
  */
-function shimPath() {
-  const bin = mkdtempSync(join(tmpdir(), "evestack-gitshim-"));
-  const write = (name, body) => {
-    writeFileSync(join(bin, name), body);
-    chmodSync(join(bin, name), 0o755);
-  };
-  const install = String.fromCharCode(35) + "!/bin/sh\ncase \"$1\" in install) mkdir -p node_modules/eve;; esac\nexit 0\n";
-  ["npm", "pnpm", "yarn", "bun"].forEach((name) => write(name, install));
-  // Neither is consulted by anything asserted here, and both are slow or absent
-  // depending on the machine. Failing them keeps the wizard off those paths.
-  ["docker", "ollama"].forEach((name) => write(name, String.fromCharCode(35) + "!/bin/sh\nexit 1\n"));
-  return bin + ":" + process.env.PATH;
-}
 
 test("a fresh scaffold is its own git repository", () => {
   // Not a nicety. eve resolves its dev source root by walking parents until it

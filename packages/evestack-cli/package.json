@@ -1,8 +1,8 @@
 {
   "name": "evestack",
-  "version": "0.4.1",
+  "version": "0.7.0",
   "type": "module",
-  "description": "Run AI agents on your own machine. `evestack create` sets up an agent and a dashboard, `evestack attach` adds them to a project you already have, and `evestack doctor` explains why a job stopped moving.",
+  "description": "Create and operate an Eve Stack workspace: tasks, routines, readiness, configuration, upgrades and read-only diagnostics.",
   "license": "Apache-2.0",
   "bin": {
     "evestack": "./bin/evestack.mjs"
@@ -15,6 +15,7 @@
   "files": [
     "bin",
     "src",
+    "agent-pack.json",
     "README.md",
     "LICENSE"
   ],
@@ -33,10 +34,10 @@
   "scripts": {
     "typecheck": "node scripts/check.mjs",
     "prepack": "node scripts/prepack.mjs",
-    "test": "node scripts/check.mjs && node --test test/*.test.mjs"
+    "test": "node scripts/sync-skill-pack.mjs && node scripts/check.mjs && node --test test/*.test.mjs"
   },
   "dependencies": {
-    "create-evestack": "workspace:^",
+    "create-evestack": "workspace:*",
     "pg": "^8.20.3"
   },
   "engines": {

@@ -63,6 +63,13 @@ Slack is the request signature. Do not put Basic auth in front of `/eve/v1/slack
 proxy — Slack cannot answer a challenge, and you would be trading a signature check for a 401.
 </Note>
 
+<Warning>
+**The signature authenticates Slack, not the speaker.** A valid HMAC means the event really came
+from Slack; it says nothing about who typed the message, and every member of the workspace can
+DM a bot. So `agent/channels/slack.ts` also checks `SLACK_ALLOWED_USER_IDS`, and unset means
+nobody — see [Who is allowed to talk to it](#who-is-allowed-to-talk-to-it).
+</Warning>
+
 ## 1. Create the app
 
 Go to **[api.slack.com/apps](https://api.slack.com/apps) → Create New App → From an app
@@ -145,6 +152,7 @@ Put both into `templates/default/.env.local`:
 ```bash
 SLACK_BOT_TOKEN=xoxb-...
 SLACK_SIGNING_SECRET=...
+SLACK_ALLOWED_USER_IDS=U01ABCDEFGH   # who may start a turn; unset = nobody
 ```
 
 Restart the agent so the process actually has them:
@@ -229,6 +237,60 @@ Signature verification is HMAC-SHA256 over `v0:{timestamp}:{raw body}`, compared
 time, with a 300-second skew window. Retries whose `x-slack-retry-reason` is `http_timeout` are
 dropped, so a slow first turn does not get delivered twice.
 
+## Who is allowed to talk to it
+
+Slack's signature proves an event came from Slack. It does not say who spoke, and in a workspace
+that is a real distinction: guests, Slack Connect channels and shared-channel partners are all
+"in the workspace", and a single phished account is enough. Every accepted message starts a turn
+with bash in a container running as root, metered under that person's own principal — so
+`@evestack/budget`'s per-principal daily cap multiplies by the number of people who try it
+rather than capping the install.
+
+So `agent/channels/slack.ts` dispatches only for member ids you name, and **unset means nobody**:
+
+```bash
+SLACK_ALLOWED_USER_IDS=U01ABCDEFGH               # just you
+SLACK_ALLOWED_USER_IDS=U01ABCDEFGH,U02HGFEDCBA   # you and a colleague
+SLACK_ALLOWED_USER_IDS=*                         # every member of the workspace
+```
+
+Find a member id in Slack: **profile → ⋮ (More) → Copy member ID**. It looks like `U01ABCDEFGH`
+and is not the `@handle`.
+
+This covers **every way a turn can start from Slack** — DMs, `@evestack` mentions in a channel,
+and replies into a thread the agent is already in. The security finding named only the DM path,
+but an `@mention` starts exactly the same turn on exactly the same key, so gating one and not
+the other would leave you believing Slack was closed while the loudest path stayed open.
+
+A refused message is dropped before any model call — no reply, no ephemeral, nothing in the
+thread, because Slack offers no way to answer without the bot token spending a call on a
+stranger. The only evidence is one line in the agent log:
+
+```
+[evestack:slack] refused a message from user U01ABCDEFGH in channel D01234567:
+SLACK_ALLOWED_USER_IDS does not list it. Set SLACK_ALLOWED_USER_IDS=U01ABCDEFGH in .env.local
+to allow this person, or SLACK_ALLOWED_USER_IDS=* to accept every member of the workspace.
+```
+
+An app with both credentials and no allow-list also says so once at boot. The list is re-read on
+every message, so editing `.env.local` takes effect on the next message rather than on the next
+restart.
+
+Un-addressed channel chatter is *not* logged as a refusal — the allow-list is checked after the
+"is this a thread I am already in" gate, so a bot in a busy channel does not print a line for
+every message anybody types. A logged refusal always means a turn would have started.
+
+Approval buttons are outside the list today: clicking one resumes a session that already exists,
+and eve routes it without consulting either message hook. The buttons only appear in a thread the
+agent was already allowed to answer in, but anyone who can see that thread can click one.
+
+Unlike Telegram and Discord, that is not a limit of the framework — Slack is the one channel
+where eve offers a seam for it, `slackChannel({ onInputResponse })`, which is handed the
+submitting user and returns `{ auth }` to accept or `null` to reject. `agent/channels/slack.ts`
+does not author it yet, so eve's default stands and the response is accepted with the clicker's
+own auth. If your threads have people in them who should not be approving the agent's tool
+calls, that hook is where the same `SLACK_ALLOWED_USER_IDS` check belongs.
+
 ## Installing this into an existing eve project
 
 ```bash
@@ -250,6 +312,7 @@ Vercel Connect flow.
 | Bot ignores mentions in one channel | Not invited there (`/invite @evestack`). |
 | Scope added, still unauthorized | Slack requires a reinstall to widen a grant. |
 | DMs do nothing | App Home messages tab off, or `message.im` / `im:history` missing. |
+| Every event verifies, nothing is ever answered, no error anywhere | `SLACK_ALLOWED_USER_IDS` unset or missing your member id. The agent log names the id it refused. |
 | Approval buttons do nothing | Interactivity request URL not set (step 5). |
 | `Error: SLACK_BOT_TOKEN is required.` | Inbound verification passed, so events arrive — but the reply cannot be posted. Outbound needs the token; inbound needs the secret. They fail independently. |
 
@@ -257,7 +320,9 @@ Vercel Connect flow.
 
 `templates/default/agent/channels/slack.ts` ships two hooks: `onAppMention`, which answers
 `@evestack ...`, and `onMessage`, which handles DMs and continues threads the agent already has
-a session in. Three details are worth reading before you edit it:
+a session in. Both consult `SLACK_ALLOWED_USER_IDS` before dispatching, and both do it *after*
+their own gates so the log only ever carries refusals for messages that would have started a
+turn. Four details are worth reading before you edit it:
 
 - **`onAppMention` is not optional here, even though it only reproduces eve's default.** eve
   resolves an inbound event with `(kind === "app_mention" ? onAppMention : onDirectMessage) ??
@@ -273,6 +338,10 @@ a session in. Three details are worth reading before you edit it:
   duplicate cache is keyed on event id, so it would not catch it. A consequence: inside
   `onMessage`, `ctx.isBotMentioned()` is always false for channel messages. eve's own docs show
   a snippet that gates on it; on the `onMessage` path that branch is unreachable.
+- The allow-list check is the last gate in both hooks, deliberately. Moved to the top of
+  `onMessage` it would log a refusal for every message in every channel the app can see —
+  thousands of lines about chatter that was never going to wake the agent, burying the one
+  refusal that is somebody actually trying to use it.
 
 `ctx.reset()` for a `/new` command, `ctx.cancel()` for debouncing, `threadContext` for injecting
 earlier thread replies, and `onEvent` for things like `team_join` are all documented in eve's

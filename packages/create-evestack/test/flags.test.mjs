@@ -38,6 +38,18 @@ test("a flag that belongs to another command says so", () => {
   assert.match(CREATE_USAGE, /--yes/);
 });
 
+test("--no-open is create's own flag now, not one that lives elsewhere", () => {
+  // It used to be rejected with "that is a flag on `verify and open`", which was
+  // true until the wizard started opening the dashboard itself. The opt-out has
+  // to exist on the command that does the opening, or the only way to decline a
+  // browser window is to not bring the stack up.
+  const parsed = parseCreateArgs(["my-agent", "--no-open"]);
+  assert.ok(!parsed.error, parsed.error ?? "");
+  assert.equal(parsed.noOpen, true);
+  assert.deepEqual(parsed.positional, ["my-agent"]);
+  assert.match(CREATE_USAGE, /--no-open/);
+});
+
 test("a name that starts with a dash is refused, with the way to type it", () => {
   const parsed = parseCreateArgs(["-my-agent"]);
   assert.ok(parsed.error);

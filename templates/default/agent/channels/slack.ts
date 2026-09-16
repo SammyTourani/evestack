@@ -1,4 +1,8 @@
 import { defaultSlackAuth, slackChannel } from "eve/channels/slack";
+// Type-only, and erased by Node's type stripping before the specifier is ever
+// resolved — which is what lets test/channel-access.test.mjs stub this module
+// with nothing but `slackChannel` and `defaultSlackAuth` on it.
+import type { SlackMessage } from "eve/channels/slack";
 
 /**
  * Slack without a Vercel account.
@@ -27,8 +31,32 @@ import { defaultSlackAuth, slackChannel } from "eve/channels/slack";
  * not put Basic auth in front of this path in a reverse proxy: Slack cannot
  * answer a challenge, and you would be trading a signature check for nothing.
  *
+ * ─ The signature authenticates SLACK, not the speaker ─
+ *
+ * Which is the narrower claim, and the reason SLACK_ALLOWED_USER_IDS exists.
+ * The HMAC proves the request came from Slack rather than from someone who
+ * found the tunnel; it says nothing about who typed the message. Before the
+ * allow-list, anybody in the workspace could DM this bot — or reply into a
+ * thread it was already in — and get a turn with bash in a container that runs
+ * as root with no memory, CPU, pid or time limit (see the comment block in
+ * agent/sandbox/sandbox.ts), metered under their own principal, so
+ * @evestack/budget's per-principal daily cap multiplied by the number of people
+ * in the workspace rather than capping it.
+ *
+ * "Everybody here is a colleague" is a weaker boundary than it sounds in a
+ * workspace with guests, Slack Connect channels, or a shared-channel partner —
+ * and it is no boundary at all once a single account is phished.
+ *
+ * Unset now means NOBODY, matching agent/channels/telegram.ts, which carries
+ * the full argument for that default. `SLACK_ALLOWED_USER_IDS=*` restores the
+ * previous "anyone in the workspace" behaviour in one value.
+ *
  * Setup, scope by scope, is in docs/channels/slack.mdx.
  */
+/** The one variable that decides who may start a turn over Slack. Declared
+ *  above the boot notice that reads it, because `const` is not hoisted. */
+const ALLOWED_USER_IDS = "SLACK_ALLOWED_USER_IDS";
+
 const missing = ["SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET"].filter(
   (name) => !process.env[name],
 );
@@ -46,6 +74,26 @@ if (missing.length > 0) {
       `[evestack] slack idle — no ${missing.join("/")} (docs/channels/slack.mdx)`,
     );
   }
+} else if (allowList(ALLOWED_USER_IDS).ids.size === 0) {
+  /*
+   * Only once both credentials are present, which is the state where somebody
+   * is actually trying to use this channel. An empty set is exactly "unset or
+   * blank": `*` is itself an entry, so an open list is never empty and this
+   * cannot fire for somebody who has deliberately opted out.
+   *
+   * Advisory only — the value that DECIDES is re-read per message below.
+   */
+  if (verbose()) {
+    console.warn(
+      `[evestack:slack] ${ALLOWED_USER_IDS} is not set, so this app will verify Slack's ` +
+        "signature and then decline to answer anybody. The signature proves the event came " +
+        `from Slack; it does not say who spoke. Set ${ALLOWED_USER_IDS} to your own Slack user ` +
+        "id (profile → ⋮ → Copy member ID, shaped like U01ABCDEFGH), comma-separated for " +
+        "several, or `*` to accept every member of the workspace. See docs/channels/slack.mdx.",
+    );
+  } else {
+    console.log(`[evestack] slack closed — set ${ALLOWED_USER_IDS} (docs/channels/slack.mdx)`);
+  }
 }
 /** `EVESTACK_VERBOSE=1` turns the one-line boot notice below into the full
  *  explanation. Defined per file on purpose: this module also ships as a
@@ -55,8 +103,65 @@ function verbose(): boolean {
   return Boolean(value) && value !== "0" && value !== "false";
 }
 
+/**
+ * Read a comma-separated id allow-list out of the environment, AT CALL TIME.
+ *
+ * Call time, not module load: eve loads .env / .env.local when the dev server
+ * starts and reloads them when they change, so a `Set` frozen at import is a
+ * snapshot of the environment as it stood before the project's own files were
+ * read — the same reasoning that keeps agent/sandbox/sandbox.ts resolving its
+ * docker options inside a factory, and the bug the sibling Discord file used to
+ * carry. Splitting a short string per inbound message costs nothing against a
+ * model call, and it means editing .env.local takes effect on the next message
+ * rather than on the next restart.
+ *
+ * Duplicated across the three channel files rather than shared, because each of
+ * them also ships as a standalone registry item and lands in projects where no
+ * sibling exists to import. `*` anywhere in the list is the escape hatch.
+ */
+function allowList(variable: string): { readonly open: boolean; readonly ids: ReadonlySet<string> } {
+  const entries = (process.env[variable] ?? "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean);
+  return { open: entries.includes("*"), ids: new Set(entries) };
+}
+
+/**
+ * Whether this Slack user may start a turn, and ONE loud line when they may not.
+ *
+ * Shared by both hooks below so a refusal reads the same wherever it came from,
+ * and so the two paths cannot drift into one being open. A dropped Slack event
+ * is invisible from Slack's side — no error, no ephemeral, nothing in the
+ * thread — so the log line is the only evidence that exists, and it names the
+ * variable and the member id that has to go in it.
+ *
+ * Deliberately not deduplicated per user: suppressing repeats makes the SECOND
+ * attempt silent, and the second attempt is when somebody has just fixed a typo
+ * in the list and is checking whether it took.
+ */
+function permits(message: SlackMessage): boolean {
+  const userId = message.author?.userId;
+  const list = allowList(ALLOWED_USER_IDS);
+  if (userId !== undefined && (list.open || list.ids.has(userId))) return true;
+  console.warn(
+    `[evestack:slack] refused a message from user ${userId ?? "(unknown)"} in channel ` +
+      `${message.channelId}: ${ALLOWED_USER_IDS} does not list it. Set ` +
+      `${ALLOWED_USER_IDS}=${userId ?? "<member id>"} in .env.local to allow this person, or ` +
+      `${ALLOWED_USER_IDS}=* to accept every member of the workspace. ` +
+      "See docs/channels/slack.mdx.",
+  );
+  return false;
+}
+
 
 export default slackChannel({
+  onInputResponse(ctx, submission) {
+    const userId = submission.user.id;
+    const list = allowList(ALLOWED_USER_IDS);
+    if (!userId || (!list.open && !list.ids.has(userId))) return null;
+    return { auth: ctx.defaultAuth };
+  },
   /**
    * The baseline path: `@evestack do a thing` in a channel.
    *
@@ -72,8 +177,17 @@ export default slackChannel({
    *
    * So: mentions dispatch unconditionally here, and `onMessage` is left to mean
    * only "un-addressed chatter", which is the case that actually needs a gate.
+   *
+   * The allow-list applies here too, and that is a choice rather than an
+   * oversight. The finding named the DM branch, but an `@evestack` in a channel
+   * starts exactly the same turn on exactly the same key, so gating one and not
+   * the other would leave an operator who set the variable believing Slack was
+   * closed while the loudest path stayed open. It runs BEFORE `startTyping()`
+   * so a refused person gets no indicator — and no API call is spent on them.
    */
   async onAppMention(ctx, message) {
+    if (!permits(message)) return null;
+
     await ctx.thread.startTyping("Thinking…");
     return { auth: defaultSlackAuth(message, ctx) };
   },
@@ -100,6 +214,13 @@ export default slackChannel({
    * un-addressed chatter, and only a thread this agent is already in should
    * wake it. (`ctx.isBotMentioned()` is consequently always false here, which
    * is worth knowing before you copy the snippet from eve's docs.)
+   *
+   * THE ALLOW-LIST GOES LAST, after the bot check and after `isSubscribed()`,
+   * and the order is the whole reason a refusal is readable. Checked first, it
+   * would log a line for every message anybody typed in any channel the app can
+   * see — thousands of refusals for chatter that was never going to wake the
+   * agent, burying the one refusal that is somebody actually trying to use it.
+   * Last, a logged refusal always means "this would have started a turn".
    */
   async onMessage(ctx, message) {
     if (message.author?.isBot) return null;
@@ -107,6 +228,8 @@ export default slackChannel({
     const isDirectMessage = message.raw.channel_type === "im";
     // Local session lookup, not a Slack API call — cheap enough to gate on.
     if (!isDirectMessage && !(await ctx.isSubscribed())) return null;
+
+    if (!permits(message)) return null;
 
     // Posts before the workflow runtime cold-starts, so the thread shows life
     // during the slowest part of the turn. Failures are swallowed by eve.

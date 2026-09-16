@@ -38,7 +38,7 @@ import { test } from "node:test";
 
 import { installStubPool, uninstallStubPool } from "./stub-pool.mjs";
 
-const { insertSpans, listModelCalls, listToolCalls } = await import(
+const { insertSpans, listModelCalls, listToolCalls, listSpansBySession } = await import(
   new URL("../lib/traces.ts", import.meta.url).href
 );
 
@@ -309,4 +309,20 @@ test("a stored batch is re-resolved after it commits, because the trigger cannot
     [TRACE, OTHER_TRACE],
     "the resolve is scoped to the traces this batch touched, not to the whole table",
   );
+});
+
+test("schema-v4 activation rows expose their resolved session to the trace viewer", async (t) => {
+  installStubPool([[SPAN_READ, [row({
+    name: "invoke_agent example",
+    session_id: null,
+    root_session_id: null,
+    resolved_session_id: SESSION,
+    resolved_turn_id: TURN_RUN,
+    attributes: { "gen_ai.conversation.id": "external-correlation", "agent.turn.id": TURN_RUN },
+  })]]]);
+  t.after(uninstallStubPool);
+  const [span] = await listSpansBySession(SESSION);
+  assert.equal(span.sessionId, SESSION);
+  assert.equal(span.resolvedTurnId, TURN_RUN);
+  assert.notEqual(span.sessionId, span.attributes["gen_ai.conversation.id"]);
 });

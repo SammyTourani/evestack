@@ -462,7 +462,7 @@ export default {
         `SELECT version FROM ${schema}.schema_version WHERE component = 'spans'`,
       );
       t.ok(
-        Number(version[0]?.version) === 4,
+        Number(version[0]?.version) === 5,
         "re-applying the file to a database that predates the migration records the new schema version",
         { actual: version[0]?.version },
       );
@@ -492,7 +492,7 @@ export default {
       await client.query(schemaSql(schema));
       const again = await resolved(client, schema, "a400000000000000");
       const { rows: stillCurrent } = await client.query(
-        `SELECT count(*)::int AS n FROM ${schema}.schema_version WHERE component = 'spans' AND version = 4`,
+        `SELECT count(*)::int AS n FROM ${schema}.schema_version WHERE component = 'spans' AND version = 5`,
       );
       t.ok(
         again.resolved_session_id === "sess_a2" && stillCurrent[0].n === 1,

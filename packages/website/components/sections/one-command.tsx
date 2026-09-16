@@ -25,13 +25,26 @@ export function OneCommand() {
                the stack" are four bits of in-house shorthand in two sentences.
                Same three facts, said the way you would say them to someone
                sitting next to you. */
-            sub="It asks you a few questions, then builds the project and sets up a password for your dashboard. When it finishes it prints the last three commands to run. Turn everything off and back on whenever you like, because your agents carry on from where they stopped."
+            sub="Choose a provider and tools. The CLI creates your project and dashboard credentials, then offers to start the services or prints the remaining commands. Check setup in the dashboard before starting work."
           />
           {/* The three jobs in this line are the three rows in the panel to
               the right, so the abstract claim and the concrete evidence are
               on screen together. Sits above the ports because "what would I
               use this for" is a bigger question than "which ports". */}
-          <p className="mb-8 hidden text-copy-14 text-gray-700 md:block">{terminal.examples}</p>
+          <p className="mb-8 hidden text-copy-14 text-gray-700 md:block">
+            {terminal.examples}
+          </p>
+          <p className="mb-6 text-copy-14 text-gray-900">
+            Requires Node 24+, Docker and a model API key, or a local model with
+            enough memory. Hosted providers and connected services may charge
+            for usage.
+          </p>
+          <a
+            className="mb-6 inline-flex min-h-11 items-center text-copy-14 text-blue-700 underline underline-offset-4"
+            href="/docs/first-task"
+          >
+            Follow the repository brief walkthrough →
+          </a>
           <dl className="grid grid-cols-3 gap-6 font-mono text-mono-13">
             <div className="flex flex-col gap-1">
               <dt className="text-gray-700">agent</dt>
@@ -61,7 +74,9 @@ export function OneCommand() {
                 <span className="h-2.5 w-2.5 rounded-full bg-[#FEBC2E]" />
                 <span className="h-2.5 w-2.5 rounded-full bg-[#28C840]" />
               </span>
-              <span className="ml-2 font-mono text-mono-13 text-gray-700">evestack</span>
+              <span className="ml-2 font-mono text-mono-13 text-gray-700">
+                evestack
+              </span>
             </figcaption>
             {/* Every line is a clipping wrapper plus a caret, so the whole
                 terminal can be typed out rather than faded in line by line.
@@ -94,7 +109,12 @@ export function OneCommand() {
                 <span data-term-caret aria-hidden className="terminal-cursor" />
               </p>
               {terminal.lines.map((line) => (
-                <p key={line.text} data-terminal-line data-kind={line.kind} className="text-gray-900">
+                <p
+                  key={line.text}
+                  data-terminal-line
+                  data-kind={line.kind}
+                  className="text-gray-900"
+                >
                   <span data-term-text className="whitespace-pre">
                     {line.kind === "cmd" ? (
                       <>
@@ -103,16 +123,15 @@ export function OneCommand() {
                         </span>
                         <span className="text-gray-1000">{line.text}</span>
                       </>
-                    ) : line.kind === "dim" ? (
-                      <span className="text-gray-700">{line.text}</span>
                     ) : (
-                      <>
-                        <span className="text-ok">✓ </span>
-                        {line.text}
-                      </>
+                      <span className="text-gray-700">{line.text}</span>
                     )}
                   </span>
-                  <span data-term-caret aria-hidden className="terminal-cursor" />
+                  <span
+                    data-term-caret
+                    aria-hidden
+                    className="terminal-cursor"
+                  />
                 </p>
               ))}
             </div>
@@ -121,6 +140,9 @@ export function OneCommand() {
           {/* what the command buys you: a live, interactive dashboard */}
           <div data-terminal-result>
             <DashboardDemo />
+            <p className="mt-2 text-copy-14 text-gray-700">
+              Interactive illustration with example tasks and estimates.
+            </p>
           </div>
         </div>
       </div>

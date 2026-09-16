@@ -70,24 +70,44 @@ jobs:
           --health-interval 3s
           --health-timeout 3s
           --health-retries 20
+    # `OPENAI_API_KEY` is deliberately NOT here. It is scoped to the two steps
+    # that need it, for the reason spelled out at length on the same block in
+    # evals.yml — and this workflow is the sharper case of it. `run_arm` below
+    # builds a sabotaged copy of the template with a REWRITTEN provider range
+    # and installs it with `--no-frozen-lockfile`, twice, at ranges supplied as
+    # workflow inputs. That is, by construction, "resolve whatever the registry
+    # serves for `^2.0.0` today and execute it" — the exact shape a scoped
+    # secret is for. Job-level env would have handed the key to every
+    # postinstall script in both arms, plus the install, the build and the
+    # bootstrap, none of which talk to a provider at all.
     env:
       WORKFLOW_POSTGRES_URL: postgres://evestack:evestack@localhost:5433/evestack
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       # Both arms, so the model is held still alongside eve while only the
       # provider moves. Vacuity is the dominant failure here — the eval needs
       # the model to actually call the gated tool, and with two arms per run the
       # odds of at least one refusing are high on a weaker model.
       EVESTACK_MODEL: ${{ inputs.model }}
+      OLD_VERSION: ${{ inputs.old }}
+      NEW_VERSION: ${{ inputs.new }}
       TZ: America/New_York
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      # SHA-pinned and de-credentialed; ci.yml's first checkout has the long
+      # version of why.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
 
+      # Gets the key only to ask whether it exists, because the `secrets`
+      # context is not available in a step's `if:` and so the test cannot be
+      # written as a condition. Nothing else runs in this step.
       - name: a provider key is required
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           if [ -z "$OPENAI_API_KEY" ]; then
             echo "::error::this workflow drives a real model and cannot run without OPENAI_API_KEY"
@@ -101,6 +121,12 @@ jobs:
 
       - name: run the deny eval under each provider version
         id: bisect
+        # The one step that has to hold the key: both arms drive a real model,
+        # and an arm that cannot reach the provider is an arm that reports
+        # `vacuous` for a reason having nothing to do with the provider — which
+        # is precisely the confusion this workflow exists to remove.
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           # Both arms remove the middleware. That is the point: with the fix
           # absent, the eval reports whether the underlying bug is present.
@@ -172,8 +198,8 @@ jobs:
             fi
           }
 
-          OLD_RESULT="$(run_arm old '${{ inputs.old }}' 2996)"
-          NEW_RESULT="$(run_arm new '${{ inputs.new }}' 2995)"
+          OLD_RESULT="$(run_arm old "$OLD_VERSION" 2996)"
+          NEW_RESULT="$(run_arm new "$NEW_VERSION" 2995)"
 
           echo "old=$OLD_RESULT" >> "$GITHUB_OUTPUT"
           echo "new=$NEW_RESULT" >> "$GITHUB_OUTPUT"
@@ -185,8 +211,8 @@ jobs:
             echo
             echo "| @ai-sdk/openai | deny eval |"
             echo "|---|---|"
-            echo "| \`${{ inputs.old }}\` | $OLD_RESULT |"
-            echo "| \`${{ inputs.new }}\` | $NEW_RESULT |"
+            echo "| \`${OLD_VERSION}\` | $OLD_RESULT |"
+            echo "| \`${NEW_VERSION}\` | $NEW_RESULT |"
             echo
             if [ "$OLD_RESULT" = "vacuous" ] || [ "$NEW_RESULT" = "vacuous" ]; then
               echo "**Inconclusive — a vacuous arm.** The model answered in prose and never"
@@ -194,7 +220,7 @@ jobs:
               echo "evidence either way. Re-run; this happens roughly one run in four."
             elif [ "$OLD_RESULT" = "reproduced" ] && [ "$NEW_RESULT" = "survived" ]; then
               echo "**The provider fixed it.** eve still emits the shape that broke"
-              echo "\`${{ inputs.old }}\`; upgrading the provider is what makes the session survive."
+              echo "\`${OLD_VERSION}\`; upgrading the provider is what makes the session survive."
               echo "vercel/eve#1658 is still a real bug for anyone on the older provider."
             elif [ "$OLD_RESULT" = "survived" ] && [ "$NEW_RESULT" = "survived" ]; then
               echo "**Not the provider.** The bug does not reproduce on either version, so"

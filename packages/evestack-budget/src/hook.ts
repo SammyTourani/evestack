@@ -1,12 +1,25 @@
 import { defineHook } from "eve/hooks";
 import type { HookContext, HookDefinition } from "eve/hooks";
 import { cancelTurn } from "./cancel.js";
-import { dayKey, isUncapped, resolveConfig, type BudgetConfig, type BudgetOptions } from "./config.js";
-import { costUsd, formatUsd, isPriced } from "./pricing.js";
+import { runtimeBudgetConfig } from "./runtime-settings.js";
+import {
+  dayKey,
+  isUncapped,
+  resolveConfig,
+  type BudgetConfig,
+  type BudgetOptions,
+} from "./config.js";
+// Never `./pricing.js` directly. That module is a build-time copy of the
+// dashboard's table and reads EVESTACK_PRICING with no shape check; importing
+// the checked wrapper is what keeps a half-written override from pricing every
+// step as NaN and poisoning the stored totals. See checked-pricing.ts.
+import { costUsd, formatUsd, isPriced } from "./checked-pricing.js";
 import {
   clearStop,
   ensureSchema,
   principalDayKey,
+  readStop,
+  readTotals,
   recordBudgetEvent,
   recordStep,
   recordStop,
@@ -69,11 +82,75 @@ export interface BudgetVerdict {
  * cannot. The daily cap still shows up on the next turn, because it does not
  * reset when the session does. That is the entire point of it.
  */
+/**
+ * A stored total that is not a number, which no comparison can be made against.
+ *
+ * `NaN >= 2` is false, so a poisoned `cost_usd` column did not read as "over
+ * the cap" — it read as "under it", forever. That is how the NaN this package
+ * used to compute from a half-written `EVESTACK_PRICING` override survived the
+ * override being corrected: the bad number is in Postgres now, `cost + NaN` is
+ * NaN on every subsequent step, and both the session and the principal-day
+ * counters stayed silently unenforceable for the rest of the day.
+ *
+ * checked-pricing.ts stops this package producing such a number in the first
+ * place and store.ts refuses to write one. This is the third lock, and the only
+ * one that helps an install that already has a poisoned row: an unusable total
+ * fails CLOSED, with a message that says which table to look at, rather than
+ * quietly granting unlimited spend.
+ *
+ * It cannot break a working install, which is why it has no escape hatch — a
+ * total that is a real number takes none of these branches, and there is no
+ * deployment in which NaN or Infinity is the true amount of money spent.
+ */
+function unusableTotal(scope: BudgetScope, spentUsd: number): BudgetVerdict {
+  const key = scope === "session" ? "the session's" : "this user's";
+  return {
+    exceeded: true,
+    scope,
+    limitUsd: 0,
+    spentUsd: 0,
+    reason:
+      `Stopped because ${key} recorded spend is ${String(spentUsd)}, which cannot be compared ` +
+      `against a cap. A non-finite cost was written into evestack.budget_usage — historically by ` +
+      `an EVESTACK_PRICING override missing its "output" rate — and it poisons every later total ` +
+      `it is added to. Fix the override, then reset the row: ` +
+      // The predicate is `= 'NaN'::numeric`, and it has to be, because the
+      // JavaScript idiom for the same question is a no-op in Postgres. `x <> x`
+      // — which is how you find NaN in almost every other language, and what
+      // this message used to print as `NOT (cost_usd = cost_usd)` — matches
+      // nothing here: Postgres deliberately departs from IEEE 754 and treats
+      // NaN as EQUAL to NaN, and as greater than every non-NaN value, so that
+      // numerics can be sorted and indexed. Printing the JavaScript idiom would
+      // have handed an already-stuck operator a statement that reports
+      // "UPDATE 0" and leaves the row exactly as poisoned as it found it, which
+      // is a worse failure than saying nothing. Only NaN is listed because only
+      // NaN can be in the column: `numeric(16, 8)` has a declared scale, and
+      // Postgres refuses an infinity into one (`numeric field overflow`), so
+      // ±Infinity never became durable even before recordStep started refusing
+      // it.
+      `UPDATE evestack.budget_usage SET cost_usd = 0 WHERE cost_usd = 'NaN'::numeric.`,
+  };
+}
+
 export function evaluate(
   config: BudgetConfig,
   totals: { readonly session: SpendTotals; readonly principalDay: SpendTotals },
 ): BudgetVerdict {
-  if (config.sessionUsd !== false && totals.session.costUsd >= config.sessionUsd) {
+  // Ahead of both comparisons, in the same session-before-daily order and for
+  // the same reason: the scope a user can act on is the one worth naming first.
+  if (config.sessionUsd !== false && !Number.isFinite(totals.session.costUsd)) {
+    return unusableTotal("session", totals.session.costUsd);
+  }
+  if (
+    config.dailyUsd !== false &&
+    !Number.isFinite(totals.principalDay.costUsd)
+  ) {
+    return unusableTotal("principal-day", totals.principalDay.costUsd);
+  }
+  if (
+    config.sessionUsd !== false &&
+    totals.session.costUsd >= config.sessionUsd
+  ) {
     return {
       exceeded: true,
       scope: "session",
@@ -81,7 +158,10 @@ export function evaluate(
       spentUsd: totals.session.costUsd,
     };
   }
-  if (config.dailyUsd !== false && totals.principalDay.costUsd >= config.dailyUsd) {
+  if (
+    config.dailyUsd !== false &&
+    totals.principalDay.costUsd >= config.dailyUsd
+  ) {
     return {
       exceeded: true,
       scope: "principal-day",
@@ -119,7 +199,10 @@ export class BudgetExceededError extends Error {
 
 function describe(verdict: BudgetVerdict): string {
   if (verdict.reason) return verdict.reason;
-  const scope = verdict.scope === "session" ? "session budget" : "daily budget for this user";
+  const scope =
+    verdict.scope === "session"
+      ? "session budget"
+      : "daily budget for this user";
   return (
     `Stopped by the evestack ${scope}: ${formatUsd(verdict.spentUsd ?? 0)} spent against a ` +
     `${formatUsd(verdict.limitUsd ?? 0)} cap. Raise EVESTACK_BUDGET_${
@@ -129,6 +212,72 @@ function describe(verdict: BudgetVerdict): string {
 }
 
 /**
+ * Turns a stop row read at the START of a turn into a decision, or into nothing.
+ *
+ * Split out from the handler because the handler cannot be exercised without a
+ * live session and a Postgres to read the stop from, and this is the part worth
+ * pinning: which configurations let an already-stopped session buy another model
+ * call. `observe` still buys one, deliberately — "record spend, stop nothing" is
+ * the whole contract of that mode and a preflight that failed turns under it
+ * would make measuring-before-enforcing impossible.
+ *
+ * The extra sentence is not decoration. The `step.completed` path's message ends
+ * with "raise the cap or wait for the window", which reads as advice about a
+ * turn that already ran; at the boundary nothing ran, and a user who sends three
+ * messages and gets three identical errors needs to be told that explicitly or
+ * they will keep sending them.
+ *
+ * `live` is the verdict from the totals and caps AS THEY ARE NOW, and leaving it
+ * out is what the first version of this function did — which made the message
+ * above a lie, because it advised raising the cap and then ignored the raise.
+ * A stop row records that a cap was blown once; it does not expire when the cap
+ * moves, `recordStop` never rewrites its `limit_usd` on conflict, and the only
+ * `DELETE` that lifts one lives in `step.completed`. So a preflight that blocks
+ * on the row's mere existence blocks on it forever: raising
+ * EVESTACK_BUDGET_SESSION_USD could no longer heal the session, because no step
+ * could complete to notice, and raising EVESTACK_BUDGET_DAILY_USD could not heal
+ * the principal until the day key rolled over. That is not a softer version of
+ * the documented "a cap raised under a session that already hit the old one
+ * heals on the next step" — it is the opposite of it, and it bricks the session
+ * for the 30 days the stop sweep keeps the row.
+ *
+ * So the stop is a reason to LOOK, and `live` is the answer. Under budget now
+ * means the stop is stale and the turn runs (the caller lifts the row, so the
+ * tool guard stops shadowing too). Over budget now means the turn never reaches
+ * a model, which is the whole point of the preflight. `live` is optional so that
+ * a caller with no totals to hand — and every test that only cares which
+ * configurations preflight at all — gets the plain "a live stop stops the turn"
+ * reading rather than a silent pass.
+ */
+export function preflightVerdict(
+  config: BudgetConfig,
+  stop: { readonly scope: BudgetScope; readonly reason: string } | null,
+  live?: BudgetVerdict,
+): BudgetVerdict | null {
+  if (!stop) return null;
+  if (!config.preflight) return null;
+  if (config.mode === "observe") return null;
+  if (live !== undefined && !live.exceeded) return null;
+  return {
+    exceeded: true,
+    scope: stop.scope,
+    reason: `${stop.reason} This turn was stopped before it called the model, so it cost nothing.`,
+  };
+}
+
+/**
+ * Sessions whose preflight block has already been recorded, bounded like the
+ * two sets above.
+ *
+ * Enforcement never consults this — every turn that starts against a live stop
+ * is failed, every time. It only keeps the `budget_events` row and the log line
+ * to one per stop episode. A client that retries a rejected message in a loop
+ * would otherwise write an unbounded number of rows into the one table this
+ * package deliberately never sweeps, for no information beyond the first.
+ */
+const preflightBlocked = new Set<string>();
+
+/**
  * Builds the hook to default-export from `agent/hooks/budget.ts`.
  *
  * Options override environment variables, and the environment supplies a
@@ -136,11 +285,12 @@ function describe(verdict: BudgetVerdict): string {
  * complete configuration.
  */
 export function budgetHook(options: BudgetOptions = {}): HookDefinition {
-  const config = resolveConfig(options);
+  const baseConfig = resolveConfig(options);
 
   return defineHook({
     events: {
       async "session.started"(_event, ctx) {
+        const config = await runtimeBudgetConfig(baseConfig);
         if (isUncapped(config)) return;
         // Nothing to record yet — this is here so the first turn does not pay
         // for CREATE TABLE IF NOT EXISTS inside the step that has to decide
@@ -148,6 +298,7 @@ export function budgetHook(options: BudgetOptions = {}): HookDefinition {
         // of a session rather than in the middle of one.
         stopped.delete(ctx.session.id);
         knownUnderBudget.delete(ctx.session.id);
+        preflightBlocked.delete(ctx.session.id);
         try {
           await ensureSchema(config);
         } catch (error) {
@@ -160,7 +311,191 @@ export function budgetHook(options: BudgetOptions = {}): HookDefinition {
         }
       },
 
+      /**
+       * Enforcement BEFORE the model call, which is the only place the aggregate
+       * can be held.
+       *
+       * `step.completed` is where spend is measured, and it necessarily fires
+       * after the call it is measuring has been billed. That is a fine place to
+       * decide that a turn has gone too far; it is a useless place to decide that
+       * a turn should never have started. Until this handler existed, nothing
+       * read the durable stop table at the start of anything — `stopped` is a
+       * process-local flag cleared on `turn.cancelled` and `turn.failed` so the
+       * NEXT turn can stop again, and `session.started` only created tables. So a
+       * session that had already blown its cap answered every new message with
+       * one complete uncapped model call before failing the turn again. Ten
+       * follow-up messages were ten billed calls against a budget that was
+       * already gone, and the aggregate grew without limit while every single
+       * turn behaved exactly as documented.
+       *
+       * The stop this reads is written by `step.completed` and is durable, so
+       * this also survives a restart — the old in-memory flag did not.
+       *
+       * The stop row is a reason to look, NOT the decision. It records that a cap
+       * was blown once; nothing rewrites it when the cap moves — `recordStop`
+       * keeps the first `limit_usd` on conflict — and the only DELETE that lifts
+       * one runs in `step.completed`. So blocking on its bare existence would
+       * have made "raise the cap and it heals on the next step", which this
+       * package documents and which `clearStop` exists to deliver, unreachable:
+       * no step can complete to notice the raise if the turn dies before the
+       * first one. That is why the totals are re-read and re-evaluated against
+       * the CURRENT caps here, and why a stale stop is lifted rather than
+       * honoured. The cost is one extra primary-key lookup, and only on a turn
+       * that is already stopped.
+       *
+       * Throwing is not a stylistic choice. A hook is observe-only: it cannot
+       * deny a turn, and the cancel route cannot help here because cancellation
+       * is cooperative and the turn has not yet reached a point where it is
+       * checked. A throw is the one lever. eve 0.54 wraps a throw from
+       * `turn.started` in `BoundaryHookError` (`context/hook-lifecycle.js`),
+       * which `harness/tool-loop.js` turns into `step.failed` + `turn.failed`
+       * carrying this message, then `session.waiting`, with `next: null` — the
+       * turn is parked before any model call, and the session stays resumable.
+       * Read out of `templates/default/node_modules/eve` at 0.54.3. Two limits on
+       * that, both read in the same build: the parking is gated on
+       * `mode === "conversation"`, so a `task`-mode run rethrows and the error
+       * reaches the workflow driver instead (no worse than `mode: fail`, which
+       * has always thrown from `step.completed` where nothing wraps it at all);
+       * and older builds in the peer range have no `BoundaryHookError` wrapper,
+       * which is what `EVESTACK_BUDGET_PREFLIGHT=0` is for.
+       *
+       * The honest cost: eve emits `turn.started` before `message.received`, and
+       * the boundary-failure path persists the session history from before the
+       * user's message was appended. So a message rejected here does not land in
+       * the transcript. That is the trade — a message that is not in the history
+       * against a model call that is on the invoice — and it is the same trade
+       * eve itself makes for any failing `turn.started` handler.
+       */
+      async "turn.started"(event, ctx) {
+        const config = await runtimeBudgetConfig(baseConfig);
+        if (isUncapped(config)) return;
+        if (!config.preflight) return;
+        // Cheapest possible exit for the mode that is defined as stopping
+        // nothing, taken before the query rather than after it: `observe` exists
+        // to measure without enforcing, and a per-turn round trip to Postgres to
+        // decide to do nothing is a cost that mode should not pay.
+        if (config.mode === "observe") return;
+
+        const principalId = principalOf(ctx);
+
+        let day: string;
+        let stop;
+        let totals;
+        try {
+          // `dayKey` inside the try for the reason `step.completed` gives below:
+          // it hands a configured string to `Intl`, and an escaped `RangeError`
+          // here would be indistinguishable from the budget stopping the turn.
+          day = dayKey(config);
+          stop = await readStop(config, {
+            sessionId: ctx.session.id,
+            principalId,
+            day,
+          });
+          // The totals only when there is a stop to test them against, which is
+          // why they are not read unconditionally: the overwhelmingly common
+          // turn has no stop row, and it must keep costing exactly one
+          // primary-key lookup. A turn that IS stopped can afford a second one —
+          // it is about to be refused, and the alternative is refusing it on a
+          // cap that was raised an hour ago.
+          totals =
+            stop || config.dashboardControls
+              ? await readTotals(config, {
+                  sessionId: ctx.session.id,
+                  principalId,
+                  day,
+                })
+              : null;
+        } catch (error) {
+          // Same posture as every other store failure in this package, and it
+          // matters more here than anywhere: this runs on the first event of
+          // every turn, so failing closed by default would turn a Postgres blip
+          // into an agent that cannot answer at all.
+          console.error(
+            `[evestack:budget] preflight could not read the stop state or the totals, the turn runs unchecked: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+          if (config.failClosed) throw error;
+          return;
+        }
+
+        if (!totals) return;
+
+        /**
+         * The same two-branch decision `step.completed` makes, against the same
+         * caps, so the boundary cannot refuse a turn the step would have allowed.
+         *
+         * The unpriced branch is not duplication for its own sake. Without it,
+         * an `EVESTACK_BUDGET_UNPRICED=stop` install would heal its own stop on
+         * every single message — the totals are $0.00, so `evaluate` says "under
+         * budget", the row is lifted, one full model call runs, and
+         * `step.completed` writes the stop straight back. That is the exact
+         * billed-call-per-message hole this handler exists to close, reappearing
+         * through the one configuration that stops on something other than a
+         * number.
+         */
+        const live: BudgetVerdict =
+          config.unpricedModel === "stop" && !isPriced(config.model)
+            ? { exceeded: true, scope: "session" }
+            : evaluate(config, totals);
+
+        const effectiveStop =
+          stop ??
+          (config.dashboardControls && live.exceeded
+            ? {
+                scope: live.scope ?? "session",
+                reason:
+                  live.reason ??
+                  "The configured spend limit or pricing requirement prevents this turn.",
+              }
+            : null);
+        const verdict = preflightVerdict(config, effectiveStop, live);
+        if (!verdict) {
+          // The cap moved, or the row was reset, and this stop is a leftover.
+          // Lifting it HERE rather than leaving it to the coming
+          // `step.completed` is what makes the raise take effect on this turn
+          // instead of the next one: `guard.ts` reads the same row before every
+          // model call, so a stop left in place would run the healing turn with
+          // its tools still shadowed by refusals. The DELETE re-checks the
+          // totals inside its own statement, so it cannot lift a stop another
+          // session has just written — see clearStop in store.ts.
+          preflightBlocked.delete(ctx.session.id);
+          await clearStop(config, {
+            sessionId: ctx.session.id,
+            principalId,
+            day,
+            sessionUsd: config.sessionUsd,
+            dailyUsd: config.dailyUsd,
+          }).catch(() => undefined);
+          return;
+        }
+
+        const message = describe(verdict);
+
+        if (!preflightBlocked.has(ctx.session.id)) {
+          remember(preflightBlocked, ctx.session.id);
+          await recordBudgetEvent(config, {
+            sessionId: ctx.session.id,
+            turnId: event.data.turnId,
+            principalId,
+            scope: verdict.scope ?? "session",
+            limitUsd: 0,
+            spentUsd: 0,
+            // Distinct from `turn-failed` on purpose. Both stop a turn, but that
+            // one names a turn whose model call had already been paid for and
+            // this one names a turn that never made one, and a dashboard that
+            // cannot tell them apart cannot show that the preflight is working.
+            action: "preflight-blocked",
+            detail: { model: config.model, scope: verdict.scope ?? "session" },
+          }).catch(() => undefined);
+          console.warn(`[evestack:budget] ${message}`);
+        }
+
+        throw new BudgetExceededError(message);
+      },
+
       async "step.completed"(event, ctx) {
+        const config = await runtimeBudgetConfig(baseConfig);
         if (isUncapped(config)) return;
 
         const usage = event.data.usage;
@@ -223,7 +558,13 @@ export function budgetHook(options: BudgetOptions = {}): HookDefinition {
         // live it beats our table, and it is one `??` to be ready for it.
         const cost =
           usage.costUsd ??
-          costUsd(config.model, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens);
+          costUsd(
+            config.model,
+            inputTokens,
+            outputTokens,
+            cacheReadTokens,
+            cacheWriteTokens,
+          );
 
         const principalId = principalOf(ctx);
 
@@ -285,9 +626,24 @@ export function budgetHook(options: BudgetOptions = {}): HookDefinition {
           // step: the common case is a session that was never stopped.
           if (!knownUnderBudget.has(ctx.session.id)) {
             remember(knownUnderBudget, ctx.session.id);
-            await clearStop(config, { sessionId: ctx.session.id, principalId, day }).catch(
-              () => undefined,
-            );
+            preflightBlocked.delete(ctx.session.id);
+            // The caps travel with the delete, and that is the fix for a race
+            // this used to lose. Two sessions belonging to one principal share
+            // the principal-day row. Session A's `recordStep` returned a day
+            // total under the cap; session B's next step pushed the shared total
+            // over it and wrote the principal-day stop; A then reached this line
+            // and deleted that stop unconditionally — removing, moments after it
+            // was written, the exact row the guard exists to honour, on the word
+            // of a total that was already stale when A read it. `clearStop` now
+            // re-reads the stored totals inside the same statement, so the delete
+            // only fires against numbers that are current at delete time.
+            await clearStop(config, {
+              sessionId: ctx.session.id,
+              principalId,
+              day,
+              sessionUsd: config.sessionUsd,
+              dailyUsd: config.dailyUsd,
+            }).catch(() => undefined);
           }
           return;
         }
@@ -335,7 +691,11 @@ export function budgetHook(options: BudgetOptions = {}): HookDefinition {
             limitUsd: verdict.limitUsd ?? 0,
             spentUsd: verdict.spentUsd ?? 0,
             action: "turn-failed",
-            detail: { model: config.model, stepIndex: event.data.stepIndex, day },
+            detail: {
+              model: config.model,
+              stepIndex: event.data.stepIndex,
+              day,
+            },
           }).catch(() => undefined);
           console.warn(`[evestack:budget] ${message}`);
           // eve treats a thrown hook as a real failure and surfaces it as

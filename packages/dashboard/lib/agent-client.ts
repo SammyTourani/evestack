@@ -7,8 +7,7 @@
  * know what HTTP status to return — and because the agent's wire contract is
  * worth stating once in types instead of being re-derived in five route files.
  *
- * Routes below were read out of eve 0.29.5 rather than guessed;
- * `templates/default/node_modules/eve/dist/src/protocol/routes.js` declares:
+ * Eve 0.54 addresses commands by durable session ID:
  *
  *   POST /eve/v1/session                      create a session, 202
  *   POST /eve/v1/session/:sessionId           follow-up message and/or HITL answers, 200
@@ -18,6 +17,8 @@
  * There is no approve/deny route. HITL answers ride the follow-up route as
  * `inputResponses`; see `answerInput` below.
  */
+
+import { resolvedInputIds } from "./input-resolutions";
 
 const DEFAULT_AGENT_URL = "http://127.0.0.1:2000";
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -104,17 +105,29 @@ export class AgentError extends Error {
     message: string,
     options: { status: number; upstreamStatus?: number; cause?: unknown },
   ) {
-    super(message, options.cause === undefined ? undefined : { cause: options.cause });
+    super(
+      message,
+      options.cause === undefined ? undefined : { cause: options.cause },
+    );
     this.name = "AgentError";
     this.code = code;
     this.status = options.status;
-    if (options.upstreamStatus !== undefined) this.upstreamStatus = options.upstreamStatus;
+    if (options.upstreamStatus !== undefined)
+      this.upstreamStatus = options.upstreamStatus;
   }
 
   toResponse(): Response {
-    const body: Record<string, unknown> = { ok: false, error: this.message, code: this.code };
-    if (this.upstreamStatus !== undefined) body.upstreamStatus = this.upstreamStatus;
-    return Response.json(body, { status: this.status, headers: { "cache-control": "no-store" } });
+    const body: Record<string, unknown> = {
+      ok: false,
+      error: this.message,
+      code: this.code,
+    };
+    if (this.upstreamStatus !== undefined)
+      body.upstreamStatus = this.upstreamStatus;
+    return Response.json(body, {
+      status: this.status,
+      headers: { "cache-control": "no-store" },
+    });
   }
 }
 
@@ -154,7 +167,10 @@ function codeForUpstream(upstream: number): AgentErrorCode {
  * before, and it stays exactly as configured.
  */
 export function agentUrlForHumans(): string {
-  return agentBaseUrl().replace(/\/\/(host\.docker\.internal|0\.0\.0\.0)(?=[:/]|$)/, "//localhost");
+  return agentBaseUrl().replace(
+    /\/\/(host\.docker\.internal|0\.0\.0\.0)(?=[:/]|$)/,
+    "//localhost",
+  );
 }
 
 export function agentBaseUrl(): string {
@@ -183,11 +199,23 @@ export interface AgentFetchOptions {
   signal?: AbortSignal;
 }
 
-export async function agentFetch(path: string, options: AgentFetchOptions = {}): Promise<Response> {
-  const { method = "GET", body, headers = {}, timeoutMs = DEFAULT_TIMEOUT_MS, signal } = options;
+export async function agentFetch(
+  path: string,
+  options: AgentFetchOptions = {},
+): Promise<Response> {
+  const {
+    method = "GET",
+    body,
+    headers = {},
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+    signal,
+  } = options;
   const url = `${agentBaseUrl()}${path}`;
 
-  const requestHeaders: Record<string, string> = { accept: "application/json", ...headers };
+  const requestHeaders: Record<string, string> = {
+    accept: "application/json",
+    ...headers,
+  };
   const auth = authHeader();
   if (auth) requestHeaders.authorization = auth;
   if (body !== undefined) requestHeaders["content-type"] = "application/json";
@@ -209,10 +237,14 @@ export async function agentFetch(path: string, options: AgentFetchOptions = {}):
   } catch (cause) {
     if (signal?.aborted) throw cause;
     if (cause instanceof DOMException && cause.name === "TimeoutError") {
-      throw new AgentError("agent_timeout", `The agent at ${agentBaseUrl()} did not respond in time.`, {
-        status: 504,
-        cause,
-      });
+      throw new AgentError(
+        "agent_timeout",
+        `The agent at ${agentBaseUrl()} did not respond in time.`,
+        {
+          status: 504,
+          cause,
+        },
+      );
     }
     // `npm run dev`, not `pnpm exec eve dev --no-ui`. A scaffolded project is an
     // npm project with that script defined, and this string is shown at the one
@@ -230,7 +262,10 @@ export async function agentFetch(path: string, options: AgentFetchOptions = {}):
   }
 }
 
-async function agentJson<T>(path: string, options: AgentFetchOptions): Promise<T> {
+async function agentJson<T>(
+  path: string,
+  options: AgentFetchOptions,
+): Promise<T> {
   const response = await agentFetch(path, options);
   const text = await response.text();
 
@@ -239,18 +274,24 @@ async function agentJson<T>(path: string, options: AgentFetchOptions): Promise<T
     parsed = text.length === 0 ? {} : JSON.parse(text);
   } catch (cause) {
     if (response.ok) {
-      throw new AgentError("invalid_response", "The agent returned a non-JSON response.", {
-        status: 502,
-        upstreamStatus: response.status,
-        cause,
-      });
+      throw new AgentError(
+        "invalid_response",
+        "The agent returned a non-JSON response.",
+        {
+          status: 502,
+          upstreamStatus: response.status,
+          cause,
+        },
+      );
     }
     parsed = {};
   }
 
   if (!response.ok) {
     const message =
-      (typeof parsed === "object" && parsed !== null && typeof (parsed as { error?: unknown }).error === "string"
+      (typeof parsed === "object" &&
+      parsed !== null &&
+      typeof (parsed as { error?: unknown }).error === "string"
         ? (parsed as { error: string }).error
         : undefined) ?? `The agent returned ${response.status}.`;
     throw new AgentError(codeForUpstream(response.status), message, {
@@ -280,52 +321,46 @@ export interface CreateSessionInput {
 
 export interface CreateSessionResult {
   sessionId: string;
-  /**
-   * NULL FROM eve 0.31 ONWARD, and that is not a degradation.
-   *
-   * 0.30.x minted a continuation token in the create response. 0.31.3 answers
-   * `{ok, sessionId, status}` and publishes the token on the `session.waiting`
-   * stream event instead — which is where it becomes meaningful, since a session
-   * that has not parked has nothing to continue from. Verified against a running
-   * 0.31.3: the event still carries `data.continuationToken`, unchanged.
-   *
-   * Requiring it here rejected every session created against 0.31.3 with
-   * "The agent accepted the session but returned no handles" — a 502 on the
-   * dashboard's only way to start a conversation. Contracts did not see it
-   * (they pin routes and module exports, not response bodies) and neither did
-   * typecheck (this is JSON parsed at runtime). Only seam/chat-stream and
-   * seam/chat-mutations, driving a live agent, did.
-   */
+  /** Legacy response metadata; current commands use sessionId directly. */
   continuationToken: string | null;
 }
 
-export async function createSession(input: CreateSessionInput): Promise<CreateSessionResult> {
+export async function createSession(
+  input: CreateSessionInput,
+): Promise<CreateSessionResult> {
   const body: Record<string, unknown> = { message: input.message };
   if (input.mode !== undefined) body.mode = input.mode;
-  if (input.clientContext !== undefined) body.clientContext = input.clientContext;
+  if (input.clientContext !== undefined)
+    body.clientContext = input.clientContext;
 
-  const result = await agentJson<{ sessionId?: string; continuationToken?: string }>("/eve/v1/session", {
+  const result = await agentJson<{
+    sessionId?: string;
+    continuationToken?: string;
+  }>("/eve/v1/session", {
     method: "POST",
     body,
     ...(input.signal ? { signal: input.signal } : {}),
   });
 
-  // The SESSION ID is the handle. The token is not required, and demanding it
-  // is what broke against 0.31.3 — see CreateSessionResult above. Every caller
-  // that needs a token already resolves one from the durable stream: the
-  // follow-up route does it whenever `continuationToken` is omitted, and the
-  // fork route polls `getSessionSnapshot` for a token that is not the one it
-  // already spent. Neither has ever depended on this field.
+  // A successful create must identify the durable session.
   if (!result.sessionId) {
-    throw new AgentError("invalid_response", "The agent accepted the session but named no session.", {
-      status: 502,
-    });
+    throw new AgentError(
+      "invalid_response",
+      "The agent accepted the session but named no session.",
+      {
+        status: 502,
+      },
+    );
   }
-  return { sessionId: result.sessionId, continuationToken: result.continuationToken ?? null };
+  return {
+    sessionId: result.sessionId,
+    continuationToken: result.continuationToken ?? null,
+  };
 }
 
 export interface ContinueSessionInput {
-  continuationToken: string;
+  /** Legacy caller compatibility only. Eve 0.54 rejects this field on the wire. */
+  continuationToken?: string;
   message?: UserMessage;
   inputResponses?: readonly InputResponse[];
   clientContext?: unknown;
@@ -334,22 +369,30 @@ export interface ContinueSessionInput {
 
 /**
  * Follow-up turn. eve requires a non-empty `message`, a non-empty
- * `inputResponses`, or both; sending neither is a 400 from the agent.
+ * `inputResponses`, exclusively. The session ID supplies the address.
  */
 export async function continueSession(
   sessionId: string,
   input: ContinueSessionInput,
 ): Promise<{ sessionId: string }> {
-  const body: Record<string, unknown> = { continuationToken: input.continuationToken };
+  if (input.message !== undefined && input.inputResponses !== undefined) {
+    throw new AgentError("bad_request", "Send a follow-up message separately from an input decision.", { status: 400 });
+  }
+  const body: Record<string, unknown> = {};
   if (input.message !== undefined) body.message = input.message;
-  if (input.inputResponses !== undefined) body.inputResponses = input.inputResponses;
-  if (input.clientContext !== undefined) body.clientContext = input.clientContext;
+  if (input.inputResponses !== undefined)
+    body.inputResponses = input.inputResponses;
+  if (input.clientContext !== undefined)
+    body.clientContext = input.clientContext;
 
-  const result = await agentJson<{ sessionId?: string }>(sessionPath(sessionId), {
-    method: "POST",
-    body,
-    ...(input.signal ? { signal: input.signal } : {}),
-  });
+  const result = await agentJson<{ sessionId?: string }>(
+    sessionPath(sessionId),
+    {
+      method: "POST",
+      body,
+      ...(input.signal ? { signal: input.signal } : {}),
+    },
+  );
   return { sessionId: result.sessionId ?? sessionId };
 }
 
@@ -362,22 +405,25 @@ export async function cancelTurn(
   sessionId: string,
   options: { turnId?: string; signal?: AbortSignal } = {},
 ): Promise<{ sessionId: string; status: CancelTurnStatus }> {
-  const result = await agentJson<{ sessionId?: string; status?: CancelTurnStatus }>(
-    `${sessionPath(sessionId)}/cancel`,
-    {
-      method: "POST",
-      body: options.turnId === undefined ? {} : { turnId: options.turnId },
-      ...(options.signal ? { signal: options.signal } : {}),
-    },
-  );
-  return { sessionId: result.sessionId ?? sessionId, status: result.status ?? "accepted" };
+  const result = await agentJson<{
+    sessionId?: string;
+    status?: CancelTurnStatus;
+  }>(`${sessionPath(sessionId)}/cancel`, {
+    method: "POST",
+    body: options.turnId === undefined ? {} : { turnId: options.turnId },
+    ...(options.signal ? { signal: options.signal } : {}),
+  });
+  return {
+    sessionId: result.sessionId ?? sessionId,
+    status: result.status ?? "accepted",
+  };
 }
 
 /** Answers one or more parked HITL requests. This is eve's only approval path. */
 export async function answerInput(
   sessionId: string,
   input: {
-    continuationToken: string;
+    continuationToken?: string;
     inputResponses: readonly InputResponse[];
     message?: UserMessage;
     signal?: AbortSignal;
@@ -393,6 +439,7 @@ export async function answerInput(
 export interface OpenStreamOptions {
   /** Non-negative is absolute; negative reads back from the tail (-1 = latest). */
   startIndex?: number;
+  /** Requests a finite snapshot ending at the returned tail in Eve 0.54. */
   includeTailIndex?: boolean;
   signal?: AbortSignal;
 }
@@ -407,22 +454,30 @@ export async function openEventStream(
   options: OpenStreamOptions = {},
 ): Promise<Response> {
   const params = new URLSearchParams();
-  if (options.startIndex !== undefined) params.set("startIndex", String(options.startIndex));
+  if (options.startIndex !== undefined)
+    params.set("startIndex", String(options.startIndex));
   if (options.includeTailIndex) params.set("includeTailIndex", "1");
   const query = params.size === 0 ? "" : `?${params}`;
 
-  const response = await agentFetch(`${sessionPath(sessionId)}/stream${query}`, {
-    headers: { accept: EVE_STREAM_CONTENT_TYPE },
-    timeoutMs: null,
-    ...(options.signal ? { signal: options.signal } : {}),
-  });
+  const response = await agentFetch(
+    `${sessionPath(sessionId)}/stream${query}`,
+    {
+      headers: { accept: EVE_STREAM_CONTENT_TYPE },
+      timeoutMs: null,
+      ...(options.signal ? { signal: options.signal } : {}),
+    },
+  );
 
   if (!response.ok) {
     const text = await response.text().catch(() => "");
     let message = `The agent returned ${response.status} for the event stream.`;
     try {
       const parsed: unknown = JSON.parse(text);
-      if (typeof parsed === "object" && parsed !== null && typeof (parsed as { error?: unknown }).error === "string") {
+      if (
+        typeof parsed === "object" &&
+        parsed !== null &&
+        typeof (parsed as { error?: unknown }).error === "string"
+      ) {
         message = (parsed as { error: string }).error;
       }
     } catch {
@@ -454,9 +509,9 @@ export interface RecentEvents {
 /**
  * Reads the tail of the durable stream and stops, instead of following it live.
  *
- * The stream never ends on its own, so the bound has to come from somewhere:
- * `includeTailIndex=1` returns the index of the last recorded event, which turns
- * "read the recent history" into a read of an exactly known number of lines.
+ * `includeTailIndex=1` returns the index of the last recorded event and, in
+ * Eve 0.54, closes after that event. The explicit line count also bounds reads
+ * against older agents that leave their snapshot streams open.
  */
 export async function readRecentEvents(
   sessionId: string,
@@ -518,7 +573,10 @@ export class StreamTruncatedError extends Error {
   }
 }
 
-async function readNdjson(body: ReadableStream<Uint8Array>, limit: number): Promise<EveStreamEvent[]> {
+async function readNdjson(
+  body: ReadableStream<Uint8Array>,
+  limit: number,
+): Promise<EveStreamEvent[]> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   const events: EveStreamEvent[] = [];
@@ -614,11 +672,13 @@ function parseEventLine(line: string): EveStreamEvent | undefined {
 
 export interface SessionSnapshot {
   sessionId: string;
-  /** Rotates every turn; only the one from the latest `session.waiting` works. */
+  /** Legacy stream metadata. Current session-ID commands do not send this field. */
   continuationToken?: string;
   /** True when the last boundary event was `session.waiting`. */
   waiting: boolean;
   terminal: boolean;
+  /** Failure/cancellation observed in this bounded stream window; absence is not historical proof. */
+  failedOrCancelled?: boolean;
   /** Turn id from the most recent `turn.started`, for scoped cancellation. */
   turnId?: string;
   pendingRequests: InputRequest[];
@@ -662,20 +722,16 @@ export async function getSessionSnapshot(
         const turnId = event.data.turnId;
         if (typeof turnId === "string") snapshot.turnId = turnId;
         snapshot.waiting = false;
-        // Two orderings, both verified against eve 0.29.5, force this to be the
-        // clearing signal. A HITL pause emits `turn.completed` BEFORE
-        // `session.waiting`, so turn completion cannot mean "answered". And
-        // answering an `ask_question` emits no `action.result` at all — the
-        // resumed turn just starts. A new turn is the one thing that reliably
-        // means the parked one moved on. eve re-emits `input.requested` for
-        // anything still outstanding, so clearing here cannot strand a live
-        // request; the reverse mistake would show an operator a decision that
-        // has already been made.
-        pending.clear();
+        // Unrelated messages start new turns without resolving older approvals.
+        break;
+      }
+      case "input.resolved": {
+        for (const requestId of resolvedInputIds(event.data)) pending.delete(requestId);
         break;
       }
       case "input.requested": {
-        for (const entry of toInputRequests(event.data.requests)) pending.set(entry.requestId, entry);
+        for (const entry of toInputRequests(event.data.requests))
+          pending.set(entry.requestId, entry);
         break;
       }
       case "action.result": {
@@ -684,7 +740,8 @@ export async function getSessionSnapshot(
         const callId = actionResultCallId(event.data);
         if (callId !== undefined) {
           for (const [requestId, entry] of pending) {
-            if (requestId === callId || entry.action?.callId === callId) pending.delete(requestId);
+            if (requestId === callId || entry.action?.callId === callId)
+              pending.delete(requestId);
           }
         }
         break;
@@ -698,11 +755,17 @@ export async function getSessionSnapshot(
       }
       case "session.completed":
       case "session.failed": {
+        if (event.type === "session.failed") snapshot.failedOrCancelled = true;
         snapshot.waiting = false;
         snapshot.terminal = true;
         pending.clear();
         break;
       }
+      case "turn.failed":
+      case "step.failed":
+      case "turn.cancelled":
+        snapshot.failedOrCancelled = true;
+        break;
       default:
         break;
     }

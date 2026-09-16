@@ -332,16 +332,50 @@ function probeModel(env) {
   const provider = (env("EVESTACK_PROVIDER")?.trim() || "openai").toLowerCase();
   const model =
     env("EVESTACK_MODEL") ||
-    { openai: "gpt-5-mini", anthropic: "claude-sonnet-5", ollama: "qwen3" }[provider] ||
+    { openai: "gpt-5-mini", anthropic: "claude-sonnet-5", openrouter: "qwen/qwen3.8-27b",
+      ollama: "qwen3:0.6b", compatible: "", chatgpt: "gpt-5.6-sol" }[provider] ||
     "unknown";
   if (provider === "ollama") {
     return { part: "model", state: "ok", where: provider, detail: `${model} ${c.dim("(local)")}` };
   }
-  const keyVar = provider === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY";
+  const keyVar = providerKeyVar(provider);
+  // A custom endpoint with no key is configured, not broken.
+  if (!keyVar) return { part: "model", state: "ok", where: provider, detail: model };
   return env(keyVar)
     ? { part: "model", state: "ok", where: provider, detail: model }
     : { part: "model", state: "fail", where: provider,
         detail: `${model} — ${keyVar} is not set`, fix: `add ${keyVar}=… to .env.local` };
+}
+
+/**
+ * Which environment variable holds this provider's key.
+ *
+ * A ternary lived here — `anthropic ? ANTHROPIC_API_KEY : OPENAI_API_KEY` —
+ * which is only correct while there are exactly two remote providers. With a
+ * gateway on the list it told someone their openrouter project was missing an
+ * OPENAI_API_KEY: the provider name in the message was right and the variable
+ * it demanded was wrong, which is worse than saying nothing.
+ *
+ * `compatible` returns null: a loopback LM Studio or llama.cpp authenticates
+ * nobody, so there is no key whose absence is a problem to report.
+ */
+function providerKeyVar(provider) {
+  const keys = {
+    openai: "OPENAI_API_KEY",
+    anthropic: "ANTHROPIC_API_KEY",
+    openrouter: "OPENROUTER_API_KEY",
+    compatible: null,
+    // No variable at all: the ChatGPT session lives in the OS secret store,
+    // not in .env.local, so there is nothing here whose absence is a fault.
+    chatgpt: null,
+  };
+  // `hasOwn` and not `?? "OPENAI_API_KEY"`. `??` falls back on null, so the one
+  // entry deliberately set to null — "this provider needs no key" — came back
+  // out of the lookup as OPENAI_API_KEY, and a scaffold pointed at LM Studio on
+  // loopback refused to start until an OpenAI key it will never call was set.
+  // The two cases are genuinely different: a known provider with no key, and a
+  // provider nobody here recognises.
+  return Object.hasOwn(keys, provider) ? keys[provider] : "OPENAI_API_KEY";
 }
 
 function dockerRunning() {
@@ -456,7 +490,7 @@ export async function status(argv, { stdout = process.stdout, stderr = process.s
     const url = forHumans(dashboard.url ?? "http://localhost:4000");
     lines.push(
       `  ${c.greenBold("Everything is up.")}  ${c.dim("Your dashboard:")} ${c.brand(url)}`,
-      `  ${c.dim(`${g.arrow} `)}${c.bold("evestack open")}${c.dim("   sign in, with the password printed for you")}`,
+      `  ${c.dim(`${g.arrow} `)}${c.bold("evestack dashboard")}${c.dim("   sign in, with the password printed for you")}`,
       "",
     );
     stdout.write(`${lines.join("\n")}\n`);

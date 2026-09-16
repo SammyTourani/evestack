@@ -3,6 +3,14 @@
  *
  * Two different things are pinned here, for two different reasons.
  *
+ * CURRENT CONTRACT (Eve 0.54+). Activation spans use invoke_agent and
+ * agent.turn.id; gen_ai.conversation.id is correlation, not a session id.
+ * Legacy agent.session.id/root-session columns remain readable for old rows.
+ * The dashboard joins turn workflow runs to their $eve.parent session and
+ * propagates that identity through span ancestry. The tests below check the
+ * actual attribute builder/provider emission chain. The older implementation
+ * notes that follow explain why legacy vocabulary is still kept by consumers.
+ *
  * The first is vocabulary. `packages/dashboard/sql/traces.sql` projects three
  * span attributes into generated Postgres columns, and `lib/traces.ts` filters
  * spans by name and reads attributes by string key. Both are string literals —
@@ -329,6 +337,28 @@ const vocabulary = {
 
   async check(eve, t) {
     const names = dashboardOtelNames();
+    const activationSchema = compare(eve.version, "0.54.0") >= 0;
+    const legacy = new Set(["agent.session", "agent.session.id", "agent.root.session.id"]);
+    const schema = readFileSync(join(REPO_ROOT, "packages/dashboard/sql/traces.sql"), "utf8");
+    const readers = readFileSync(join(REPO_ROOT, "packages/dashboard/lib/traces.ts"), "utf8");
+    if (activationSchema) {
+      // Legacy literals remain readers for stored traces, not requirements on
+      // a new emitter. Check the replacement's identity semantics separately.
+      t.contains(schema, "attributes ->> 'gen_ai.conversation.id'", "conversation correlation is stored separately");
+      t.contains(schema, "run_sessions ->> r.tid", "activation turn IDs resolve through the durable run map");
+      t.contains(schema, "r.attributes ->> '$eve.parent'", "the actual session comes from the turn parent");
+      t.contains(readers, "conversation_id IN (", "session reads include correlated activation traces");
+      t.contains(readers, "resolved_session_id = $1", "session reads anchor on resolved session identity");
+      const naming = eve.readFile("dist/src/tracing/agent-span-contract.js");
+      t.contains(naming, "`invoke_agent", "eve still names activation spans invoke_agent");
+      const identity = eve.readFile("dist/src/tracing/agent-otel-attributes.js");
+      t.contains(identity, '"gen_ai.conversation.id"', "eve emits the replacement conversation identity");
+      const runtime = eve.readFile("dist/src/tracing/agent-otel-runtime-context.js");
+      t.contains(runtime, "agentTraceIdentityAttributes", "activation emitter uses the identity attributes");
+      const emitter = eve.readFile("dist/src/tracing/agent-otel-provider.js");
+      t.contains(emitter, "agentActivationAttributes(", "span provider applies activation attributes");
+      t.contains(emitter, "startSpan(", "span provider actually opens spans");
+    }
 
     // A derivation that finds nothing would pass this contract vacuously, so
     // the derivation itself is asserted before anything is derived from it.
@@ -396,6 +426,10 @@ const vocabulary = {
       const needle = name.startsWith(CONTEXT_PREFIX) ? name.slice(CONTEXT_PREFIX.length) : name;
       const found = modulesNaming(needle);
       const withdrawn = WITHDRAWN[name];
+      if (activationSchema && legacy.has(name)) {
+        t.equal(found.length, 0, `${name} is legacy-only on eve ${eve.version}; replacement identity checks run above`);
+        continue;
+      }
 
       if (withdrawn === undefined) {
         t.ok(found.length > 0, `eve still names \`${needle}\` in ${found[0] ?? "no shipped module"} — read by ${origins[0]}`, {
@@ -439,6 +473,7 @@ const vocabulary = {
     // opens spans, not where it sits. 0.30.8 satisfies this from one module,
     // 0.39.2 from five, and neither number is asserted.
     for (const column of GENERATED_COLUMN_KEYS) {
+      if (activationSchema && legacy.has(column)) continue;
       const emitters = modulesNaming(column).filter((file) => spanCreators.has(file));
       t.ok(
         emitters.length > 0,

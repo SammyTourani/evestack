@@ -42,11 +42,18 @@ is the same bet the rest of evestack makes: a few hundred lines you can read bea
 
 | Tool | Reads | Notes |
 | --- | --- | --- |
-| `list_sessions` | `/api/health/detail` | **Five most recent only** — that route's limit, not a choice made here. |
-| `get_session` | `/api/control/sessions/:id/approve` + `/api/budget` + `/api/health/detail` | Live waiting state, pending approval requests, usage, and the verbatim budget-stop reason. |
+| `list_sessions` | `/api/tasks` | Search all titles/IDs with `q`; page with `cursor` and `limit` (1–100). |
+| `get_session` | `/api/control/sessions/:id/approve` + `/api/budget` + `/api/tasks/:id` | Live waiting state, pending approval requests, usage, and the verbatim budget-stop reason. |
 | `list_approvals` | `/api/approvals` | Who decided what, and how the identity was established. |
 | `get_costs` | `/api/budget` + `/api/health/detail` | Caps, per-principal daily spend, stops, lifetime totals. |
 | `promote_session_to_eval` | `/api/evals/promote/:id` | Generates eval source and returns it. Writes nothing. |
+| `list_routines` / `get_routine` | `/api/routines` / `/api/routines/:id` | Saved schedules, clock health and bounded run/delivery history. |
+| `pending_decisions` | `/api/approvals/pending` | Paginated decisions with unknown/unreachable coverage. |
+| `get_task_recovery` | `/api/tasks/:id/recovery` | Saved evidence with coverage limits, even when the agent is offline. |
+| `check_readiness` | `/api/readiness` | Reachability/configuration checks; no model call or notification. |
+| `list_memories` | `/api/memories` | Paginated operator view with original ownership and review hashes. |
+| `get_memory_reviews` | `/api/memories/:id/review` | Latest 20 reviews; proposals do not change recall. |
+| `list_regressions` / `get_regression` | `/api/regressions` / `/api/regressions/:id` | Versioned expectations and manual observations, not automated test results. |
 
 Enabled only with `EVESTACK_MCP_ALLOW_CONTROL=1`:
 
@@ -54,7 +61,7 @@ Enabled only with `EVESTACK_MCP_ALLOW_CONTROL=1`:
 | --- | --- | --- |
 | `start_session` | `POST /api/control/sessions` | Starts a real run. Spends money. |
 | `send_message` | `POST …/:id/message` | Another turn on a live session. Spends money. |
-| `approve_or_deny` | `POST …/:id/approve` | **Runs the gated tool for real.** Audited. |
+| `approve_or_deny` | `POST …/:id/approve` | Also requires `EVESTACK_MCP_ALLOW_APPROVALS=1`. Runs the gated tool for real; audited. |
 | `cancel_run` | `POST …/:id/cancel` | Cooperative stop between steps; the in-flight model call still bills. |
 
 Read-only vs mutating is stated three ways, because different clients surface different ones: the first
@@ -72,27 +79,43 @@ enabling itself: the gate is an environment variable read once at launch, before
 parsed. Calling one anyway returns a JSON-RPC `-32602` whose message says who can turn it on (the
 operator) and how.
 
-Opting in is one line:
+To enable task control while keeping human decisions withheld:
 
 ```jsonc
 "env": {
   "EVESTACK_MCP_DASHBOARD_URL": "http://localhost:4000",
-  "EVESTACK_MCP_ALLOW_CONTROL": "1",
-  "EVESTACK_MCP_APPROVER": "sammy@example.com"
+  "EVESTACK_MCP_ALLOW_CONTROL": "1"
 }
 ```
+
+To additionally allow answers to human decisions, explicitly set
+`EVESTACK_MCP_ALLOW_APPROVALS=1`. This is a separate grant of authority.
 
 ### Identity vs. provenance
 
 evestack records **who** approved something, and always records **how** it learned that
 (`packages/dashboard/lib/approvals.ts`). This server threads identity through by setting the header the
-dashboard already reads:
+dashboard already reads. Whether the dashboard *believes* that header is not this server's decision, and
+that difference is the whole of this section.
 
-| | Sent | Dashboard records |
+**The precondition.** `identifyApprover` reads `X-Forwarded-User`, `X-Forwarded-Email` and
+`EVESTACK_APPROVER_HEADER` only when **`EVESTACK_TRUSTED_PROXY` is set on the dashboard**. Unset — the
+default — those headers are not read at all: not read and downgraded, not read and marked untrusted.
+Ignored.
+
+| Dashboard | With `EVESTACK_MCP_APPROVER` set | Dashboard records |
 | --- | --- | --- |
-| `EVESTACK_MCP_APPROVER` set | `X-Forwarded-User: <value>` | `approverVia: "forwarded-user"` |
-| …plus `EVESTACK_APPROVER_HEADER` set | that header instead | `approverVia: "header"` |
-| **Unset (default)** | *nothing* | `approverVia: "unidentified"` |
+| `EVESTACK_TRUSTED_PROXY` set | `X-Forwarded-User: <value>` is read | `approver: <value>`, `approverVia: "forwarded-user"` |
+| …plus `EVESTACK_APPROVER_HEADER` set | that header is read instead | `approverVia: "header"` |
+| **`EVESTACK_TRUSTED_PROXY` unset (default)** | header is sent and **ignored** | the name on the credential that got in — `approverVia: "basic"` or `"session"` |
+| `EVESTACK_MCP_APPROVER` unset | *nothing sent* | as above, or `approverVia: "unidentified"` if nothing authenticated the call |
+
+This section used to say that setting `EVESTACK_MCP_APPROVER` records `approverVia: "forwarded-user"`, and
+that the variable "is for the case where nothing else is in front". Both were wrong, and wrong in the same
+direction: with nothing in front is precisely when the name is discarded, and the audit row names the
+shared deployment credential instead. `approve_or_deny`'s attribution warning does not cover for it
+either — that warning fires on a **null** approver, and the Basic username is not null. The result was a
+row that looked attributed, an MCP server that looked configured, and a name that never left the header.
 
 Note what the default does **not** do: it does not invent an identity. An MCP server genuinely does not
 know which human is at the other end of the conversation, and writing a plausible-looking name into an
@@ -106,21 +129,31 @@ row still says the decision arrived through MCP, and from which client. The vers
 typed twice as a literal once, and a published bump would have put a version that was never released into
 the audit log permanently. This sentence is not the place to make that three.
 
-Be clear-eyed about the trust here, the same way the dashboard's approvals page is: `X-Forwarded-User` is
-a header a proxy is supposed to set. If your dashboard sits behind one that does OAuth, that proxy will
-overwrite whatever this server sends, which is the correct outcome — the proxy knows and this server is
-guessing. `EVESTACK_MCP_APPROVER` is for the case where nothing else is in front, and it is worth exactly
-as much as the config file it lives in.
+Be clear-eyed about what turning the precondition on costs, the same way the dashboard's approvals page
+is. `EVESTACK_TRUSTED_PROXY=1` tells the dashboard to believe a forwarded name on every request that
+reaches it. There is no signature and no second factor: **anyone holding the dashboard credential can then
+write any name they like onto an audit row with one `curl -H 'X-Forwarded-User: …'`.** It is honest only
+when a proxy you control terminates every request *and strips the client's own `X-Forwarded-*` headers* —
+that stripping is the real control, and the variable only records that you did it. Setting it so that this
+server's `EVESTACK_MCP_APPROVER` lands in the log, on a dashboard reachable directly, trades a row that
+says "the deployment credential" for a row that says whatever the last caller typed.
+
+If your dashboard already sits behind a proxy that does OAuth, that proxy will overwrite whatever this
+server sends, which is the correct outcome — the proxy knows and this server is guessing.
+`EVESTACK_MCP_APPROVER` is worth exactly as much as the config file it lives in, and on a dashboard with
+nothing in front of it, nothing at all.
 
 ## Configuration
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `EVESTACK_MCP_DASHBOARD_URL` | `http://localhost:4000` | Dashboard origin. |
-| `EVESTACK_MCP_ALLOW_CONTROL` | unset | `1` advertises the mutating tools. |
-| `EVESTACK_MCP_APPROVER` | unset | Identity recorded on approvals. |
-| `EVESTACK_APPROVER_HEADER` | `x-forwarded-user` | Header to carry it in. Same variable the dashboard reads, so one line configures both ends. |
-| `EVESTACK_MCP_DASHBOARD_AUTH` | unset | Verbatim `Authorization` value, if your dashboard is behind auth. |
+| `EVESTACK_MCP_ALLOW_CONTROL` | unset | `1` advertises task mutations. |
+| `EVESTACK_MCP_ALLOW_APPROVALS` | unset | With control enabled, `1` also grants authority to answer human decisions. |
+| `EVESTACK_MCP_APPROVER` | unset | Identity offered for approvals. Recorded **only** if the dashboard sets `EVESTACK_TRUSTED_PROXY`; ignored otherwise. See [Identity vs. provenance](#identity-vs-provenance). |
+| `EVESTACK_APPROVER_HEADER` | `x-forwarded-user` | Header to carry it in. Same variable the dashboard reads, so one line configures both ends. Also only read behind `EVESTACK_TRUSTED_PROXY`. |
+| `EVESTACK_MCP_DASHBOARD_AUTH` | unset | The dashboard credential. Either `user:password`, which is encoded here as `Basic …`, or a complete header value (`Basic dXNlcjpwYXNz`, `Bearer …`), which is sent exactly as written. |
+| `EVESTACK_MCP_DASHBOARD_AUTH_VERBATIM` | unset | `1` sends `EVESTACK_MCP_DASHBOARD_AUTH` exactly as written whatever it looks like. Only needed for a proxy wanting a schemeless value that contains a colon. |
 | `EVESTACK_MCP_TIMEOUT_MS` | `30000` | Per-request timeout. |
 | `EVESTACK_MCP_MAX_OUTPUT_BYTES` | `65536` | Ceiling on one tool result. See [Output cap](#output-cap). Minimum 1024; a value below that is rejected at startup rather than clamped. |
 
@@ -141,10 +174,10 @@ Treat them as representative sizes for a busy deployment, not as a ceiling:
 
 | Tool | Uncapped | ≈ tokens |
 | --- | --- | --- |
-| `list_sessions` | 1,489 B | 0.4k |
+| `list_sessions` | 11,765 B | 2.9k |
 | `promote_session_to_eval` (40-turn session) | 15,592 B | 3.9k |
-| `get_session` (one pending `write_file` approval) | 39,861 B | 10k |
-| `get_costs` (200 principals) | 81,942 B | 20k |
+| `get_session` (one pending `write_file` approval) | 40,015 B | 10k |
+| `get_costs` (200 principals) | 81,967 B | 20k |
 | `list_approvals` (no arguments — 200 rows) | 113,289 B | 28k |
 | `list_approvals` `limit=500` | 283,123 B | 71k |
 | `list_approvals` `sessionId`, no limit (1000 rows) | 566,182 B | **142k** |
@@ -154,8 +187,8 @@ defaults the whole-log arm to 200 rows and the `?sessionId=` arm to `MAX_APPROVA
 asking about **one session** without a limit, not from omitting arguments.
 
 The measured results fall into two groups with a wide gap between them — three that stay small on any
-deployment, topping out at 39,861 B, and four whose size tracks how much history you have, starting at
-81,942 B. 64 KiB (~16k tokens) is the only power of two in that gap: 32 KiB would cut `get_session`, and
+deployment, topping out at 40,015 B, and four whose size tracks how much history you have, starting at
+81,967 B. 64 KiB (~16k tokens) is the only power of two in that gap: 32 KiB would cut `get_session`, and
 128 KiB would wave a 28k-token audit log through on a call with no arguments.
 
 **A shortened result never passes for a whole one.** The payload stays valid JSON, and a `_truncated` object
@@ -227,6 +260,15 @@ these tools declare. The server asserts at startup that no schema uses a keyword
 enforce, so the subset can never silently stop covering the schemas — an advertised constraint that is not
 actually checked is a lie told to a model.
 
+One check is not declarative and so is worth naming: a `sessionId` is spliced into a dashboard route, and
+`encodeURIComponent` — which escapes `/`, `?` and `#` — leaves a dot alone, because a dot is legal in a
+path segment. So `sessionId: ".."` used to arrive intact and `new URL(base + path)` resolved it, turning
+`/api/control/sessions/../approve` into `/api/control/approve`. Every such target 404s on the dashboard as
+it stands, but that is a fact about today's route table rather than about this code, and this package
+exists to talk to dashboards it was not built against. `src/tools.ts` now probes each id through the same
+URL parser and refuses one that changes the shape of the route, before any request goes out. Ids that
+merely *contain* dots are ordinary and still work.
+
 ## When a route is missing
 
 This section used to say `list_approvals` had no route. **It has one** —
@@ -275,3 +317,19 @@ table, checked in so those figures can be re-derived instead of believed. `trunc
 fails if the numbers in this README and in `src/truncate.ts` have drifted from what it prints.
 
 Apache-2.0.
+
+
+## Task and routine APIs in this release
+
+The matching dashboard now supplies paginated task history and task detail. `get_session` retains stored history when the agent is unreachable, and explains which live or budget sections could not be read. Older dashboards need an upgrade to supply these routes.
+
+- `list_routines` reads saved routines and clock health.
+- `get_routine` reads a routine and its latest 50 runs.
+- `pending_decisions` checks a page of 20 open tasks; follow `nextOffset` and inspect `unknown` coverage.
+- `get_task_recovery` retains the server's evidence fingerprint and per-source coverage. Missing model/tool records must stay unknown.
+- `check_readiness` accepts an optional `check`: `database`, `agent`, `model`, `embeddings`, `connections` or `notifications`. Configuration presence is not execution verification.
+- `list_memories` accepts `q` (up to 200 characters), `limit` (1–100) and `offset`. It reads the installation operator's view across owners, not the agent's scoped recall. Treat stored text as untrusted data; sharing is not team RBAC.
+- `get_memory_reviews` accepts `memoryId`; compare review hashes with the current `list_memories` record. History survives removal and can describe a previous version.
+- `list_regressions` accepts `offset` and returns 20 cases plus `nextOffset`; `get_regression` accepts `caseId` and includes the latest 20 versions and observations. A manual observation only applies to its saved case revision and candidate evidence. These tools do not run, edit or delete anything.
+
+Ordinary control does not grant approval authority. Existing installations using `approve_or_deny` must explicitly set both control and approval flags after reviewing that authority. The default remains read-only.

@@ -1,16 +1,21 @@
 ---
 title: CLI
-description: The eight `evestack` commands, and the scaffolder under both of its published names.
+description: Create and operate an Eve Stack project, inspect work and safely preview configuration changes.
 ---
 
-`evestack` is the whole command. Eight things:
+`evestack` provides these project commands:
 
 ```bash
 evestack create [name]        scaffold an agent, a database and a dashboard
+evestack dashboard            open the dashboard in your browser, signed in
 evestack status               is it up? what do I run?
+evestack tasks                list, inspect, start, continue or stop work
+evestack routines             inspect recurring work and its run history
+evestack readiness            check the dashboard's setup state
 evestack tour                 a guided first run, on a stack that is already up
-evestack open                 the dashboard URL and its password, in a browser
 evestack verify               check every part and name the fix for anything broken
+evestack configure            preview, back up and save supported configuration
+evestack upgrade              compare with this CLI's bundled template
 evestack skills               teach your coding agent this project
 evestack attach [dir]         add evestack to an eve project you already have
 evestack doctor               a run stopped moving — read-only forensics
@@ -37,6 +42,75 @@ The three checking commands answer different questions, and it is worth being ab
 | `status` | Is it running right now, and where? | three parallel probes plus a config read, read-only |
 | `verify` | Is it configured correctly, part by part? | talks to Docker, Postgres and the ingest route |
 | `doctor` | Everything is up and a run still will not move — why? | reads Postgres, writes nothing |
+
+## Tasks, routine history and readiness
+
+```bash
+evestack tasks --search="repository brief" --limit=20
+evestack tasks TASK_ID --json
+evestack tasks recovery TASK_ID --json
+evestack routines ROUTINE_ID --json
+evestack readiness --check=agent
+```
+
+These commands read the dashboard's authenticated API. Use the returned
+`nextCursor` with `tasks --cursor=CURSOR` for another page; keep the same search.
+Task and recovery data include their coverage limits. Routine lists contain at
+most 200 entries, with bounded per-routine run/delivery history. Readiness can
+successfully report an unavailable or unverified component.
+
+Explicit task actions can invoke models and tools:
+
+```bash
+evestack tasks start --message-file=brief.txt
+evestack tasks reply TASK_ID --message-file=follow-up.txt
+evestack tasks stop TASK_ID
+```
+
+Messages must be UTF-8 files up to 64 KiB. The CLI prints the task link and never
+automatically retries a mutation or answers an approval. A lost response means
+delivery is unknown: inspect Tasks before submitting again. Stop is cooperative;
+acceptance does not prove cancellation or task completion. `--json` retains the
+server's structured result. Exit 0 means the read or request was accepted, 1 means
+refusal or uncertain delivery, and 2 means no project was found.
+
+The address comes from `EVESTACK_PUBLIC_URL`, then the origin of
+`EVESTACK_DASHBOARD_URL`, then loopback port 4000. It uses the installation's
+`EVESTACK_AUTH_USER`/`EVESTACK_AUTH_PASSWORD` from project settings and shell
+overrides. Remote dashboards require HTTPS. Redirects are not followed and
+credentials are not printed or embedded in task links.
+
+## Preview and restore configuration
+
+```bash
+evestack configure --set=EVESTACK_PROVIDER=openai --set=EVESTACK_MODEL=YOUR_MODEL
+evestack configure --from-file=/private/settings.json
+```
+
+Put secrets in a private JSON file, not command-line arguments. Values are strings;
+JSON `null` removes an override. The command previews supported settings with
+secret values redacted and prints a fingerprint. Repeat the same options with
+`--apply --expect=FINGERPRINT` to save that exact preview. Stale files, unsafe Git
+tracking, invalid env syntax and unsupported values are refused.
+
+Apply takes an owner-protected backup outside the project before atomically
+replacing configuration. Use `--restore=BACKUP_ID` to preview a restore, then apply
+its new fingerprint. A restore takes another backup. Backups retain old secrets
+and cover env configuration only; they do not back up Postgres.
+
+Saving does not activate a provider or channel. Restart the affected processes,
+run `evestack verify`, then inspect a real task or receipt. For supported heartbeat
+settings, use the template's `npm run heartbeat:preview` before enabling. The
+preview shows the exact prompt and quiet-hour gate without sending anything.
+
+## Upgrade preview
+
+`evestack upgrade --changed-only` compares your code and declared dependencies
+with this CLI's bundled template. `--json` includes hashes and component versions.
+It writes nothing and has no apply flag. Differences require manual merging;
+symlinks and oversized files are flagged without reading their targets. Secrets,
+caches and extra user files are excluded. Follow the [upgrade procedure](/docs/upgrading)
+for backups, publication checks and activation.
 
 ## `evestack create` / `npx create-evestack`
 
@@ -183,10 +257,10 @@ globally installed CLI cannot report problems against rules your project does no
 made by `attach` has no `scripts/` of its own, and there it falls back to the copy inside
 `create-evestack`.
 
-## `evestack open`
+## `evestack dashboard`
 
 ```bash
-evestack open [--no-open]
+evestack dashboard [--no-open]
 ```
 
 Prints the dashboard URL, the username and the password, says whether anything is answering there,
@@ -198,15 +272,22 @@ The port comes from `EVESTACK_DASHBOARD_URL`, which is where the chosen dashboar
 recorded — the scaffolder does not assume 4000. `--no-open` prints and stops. Exit `1` means
 nothing is answering yet.
 
+<Note>
+  `evestack open` is this command's first name and still works. It was renamed because
+  `dashboard` is the word someone reaches for when they want the dashboard and have not read
+  anything — and there are now four other ways to the same page, so the name had to be the
+  guessable one. See [The dashboard](/docs/dashboard#five-ways-in).
+</Note>
+
 ## `evestack skills`
 
 ```bash
 evestack skills [--dir=PATH] [--print] [--force] [--json]
 ```
 
-Writes the evestack skill pack — `SKILL.md` plus four reference files — where your coding agent
-will find it, so it knows this project without being told. The same pack the landing page's
-**Set up your agent** button copies. Full detail in [Set up with an agent](/docs/agent-setup).
+Writes the setup pack bundled with this CLI release: `SKILL.md` plus four reference files.
+The website's **Set up your agent** button follows the deployed site version and may differ.
+Full detail in [Set up with an agent](/docs/agent-setup).
 
 | Flag | Effect |
 | --- | --- |
@@ -215,13 +296,16 @@ will find it, so it knows this project without being told. The same pack the lan
 | `--force` | Overwrite files that already exist. Without it, one existing file stops the run and nothing is written. |
 | `--json` | Report what was written, as JSON. |
 
-The pack is fetched from the site rather than bundled into this package, so it cannot ship stale —
-which is the trade: it needs a network connection, and says so plainly when it does not have one.
+The default works offline after CLI installation and reports its source and version.
+`EVESTACK_PACK_URL` explicitly chooses a custom server, which is marked version-unverified.
+Remote HTTPS (or loopback HTTP) is required, with no redirects, a 15-second timeout and a
+1 MiB response limit. Existing files require `--force`; linked destination files/directories
+are refused. If a filesystem write fails partway through, inspect the destination before retrying.
 
 | Code | Meaning |
 | --- | --- |
 | `0` | Installed, or printed. |
-| `1` | Could not fetch the pack, or refused to overwrite. |
+| `1` | Could not load the pack, or refused to write. |
 | `2` | Bad arguments. |
 
 ## `evestack attach`
@@ -238,6 +322,17 @@ line for everything it writes.
 | `[dir]` | The project to attach to. Defaults to the current directory. |
 | `--yes` / `-y` | Skip the confirmation. Required when stdin is not a terminal — it will not guess at a project it did not create. |
 | `--dry-run` / `-n` | Print the plan and write nothing. |
+
+The preview names detected compatibility, files, ports and trace-export changes.
+Trace export can include prompts and tool inputs; decide whether that destination
+is appropriate before applying. Existing instrumentation is preserved.
+
+After applying, start the services using the printed commands, then run
+`evestack status` and `evestack readiness` against that dashboard. Readiness
+labels unavailable and unverified checks; follow [the first-task guide](/docs/first-task)
+to verify a real model/source result. `attach` writing files does not establish
+that the services are running. Keep its undo instructions and the private
+configuration backup when [removing the attachment](/docs/uninstall).
 
 ## `evestack doctor`
 

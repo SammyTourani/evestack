@@ -37,17 +37,44 @@ export default {
 
     // eve's own predicate, not a re-implementation of it. If eve changes how it
     // recognises a dynamic export, this is what stops agreeing.
-    const shared = await eve.loadInternal("dist/src/shared/dynamic-tool-definition.js");
-    t.equal(shared.DYNAMIC_SENTINEL_KIND, "eve:dynamic", "eve's DYNAMIC_SENTINEL_KIND constant is unchanged");
-    t.ok(shared.isDynamicSentinel(sentinel), "eve's own isDynamicSentinel() accepts what defineDynamic() produced");
+    //
+    // dist/src/shared/dynamic-tool-definition.js does not exist in 0.54.3 —
+    // there is no dist/src/shared/dynamic-tool-definition.* at all — and what
+    // it used to bundle together has been split across two files rather than
+    // relocated as one. Found by grepping the whole dist tree (minus
+    // dist/src/compiled, which is vendored) for each of the four runtime names
+    // this check touches:
+    //
+    //   DYNAMIC_SENTINEL_KIND, isDynamicSentinel, ALLOWED_DYNAMIC_TOOL_EVENTS
+    //     → dist/src/dynamic/definition.js — this is also where the public
+    //       `defineDynamic()` used above is implemented (it's `#dynamic/
+    //       definition.js` behind eve's package.json `imports` map), so the
+    //       sentinel a resolver author gets from the public API and the
+    //       predicate that recognises it now live in literally the same module.
+    //   isBrandedToolEntry
+    //     → dist/src/tools/dynamic.js, next to the `TOOL_BRAND` symbol it
+    //       reads (`Symbol.for("eve:tool-brand")`, unchanged) — grouped with
+    //       ordinary tool branding rather than with the dynamic-resolver
+    //       sentinel, because a branded tool entry is not itself a dynamic
+    //       export; a resolver returns a map of these keyed by tool name.
+    //
+    // Read the source of both before trusting this split: dynamic/definition.js
+    // defines ALLOWED_DYNAMIC_TOOL_EVENTS as `new Set(["session.started",
+    // "turn.started", "step.started"])` — same three events, same literal
+    // strings — and DYNAMIC_SENTINEL_KIND as the literal `"eve:dynamic"`. Two
+    // loads instead of one, because there no longer is one file that has both.
+    const dynamicDef = await eve.loadInternal("dist/src/dynamic/definition.js");
+    const toolDynamic = await eve.loadInternal("dist/src/tools/dynamic.js");
+    t.equal(dynamicDef.DYNAMIC_SENTINEL_KIND, "eve:dynamic", "eve's DYNAMIC_SENTINEL_KIND constant is unchanged");
+    t.ok(dynamicDef.isDynamicSentinel(sentinel), "eve's own isDynamicSentinel() accepts what defineDynamic() produced");
     t.ok(
-      shared.isBrandedToolEntry(
+      toolDynamic.isBrandedToolEntry(
         tools.defineTool({ description: "probe", inputSchema: {}, execute: () => "ok" }),
       ),
       "eve's isBrandedToolEntry() accepts an entry built by defineTool inside a resolver",
     );
 
-    const allowed = shared.ALLOWED_DYNAMIC_TOOL_EVENTS;
+    const allowed = dynamicDef.ALLOWED_DYNAMIC_TOOL_EVENTS;
     t.ok(allowed instanceof Set, "ALLOWED_DYNAMIC_TOOL_EVENTS is still a Set of event names");
     t.contains(allowed, "step.started", "`step.started` is still an allowed dynamic-tool event");
 

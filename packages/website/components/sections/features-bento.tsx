@@ -9,10 +9,20 @@ function CellDemo({ kind }: { kind: (typeof features.cells)[number]["demo"] }) {
   switch (kind) {
     case "events":
       return (
-        <div data-demo="events" className="flex flex-col gap-1 font-mono text-mono-13">
-          {["run_created", "step_started", "ai.streamText", "step_completed"].map((e, i) => (
+        <div
+          data-demo="events"
+          className="flex flex-col gap-1 font-mono text-mono-13"
+        >
+          {[
+            "run_created",
+            "step_started",
+            "ai.streamText",
+            "step_completed",
+          ].map((e, i) => (
             <p key={e} className={i === 3 ? "text-gray-1000" : "text-gray-700"}>
-              <span className="text-gray-600">{String(i + 35).padStart(2, "0")} </span>
+              <span className="text-gray-600">
+                {String(i + 35).padStart(2, "0")}{" "}
+              </span>
               {e}
             </p>
           ))}
@@ -21,31 +31,48 @@ function CellDemo({ kind }: { kind: (typeof features.cells)[number]["demo"] }) {
     case "cost":
       return (
         <p data-demo="cost" className="font-mono text-heading-32 text-ok">
-          $0.00
+          Your budget
           <span className="mt-1 block font-mono text-label-12 uppercase text-gray-700">
-            infrastructure / month
+            model usage + hosting
           </span>
         </p>
       );
     case "privacy":
       return (
-        <div data-demo="privacy" className="flex flex-col gap-2 font-mono text-mono-13">
+        <div
+          data-demo="privacy"
+          className="flex flex-col gap-2 font-mono text-mono-13"
+        >
           <p className="text-gray-1000">EVESTACK_TRACE_CONTENT=off</p>
           <p className="text-gray-700">
-            prompt: <span className="tracking-widest text-gray-500">••••••••••••</span>
+            prompt:{" "}
+            <span className="tracking-widest text-gray-500">••••••••••••</span>
           </p>
           <p className="text-gray-700">
-            result: <span className="tracking-widest text-gray-500">••••••••</span>
+            result:{" "}
+            <span className="tracking-widest text-gray-500">••••••••</span>
           </p>
         </div>
       );
     case "spans":
       return (
-        <div data-demo="spans" className="flex flex-col gap-1 font-mono text-mono-13">
+        <div
+          data-demo="spans"
+          className="flex flex-col gap-1 font-mono text-mono-13"
+        >
           {observability.spanTree.slice(0, 5).map((span) => (
-            <p key={span.name + span.depth} style={{ paddingLeft: span.depth * 14 }}>
-              <span className="text-gray-600">{span.depth > 0 ? "└ " : ""}</span>
-              <span className={span.depth === 0 ? "text-gray-1000" : "text-gray-900"}>
+            <p
+              key={span.name + span.depth}
+              style={{ paddingLeft: span.depth * 14 }}
+            >
+              <span className="text-gray-600">
+                {span.depth > 0 ? "└ " : ""}
+              </span>
+              <span
+                className={
+                  span.depth === 0 ? "text-gray-1000" : "text-gray-900"
+                }
+              >
                 {span.name}
               </span>
             </p>
@@ -79,7 +106,10 @@ function CellDemo({ kind }: { kind: (typeof features.cells)[number]["demo"] }) {
        makes the "pause one without taking anything else down" claim visible. */
     case "restart":
       return (
-        <div data-demo="restart" className="flex flex-col gap-2 font-mono text-mono-13">
+        <div
+          data-demo="restart"
+          className="flex flex-col gap-2 font-mono text-mono-13"
+        >
           <p className="text-gray-1000">
             <span
               aria-hidden
@@ -100,7 +130,12 @@ function CellDemo({ kind }: { kind: (typeof features.cells)[number]["demo"] }) {
 export function FeaturesBento() {
   return (
     <Section id="features">
-      <SectionHeading id="features-heading" eyebrow="02 · features" title={features.heading} sub={features.sub} />
+      <SectionHeading
+        id="features-heading"
+        eyebrow="02 · features"
+        title={features.heading}
+        sub={features.sub}
+      />
       <ul
         data-reveal="stagger"
         data-bento
@@ -120,7 +155,9 @@ export function FeaturesBento() {
                       desktop's. "Nothing gets lost" over four real event rows
                       says more on a phone than either does with a paragraph
                       wedged between them. */}
-                  <p className="hidden text-copy-14 text-gray-900 md:block">{cell.body}</p>
+                  <p className="hidden text-copy-14 text-gray-900 md:block">
+                    {cell.body}
+                  </p>
                 </div>
                 <CellDemo kind={cell.demo} />
               </div>

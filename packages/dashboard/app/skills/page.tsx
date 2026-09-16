@@ -7,8 +7,15 @@ import {
   type Severity,
 } from "@/lib/skill-scan";
 import { stamp } from "@/lib/time";
-import { listSkills, readFixtureSkill, SKILLS_DIR_ENV, type Skill } from "@/lib/skills";
+import {
+  listSkills,
+  readFixtureSkill,
+  SKILLS_DIR_ENV,
+  type Skill,
+} from "@/lib/skills";
 import styles from "./skills.module.css";
+import { skillFingerprint } from "@/lib/skill-fingerprint";
+import { SkillReview } from "@/components/skill-review";
 
 export const dynamic = "force-dynamic";
 
@@ -55,7 +62,9 @@ function FindingRow({ finding }: { finding: Finding }) {
   return (
     <div className={styles.finding}>
       <div className={styles.findingHead}>
-        <span className={`${styles.sev} ${SEVERITY_CLASS[finding.severity]}`}>{finding.severity}</span>
+        <span className={`${styles.sev} ${SEVERITY_CLASS[finding.severity]}`}>
+          {finding.severity}
+        </span>
         <span className={styles.findingTitle}>{finding.title}</span>
         <span className={styles.where}>
           {finding.file}
@@ -64,7 +73,8 @@ function FindingRow({ finding }: { finding: Finding }) {
       </div>
       <code className={styles.excerpt}>{finding.excerpt}</code>
       <p className={styles.why}>
-        {finding.explanation} <span className={styles.rule}>[{finding.ruleId}]</span>
+        {finding.explanation}{" "}
+        <span className={styles.rule}>[{finding.ruleId}]</span>
       </p>
     </div>
   );
@@ -72,20 +82,27 @@ function FindingRow({ finding }: { finding: Finding }) {
 
 function SkillCard({ skill, scan }: { skill: Skill; scan: ScanResult }) {
   const note = describeSource(skill);
+  const fingerprint = skillFingerprint(skill);
   return (
-    <li className={`${styles.skill} ${scan.verdict === "critical" ? styles.skillCritical : ""}`}>
+    <li
+      className={`${styles.skill} ${scan.verdict === "critical" ? styles.skillCritical : ""}`}
+    >
       <div className={styles.head}>
         <span className={styles.name}>{skill.name}</span>
         <span className={styles.kind}>{skill.kind}</span>
         <VerdictPill scan={scan} />
         <span className={styles.headMeta}>
-          {skill.files.length} file{skill.files.length === 1 ? "" : "s"} · {bytes(skill.totalBytes)} ·{" "}
-          {stamp(skill.modifiedAt, "day")}
+          {skill.files.length} file{skill.files.length === 1 ? "" : "s"} ·{" "}
+          {bytes(skill.totalBytes)} · {stamp(skill.modifiedAt, "day")}
         </span>
       </div>
 
       <p className={styles.desc}>
-        {skill.description || <span className="faint">No description — the model has nothing to route on.</span>}
+        {skill.description || (
+          <span className="faint">
+            No description — the model has nothing to route on.
+          </span>
+        )}
         {note && <span className={styles.descNote}>({note})</span>}
       </p>
 
@@ -99,6 +116,57 @@ function SkillCard({ skill, scan }: { skill: Skill; scan: ScanResult }) {
         </div>
       )}
 
+      <details className={styles.findings} style={{ overflowWrap: "anywhere" }}>
+        <summary>Source, declared version &amp; permissions</summary>
+        <p className={styles.why}>
+          Installed source: <code>{skill.rootPath}</code>. A local path and
+          content hash identify what was read; they do not authenticate its
+          publisher.
+        </p>
+        <p className={styles.why}>
+          Declared version:{" "}
+          {skill.metadata?.version?.slice(0, 200) || "not provided"}. License:{" "}
+          {skill.license || "not provided"}. Metadata is supplied by the skill
+          author and has not been independently verified.
+        </p>
+        {skill.metadata && Object.keys(skill.metadata).length > 0 && (
+          <dl>
+            {Object.entries(skill.metadata)
+              .slice(0, 20)
+              .map(([key, value]) => (
+                <div key={key}>
+                  <dt>{key.slice(0, 100)}</dt>
+                  <dd
+                    style={{ overflowWrap: "anywhere", marginInlineStart: 0 }}
+                  >
+                    {value.slice(0, 1000)}
+                    {value.length > 1000 ? "… (shortened)" : ""}
+                  </dd>
+                </div>
+              ))}
+          </dl>
+        )}
+        {skill.metadata && Object.keys(skill.metadata).length > 20 && (
+          <p>
+            Showing the first 20 metadata fields. Open JSON for the full read
+            snapshot.
+          </p>
+        )}
+        <p className={styles.why}>
+          Skills provide instructions. Their text or declared capabilities do
+          not grant tools or enforce network limits. Actual access and approval
+          requirements come from the agent's tools, sandbox and connection
+          configuration.
+        </p>
+        {skill.ignoredFrontmatterKeys.length > 0 && (
+          <p className={styles.why}>
+            Frontmatter keys ignored by the runtime:{" "}
+            {skill.ignoredFrontmatterKeys.join(", ")}. Permission-looking keys
+            here do not restrict execution.
+          </p>
+        )}
+      </details>
+
       <details className={styles.findings}>
         <summary>
           {verdictSummary(scan)}
@@ -107,28 +175,39 @@ function SkillCard({ skill, scan }: { skill: Skill; scan: ScanResult }) {
         </summary>
         {scan.findings.length === 0 ? (
           <p className={styles.why}>
-            Nothing matched. That is the absence of known-bad patterns, not evidence this skill is
-            safe — read {skill.kind === "package" ? "SKILL.md" : "the file"} before you trust it.
+            Nothing matched. That is the absence of known-bad patterns, not
+            evidence this skill is safe — read{" "}
+            {skill.kind === "package" ? "SKILL.md" : "the file"} before you
+            trust it.
           </p>
         ) : (
           scan.findings.map((finding) => (
-            <FindingRow key={`${finding.ruleId}:${finding.file}:${finding.line}`} finding={finding} />
+            <FindingRow
+              key={`${finding.ruleId}:${finding.file}:${finding.line}`}
+              finding={finding}
+            />
           ))
         )}
         {scan.truncated && (
           <p className={styles.why}>
             Showing {scan.findings.length} of{" "}
-            {scan.counts.critical + scan.counts.high + scan.counts.medium + scan.counts.low}{" "}
-            findings, most severe first. The counts above are the whole scan; this list is capped so
-            the page stays responsive. Without this line a capped list reads as a complete one, which
-            is the mistake the verdict itself used to make.
+            {scan.counts.critical +
+              scan.counts.high +
+              scan.counts.medium +
+              scan.counts.low}{" "}
+            findings, most severe first. The counts above are the whole scan;
+            this list is capped so the page stays responsive. Without this line
+            a capped list reads as a complete one, which is the mistake the
+            verdict itself used to make.
           </p>
         )}
         {scan.unscanned.length > 0 && (
           <p className={styles.why}>
             Not scanned:{" "}
-            {scan.unscanned.map((entry) => `${entry.file} (${entry.reason})`).join(", ")}. The verdict
-            above covers less than it looks like it does.
+            {scan.unscanned
+              .map((entry) => `${entry.file} (${entry.reason})`)
+              .join(", ")}
+            . The verdict above covers less than it looks like it does.
           </p>
         )}
       </details>
@@ -144,6 +223,11 @@ function SkillCard({ skill, scan }: { skill: Skill; scan: ScanResult }) {
         <span className={styles.dot}>·</span>
         <a href={`/api/skills/${encodeURIComponent(skill.name)}`}>JSON</a>
       </div>
+      <SkillReview
+        name={skill.name}
+        hash={fingerprint.hash}
+        reviewable={fingerprint.reviewable}
+      />
     </li>
   );
 }
@@ -166,7 +250,9 @@ function SkillCard({ skill, scan }: { skill: Skill; scan: ScanResult }) {
 export default async function SkillsPage() {
   const { directory, skills } = await listSkills();
   const scanned = skills.map((skill) => ({ skill, scan: scanSkill(skill) }));
-  const critical = scanned.filter((entry) => entry.scan.verdict === "critical").length;
+  const critical = scanned.filter(
+    (entry) => entry.scan.verdict === "critical",
+  ).length;
 
   const fixture = await readFixtureSkill(CANARY_SKILL);
   const canary = fixture ? scanSkill(fixture) : null;
@@ -175,9 +261,10 @@ export default async function SkillsPage() {
     <>
       <h1>Skills</h1>
       <p className="page-sub">
-        eve advertises every skill in this directory to the model and hands it a <code>load_skill</code>{" "}
-        tool. Anything here can put instructions into a live turn without a human seeing them first,
-        which is why each one is scanned before it is listed.
+        eve advertises every skill in this directory to the model and hands it a{" "}
+        <code>load_skill</code> tool. Anything here can put instructions into a
+        live turn without a human seeing them first, which is why each one is
+        scanned before it is listed.
       </p>
 
       <div className={styles.source}>
@@ -214,16 +301,19 @@ export default async function SkillsPage() {
       */}
       {directory.resolvedBy === "bundled-template" && (
         <p className={styles.problems}>
-          These are the skills bundled with the evestack template, not your agent&apos;s. Nothing
-          here scans <code>agent/skills/</code> from your project — a container has no view of it.
-          To scan your own, set <code>{SKILLS_DIR_ENV}</code> and mount that directory into the
-          container; the variable already reaches it through <code>env_file</code>, so the mount is
-          the missing half.
+          These are the skills bundled with the evestack template, not your
+          agent&apos;s. Nothing here scans <code>agent/skills/</code> from your
+          project — a container has no view of it. To scan your own, set{" "}
+          <code>{SKILLS_DIR_ENV}</code> and mount that directory into the
+          container; the variable already reaches it through{" "}
+          <code>env_file</code>, so the mount is the missing half.
         </p>
       )}
 
       <details className={styles.limits}>
-        <summary>A clean verdict is not proof of safety. What this scanner cannot do</summary>
+        <summary>
+          A clean verdict is not proof of safety. What this scanner cannot do
+        </summary>
         <ul>
           {SCANNER_LIMITS.map((limit) => (
             <li key={limit}>{limit}</li>
@@ -232,23 +322,28 @@ export default async function SkillsPage() {
       </details>
 
       {canary && (
-        <p className={`${styles.canary} ${canary.verdict === "critical" ? "" : styles.canaryBad}`}>
+        <p
+          className={`${styles.canary} ${canary.verdict === "critical" ? "" : styles.canaryBad}`}
+        >
           <span>Firewall self-test:</span>
           {canary.verdict === "critical" ? (
             <>
               <span className="status status-completed">armed</span>
               <span>
-                {canary.counts.critical} critical findings on the bundled malicious fixture, from{" "}
-                {new Set(canary.findings.map((finding) => finding.ruleId)).size} distinct rules.
+                {canary.counts.critical} critical findings on the bundled
+                malicious fixture, from{" "}
+                {new Set(canary.findings.map((finding) => finding.ruleId)).size}{" "}
+                distinct rules.
               </span>
             </>
           ) : (
             <>
               <span className="status status-failed">broken</span>
               <span>
-                The bundled malicious fixture scanned <strong>{canary.verdict}</strong>. The scanner has
-                stopped detecting things it used to — treat every clean verdict on this page as
-                meaningless until that is fixed.
+                The bundled malicious fixture scanned{" "}
+                <strong>{canary.verdict}</strong>. The scanner has stopped
+                detecting things it used to — treat every clean verdict on this
+                page as meaningless until that is fixed.
               </span>
             </>
           )}
@@ -264,11 +359,13 @@ export default async function SkillsPage() {
           <p>
             {directory.problem ?? "Nothing to read."}
             <br />
-            eve scans <code>agent/skills/</code> for packaged skills (a directory with a{" "}
-            <code>SKILL.md</code>) and flat <code>.md</code> or <code>.ts</code> skill files. If the
-            agent has some and this page does not see them, the dashboard is running somewhere that
-            cannot reach the agent&apos;s source tree — set <code>{SKILLS_DIR_ENV}</code>, or mount
-            the directory into the container.
+            eve scans <code>agent/skills/</code> for packaged skills (a
+            directory with a <code>SKILL.md</code>) and flat <code>.md</code> or{" "}
+            <code>.ts</code> skill files. If the agent has some and this page
+            does not see them, the dashboard is running somewhere that cannot
+            reach the agent&apos;s source tree — set{" "}
+            <code>{SKILLS_DIR_ENV}</code>, or mount the directory into the
+            container.
           </p>
           <p className="faint">Looked in: {directory.searched.join(", ")}</p>
         </div>
@@ -276,9 +373,11 @@ export default async function SkillsPage() {
         <div className="empty">
           <h2>No skills installed</h2>
           <p>
-            The directory exists and is empty. Add <code>agent/skills/&lt;name&gt;/SKILL.md</code> with
-            a <code>description</code> in its frontmatter — that description is the only thing the
-            model routes on, so write it as the task that should trigger the skill.
+            The directory exists and is empty. Add{" "}
+            <code>agent/skills/&lt;name&gt;/SKILL.md</code> with a{" "}
+            <code>description</code> in its frontmatter — that description is
+            the only thing the model routes on, so write it as the task that
+            should trigger the skill.
           </p>
         </div>
       ) : (

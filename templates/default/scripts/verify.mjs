@@ -27,6 +27,39 @@
  *   npm run verify -- --no-open never open it (implied when not a terminal)
  *   npm run verify -- --json    machine-readable, opens nothing
  */
+
+/**
+ * Which environment variable holds this provider's key.
+ *
+ * A ternary lived here — `anthropic ? ANTHROPIC_API_KEY : OPENAI_API_KEY` —
+ * which is only correct while there are exactly two remote providers. With a
+ * gateway on the list it told someone their openrouter project was missing an
+ * OPENAI_API_KEY: the provider name in the message was right and the variable
+ * it demanded was wrong, which is worse than saying nothing.
+ *
+ * `compatible` returns null: a loopback LM Studio or llama.cpp authenticates
+ * nobody, so there is no key whose absence is a problem to report.
+ */
+function providerKeyVar(provider) {
+  const keys = {
+    openai: "OPENAI_API_KEY",
+    anthropic: "ANTHROPIC_API_KEY",
+    openrouter: "OPENROUTER_API_KEY",
+    compatible: null,
+    // Also null, and for a stronger reason than `compatible`: the ChatGPT
+    // session is a refresh token in the OS secret store, so there is no
+    // variable whose absence means anything. Demanding one here would send
+    // someone hunting for a key that does not exist.
+    chatgpt: null,
+  };
+  // `hasOwn` and not `?? "OPENAI_API_KEY"`. `??` falls back on null, so the one
+  // entry deliberately set to null — "this provider needs no key" — came back
+  // out of the lookup as OPENAI_API_KEY, and a scaffold pointed at LM Studio on
+  // loopback refused to start until an OpenAI key it will never call was set.
+  // The two cases are genuinely different: a known provider with no key, and a
+  // provider nobody here recognises.
+  return Object.hasOwn(keys, provider) ? keys[provider] : "OPENAI_API_KEY";
+}
 import { spawn } from "node:child_process";
 
 import { existsSync, readFileSync } from "node:fs";
@@ -40,9 +73,12 @@ import {
   envValue,
   findAgent,
   inspectOllama,
+  isPlaceholderAuthPassword,
+  PLACEHOLDER_AUTH_FIX,
   probeJson,
   readEnvFile,
   schemasPresent,
+  showSecrets,
   pgvectorState,
 } from "./checks.mjs";
 import { blank, c, fix, g, heading, row, rule } from "./ui.mjs";
@@ -105,6 +141,35 @@ if (fileEnv) {
     "config",
     "no .env.local here and nothing in the environment",
     "run this from the project directory create-evestack made",
+  );
+}
+
+/*
+ * The sign-in, and the one value here that can be wrong while looking right.
+ *
+ * `.env.example` ships `EVESTACK_AUTH_PASSWORD=change-me` so the line has a
+ * shape, and until now nothing anywhere refused it. A scaffolded project never
+ * meets it — the wizard generates 24 random characters — but a project set up by
+ * hand from the example, which is the documented path for a deployment, can
+ * reach production with a password that is printed in this repository.
+ *
+ * A warning rather than a failure, and the line is the whole argument for that:
+ * everything works. eve accepts it, the dashboard signs in with it, every other
+ * check on this screen is green. Exiting 1 would tell CI a working stack is
+ * broken; a yellow line with the command to fix it is what this file does with
+ * every other "this will cost you something later".
+ *
+ * Nothing is pushed on the healthy path. There is no green `auth` row, because
+ * the absence of a problem is not news and a twelfth always-green line makes the
+ * eleven above it harder to read. `auth` is listed in GROUPS below so that when
+ * it does appear it appears next to `config`, where it belongs — a group with
+ * no matching result is skipped, not printed empty.
+ */
+if (isPlaceholderAuthPassword(env("EVESTACK_AUTH_PASSWORD"))) {
+  warn(
+    "auth",
+    "the dashboard password is the placeholder from .env.example, so it is public",
+    PLACEHOLDER_AUTH_FIX,
   );
 }
 
@@ -174,15 +239,21 @@ if (client) {
 /* -------------------------------------------------------------------------- */
 
 const provider = (env("EVESTACK_PROVIDER")?.trim() || "openai").toLowerCase();
-const model = env("EVESTACK_MODEL") || { openai: "gpt-5-mini", anthropic: "claude-sonnet-5", ollama: "qwen3" }[provider];
+// The fourth copy of this table — agent.ts, @evestack/budget and .env.example
+// carry the other three, and budget's header records the outage that drift
+// caused. Adding a provider means touching all four.
+const model = env("EVESTACK_MODEL") || {
+  openai: "gpt-5-mini", anthropic: "claude-sonnet-5", openrouter: "qwen/qwen3.8-27b",
+  ollama: "qwen3:0.6b", compatible: "",
+}[provider];
 
 /**
  * Which provider will actually be asked for EMBEDDINGS.
  *
  * Resolved the way lib/memory.ts `readEmbedProvider()` resolves it: an explicit
- * EVESTACK_EMBED_PROVIDER first, then the chat provider, and for anthropic —
- * which has no embeddings endpoint at all — OpenAI if there is a key and nothing
- * if there is not.
+ * EVESTACK_EMBED_PROVIDER first, then the chat provider, and for everything else
+ * — anthropic, openrouter, compatible and chatgpt all serve chat and no
+ * embeddings — OpenAI if there is a key and nothing if there is not.
  *
  * This used to be read INSIDE the `provider === "ollama"` branch, which left the
  * embedding pull-check unreachable for two of the three combinations. The one
@@ -229,8 +300,23 @@ if (provider === "ollama") {
     pass("model", `ollama/${model} is pulled and ready`);
   }
 } else {
-  const keyVar = provider === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY";
-  if (env(keyVar)) {
+  const keyVar = providerKeyVar(provider);
+  if (provider === "chatgpt") {
+    // A pass, and the limit of the claim is in the words rather than left to be
+    // inferred. This script checks that a credential is CONFIGURED, never that
+    // it works — it does not call OpenAI to test an OPENAI_API_KEY either. For
+    // this provider there is nothing configured to look at: the session is a
+    // refresh token in the OS secret store, and reading it from here would pop
+    // a keychain dialog, which is how you turn `npm run verify` into a command
+    // people stop running.
+    //
+    // Nothing is lost by leaving it. A missing session is not a silent failure
+    // downstream — eve raises `ChatGptSignInRequiredError`, which names the
+    // exact recovery, and that message is better than a guess made here.
+    pass("model", `${provider}/${model}, billed to your ChatGPT plan — no key to set`);
+  } else if (!keyVar) {
+    pass("model", `${provider}/${model} on ${env("EVESTACK_BASE_URL") || "this machine"}, no key needed`);
+  } else if (env(keyVar)) {
     // Not called. A verify command that spends money the first time you run it
     // is a verify command people stop running.
     pass("model", `${provider}/${model}, ${keyVar} is set`);
@@ -244,9 +330,20 @@ if (provider === "ollama") {
 // optional and nobody should be told their install is broken because they have
 // not pulled a 274 MB model they may not use.
 if (embedProvider === null) {
+  // The provider is NAMED rather than assumed. This line read "Anthropic has no
+  // embeddings endpoint" for every provider that reaches it, which by now is
+  // four of the six — anthropic, openrouter, compatible and chatgpt — and it
+  // told a reader who never chose Anthropic that Anthropic was their problem.
+  // Caught on a real chatgpt scaffold, where it is doubly wrong: the limit is
+  // that the Codex backend serves chat only.
+  //
+  // The wording is lib/memory.ts's own, verbatim in substance, because that is
+  // the error the reader will meet if they ignore this warning and call
+  // `remember` — and two descriptions of one fact is how people conclude they
+  // have two problems.
   warn(
     "memory",
-    "Anthropic has no embeddings endpoint, so remember/recall cannot run",
+    `EVESTACK_PROVIDER=${provider} has no embeddings endpoint, so remember/recall cannot run`,
     "set EVESTACK_EMBED_PROVIDER=ollama (then `ollama pull nomic-embed-text`), or set OPENAI_API_KEY",
   );
 } else if (embedProvider !== "openai" && embedProvider !== "ollama") {
@@ -548,7 +645,9 @@ if (asJson) {
  */
 
 const GROUPS = [
-  ["foundation", ["config", "docker", "postgres", "schema", "pgvector"]],
+  // `auth` sits beside `config` because it is a fact about the same file, and it
+  // only ever has a row when something is wrong with it.
+  ["foundation", ["config", "auth", "docker", "postgres", "schema", "pgvector"]],
   ["model", ["model", "memory"]],
   ["the stack", ["agent", "dashboard", "traces"]],
 ];
@@ -616,7 +715,30 @@ console.log(
 );
 blank();
 console.log(`  ${c.bold("Dashboard")}   ${c.brandBold(dashboardUrl)}`);
-if (password) console.log(`  ${c.bold("Sign in")}     ${user} ${c.dim("/")} ${password}`);
+/*
+ * The password, and the one condition under which it is printed.
+ *
+ * This file's header says "Exit code is 1 if anything required failed, so CI
+ * can run it too", and `--json` has always omitted the password — so the
+ * intent was already written down; it just had no gate on the human path.
+ * `npm run verify | tee verify.log`, a CI job archiving its output, a
+ * screen-share recording: each turns the dashboard credential into a value
+ * sitting somewhere that nothing rotates, and the dashboard starts agent runs
+ * and approves gated shell commands.
+ *
+ * Gated on `showSecrets()`, which is `process.stdout.isTTY` plus one override
+ * — the same question this file asks two screens down before offering to open a
+ * browser, "is a person reading this?", and the same answer. Nothing is lost:
+ * the value is the EVESTACK_AUTH_PASSWORD line in .env.local, which is named
+ * here, and `evestack dashboard` prints it on a terminal. Set
+ * EVESTACK_PRINT_SECRETS=1 to get the old behaviour back in a pipe.
+ */
+if (password) {
+  const shown = showSecrets()
+    ? password
+    : c.dim("(not printed to a pipe; it is EVESTACK_AUTH_PASSWORD in .env.local)");
+  console.log(`  ${c.bold("Sign in")}     ${user} ${c.dim("/")} ${shown}`);
+}
 console.log(`  ${c.dim("Sessions, live chat, approvals, memory and cost — all read from your own Postgres.")}`);
 blank();
 // One command, not a three-line curl. The tour does the same thing and then

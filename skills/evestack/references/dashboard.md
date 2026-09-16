@@ -2,7 +2,7 @@
 
 A Next.js app shipped as a container image, `ghcr.io/sammytourani/evestack-dashboard`, pinned in
 the generated `docker-compose.yml` to the version tested with that template. Multi-arch
-(`linux/amd64` + `linux/arm64`, ~204 MB compressed), so the same command works on Apple Silicon
+(`linux/amd64` + `linux/arm64`), so the same command works on Apple Silicon
 and on an x86 server.
 
 ```bash
@@ -20,19 +20,20 @@ in a `.env` beside the compose file.
 session list.** OTLP ingest at `/api/ingest/v1/traces` is a second tier used only for prompt
 bodies and tool arguments, which do not exist in the SQL tags.
 
-Cost is computed client-side from token counts (`lib/pricing.ts`), because eve only reports
-`gen_ai.usage.cost` for AI-Gateway-routed calls, which a self-hosted agent never makes.
+Costs are estimated from recorded usage and known prices (`lib/pricing.ts`). Models without
+prices are explicit. These estimates are not provider invoices.
 
 Two facts that trip people reading the data directly:
 
-- **A failed turn still records `status='completed'`.** The absence of `$eve.model` is the only
-  failure signal.
+- **A failed turn can record `status='completed'`.** Use the dashboard outcome, error fields
+  and available trace evidence together; workflow lifecycle alone does not establish success.
 - **Rows without `$eve.type` are internal noise** and must be filtered out.
 
 ## Pages
 
-`sessions` · `chat` · `costs` · `approvals` · `memory` · `skills` · `sandboxes` · `schedules` ·
-`integrations` · `evals` · `monitors` · `traces` · `charts`
+Primary: `/` (Today), `/tasks`, `/routines`, `/connections`, `/knowledge`. Task conversations
+open at `/chat?session=<id>`. `/settings` and `/diagnostics` link to the detailed operator
+surfaces. Legacy session/trace/schedule/eval URLs remain available.
 
 ## Auth
 
@@ -112,12 +113,14 @@ this package has no tool for it.
 ```
 
 Read-only tools: `list_sessions`, `get_session`, `list_approvals`, `get_costs`,
-`promote_session_to_eval`.
+`promote_session_to_eval`, `list_routines`, `get_routine`, `pending_decisions`, plus task
+recovery, readiness, memory review and regression-case tools. Inspect the server tool list
+for exact names and input schemas; these calls share the authenticated dashboard routes.
 
-**The four mutating tools — `start_session`, `send_message`, `approve_or_deny`, `cancel_run` —
-are withheld from `tools/list` entirely** unless `EVESTACK_MCP_ALLOW_CONTROL=1`. A model cannot
-plan around a capability it has never been told exists, and the gate is an environment variable
-read once at launch, before any client input is parsed.
+`EVESTACK_MCP_ALLOW_CONTROL=1` enables `start_session`, `send_message`, and
+`cancel_run`. `approve_or_deny` additionally requires
+`EVESTACK_MCP_ALLOW_APPROVALS=1`. Both gates are checked at advertisement and call
+time, using environment configuration read at server launch.
 
-Never advise a user to set that flag without saying what it means: it lets a model approve a
-gated tool call a human was asked to stand at, which is the entire reason eve pauses the turn.
+Task control can incur model charges. The separate approval flag allows a model
+to answer decisions intended for a human, including permission for real tool effects.

@@ -62,9 +62,9 @@ function cpu(fraction: number | null): string {
 
 const CONCERN_TEXT: Record<SandboxConcern["kind"], { label: string; detail: string }> = {
   networked: {
-    label: "network open",
+    label: "network attached",
     detail:
-      "This sandbox is not on `none`, so code running inside it can reach the network. eve isolates a sandbox by default; something set this one differently.",
+      "Docker reports a network mode other than `none`. Check the agent's intended policy; actual outbound reachability and host firewall rules were not probed.",
   },
   orphaned: {
     label: "long-lived",
@@ -91,7 +91,7 @@ function SandboxRow({ sandbox, flags }: { sandbox: Sandbox; flags: readonly Sand
     <Card>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <div className="flex flex-wrap items-baseline gap-2">
-          <span className="font-mono text-body text-text">{sandbox.name}</span>
+          <span className="min-w-0 break-all font-mono text-body text-text">{sandbox.name}</span>
           <Badge tone={running ? "ok" : "neutral"}>{sandbox.state}</Badge>
           {mine.map((f) => (
             <Badge
@@ -108,7 +108,7 @@ function SandboxRow({ sandbox, flags }: { sandbox: Sandbox; flags: readonly Sand
         </span>
       </div>
 
-      <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 text-small sm:grid-cols-4">
+      <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 break-all text-small sm:grid-cols-4">
         <div>
           <dt className="text-text-dim">session</dt>
           <dd className="m-0 font-mono">
@@ -169,7 +169,7 @@ function SandboxRow({ sandbox, flags }: { sandbox: Sandbox; flags: readonly Sand
         </div>
       </dl>
 
-      <p className="mt-3 mb-0 font-mono text-micro text-text-faint">
+      <p className="mt-3 mb-0 break-all font-mono text-micro text-text-faint">
         {sandbox.image}
         {sandbox.templateKey === null ? null : ` · template ${sandbox.templateKey}`}
         {sandbox.role === null ? null : ` · role ${sandbox.role}`}
@@ -191,11 +191,11 @@ function SandboxRow({ sandbox, flags }: { sandbox: Sandbox; flags: readonly Sand
 function Header() {
   return (
     <>
-      <h1>Sandboxes</h1>
+      <h1>Execution environments</h1>
       <p className="page-sub">
-        The containers eve is running on this machine, read from your own Docker daemon. A hosted
-        dashboard cannot show you this.
+        Docker sandbox containers visible to this dashboard. Other backends and host processes are not included.
       </p>
+      <p className="page-sub">Network mode and age come from Docker. Allowed destinations, external firewall rules and any custom expiration policy are not verified here. The default Docker backend keeps a container per session without an idle timeout; this page has no stop or remove controls.</p>
     </>
   );
 }
@@ -230,14 +230,14 @@ export default async function SandboxesPage() {
         <Header />
         <Placeholder
           tone="error"
-          title="Docker did not answer"
-          detail={`EVESTACK_DOCKER_SOCKET is set, but the daemon could not be reached: ${result.reason}. This page cannot tell you whether sandboxes are running, which is not the same as there being none.`}
+          title="Docker inspection failed"
+          detail={`EVESTACK_DOCKER_SOCKET is set, but inspection could not complete: ${result.reason}. The current container inventory is unknown.`}
         />
       </>
     );
   }
 
-  const { sandboxes } = result;
+  const { sandboxes, coverage } = result;
 
   // Which of the named sessions still exist. One query, not one per container:
   // the whole point of the "session gone" flag is that it is cheap enough to
@@ -273,18 +273,20 @@ export default async function SandboxesPage() {
     <>
       <Header />
 
+      {coverage.omitted > 0 && <p role="status" className="mb-4 text-small text-warn">Showing {coverage.inspected} of {coverage.listed} listed containers, prioritizing running and older-created containers. {coverage.omitted} were not inspected; their network and lifetime state is unknown. Use local Docker tools for the full inventory.</p>}
+
       {sandboxes.length === 0 ? (
         <Placeholder
           tone="empty"
           title="No sandbox containers"
-          detail="Nothing on this machine carries eve's sandbox label. That means either no agent has needed a sandbox yet, or this install uses a non-Docker backend — @evestack/sandbox-opensandbox runs no containers at all, and looks exactly like this."
+          detail="No containers with eve's sandbox label were found on this daemon. The agent may not have needed a sandbox yet, or it may use another backend whose environments are not visible here. This does not prove that the agent is idle."
         />
       ) : (
         <>
           <p className="mb-4 text-small text-text-dim">
             {running} running, {sandboxes.length - running} stopped.
             {flags.length === 0
-              ? sessionsUnread
+              ? sessionsUnread || coverage.omitted > 0
                 ? " Nothing was flagged, but one of the three checks did not run — see below."
                 : " Nothing needs attention."
               : ` ${flags.length} thing${flags.length === 1 ? "" : "s"} worth a look, flagged below.`}{" "}

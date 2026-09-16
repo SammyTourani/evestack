@@ -46,7 +46,19 @@ const SCAFFOLD_COMMANDS = new Set(["create", "attach"]);
  * What it shares with the other four is that it owns `--dir`, `--print` and
  * `--force`, none of which doctor's parser has ever heard of.
  */
-const PROJECT_COMMANDS = new Set(["status", "verify", "open", "tour", "skills"]);
+const PROJECT_COMMANDS = new Set([
+  "status",
+  "verify",
+  "dashboard",
+  "open",
+  "tour",
+  "skills",
+  "configure",
+  "tasks",
+  "routines",
+  "readiness",
+  "upgrade",
+]);
 
 /**
  * Which scaffolder command this argv is, or null for everything else.
@@ -79,10 +91,15 @@ export function projectCommand(argv) {
 export const USAGE = `evestack — the whole eve stack, on your own machine
 
   evestack create [name]     scaffold an agent, a database and a dashboard
+  evestack dashboard         open the dashboard in your browser, signed in
   evestack status            is it up? what do I run?
+  evestack tasks             list, inspect, start, continue or stop work
+  evestack routines          inspect routines and their run history
+  evestack readiness         check the dashboard's setup state
   evestack tour              a guided first run, on a stack that is already up
-  evestack open              the dashboard URL and its password, in a browser
   evestack verify            check every part and name the fix for anything broken
+  evestack configure         preview, back up and save provider/channel settings
+  evestack upgrade           compare this project with the bundled template
   evestack skills            teach your coding agent this project
   evestack attach [dir]      add evestack to an eve project you already have
   evestack doctor            a run stopped moving — read-only forensics
@@ -155,11 +172,14 @@ export function parseArgs(argv) {
       if (rest.length === 0) {
         // Refused rather than guessed: `--limit 50` would otherwise silently
         // become `--limit` plus a stray positional and run with the default.
-        throw new DoctorError(`--${name} needs a value, as --${name}=VALUE\n\n${DOCTOR_USAGE}`);
+        throw new DoctorError(
+          `--${name} needs a value, as --${name}=VALUE\n\n${DOCTOR_USAGE}`,
+        );
       }
       options[name] = rest.join("=");
     } else if (options.command === null) options.command = arg;
-    else throw new DoctorError(`Unexpected argument "${arg}"\n\n${DOCTOR_USAGE}`);
+    else
+      throw new DoctorError(`Unexpected argument "${arg}"\n\n${DOCTOR_USAGE}`);
   }
   return options;
 }
@@ -167,7 +187,8 @@ export function parseArgs(argv) {
 function numeric(value, name) {
   if (value === undefined) return undefined;
   const n = Number(value);
-  if (!Number.isFinite(n) || n < 0) throw new DoctorError(`--${name}=${value} is not a number`);
+  if (!Number.isFinite(n) || n < 0)
+    throw new DoctorError(`--${name}=${value} is not a number`);
   return n;
 }
 
@@ -216,7 +237,21 @@ async function printVersion(stdout) {
 }
 
 /** Every verb this binary answers to, for the router and for did-you-mean. */
-export const COMMANDS = ["create", "status", "tour", "open", "verify", "skills", "attach", "doctor"];
+export const COMMANDS = [
+  "upgrade",
+  "create",
+  "status",
+  "tour",
+  "dashboard",
+  "verify",
+  "configure",
+  "tasks",
+  "routines",
+  "readiness",
+  "skills",
+  "attach",
+  "doctor",
+];
 
 /**
  * Edit distance, capped at 2.
@@ -229,7 +264,10 @@ function near(input, candidate) {
   const a = input.toLowerCase();
   const b = candidate;
   if (Math.abs(a.length - b.length) > 2) return false;
-  const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [
+    i,
+    ...Array(b.length).fill(0),
+  ]);
   for (let j = 0; j <= b.length; j += 1) d[0][j] = j;
   for (let i = 1; i <= a.length; i += 1) {
     for (let j = 1; j <= b.length; j += 1) {
@@ -261,8 +299,15 @@ async function runProjectCommand(name, argv, { stdout, stderr }) {
     status: () => import("./status.mjs"),
     tour: () => import("./tour.mjs"),
     verify: () => import("./project.mjs"),
+    dashboard: () => import("./project.mjs"),
+    // The name `dashboard` replaced. Same module, same exported function.
     open: () => import("./project.mjs"),
     skills: () => import("./skills.mjs"),
+    configure: () => import("./configure.mjs"),
+    tasks: () => import("./work.mjs"),
+    routines: () => import("./work.mjs"),
+    readiness: () => import("./work.mjs"),
+    upgrade: () => import("./upgrade.mjs"),
   };
   try {
     const module = await MODULES[name]();
@@ -273,7 +318,10 @@ async function runProjectCommand(name, argv, { stdout, stderr }) {
   }
 }
 
-export async function main(argv, { stdout = process.stdout, stderr = process.stderr } = {}) {
+export async function main(
+  argv,
+  { stdout = process.stdout, stderr = process.stderr } = {},
+) {
   // Before everything, including the router: a runtime this CLI does not support
   // should be one sentence, not a failure inside pg or a scaffolded project.
   const tooOld = nodeVersionProblem();
@@ -293,7 +341,8 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
   if ((project || scaffold) && wantsVersion(argv.slice(1))) {
     return printVersion(stdout);
   }
-  if (project) return runProjectCommand(project, argv.slice(1), { stdout, stderr });
+  if (project)
+    return runProjectCommand(project, argv.slice(1), { stdout, stderr });
 
   if (scaffold) {
     const scaffolder = await import("./scaffold.mjs");
@@ -333,7 +382,8 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
   // answer, and it is not a failure.
   if (options.command === null) {
     const { findProject } = await import("./project.mjs");
-    if (findProject()) return runProjectCommand("status", [], { stdout, stderr });
+    if (findProject())
+      return runProjectCommand("status", [], { stdout, stderr });
     stdout.write(USAGE);
     return 0;
   }
@@ -354,7 +404,9 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
   // Resolved here rather than inside diagnose() because only this layer knows
   // how to refuse the way the other four refuse — and because the answer is
   // handed straight to diagnose(), so nothing resolves twice.
-  const { connectionString, project: projectDir } = resolveConnection(options.url);
+  const { connectionString, project: projectDir } = resolveConnection(
+    options.url,
+  );
   if (!connectionString && !projectDir) {
     const { notAProject } = await import("./project.mjs");
     return notAProject(stderr);
@@ -368,7 +420,10 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
       agentUrl: options["agent-url"],
       limit: numeric(options.limit, "limit"),
       probes: numeric(options.probes, "probes"),
-      idleMs: options.idle === undefined ? undefined : numeric(options.idle, "idle") * 60_000,
+      idleMs:
+        options.idle === undefined
+          ? undefined
+          : numeric(options.idle, "idle") * 60_000,
       timeoutMs: numeric(options.timeout, "timeout"),
     });
 
@@ -376,7 +431,10 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
       // Pipe-friendly: SQL on stdout and nothing else, so `--sql | psql` is a
       // decision the operator makes rather than one this tool makes for them.
       if (report.remediation) stdout.write(report.remediation);
-      else stderr.write("Nothing to remediate: no job is both dead and blocking a live run.\n");
+      else
+        stderr.write(
+          "Nothing to remediate: no job is both dead and blocking a live run.\n",
+        );
       return report.exitCode;
     }
     if (options.json) {

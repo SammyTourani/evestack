@@ -54,14 +54,14 @@ function explain(grade: Grade): { label: string; cls: string; line: string } {
         label: "regression",
         cls: styles.whyFailed,
         line:
-          "This session ended badly. The draft still asserts succeeded(), so it stays red until " +
-          "the bug is fixed — which is what a regression test is.",
+          "This task has a recorded failure. Review the draft and add assertions for the " +
+          "expected behavior before relying on it as a regression test.",
       };
     case "plain":
       return {
         label: "happy path",
         cls: styles.whyPlain,
-        line: "Nothing went wrong here. Promoting it pins the behaviour so it stays that way.",
+        line: "No failure was classified here. Review the result and add assertions for the behavior to preserve.",
       };
     case "empty":
       return {
@@ -82,6 +82,7 @@ export default async function EvalsPage() {
     return (
       <>
         <h1>Evals</h1>
+      <p><a href="/regressions">Saved corrections &amp; regression cases</a></p>
         <DatabaseError error={error} />
       </>
     );
@@ -165,8 +166,9 @@ export default async function EvalsPage() {
   return (
     <>
       <h1>Evals</h1>
+      <p><a href="/regressions">Saved corrections &amp; regression cases</a></p>
       <p className="page-sub">
-        Turn a session that already happened into an eve eval. The transcript <em>is</em> the test:
+        Turn a session that already happened into an eve eval. The transcript supplies the draft messages:
         promotion replays the user&apos;s real messages and asserts what the agent really did.
       </p>
 

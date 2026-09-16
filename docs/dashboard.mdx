@@ -1,7 +1,51 @@
 ---
 title: The dashboard
-description: The open replacement for Agent Runs — and it drives the agent, not just watches it.
+description: Run tasks, review evidence and decisions, and manage recurring work on your own infrastructure.
 ---
+
+## Start with a task
+
+The primary navigation is **Today, Tasks, Routines, Connections and Knowledge**.
+Today brings together pending decisions, recurring work and recent tasks. Tasks
+provides searchable history and a workspace with readable results, recoverable
+delivery, recorded spend and evidence links. [Routines](/docs/routines) lets you
+test a saved request before scheduling it.
+
+**Settings** shows setup health and shared budget controls, including which
+revision an opted-in agent last observed. **Diagnostics** retains the detailed
+metrics, traces, costs, monitors, evaluations and sandbox inspection.
+
+## Five ways in
+
+The dashboard is the screen that makes the rest of the stack legible, so reaching it should never
+be the hard part. It is not behind a command you have to have read this page to know.
+
+| | |
+| --- | --- |
+| **It opens itself** | When `evestack create` brings the stack up, it health-checks the dashboard and opens your browser at it, signed in. `--no-open` declines, and it never opens one without a terminal — CI, a pipe and a Dockerfile all get the printed URL instead. |
+| **`npx evestack dashboard`** | From any terminal, anywhere inside the project. Reads the port out of `.env.local`, prints the credentials, says whether anything is answering, and opens it. |
+| **`npm run dashboard`** | The same thing from inside the project, with no `npx` fetch — it works offline and runs the version that shipped with this project. It sits next to `dev` in `package.json`, which is where someone reading the file will find it. |
+| **`/dashboard`** | Typed at the agent, inside `npm run dev`. |
+| **The printed URL** | `evestack status` and the scaffolder's finish screen both print it with the password. |
+
+### `/dashboard` is not one of eve's own commands, and that is worth knowing
+
+eve's terminal UI has a slash-command registry — `/model`, `/add`, `/traces` and the rest — and it
+is a module-level constant with no registration hook, so no application can add to it. evestack
+does not fork eve, so `/dashboard` is not in that list and never will be.
+
+What makes it work is that eve treats an unrecognised `/word` as an ordinary message rather than an
+error, and the eve channel has a documented pre-dispatch hook, `eveChannel({ onMessage })`, that
+runs on the host before the runtime dispatches. `agent/channels/eve.ts` uses it: the browser opens
+from the agent process itself, immediately, and does not wait on the model or depend on it
+answering correctly. What the hook cannot do is cancel the turn, so the model still replies — with
+one line it is handed verbatim. `lib/dashboard-command.ts` in your project carries the whole
+explanation, including what it deliberately does not do.
+
+It is on the eve channel only, so a message from Telegram, Slack or Discord never reaches it: a
+stranger cannot make a window open on your machine by typing a slash command at your bot. It also
+does nothing on a process with no terminal, which is what a deployed agent is. `EVESTACK_NO_BROWSER`
+turns it off entirely.
 
 ## Observe
 
@@ -43,7 +87,7 @@ report as a faster one.
 
 ## Control
 
-This is where evestack diverges from Agent Runs, which is read-only:
+The dashboard provides these controls:
 
 - **Start a session** and stream the reply straight from the dashboard
 - **Send a follow-up** to an existing session
@@ -51,11 +95,52 @@ This is where evestack diverges from Agent Runs, which is read-only:
   for the actual protocol underneath
 - **Cancel a run** — read [the cooperative-cancellation note](/docs/architecture#cooperative-cancellation)
   before building anything that assumes a cancel is instant
-- **Promote a session to an eval** — turn any run, especially one that went wrong, into a real
-  `evals/*.eval.ts` replaying its actual messages
+- **Download a regression draft** — export a task's actual messages into an
+  `evals/*.eval.ts` draft. Add assertions for the expected behavior before running it;
+  this is not a verified regression test. Transcripts beyond the 4,096-event read window
+  are refused instead of silently exporting an incomplete conversation
   ([how to run one](#running-the-evals))
 - **Replay a session into a new one** — re-send its messages with one turn rewritten. Read
   [Replaying a session](#replaying-a-session) first; it re-runs the original's tool calls
+
+## Saved regression cases
+
+Use **Save a correction as a regression case** in a task's recovery panel, or open
+`/regressions`. Select the original task by title and record what was wrong plus
+the behavior and evidence you expect. Saving captures the bounded Postgres evidence
+shown in the preview; it does not execute a task or change the agent.
+
+Run a candidate task separately, then find it by title in the case. The comparison
+shows the original snapshot and candidate preview, including available model data,
+response text and coverage limits. Record an **operator-observed pass**,
+**operator-observed failure**, or **needs further review**, with supporting notes.
+These labels are manual judgments, not automated eval results or proof of an
+isolated execution environment. Partial traces and unknown agent build information
+stay explicit. The same task cannot serve as both the original and the candidate.
+
+An edit creates a new case revision while preserving the original snapshot and
+older reviews. A review belongs only to the revision it evaluated. Concurrent case
+edits or changed candidate evidence reject the stale write, and request IDs prevent
+an uncertain create/review retry from silently duplicating that operation. Each case
+shows the latest 20 revisions and observations; older records remain in Postgres.
+
+Authenticated APIs:
+
+| Route | Behavior |
+| --- | --- |
+| `GET /api/regressions?offset=0` | Latest 20 case heads with `nextOffset` |
+| `POST /api/regressions` | Create a case from an actual task evidence hash and correction |
+| `GET /api/regressions/:id` | Current revision, captured baseline and bounded history |
+| `POST /api/regressions/:id` | Append an edited expectation against the current revision |
+| `POST /api/regressions/:id/reviews` | Append a manual judgment against a candidate snapshot and exact revision |
+| `GET /api/tasks/:id/recovery` | Read bounded evidence and its fingerprint for a preview |
+
+Cases, revisions, observation notes and snapshots are retained in the `evestack`
+schema and backups. Shared dashboard credentials name an installation; proxy
+attribution is only as trustworthy as the proxy. Back up the database before an
+upgrade, and run the matching dashboard when the schema version changes. Older
+running writers refuse a newer regression schema. Removing a task or pruning traces
+does not remove already captured regression snapshots.
 
 ## Running the evals
 
@@ -185,6 +270,22 @@ verdict, so you can tell a scanner that is working from one that is merely quiet
 A clean verdict is not proof of safety and the page says so in as many words. It is pattern
 matching over files; a skill that fetches its instructions at runtime has nothing for it to read.
 
+Open **Source, declared version & permissions** to inspect the installed path, author-supplied
+version, license and metadata. These do not authenticate a publisher. Permission-looking
+frontmatter that the runtime ignores is identified explicitly; actual tool access, approvals
+and network restrictions come from the agent configuration.
+
+**Content review** records an outcome and reason against the exact content and installed source.
+New reviews store per-file SHA-256 fingerprints, so **Changes since the last review** lists added,
+changed and removed files. Previous file contents are not stored by this review. Older reviews
+keep their whole-content hash and history but have no per-file baseline; the page says when it
+cannot reconstruct a change. Changing a file reopens review, and saving from an outdated page
+is rejected. A review neither suppresses scanner findings nor grants permission to execute.
+
+The nullable `evestack.skill_reviews.file_manifest` column is added on first review access. Older
+rows remain intact. Include the table in a whole-database backup; rolling back application code
+does not require dropping the column or deleting review history.
+
 **Point it at the right directory.** The page reads, in order: `EVESTACK_SKILLS_DIR`, then
 `<cwd>/agent/skills`, then the skills bundled with the evestack template. In a container the
 first two do not exist unless you arrange them, so it falls through to the third — and because
@@ -263,8 +364,75 @@ dashboard together. The container runs as a non-root user; the process inside it
 and what keeps it off your network is the compose port mapping, `127.0.0.1:4000:4000`. See
 [Self-hosting](/docs/self-hosting) before exposing it beyond your own machine.
 
-## It reads your database, nothing else
+## Where data is read and sent
 
-No API calls to evestack, no telemetry, no external service in the loop. Its required
-environment variables are `WORKFLOW_POSTGRES_URL` and the `EVESTACK_AUTH_*` pair — point the
-first at your Postgres and everything on the observe side is a SQL read.
+Workflow evidence, exported traces, reviews, routines and control settings are stored
+in your Postgres. Live conversations and decisions use your agent's HTTP API. Model
+requests use the provider configured in that agent. Connections uses Composio's hosted
+account authorization when enabled; notifications go to the operator's configured
+webhooks. Dashboard credentials identify the installation, not isolated teammates.
+
+### Setup checks and recovery
+
+For local configuration changes, use `npx evestack configure` in the agent project.
+It previews supported provider/channel settings, redacts credentials, backs up the
+current env file and applies only the reviewed fingerprint. It does not restart
+processes or claim activation; restart and verify before relying on new settings.
+
+Settings distinguishes a successful database or agent health probe from a configured
+key or destination. Model and embedding readiness remains unverified until actual
+agent work demonstrates it. Recheck each item independently; these checks neither
+start a model call nor send a notification. Use Connections for explicit grant and
+delivery checks. `GET /api/readiness?check=agent` returns the same authenticated view;
+supported checks are `database`, `agent`, `model`, `embeddings`, `connections`, and
+`notifications`. Omit the parameter to check all six.
+
+Every existing task's workspace includes **Saved evidence & recovery**. It reads up
+to 100 recent workflow turns and 50 recent matching spans directly from Postgres,
+with separate coverage and truncation notices. It shows the latest observed failure,
+recorded completed turn, explicitly successful finished tool span and retained model
+response text when available. Trace text may be partial or intermediate; an explicit
+tool success does not independently verify its external effect. The authenticated
+`GET /api/tasks/:id/recovery` provides the same bounded evidence without contacting
+the agent or creating database objects.
+
+Reconnecting reads the existing durable conversation. Follow-up requests can execute
+tools, and replay runs earlier messages again in another task after a tool preview.
+A failed evidence read is reported as unavailable. For deeper local forensics, run
+`npx evestack doctor` in your agent project. Pause affected routines while investigating
+an ambiguous external effect; automatic repeat execution can make the ambiguity worse.
+
+**Check the installation's job queue** in the recovery panel runs a separate,
+on-demand database diagnosis. The same view is in Diagnostics → Queue diagnosis,
+and the authenticated `GET /api/doctor` exposes its report. It reuses the CLI's
+queue queries and finding rules, inside a server-enforced read-only transaction.
+It never unlocks jobs, resets attempts, starts a task or contacts an agent.
+
+This is an installation snapshot, not a verdict about the current task. It reads
+the standard `graphile_worker` and `workflow` schemas, caps each detail list at
+20 candidates, bounds query time and labels incomplete or unavailable coverage.
+A failed recheck retains the prior result with a stale warning. An exhausted row
+may already have a claimable replacement; only inspecting its context tells you
+whether recovery is needed. Live-session health remains unassessed. Use the CLI
+for custom schemas, live-session probes and a separately reviewed repair plan.
+Back up the database before changing queue state.
+
+### Execution environment coverage
+
+Diagnostics → Execution environments reads the operator-selected Docker socket
+with GET requests only. It shows reported state, network mode, start time, age and
+available resource samples. It does not start, stop or remove containers. Mounting
+the socket still grants the process host-level authority; this remains an explicit
+operator choice, not a privilege made safe by calling its UI read-only.
+
+Each Docker response is limited to 2 MiB and an absolute three-second deadline.
+Inspection covers at most 24 containers, prioritizing running and older-created
+ones, with six inspection workers. Omitted containers are counted and make an
+otherwise healthy network/lifetime monitor unknown. A missing sample remains
+unknown, including CPU without two valid readings. Use local Docker tools for the
+full inventory when this limit is reached.
+
+Network mode is configuration evidence. Actual outbound reachability, allowed
+destinations, host firewall policy and a custom expiration deadline are not probed.
+The default Docker backend keeps one container per session without an idle timeout;
+non-Docker backends and arbitrary host processes are outside this view.

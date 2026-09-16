@@ -15,14 +15,12 @@ something scripting these commands is a **minor**, not a patch.
   `@evestack/mcp@0.2.0`. That is deliberate and load-bearing in two places: the string
   is also a valid `npm install` spec (`npm i create-evestack@0.8.0`), and
   `.github/workflows/publish-dashboard.yml` extracts release notes by matching the
-  heading literally. See [RELEASING.md](RELEASING.md#tag-convention) for the convention
-  and for the two tags that predate it.
-- Most releases have **no tag** — a minority of the headings below have one. A heading is
-  therefore the *name a tag would have*, not proof one exists. RELEASING.md lists the tags
-  that exist, and `git tag` is the check that is never stale.
-- **Dates are `America/Los_Angeles`**, the timezone every commit in this repository is
-  stamped in. npm records its `time` field in UTC; those timestamps are converted here,
-  so a date can be one day earlier than the value `npm view <pkg> time` prints.
+  heading literally. See [RELEASING.md](RELEASING.md#publish-in-dependency-order).
+- A heading names the intended tag; it is not proof the tag, npm package or image exists.
+  Check current GitHub and registry state before using an unpublished version.
+- Historical publication dates use `America/Los_Angeles`. npm records `time` in UTC,
+  so a date can differ from the value `npm view <pkg> time` prints. Candidate entries
+  stay marked unreleased until publication is verified.
 - Commit hashes are given for anything a reader might want to check. `git show <hash>`;
   the commit messages in this repository are long and carry the measurements.
 
@@ -37,7 +35,7 @@ git log --oneline <bump>..<next-bump> -- packages/<dir>
 git tag -l
 ```
 
-Every version below is a version npm or GHCR actually serves, cross-checked against the
+Historical versions below describe npm or GHCR releases, cross-checked against the
 commit that moved the `version` field in that package's `package.json`. Where the
 boundary between two versions cannot be established from the tree — no tag was cut, so
 the only evidence is that a commit's timestamp falls before or after the registry's
@@ -52,39 +50,209 @@ They are summarised rather than itemised, deliberately.
 
 ## Unreleased
 
-Nothing is pending. Every package in this tree matches the version its registry serves, and
-the container image is published at the version the repository is on.
+**This release candidate is not published.** The planned versions are:
 
-> **This section claimed the opposite until 2026-08-19, and that is precisely the failure it
-> exists to prevent.** It opened with "**`@evestack/dashboard@0.4.0` is waiting to be
-> published** … the newest image GHCR serves is `0.3.1`, which installs spans v3 and facts
-> v1", and carried a `### Bumped and waiting to publish` list naming four more packages as
-> differing from npm. Every one of those claims had been false for days. Verified 2026-08-19:
->
-> - `docker manifest inspect ghcr.io/sammytourani/evestack-dashboard:0.4.0` returns a
->   two-platform (`linux/amd64`, `linux/arm64`) image index, and `git tag -l` carries
->   `@evestack/dashboard@0.4.0`, tagged 2026-08-11. GHCR has served 0.4.0 since.
-> - `npm view` reports `create-evestack` **0.10.0**, `evestack` **0.4.1**,
->   `@evestack/composio` **0.2.1** and `@evestack/schedules` **0.2.1** — the four "waiting"
->   versions, all live, all published 2026-08-13 (`time` field, converted from UTC). Their
->   entries have moved down into their own package sections, where the file's convention puts
->   a shipped release.
->
-> The staleness is not a harmless leftover. This section's entire job is to name the one
-> state RELEASING.md calls the dangerous one — a version number that means one thing in the
-> registry and another in the tree — so a reader who trusts it and is wrong has lost the only
-> signal this repository offers for that condition. Worse in the specific: a reader who
-> believed the "`0.3.1` is the newest image" sentence would go on pulling a tag that installs
-> spans v3 and facts v1, avoiding an image that had been correct and published for over a
-> week, on the authority of the changelog.
->
-> **The lesson for whoever writes here next:** a pending-state paragraph is a claim with an
-> expiry date, and nothing in CI checks it. `publish-dashboard.yml` gates on the
-> `### @evestack/dashboard@<version>` heading existing (publish-dashboard.yml:234) and never
-> reads this section, so "Unreleased" can rot indefinitely while every release passes green.
-> When you publish, empty this section in the same commit.
+| Artifact | Candidate |
+| --- | --- |
+| `create-evestack` | `0.13.0` |
+| `evestack` | `0.7.0` |
+| `@evestack/budget` | `0.4.0` |
+| `@evestack/composio` | `0.3.0` |
+| `@evestack/mcp` | `0.4.0` |
+| `@evestack/sandbox-opensandbox` | `0.4.1` |
+| Dashboard image | `0.5.0` |
 
-### Changed but not yet versioned
+Schedules remains at `0.2.1`. The earlier pending scaffolder/CLI patch numbers
+have been superseded by these minor versions because the release adds workflows
+and changes security behavior. The generated `release-manifest.json` records the
+complete selected combination. Follow `RELEASING.md` for publication order; a
+candidate version is not proof its npm package or image is available.
+
+- **A task workspace.** Today, searchable Tasks, pending decisions and readable
+  results put useful work first. Failed delivery preserves drafts, reconnection
+  does not replay work, and saved recovery evidence remains available when the
+  agent is offline.
+- **Durable dashboard routines.** Review a manual run before enabling a schedule,
+  preview its timezone-aware occurrences and inspect run/delivery history.
+  Competing workers cannot claim the same occurrence; ambiguous dispatches pause
+  for investigation. Notifications use a durable queue and stable deduplication
+  IDs, with explicit retry handling after uncertain acknowledgements.
+- **Setup and control.** Guided repository/channel checks, six truthful readiness
+  checks and saved budget revisions distinguish configuration from observed
+  execution. The daily spend monitor follows the saved cap and timezone.
+- **Knowledge and review.** Memory ownership and append-only reviews stay tied
+  to the exact record. Removal and its audit commit together. A correction can
+  become a versioned regression case with original/candidate evidence and manual
+  observations; no automated evaluation or applied embedding correction is implied.
+- **Terminal and MCP access.** CLI commands inspect/start/continue/stop tasks and
+  read routine/recovery state. Read-only MCP tools expose the same evidence.
+  Configuration changes have a redacted preview, protected backup, stale-file
+  checks and restore path. Upgrade previews compare files without changing them.
+- **Quiet heartbeats.** An exact prompt/recipient preview and explicit quiet-hour
+  gate share execution logic. Fresh scaffold examples are inactive until edited;
+  quiet hours prevent new dispatches without cancelling work already running.
+- **Skill provenance and changes.** Installed paths, declared metadata and ignored
+  permission-looking keys are visible. New reviews retain per-file fingerprints,
+  showing added/changed/removed paths; legacy reviews keep their history without
+  an invented file baseline. Reviews do not grant permissions or suppress findings.
+- **Matching setup instructions.** The CLI bundles its release's setup pack and
+  installs it offline, checking version and file fingerprints. Explicit custom
+  URLs remain available with bounded downloads and an unverified-version label.
+  Installation refuses linked targets and protects existing files by default.
+- **A concrete first-use path.** Updated website, screenshots and setup guides
+  show a repository brief, evidence review and a tested recurring run. Examples
+  are labeled, runtime/platform guidance matches the candidate, and provider,
+  hosting and integration costs remain explicit.
+
+> **A publish can sit STAGED, and it looks exactly like a failure.** Both of these answered
+> `+ create-evestack@0.12.0` and then `npm view` kept saying `0.11.2` — because npm had
+> accepted the tarball and not yet materialised it. `curl https://registry.npmjs.org/<pkg>`
+> said the same, so it was not a local cache: the registry genuinely did not have it. It
+> took 2m15s.
+>
+> **The wrong move is to publish again.** That is what produces
+> `409 Conflict — Cannot publish over previously staged version`, which reads like a
+> corrupted state and gets "fixed" by burning a version number. Nothing is broken while you
+> wait, either: `latest` still names the previous working pair the whole time. Poll the
+> registry directly and do nothing else.
+
+> **Emptied 2026-09-14, and the state it described is worth keeping in the history rather
+> than only in git.** For about half an hour `evestack`'s `latest` pointed at `0.4.1` — a
+> version that `npm deprecate evestack@"<0.5.0"` had by then marked — so the default
+> `npx evestack create` served a deprecated package running the previous wizard.
+>
+> It got there honestly. `evestack@0.5.0` was published BEFORE `create-evestack@0.11.0`, and
+> 0.5.0 pins that version exactly, so for a few minutes the default resolved to a package
+> whose only dependency did not exist and died on a 404. `npm dist-tag add evestack@0.4.1
+> latest` restored a working default in seconds without unpublishing anything; publishing the
+> scaffolder repaired 0.5.0 in place; the tag then moved forward to 0.5.1.
+>
+> Two things that are only obvious afterwards. **The exact pin is what made the ordering slip
+> loud** — a caret would have quietly resolved an older scaffolder and shipped a CLI driving
+> one it was never tested against, which is the bug 0.5.0 exists to end. And **a dist-tag is
+> the cheapest repair in the registry**: it needs no unpublish, no version burn and no 72-hour
+> window, and it is the right first move any time `latest` names something that should not be
+> the default.
+
+#### Additional candidate changes
+
+- **Chat stream progress.** The dashboard continues reading when a network chunk contains
+  only part of an event or a blank line. Previously, a pending browser read could stall until
+  the 15-second heartbeat. Regression tests cover split events, blank chunks and absolute IDs.
+  Eve 0.54's finite tail snapshot is also separated from the live connection, so newly emitted
+  events arrive without waiting for the browser to reconnect.
+- **Remediation follow-through.** All seven broken compatibility contracts now pass against
+  Eve 0.54.3. The dashboard links activation spans through workflow turn parents, migrates old
+  trace rows, and keeps conversation correlation separate from session identity. Telegram,
+  Discord and Slack also enforce their allow-lists on approval/answer callbacks. Attach commands
+  require a real password before Docker starts; attached databases use the current world pin.
+  OpenSandbox implements Eve’s stop/delete lifecycle and propagates provider failures.
+- **Release and dependency hardening.** A tag-driven npm workflow validates main ancestry and
+  dependency publish order, packs without publishing credentials, and publishes tarballs with
+  OIDC/provenance from a separate job. It requires per-package npm trusted-publisher setup.
+  Eval reporting is isolated from dependency execution; the negative control reuses the frozen
+  install and verifies that the ungated tool actually ran. Patched sharp, PostCSS, nanoid and
+  js-yaml versions close the remaining dependency advisories found on 2026-09-15.
+
+- **The dashboard opens itself, and `/dashboard` works inside `npm run dev`.** Reaching the
+  control plane was a command you had to have read the README to know, printed once into a
+  terminal that then scrolls. Five routes now: `evestack create` health-checks the dashboard and
+  opens your browser when it brings the stack up (`--no-open` declines, and it never opens one
+  without a terminal); `evestack dashboard` from any terminal; `npm run dashboard` from inside the
+  project, offline; `/dashboard` typed at the agent; and the printed URL.
+
+  `evestack open` was **renamed** to `evestack dashboard`, with the old name kept as an alias and
+  a test pinning them to the same function — the documented verb count stays at eight, which is
+  why a rename beat adding a ninth.
+
+  The slash command is not one of eve's. eve's TUI command list is a module constant with no
+  registration hook, and evestack does not fork eve — but eve forwards an unrecognised `/word` as
+  an ordinary message, and `eveChannel({ onMessage })` is a documented pre-dispatch hook running
+  on the host. So the browser opens from the agent process, immediately, without waiting on the
+  model or depending on it answering correctly. What that hook cannot do is cancel the turn, so
+  the model still replies, with one line it is handed verbatim. It is wired on the eve channel
+  only, so a stranger cannot make a window open on your machine by typing it at your Telegram
+  bot, and it does nothing on a process with no terminal.
+
+
+- **Security pass, 2026-09-15.** Ten confirmed findings from a full review, fixed across the
+  affected packages. These changes are included in the candidate versions above and are not
+  yet released. Grouped by what an attacker gets.
+
+  **Multi-user installs were not multi-user safe.** Three separate holes, all opening the moment a
+  channel is enabled and strangers become principals:
+
+  - `evestack.memories` had no owner column, so every channel user could read, contradict and
+    delete every other user's memories — and because the agent is told to treat recalled text as
+    fact, a memory planted by a stranger was a prompt injection into the operator's next session
+    and into the unattended heartbeat. Rows now carry `principal_id`, `recall` is owner-scoped,
+    `forget` refuses a row the caller does not own and shows the human WHAT is being deleted, and
+    recalled content is fenced as data rather than presented as fact. `EVESTACK_MEMORY_SCOPE`
+    picks between `owner` (default), `strict` and the old `shared` behaviour. The migration is an
+    `ADD COLUMN IF NOT EXISTS` that runs on the first `remember` or `recall`, because the template
+    is copied once and never updated underneath a running project.
+  - The channels dispatched for anyone. Telegram had no allow-list at all, Discord's was empty by
+    default, and Slack answered any workspace member — each turn handing the model a root shell in
+    a container with no memory, CPU or pid limit. All three now gate dispatch, and `.env.example`
+    says plainly that a webhook secret authenticates the platform and not the person.
+  - Composio bound every principal to one identity (`"evestack"`), so one person's Gmail grant was
+    executable by everyone, and its write tools ran with no human in the loop. Identities are per
+    principal behind a bounded cache, and `COMPOSIO_MULTI_EXECUTE_TOOL` and
+    `COMPOSIO_MANAGE_CONNECTIONS` park for approval. `EVESTACK_COMPOSIO_SHARED_IDENTITY` and
+    `EVESTACK_COMPOSIO_APPROVALS` restore the old behaviour for an install that wants it.
+
+  **The nightly eve-watch job ran freshly-downloaded npm code while holding a token that could
+  push to `main`** — which is the live `@evestack` registry and the live site. Checkout no longer
+  persists credentials, the job is split so the half that installs and executes the candidate
+  holds no write permission and no secrets, `git add -A` is gone, and `OPENAI_API_KEY` is scoped
+  to the steps that need it in all three workflows that use it. Every third-party action is
+  pinned to a commit SHA. The repository now requires a PR, passing CI and resolved review
+  conversations for `main`, blocks force-push/deletion, and prevents Actions from approving PRs.
+  Private vulnerability reporting is enabled.
+
+  **The dashboard's trace ingest was the one write without a cross-site check**, so a page on any
+  other port of localhost could post spans carrying the operator's cookie — and the insert is an
+  upsert, so it could overwrite the spans an operator reads before approving a tool call. The
+  proxy now runs the origin check on anything not carrying the shared token, and the route
+  requires the JSON media type, compared by essence rather than by substring (`text/plain;
+  charset=application/json` is a CORS-simple request that contains the substring, and was
+  measured passing the first version of that check). Bodies are bounded everywhere, including on
+  the unauthenticated sign-in route. `next` moved to 16.3.5 in both the dashboard and the website,
+  closing two critical advisories; the image optimizer, which had no consumer, is off.
+
+  **The spend cap could be walked past one full model call at a time.** Spend was only evaluated
+  after a step completed, so a session that had already blown its cap answered every new message
+  with one complete uncapped call. The cap is now read at the turn boundary, before the model
+  runs, and a stop left over from a cap that has since been raised is lifted rather than honoured
+  — so "raise the cap and it heals" still works. Separately, a partial `EVESTACK_PRICING`
+  override (an input price with no output price) made every cost `NaN`, which read as under the
+  cap and then poisoned the stored totals; overrides are validated and a non-finite cost is
+  refused at the store.
+
+  Also: the scaffolder no longer relies on `shell: true` for correctness on Windows and validates
+  registry ids before they reach a command line; the dashboard password is printed only to a
+  terminal, with `EVESTACK_PRINT_SECRETS` for automated setups; `evestack skills` works on
+  Windows, where the path check refused every file; `evestack doctor` reads the project's own
+  agent port and credentials instead of probing whichever agent holds 2000; and `npm run start`
+  strips `EVE_DEV`, which otherwise turned a built server unauthenticated from one stray line in
+  `.env.local`.
+
+- **The heartbeat stopped talking to you when it has nothing to say.** The template asked the
+  agent to reply `HEARTBEAT_OK` and then carried a long warning that nothing drops it, because
+  eve posts the reply itself and evestack never sees the text. eve has since made the case
+  first-class: a reply of exactly `<eve-empty-delivery/>` becomes a completed message with no
+  content, and no channel posts one. The template asks for that marker, and the warning — in
+  `heartbeat.ts`, `HEARTBEAT.md`, `docs/proactive.mdx` and `@evestack/schedules`' README — is
+  gone rather than merely softened.
+
+- **`registry/build.mjs` refuses to emit an item that imports a file the item does not ship.**
+  Written after exactly that escaped: `basic-auth` embeds the template's `agent/channels/eve.ts`,
+  that file grew an import of `lib/dashboard-command`, and the item was rebuilt and would have
+  been served with an import that cannot resolve in the stock eve project it exists for. The
+  guard resolves every relative specifier against the item's own file list; a negative control
+  proves it catches the original bug. The auth chain stays single-sourced, and the template-only
+  wiring is transformed out by a function that throws rather than guesses if the shape changes.
+
 
 - **`contract/`** — 1b63559 and 06274c4 repaired a probe that was writing rows eve's
   `WorkflowRunSchema` rejects, which bricked a development database for four days.
@@ -92,12 +260,268 @@ the container image is published at the version the repository is on.
   here because the *symptom* reached users as "the database that would not boot", and
   docs/troubleshooting.mdx carries the repair.
 
+- **`@evestack/dashboard` and `@evestack/budget`** both learned the `chatgpt` provider
+  alongside `create-evestack@0.12.0`; those changes are included in this candidate.
+  The dashboard change is the one worth reading: **every provider arrives at `findPrice`
+  under two different names**, and the table only ever answered to one of them.
+  `@evestack/budget` builds its key from the environment (`chatgpt/gpt-5.6-sol`); the
+  dashboard reads `$eve.model` off the span, which eve writes from the model object itself
+  (`codex/gpt-5.6-sol`). They happen to agree for openai, anthropic and ollama, which is why
+  nothing caught the case where they do not — **the wizard's own OpenRouter default was
+  priced for the spend cap and unpriced on the dashboard at the same time**, since
+  `createOpenRouter({})("qwen/qwen3.8-27b")` reports `openrouter.chat` and the key was the
+  bare id. Both names are now priced, and a test states the rule: a provider is not priced
+  until both of its names are.
+
 ---
 
 ## `create-evestack`
 
 The `npm create` entry point. Carries `templates/default` inside it, so a change to the
 template ships as a change to this package.
+
+### create-evestack@0.13.0 — unreleased
+
+Supersedes the planned 0.12.1 patch. The template includes owner-scoped memory,
+channel allow-lists, per-principal Composio identities, budget activation reporting,
+quiet heartbeat previews and the selected component manifest. Generated projects
+use dashboard 0.5.0, budget 0.4.0 and Composio 0.3.0. Existing projects need the
+documented upgrade and backup procedure; scaffolding does not migrate them.
+
+Noninteractive generation protects credentials, validates package identifiers and
+uses native Windows command execution. A fresh candidate-tarball installation,
+dependency install, typecheck and production build passed. Live provider and
+external channel validation remain separate release gates.
+
+#### Changed
+
+- **The finish screen sold `evestack open` as doing less than it does.** The command reads the
+  dashboard port out of `.env.local`, health-checks it, prints the credentials AND launches
+  the browser. It was advertised in one dim grey line as
+  ``npx evestack open` prints them again — this terminal will scroll`, which reads like a
+  clipboard helper — so the reader's conclusion at the moment of highest attention in the
+  whole run was "copy this URL, then type this password", with the command that would have
+  done it sitting right there. It is now a real instruction, in the same arrow shape
+  `evestack status` already uses for it, because they are the same instruction:
+
+  ```
+  Dashboard   http://localhost:4000
+  Sign in     evestack / …
+  → npx evestack open   opens it in your browser, already signed in
+  ```
+
+- **The list called "Next" said how to start the dashboard and never how to see it.** Four
+  commands that start something, ending on `npm run dev` — an agent in a terminal — with the
+  dashboard a container the reader had booted and been told nothing more about.
+  `npx evestack open` is the fifth entry now.
+
+- **And that list's comment column only lined up under `npm`.** It was five hardcoded runs of
+  spaces: the bootstrap line's `#` sat one column right of the other four, and `pnpm` — two
+  characters longer, and in two of the commands — moved all of them. Computed from the widest
+  command now, with a test that checks the column across npm, pnpm, yarn and bun.
+
+### create-evestack@0.12.0 — 2026-09-14
+
+Adds a model option and a Review option, so a minor rather than a patch. The numbered
+non-interactive answers are unchanged — `1`–`4` still mean what they meant and ChatGPT is
+appended as `5`.
+
+
+#### Fixed
+
+- **Ctrl-C during a yes/no prompt did not quit.** readline turns SIGINT into its own `close`
+  event, so `ask` returned its *fallback* — the wizard recorded a "yes" nobody typed, walked
+  on to Review, and signed off with `readline was closed`. An interrupt now means the same
+  thing at every prompt: stop, write nothing, exit 130.
+
+- **`↑↓ 14 options, showing 10–17`.** The range and the total were counted in different
+  units. The window is computed in ROWS, and a group heading is a row — so is the blank line
+  between tiers — while the count beside it is of things you can choose. Flat lists (all 26
+  channels, all 73 integrations) have no headings, so the two agreed there and nothing caught
+  it; the model list has tiers, and its range overran its own total on the one line whose
+  whole job is to say how much more there is.
+
+#### Added
+
+- **ChatGPT subscription, as the first model on the list.** The only option here that needs
+  no credential at all: if you already pay for ChatGPT, that is what answers. Picking it asks
+  for nothing, writes nothing to `.env.local`, and opens a browser after the install.
+
+  It is eve's own implementation rather than a second one. `chatgpt()` is a public export of
+  `eve/models/openai` and returns the same `LanguageModel` object the template builds for
+  every other provider, so `agent.ts` gained one branch; the sign-in is eve's too, reached by
+  path into the scaffold's own `node_modules`, and a test asserts the module is still where
+  the wizard looks — a move upstream would otherwise take the easiest option off the list
+  with nothing failing anywhere.
+
+  Three things measured rather than assumed, each of which would have been a quiet bug:
+
+  - **Its context window must NOT be declared.** It looks like the fourth member of
+    `UNCATALOGUED` — a Codex model id is no more a gateway id than an Ollama tag is — but eve
+    answers 200,000 tokens for ChatGPT routing *before* it consults the catalog. Setting
+    `modelContextWindowTokens` would replace a right number with a wrong one and start
+    compaction firing six times too early. Verified against a compiled manifest:
+    `{"id":"codex/gpt-5.6-sol","routing":{"kind":"external","provider":"codex"},"contextWindowTokens":200000}`.
+  - **It is the one provider that leaves eve's own `/model` picker working.** Everything else
+    evestack writes makes the model source-owned, and eve responds by disabling the picker
+    ("Set via an SDK model call in agent.ts"). ChatGPT routing is the exception eve carved out
+    for itself, which is what makes a failed sign-in recoverable from inside the running agent.
+  - **`keyVar: null` had to be handled before the non-interactive branch**, which writes
+    `${keyVar}=` — literally `null=` for this provider. Pinned by a test that drives the
+    piped-stdin path.
+
+  Two limits, both stated at the moment of choosing rather than discovered later: it runs
+  where a person can sign in, so a container or remote host still needs a key; and the Codex
+  backend serves chat only, so `remember`/`recall` need `OPENAI_API_KEY` or a local Ollama
+  for embeddings.
+
+- **`verify` told a ChatGPT project that Anthropic was its problem.** The embeddings warning
+  was written for the one provider that had it and hardcoded that provider's name —
+  `Anthropic has no embeddings endpoint` — while the branch it sits in is reached by four of
+  the six: anthropic, openrouter, compatible and chatgpt. It names the provider that is
+  actually configured now, in `lib/memory.ts`'s own words, since that is the error a reader
+  meets if they ignore the warning and call `remember`. Caught by running a real scaffold, not
+  by a test.
+
+- **"Finish without adding" on the Review step**, which eve's own review has and this one did
+  not. Someone who ticked four integrations and then thought better of it had to go back and
+  untick them one at a time to get their scaffold. It writes the project, skips the installs,
+  and prints the `eve add` commands. Hidden when nothing is ticked, where it is the same door
+  as the one above it under another name.
+
+### create-evestack@0.11.2 — 2026-09-14
+
+#### Added
+
+- **The version is on screen before anything else.** `evestack v0.11.2` sits beside the
+  wordmark. npx resolves a version out of a cache the reader cannot see — this session spent
+  an hour on a broken install that came from a stale `0.10.0` — so the only reliable answer to
+  "which one am I running" is the one the running process prints about itself.
+
+#### Changed
+
+- **A short list no longer gets a search box.** Three options fit in one glance; a filter
+  above them is an affordance for a problem nobody has, and on the opening screen it was the
+  first thing the reader saw. It appears above six options, and always once something has been
+  typed, so an active filter can never be invisible.
+
+- **The step header collapses instead of wrapping on a narrow terminal.** Naming six steps
+  does not fit 52 columns, and a header breaking mid-`Integrations` stops reading as a header;
+  it falls back to the current step plus `step 3 of 6`. Prose — the question hint and the group
+  headings — is cut with an ellipsis for the same reason: the columns were measured from the
+  start and the sentences were not, so at 52 columns rows adapted while sentences broke
+  mid-word. Verified at 52, 60, 80 and 100 columns: nothing exceeds the terminal.
+
+- **A name that is already taken ended the run.** Reported from a real first use:
+  `npx evestack create my-agent` against an existing directory printed the wordmark, printed
+  the first step's header, and then exited on one bare line —
+  `/Users/…/my-agent already exists and is not empty.` A wizard that has just drawn its
+  opening screen, with a prompter already open, does not need to quit over a name.
+
+  It now says what is in the way, offers the nearest free name as the default, and asks
+  again:
+
+  ```
+  ! ~/my-agent already exists and is not empty.
+    It holds 3 entries including package.json — probably an earlier project.
+    ~/my-agent-2 is free — press Enter to take it.
+
+  ? Project name? (my-agent-2)
+  ```
+
+  Naming the contents is usually the whole explanation — almost every collision is a scaffold
+  the reader forgot about. The hard exit survives for the case that genuinely cannot be
+  asked: `--yes`, CI, a closed pipe still fail with the same words and exit 1.
+
+- **The single-select list carried two markers for one fact.** It rendered `▎ › OpenAI` — the
+  gutter bar and a cursor arrow both meaning "this row". In a multi-select the two columns
+  say different things (here / chosen) and both earn their place; in a single-select the
+  active row IS the one that would be taken, so the arrow was the very double-marker the
+  gutter was introduced to remove, surviving in the other mode.
+
+### create-evestack@0.11.1 — 2026-09-14
+
+#### Fixed
+
+- **The ASCII fallback carried the collision the Unicode set had just been fixed for, three
+  ways.** `ui.mjs` drops to ASCII automatically on win32 outside Windows Terminal, which
+  makes the classic console the DEFAULT rendering for a Windows user and therefore the one
+  nobody here ever looks at. Forced on with `EVESTACK_ASCII=1`, a row came out as
+
+  ```
+  > - Web Chat                 - Add the built-in Next.js Web Chat channel.
+  ```
+
+  with one character serving as the empty checkbox, the separator before every description,
+  and the separator between every step in the header — `g.sep` is `-` without unicode. The
+  empty box is `o` now: `> o Web Chat  - Add the built-in …`.
+
+  `MARKS` is exported so the set can be asserted as a set — the four glyphs that can land on
+  one row must be four different characters, in both sets, one column each, and the ASCII
+  ones must actually be ASCII. `test/ascii-fallback.test.mjs` pins all four and was verified
+  to fail when the `-` is put back.
+
+### create-evestack@0.11.0 — 2026-09-14
+
+#### Added
+
+- **A setup wizard with steps you can walk back through, and lists you can search.** Six
+  steps with a header that names them — `✓ Where · ✓ Model · Channels (2) → …` — rather
+  than four numbered questions with no way back. Channels and integrations come from eve's
+  own registry (`https://eve.dev/r`, 99 items), read live with a 2s timeout and an embedded
+  snapshot behind it so the wizard still opens with no network. Filter matches descriptions
+  as well as labels, so "sms" finds Twilio. `wizard.mjs` replaces `select.mjs`.
+
+- **Every pick says what it will cost you before you pick it.** eve's list does not record
+  which items need an account; `needs` is the one thing added on top, and it is structural
+  rather than textual — everything under `connection/` needs authenticating whether or not
+  its description says "token". Reading descriptions alone flagged 7 of 99; the prefix rule
+  brings it to 52.
+
+- **Two providers and a much smaller local default.** `openrouter` (one key, 400+ models,
+  open weights included) and `compatible` (LM Studio, llama.cpp, vLLM, Groq, Together —
+  `EVESTACK_BASE_URL` required, never defaulted). Local models are listed with verified
+  sizes and verified tool-calling, smallest first: `granite4:350m-h` at 366 MB is the
+  smallest thing that can still drive an agent. The default moves from `qwen3` (5.2 GB) to
+  `qwen3:0.6b` (523 MB).
+
+  Gemma is on the list and marked `no tools`. Its Ollama template references no `.Tools` at
+  any size, and a pulled `gemma3:1b` reports `capabilities: ["completion"]`. Unmarked, it
+  produces an agent that answers fluently and does nothing.
+
+- **A door for someone who has never seen this before.** The wizard opens by asking whether
+  you want to set up, read the quickstart (opens the browser and keeps the wizard running),
+  or have each step explained.
+
+#### Changed
+
+- **The scaffold targets eve 0.54.3**, up from 0.30.8. See the `evestack` entry below for
+  the database migration this implies.
+
+- **Key prompts take three tries and then move on.** The Composio prompt was where people
+  stalled — the key is behind a sign-up, so the honest first answer is an empty line, and
+  the old wizard took that as final and wrote `COMPOSIO_API_KEY=`, a setting that looks
+  configured and is not.
+
+#### Fixed
+
+- **`eve add channel/web` silently took over `npm run dev`.** It rewrites `dev`, `build` and
+  `start` to `next dev` and friends — correct for a bare eve project, fatal here, because
+  `scripts/dev.mjs` is the wrapper that wires Postgres and `.env.local` and the finish
+  screen says `npm run dev   # the agent`. Collisions are restored and the installer's
+  versions parked at `dev:web`.
+
+- **A registry item can install cleanly and stop the agent compiling.** `eve build` catches
+  it in ~1.5s and names both the module and the cause, so it now runs after every install.
+
+- **Required environment variables are named.** Generated wiring declares them with a
+  non-null assertion (`process.env.BROWSERBASE_API_KEY!`). Unset is not a warning, it is
+  `Invalid extension config: apiKey: Too small` at boot — a message naming a zod field and
+  never the variable. Newly-written files are scanned for that assertion.
+
+- **`no-floating-tags.test.mjs` fails the build if any scaffold dependency is named by tag
+  rather than by version.** Verified to catch the original `"beta"`. This is the regression
+  test for the defect fixed in 0.10.1.
 
 ### create-evestack@0.10.1 — 2026-08-19
 
@@ -435,8 +859,67 @@ not correspond to any commit in this repository. Do not install it.
 
 ## `evestack`
 
-The CLI — `create`, `status`, `tour`, `open`, `verify`, `attach`, `doctor`. Depends on
-`create-evestack`, so it publishes last.
+The CLI creates projects and operates tasks, routines, readiness, configuration,
+upgrades and diagnostics. It depends on the scaffolder and publishes after it.
+
+### evestack@0.7.0 — unreleased
+
+Supersedes the planned 0.6.1 patch and carries `create-evestack@0.13.0` exactly.
+Adds authenticated task/routine/readiness commands, protected configuration
+preview/apply/restore, and a read-only upgrade comparison. Mutations do not retry
+after uncertain delivery. Setup instructions are bundled with the CLI and install
+offline with version and file-integrity checks. Custom pack downloads and target
+writes are bounded. `dashboard` is the primary opening command; `open` remains an alias.
+
+### evestack@0.6.0 — 2026-09-14
+
+Carries `create-evestack@0.12.0`, which it pins exactly. `evestack create` is that wizard, so
+everything in the 0.12.0 entry above reaches users through this release and not before it —
+the exact pin is deliberate and is why the two always ship as a pair, oldest first.
+
+#### Added
+
+- **`chatgpt` in `evestack status`.** Its default model, and `null` for its key variable —
+  the ChatGPT session lives in the OS secret store, so there is no variable whose absence is
+  a fault to report. Without the second half, `providerKeyVar()`'s fallback would have told a
+  correctly configured project it was missing an OpenAI key it will never call.
+
+### evestack@0.5.2 — 2026-09-14
+
+#### Changed
+
+- **Carries `create-evestack@0.11.2`.** No change of its own; the pin is exact, so a
+  scaffolder patch needs a CLI release beside it.
+
+### evestack@0.5.1 — 2026-09-14
+
+#### Changed
+
+- **Carries `create-evestack@0.11.1`.** No change of its own. This release exists because the
+  dependency is pinned exactly, so a scaffolder patch cannot reach anyone without a CLI
+  release alongside it — the standing cost of the pin 0.5.0 introduced, and the accepted
+  trade for never again shipping a CLI driving a scaffolder it was not tested against.
+
+### evestack@0.5.0 — 2026-09-14
+
+#### Changed
+
+- **`create-evestack` is pinned exactly rather than by caret.** `workspace:^` published as
+  `^0.10.0`, which let npx satisfy the dependency from a cached `0.10.0` — carrying the
+  floating `"@workflow/world-postgres": "beta"` — long after `0.10.1` had fixed it. A range
+  means the CLI and the scaffolder it drives are only *probably* the pair that was tested
+  together. `workspace:*` resolves to the exact version at pack time; verified by packing
+  and reading the manifest back.
+
+- **The scaffold it produces targets eve 0.54.3**, up from 0.30.8.
+
+  **Upgrading an existing database is two steps, not one.** The World spec moves 5 → 7 and
+  the spec-7 World keeps a per-run slot sequencer in a table the older schema lacks; booting
+  does not create it. Measured against a database holding 3 runs and 52 spec-5 events: the
+  agent starts and old runs stay readable, but a new session fails with `insert into
+  "workflow"."workflow_event_slots" … (500)`. `npm run db:bootstrap` creates the table,
+  keeps every row, and both generations then coexist. Skipping it leaves an agent that reads
+  its history and cannot start a conversation.
 
 ### evestack@0.4.1 — 2026-08-13
 
@@ -508,6 +991,13 @@ until `0.1.0` landed.
 The MCP server. Standalone — nothing else published names it, so it can go out at any
 point in the release order.
 
+### @evestack/mcp@0.4.0 — unreleased
+
+Reads the dashboard's paginated task APIs and exposes routines, readiness, pending
+decisions, recovery, memory reviews and versioned regression cases. Results retain
+coverage limits and unknown states. Runtime control and approval decisions require
+separate explicit capabilities; enabling one does not silently grant the other.
+
 ### @evestack/mcp@0.3.0 — 2026-08-09
 
 Cut as a minor, not the patch this was first queued as. It was a patch while the change
@@ -558,6 +1048,33 @@ First release (51d2b85), alongside the fix to the trace tier that had never work
 
 Spend caps. A **template dependency** — it must exist on npm before `create-evestack`
 does.
+
+### @evestack/budget@0.4.0 — unreleased
+
+Checks configured caps before a new turn and subsequent steps, validates pricing
+and rejects nonfinite totals. Optional durable settings use revision checks and
+append-only history; the enforcing agent rereads them and reports activation.
+Unknown pricing and storage failures follow explicit policies. Upgrade opted-in
+agents with dashboard 0.5.0; a saved policy alone does not prove enforcement.
+
+### @evestack/budget@0.3.0 — 2026-09-14
+
+#### Changed
+
+- **`PROVIDER_DEFAULT_MODEL` gains `openrouter` and `compatible`, and the ollama default
+  moves to `qwen3:0.6b`.** This table must equal `DEFAULT_MODEL` in
+  `templates/default/agent/agent.ts`; the header above it records the outage a drifted row
+  caused. `compatible` is deliberately absent rather than `""` — a custom endpoint has no
+  price table anywhere, so the honest outcome is the unpriced warning rather than a number
+  borrowed from whichever vendor the model id resembles.
+
+#### Added
+
+- **A price for `qwen/qwen3.8-27b`**, the wizard's OpenRouter default, from OpenRouter's own
+  `/models` endpoint. One exact id and deliberately not an `openrouter/*` wildcard: that
+  gateway fronts 445 models from a frontier model down to `:free`, and a wildcard at 0 would
+  leave the spend cap unable to trip while looking perfectly configured. Keyed without a
+  provider prefix because `envModel()` passes any id containing a slash through unchanged.
 
 ### @evestack/budget@0.2.1 — 2026-08-09
 
@@ -627,6 +1144,14 @@ First release, with the eve contract suite (30c296d).
 ## `@evestack/composio`
 
 Composio tool access. A **template dependency**.
+
+### @evestack/composio@0.3.0 — unreleased
+
+Scopes hosted tool routing to the current principal with bounded identity caches.
+Connection management and multi-tool execution require human approval by default.
+Shared-identity and approval overrides are explicit compatibility choices. Existing
+shared grants need deliberate migration; an active grant does not prove repository
+scope, permission or a successful tool result.
 
 ### @evestack/composio@0.2.1 — 2026-08-13
 
@@ -707,6 +1232,14 @@ First release, out of the work that added schedules, skills, fleet health and at
 ## `@evestack/sandbox-opensandbox`
 
 The OpenSandbox backend adapter. Standalone.
+
+### @evestack/sandbox-opensandbox@0.4.1 — unreleased
+
+Implements the current sandbox lifecycle contract: explicit stop preserves a
+reattachable workspace, and delete checks cancellation before issuing a kill.
+Stop failures propagate without silently deleting the workspace. Legacy shutdown
+cleanup reports a failed fallback rather than swallowing both failures. Adapter
+tests cover the contract; no new live OpenSandbox service run is claimed.
 
 ### @evestack/sandbox-opensandbox@0.4.0 — 2026-08-09
 
@@ -876,6 +1409,43 @@ First release (952f0f9).
 `ghcr.io/sammytourani/evestack-dashboard:<version>` (`linux/amd64` and `linux/arm64`),
 built and pushed by `.github/workflows/publish-dashboard.yml` on a tag push. The version
 here is the image tag. Dates are the git tag's, not npm's.
+
+### @evestack/dashboard@0.5.0 — unreleased
+
+A task workspace for a solo operator: Today, Tasks, Routines, Connections and
+Knowledge, with Settings and Diagnostics still available. Readable results link
+to recorded evidence and cost; failed requests retain drafts, and uncertain
+external delivery remains visible.
+
+Real-model testing on an 8 GB Mac found and fixed routine completion against the
+actual PostgreSQL status enum, Eve 0.54 follow-up/approval command compatibility,
+replay progress with stable session IDs, and independent pending-decision tracking.
+Gated tools display their pending decision state. See [the live test](MAC_SMOKE_TEST.md)
+for successful workflows and small-model limitations.
+
+- Durable routines have timezone previews, tested DST behavior, revision snapshots,
+  concurrent-worker claims, a test-before-enable gate, bounded catch-up and visible
+  uncertain dispatch. Notification retries retain stable delivery identifiers.
+- Pending decisions show the actual proposed tool/input and preserve failures for
+  retry. Shared installation credentials do not identify individual teammates.
+- Readiness distinguishes configured, verified, unknown and unavailable checks.
+  Budget controls show revisions and reported activation. Guided connections and
+  inbound-channel receipt checks explain their verification limits.
+- Memory reviews retain owners and correction proposals without silently changing
+  embeddings. Skills show declared provenance and per-file changes since review.
+  Corrections become immutable regression evidence with manual, revision-bound observations.
+- Recovery combines historical evidence and read-only queue diagnosis. Docker
+  inspection is opt-in, GET-only, bounded and explicit about omitted containers.
+- Cross-site ingest checks, bounded requests, and updated Next.js close the
+  documented security findings. Mobile navigation, focus and dark layouts were
+  exercised against the built dashboard.
+
+Back up the whole database and private configuration before upgrading. Storage
+changes are additive and guarded; old images may refuse newer schema markers.
+Use the documented restore procedure instead of dropping schemas, and inspect
+pending work before starting workers on a restored database. Upgrade opted-in
+budget agents with this image. Live model/source results and external channel
+receipt remain release gates; fixture checks do not establish them.
 
 ### @evestack/dashboard@0.4.0 — 2026-08-11
 

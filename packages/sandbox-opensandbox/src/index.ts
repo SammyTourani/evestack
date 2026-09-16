@@ -6,6 +6,7 @@ import type {
   SandboxBackendCreateInput,
   SandboxBackendHandle,
   SandboxBackendSessionState,
+  SandboxDeleteOptions,
   SandboxNetworkPolicy,
   SandboxProcess,
   SandboxReadBinaryFileOptions,
@@ -86,6 +87,8 @@ interface BackendHandle {
     metadata: Record<string, unknown>;
     sessionKey: string;
   }>;
+  delete(options?: SandboxDeleteOptions): Promise<void>;
+  stop(): Promise<void>;
   shutdown(): Promise<void>;
 }
 
@@ -955,10 +958,21 @@ export function opensandbox(options: OpenSandboxOptions = {}): SandboxBackendLik
           // caller pays for. Fixing connect() was only half of it.
           sessionKey,
         }),
+        delete: async (options) => {
+          // The SDK has no abortable kill overload. Honor cancellation before
+          // issuing the destructive request; once sent, await its real outcome.
+          options?.abortSignal?.throwIfAborted();
+          await live.kill();
+        },
+        stop: async () => {
+          // An authored stop must keep /workspace reattachable. In particular,
+          // a provider error must reject rather than falling back to deletion.
+          await live.pause();
+        },
         shutdown: async () => {
           // pause(), not kill(): eve reattaches by id on the next turn, and
           // killing here would discard /workspace that the session still owns.
-          await live.pause().catch(() => live.kill().catch(() => {}));
+          await live.pause().catch(() => live.kill());
         },
       };
     },

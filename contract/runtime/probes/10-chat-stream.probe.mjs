@@ -206,7 +206,7 @@ export default {
     );
 
     const ids = frames.map((f) => Number(f.id));
-    const allIntegers = ids.every((n) => Number.isSafeInteger(n) && n >= 0);
+    const allIntegers = frames.every((frame, i) => frame.id !== null && /^\d+$/.test(frame.id) && Number.isSafeInteger(ids[i]) && ids[i] >= 0);
     t.ok(
       allIntegers,
       "every frame carries a non-negative integer id, which is what Last-Event-ID sends back",

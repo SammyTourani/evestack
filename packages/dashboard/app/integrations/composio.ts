@@ -2,14 +2,14 @@
  * A hand-rolled Composio v3 client.
  *
  * @composio/core would do this too, but it drags a large dependency tree in for
- * what is four GETs and two POSTs, and the dashboard deliberately ships no
- * runtime dependencies beyond `pg`. The agent uses the real SDK; the dashboard
+ * these catalog reads and authorization requests. The agent uses the real SDK; the dashboard
  * only reads and starts auth flows.
  *
  * Every shape below was checked against the live API, not the docs.
  */
 
-const API_BASE = process.env.COMPOSIO_BASE_URL ?? "https://backend.composio.dev";
+const API_BASE =
+  process.env.COMPOSIO_BASE_URL ?? "https://backend.composio.dev";
 
 /**
  * Composio ties OAuth grants to a user id, not a session. This must match the
@@ -20,7 +20,7 @@ const API_BASE = process.env.COMPOSIO_BASE_URL ?? "https://backend.composio.dev"
  * `@evestack/composio` exports this same constant, so importing it would be the
  * obvious fix — but that package depends on `@composio/core` and
  * `@composio/experimental`, and this file's whole reason for existing (see the
- * header) is that the dashboard ships no runtime dependency beyond `pg`.
+ * header) is that the dashboard avoids the Composio SDK dependency tree.
  * Importing the constant would drag in the tree this client was hand-rolled to
  * avoid, to share nine characters.
  *
@@ -35,7 +35,9 @@ export function composioApiKey(): string | undefined {
 }
 
 export function composioUserId(): string {
-  return process.env.EVESTACK_COMPOSIO_USER_ID?.trim() || DEFAULT_COMPOSIO_USER_ID;
+  return (
+    process.env.EVESTACK_COMPOSIO_USER_ID?.trim() || DEFAULT_COMPOSIO_USER_ID
+  );
 }
 
 export class ComposioError extends Error {
@@ -91,32 +93,75 @@ async function request<T>(
       method: init?.method ?? "GET",
       headers: {
         "x-api-key": apiKey,
-        ...(init?.body === undefined ? {} : { "content-type": "application/json" }),
+        ...(init?.body === undefined
+          ? {}
+          : { "content-type": "application/json" }),
       },
       body: init?.body === undefined ? undefined : JSON.stringify(init.body),
       cache: "no-store",
+      signal: AbortSignal.timeout(10_000),
     });
-  } catch (cause) {
+  } catch {
     throw new ComposioError(
-      `Could not reach ${API_BASE} — ${cause instanceof Error ? cause.message : String(cause)}`,
+      init?.method === "POST"
+        ? "The Composio connection request could not be confirmed. Check existing grants before starting it again."
+        : "Could not reach Composio within 10 seconds. Check connectivity and try again.",
       0,
     );
   }
 
-  const text = await response.text();
-  if (!response.ok) {
-    throw new ComposioError(readErrorMessage(text) ?? `${response.status} from ${path}`, response.status);
+  const reader = response.body?.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (reader) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > 2 * 1024 * 1024)
+        throw new ComposioError(
+          "Composio returned a response larger than the 2 MB limit.",
+          502,
+        );
+      chunks.push(value);
+    }
+  } catch (error) {
+    if (error instanceof ComposioError) throw error;
+    throw new ComposioError(
+      "The Composio response was interrupted. Check its status before repeating a connection request.",
+      502,
+    );
+  } finally {
+    await reader?.cancel().catch(() => {});
   }
-  return text ? (JSON.parse(text) as T) : ({} as T);
+  const text = Buffer.concat(chunks).toString("utf8");
+  if (!response.ok) {
+    const detail = (
+      readErrorMessage(text) ?? `HTTP ${response.status} from Composio`
+    )
+      .replaceAll(apiKey, "[redacted]")
+      .replace(/https?:\/\/[^\s"']+/gi, "[URL redacted]")
+      .slice(0, 300);
+    throw new ComposioError(detail, response.status);
+  }
+  try {
+    return text ? (JSON.parse(text) as T) : ({} as T);
+  } catch {
+    throw new ComposioError("Composio returned an unreadable response.", 502);
+  }
 }
 
 function readErrorMessage(body: string): string | null {
   try {
-    const parsed = JSON.parse(body) as { error?: { message?: unknown; errors?: unknown } };
+    const parsed = JSON.parse(body) as {
+      error?: { message?: unknown; errors?: unknown };
+    };
     const message = parsed.error?.message;
     const details = parsed.error?.errors;
     if (typeof message !== "string") return null;
-    return Array.isArray(details) && details.length ? `${message}: ${details.join("; ")}` : message;
+    return Array.isArray(details) && details.length
+      ? `${message}: ${details.join("; ")}`
+      : message;
   } catch {
     return null;
   }
@@ -185,11 +230,28 @@ export async function listConnectedAccounts(
   apiKey: string,
   limit = 100,
 ): Promise<ConnectedAccount[]> {
-  const page = await request<{ items?: RawConnectedAccount[] }>(
-    `/api/v3/connected_accounts?limit=${limit}`,
-    apiKey,
-  );
-  return (page.items ?? []).map((raw) => ({
+  return (await connectedAccountsPage(apiKey, limit)).accounts;
+}
+
+export async function connectedAccountsPage(
+  apiKey: string,
+  limit = 100,
+  userId?: string,
+) {
+  const boundedLimit = Math.min(100, Math.max(1, Math.floor(limit)));
+  const params = new URLSearchParams({ limit: String(boundedLimit) });
+  if (userId) params.set("user_ids", userId);
+  const page = await request<{
+    items?: RawConnectedAccount[];
+    next_cursor?: string | null;
+    total_pages?: number;
+  }>(`/api/v3/connected_accounts?${params}`, apiKey);
+  if (!Array.isArray(page.items))
+    throw new ComposioError(
+      "Composio returned no account list. Authorization could not be checked.",
+      502,
+    );
+  const accounts = page.items.map((raw) => ({
     id: raw.id ?? "",
     toolkitSlug: raw.toolkit?.slug ?? "unknown",
     status: raw.status ?? "UNKNOWN",
@@ -199,16 +261,76 @@ export async function listConnectedAccounts(
     isComposioManaged: raw.auth_config?.is_composio_managed ?? false,
     createdAt: raw.created_at ?? null,
   }));
+  return {
+    accounts,
+    coverage: {
+      scanned: accounts.length,
+      limit: boundedLimit,
+      complete:
+        !page.next_cursor &&
+        (page.total_pages ?? 1) <= 1 &&
+        accounts.length < boundedLimit,
+    },
+  };
+}
+
+/** An account belonging to another identity cannot establish this agent's readiness. */
+export async function inspectConnection(
+  apiKey: string,
+  toolkit: string,
+  userId = composioUserId(),
+) {
+  const { accounts, coverage } = await connectedAccountsPage(
+    apiKey,
+    100,
+    userId,
+  );
+  const matching = accounts.filter(
+    (account) =>
+      account.toolkitSlug.toLowerCase() === toolkit &&
+      account.userId === userId,
+  );
+  const active = matching.some(
+    (account) => account.status.toUpperCase() === "ACTIVE",
+  );
+  return {
+    configured: true,
+    identity: userId,
+    toolkit,
+    checkedAt: new Date().toISOString(),
+    status: active
+      ? "active"
+      : matching.length
+        ? "attention"
+        : coverage.complete
+          ? "missing"
+          : "unknown",
+    accounts: matching,
+    coverage,
+    otherIdentityAccounts: accounts.filter(
+      (account) =>
+        account.toolkitSlug.toLowerCase() === toolkit &&
+        account.userId !== userId,
+    ).length,
+    scopes: "unavailable",
+    repositoryAccess: "not_checked",
+  };
 }
 
 /** The whole catalog, independent of whatever the user is filtering by. */
 export async function countToolkits(apiKey: string): Promise<number> {
-  const page = await request<{ total_items?: number }>("/api/v3/toolkits?limit=1", apiKey);
+  const page = await request<{ total_items?: number }>(
+    "/api/v3/toolkits?limit=1",
+    apiKey,
+  );
   return page.total_items ?? 0;
 }
 
 export async function countAuthConfigs(apiKey: string): Promise<number> {
-  const page = await request<{ total_items?: number }>("/api/v3/auth_configs?limit=1", apiKey);
+  const page = await request<{ total_items?: number }>(
+    "/api/v3/auth_configs?limit=1",
+    apiKey,
+  );
   return page.total_items ?? 0;
 }
 
@@ -242,7 +364,10 @@ export async function listCategories(apiKey: string): Promise<Category[]> {
  * without a managed scheme need credentials, which is the agent's job via
  * COMPOSIO_MANAGE_CONNECTIONS, not the dashboard's.
  */
-export async function resolveAuthConfigId(apiKey: string, toolkitSlug: string): Promise<string> {
+export async function resolveAuthConfigId(
+  apiKey: string,
+  toolkitSlug: string,
+): Promise<string> {
   // `?toolkit_slug=` is sent, but Composio ignores it: `bananaslug`,
   // `nonexistenttoolkit123` and 50 random characters all came back 200 with the
   // account's single github config. Taking the first enabled item on trust is
@@ -256,7 +381,10 @@ export async function resolveAuthConfigId(apiKey: string, toolkitSlug: string): 
       status?: string;
       toolkit?: { slug?: string };
     }[];
-  }>(`/api/v3/auth_configs?toolkit_slug=${encodeURIComponent(toolkitSlug)}&limit=100`, apiKey);
+  }>(
+    `/api/v3/auth_configs?toolkit_slug=${encodeURIComponent(toolkitSlug)}&limit=100`,
+    apiKey,
+  );
   // `status` is what the live API returns ("ENABLED"); `is_disabled` is not a
   // field on this resource, so testing it alone accepts a disabled config.
   const usable = (existing.items ?? []).find(
@@ -280,7 +408,11 @@ export async function resolveAuthConfigId(apiKey: string, toolkitSlug: string): 
     },
   );
   const id = created.auth_config?.id ?? created.id;
-  if (!id) throw new ComposioError(`Composio created no auth config for ${toolkitSlug}`, 502);
+  if (!id)
+    throw new ComposioError(
+      `Composio created no auth config for ${toolkitSlug}`,
+      502,
+    );
   return id;
 }
 
@@ -297,7 +429,10 @@ export async function createConnectLink(
     method: "POST",
     body: {
       auth_config: { id: options.authConfigId },
-      connection: { user_id: options.userId, callback_url: options.callbackUrl },
+      connection: {
+        user_id: options.userId,
+        callback_url: options.callbackUrl,
+      },
     },
   });
 
@@ -308,7 +443,10 @@ export async function createConnectLink(
     created.redirect_url;
 
   if (!url) {
-    throw new ComposioError("Composio returned no authorization URL for this app", 502);
+    throw new ComposioError(
+      "Composio returned no authorization URL for this app",
+      502,
+    );
   }
   return url;
 }

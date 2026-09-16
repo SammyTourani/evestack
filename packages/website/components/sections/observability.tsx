@@ -1,5 +1,6 @@
 import { Section, SectionHeading } from "@/components/ui/section";
 import { MonitorsPanel } from "@/components/sections/monitors-panel";
+import { DashboardShot } from "@/components/ui/dashboard-shot";
 import { ApprovalDemo } from "@/components/sections/approval-demo";
 import { observability, control, site } from "@/lib/copy";
 
@@ -34,9 +35,33 @@ export function Observability() {
         <figure data-screenshot-tilt className="mx-auto max-w-5xl min-w-0">
           <MonitorsPanel />
           <figcaption className="mt-4 text-center font-mono text-label-12 uppercase text-gray-700">
-            read from your own database, <span data-scramble>100% yours</span>
+            interactive illustration, <span data-scramble>example data</span>
           </figcaption>
         </figure>
+
+        <div className="mx-auto mt-10 max-w-5xl">
+          <h3 className="text-heading-32">A repository brief you can check</h3>
+          <p className="mt-3 max-w-3xl text-copy-16 text-gray-900">
+            Ask what changed, what needs attention, and which sources support
+            each finding. Review the result, then save the task as a routine.
+            Missing access should be reported in the brief.
+          </p>
+          <figure className="mt-6 overflow-hidden rounded-xl border border-border-default bg-background-200">
+            <DashboardShot
+              {...observability.shots.detail}
+              className="h-auto w-full"
+            />
+            <figcaption className="border-t border-border-subtle p-4 text-copy-14 text-gray-700">
+              {observability.shots.detail.caption}{" "}
+              <a
+                className="inline-flex min-h-11 items-center underline underline-offset-4"
+                href="/docs/first-task"
+              >
+                Try the walkthrough.
+              </a>
+            </figcaption>
+          </figure>
+        </div>
 
         {/* The four capability paragraphs that were here are gone (2026-08-11,
             Sammy: "way too much text"). He was right; they restated in prose
@@ -89,7 +114,9 @@ export function Observability() {
           <div className="grid grid-cols-1 items-center gap-12 lg:grid-cols-2">
             <div className="flex flex-col gap-4">
               <h3 className="text-heading-32">{control.heading}</h3>
-              <p className="hidden max-w-md text-copy-16 text-gray-900 md:block">{control.sub}</p>
+              <p className="hidden max-w-md text-copy-16 text-gray-900 md:block">
+                {control.sub}
+              </p>
             </div>
             <ApprovalDemo />
           </div>

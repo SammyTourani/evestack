@@ -1,6 +1,26 @@
 /**
  * The credential leak itself, asserted against eve's own resolver.
  *
+ * ── WHAT CHANGED WITH EVE 0.54, AND WHY THE ASSERTIONS MOVED ────────────────
+ *
+ * This file was written against eve 0.30, where an unfenced project put the
+ * user's `~/.npmrc` in `plan.copyFiles` and `eve dev` wrote it into
+ * `.eve/dev-runtime/snapshots/` on every boot. eve 0.54 restricts `copyFiles`
+ * to the app root: the same fixture now copies exactly one file, the project's
+ * own `package.json`, and nothing from outside the project at all. The copy
+ * half of the leak is fixed upstream.
+ *
+ * The other half is not. `plan.sourceRoot` is still the first marker directory
+ * found walking up — $HOME for a dotfiles repo — and `plan.watchPaths` still
+ * includes the credential file. So the fence still does something measurable,
+ * and the assertions here moved from "is it copied" to "is it within reach",
+ * which is the property the fence actually changes.
+ *
+ * These tests were SKIPPED for the whole of eve 0.30's life, because eve was
+ * not installed in the workspace. They started running on the upgrade and
+ * failed immediately — which is the system working: a canary for upstream
+ * behaviour is supposed to fail when the upstream behaviour changes.
+ *
  * WHY THIS FILE EXISTS AND THE OTHER TWO ARE NOT ENOUGH.
  * `test/first-run-ux.test.mjs` asserts that `create` leaves a `.git`.
  * `test/attach-writes.test.mjs` asserts that `attach` leaves one, and that it
@@ -31,13 +51,14 @@
  * directory that is a dotfiles repository (`.git` + `.npmrc` with a registry
  * token), with the project some directories below it.
  */
+import { shimPath } from "./helpers/scaffold-shims.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ENTRY = join(HERE, "..", "index.mjs");
@@ -76,7 +97,7 @@ const NO_EVE = EVE_SNAPSHOT_MODULE
   ? false
   : "eve is not installed — run `pnpm install` at the repository root";
 
-const eveSnapshot = EVE_SNAPSHOT_MODULE ? await import(EVE_SNAPSHOT_MODULE) : null;
+const eveSnapshot = EVE_SNAPSHOT_MODULE ? await import(pathToFileURL(EVE_SNAPSHOT_MODULE).href) : null;
 
 /**
  * A dotfiles repository with a real credential in it, and a project below it.
@@ -122,18 +143,6 @@ function eveProject(parent, name = "my-agent") {
  * real `npm install` in a test that is about a filesystem walk would spend two
  * minutes proving nothing, and a real `docker` would try to start a stack.
  */
-function shimPath() {
-  const bin = mkdtempSync(join(tmpdir(), "evestack-leak-shim-"));
-  const write = (name, body) => {
-    writeFileSync(join(bin, name), body);
-    chmodSync(join(bin, name), 0o755);
-  };
-  const hash = String.fromCharCode(35);
-  const install = `${hash}!/bin/sh\ncase "$1" in install) mkdir -p node_modules/eve;; esac\nexit 0\n`;
-  ["npm", "pnpm", "yarn", "bun"].forEach((name) => write(name, install));
-  ["docker", "ollama"].forEach((name) => write(name, `${hash}!/bin/sh\nexit 1\n`));
-  return `${bin}:${process.env.PATH}`;
-}
 
 function cli(args, cwd) {
   return spawnSync(process.execPath, [ENTRY, ...args], {
@@ -174,7 +183,7 @@ async function leakReport(projectDir) {
 /* the control: the fixture really does put a credential within reach          */
 /* -------------------------------------------------------------------------- */
 
-test("without a marker in the project, eve copies the home directory's credential", { skip: NO_EVE }, async () => {
+test("without a marker in the project, eve reaches the home directory's credential", { skip: NO_EVE }, async () => {
   const { home, work } = dotfilesHome();
   const project = eveProject(work);
   // No `git init` here, and no attach: this is the state a project is in before
@@ -184,14 +193,29 @@ test("without a marker in the project, eve copies the home directory's credentia
   const { plan, carrying, outside } = await leakReport(project);
 
   assert.equal(plan.sourceRoot, home, "the fixture did not reproduce the walk-up");
+
+  // THE CONTROL MOVED, BECAUSE EVE MOVED. On eve 0.30 this asserted
+  // `carrying === [home/.npmrc]` — the credential was in `copyFiles` and landed
+  // in `.eve/dev-runtime/snapshots/`. eve 0.54 restricts `copyFiles` to the app
+  // root, so the same fixture now copies one file: the project's own
+  // package.json. The copy half of the leak is fixed upstream.
+  //
+  // The control is still a control, because the reach is what the fence is
+  // measured against and the reach is still there: the source root is still
+  // $HOME and the credential is still WATCHED. Asserting on `outside` rather
+  // than on `carrying` keeps the two fence tests below honest — they assert
+  // `outside === []`, which would prove nothing if an unfenced project were
+  // already clean.
+  assert.ok(
+    outside.includes(join(home, ".npmrc")),
+    "the fixture puts no credential within eve's reach, so nothing below this line proves anything",
+  );
   assert.deepEqual(
     carrying,
-    [join(home, ".npmrc")],
-    "the fixture has no credential in eve's copy plan, so nothing below this line proves anything",
+    [],
+    "eve 0.54 is expected NOT to copy it — if this fails the upstream fix regressed, " +
+      "and the alert wording in attach.mjs is wrong again",
   );
-  // The second half of the same bug, and the reason `eve dev` rebuilt whenever
-  // an unrelated dotfile changed: the watcher is pointed outside the project too.
-  assert.ok(outside.length > 0, "the fixture does not reproduce the watch-outside-the-project half");
 });
 
 /* -------------------------------------------------------------------------- */
@@ -250,7 +274,7 @@ test("a project `attach` fenced keeps the credential out of eve's copy plan", { 
  * makes `attach` fence a workspace root, this test goes red and the reader is
  * sent to the trade-off rather than to a mystery.
  */
-test("a workspace root above the project is warned about, not fenced — and the copy is real", { skip: NO_EVE }, async () => {
+test("a workspace root above the project is warned about, not fenced — and the reach is real", { skip: NO_EVE }, async () => {
   const { home, work } = dotfilesHome();
   writeFileSync(join(work, "pnpm-workspace.yaml"), "packages:\n  - my-agent\n");
   writeFileSync(
@@ -264,17 +288,26 @@ test("a workspace root above the project is warned about, not fenced — and the
 
   assert.equal(existsSync(join(project, ".git")), false, "attach fenced a workspace it belongs to");
   assert.match(output, /Move the secret/, output);
+  assert.doesNotMatch(
+    output,
+    /copies that file into|copies stop carrying/,
+    "the alert still promises a copy eve 0.54 does not make",
+  );
   assert.ok(output.includes(join(work, ".npmrc")), `the alert does not name the file:\n${output}`);
   assert.ok(!output.includes(DECOY), "attach printed the credential itself");
 
-  const { plan, carrying } = await leakReport(project);
+  const { plan, carrying, outside } = await leakReport(project);
   assert.equal(plan.sourceRoot, work, "the workspace root is not where eve snapshots from");
-  assert.deepEqual(
-    carrying,
-    [join(work, ".npmrc")],
-    "the alert claims a copy that does not happen — one of the two is wrong",
+  // The alert names this file, so the file has to actually be within eve's
+  // reach or the alert is noise. On eve 0.54 "within reach" means watched, not
+  // copied — which is exactly what the alert now says, and why it stopped
+  // promising a copy the reader could go and fail to find.
+  assert.ok(
+    outside.includes(join(work, ".npmrc")),
+    "the alert names a file eve never touches — one of the two is wrong",
   );
+  assert.deepEqual(carrying, [], "eve 0.54 keeps copies inside the project");
   // And the home directory above the workspace is out of reach either way,
   // because eve stops at the FIRST marker going up.
-  assert.ok(!carrying.includes(join(home, ".npmrc")), "eve walked past the workspace root");
+  assert.ok(!outside.includes(join(home, ".npmrc")), "eve walked past the workspace root");
 });

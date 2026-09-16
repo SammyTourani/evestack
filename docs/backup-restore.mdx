@@ -1,0 +1,167 @@
+---
+title: Backup and restore
+description: Preserve your database and configuration, rehearse a restore without running work, and recover deliberately.
+---
+
+Back up the **whole Postgres database** and the project's private configuration.
+A database archive alone does not include your agent code, environment files,
+skill files, sandbox files or credentials held by an external integration service.
+
+| Data | Included in a whole-database archive? |
+| --- | --- |
+| Workflow runs, events, pending jobs, waits and migration records | Yes |
+| Memories and their vectors, ownership, reviews and deletion audit | Yes |
+| Approval history, skill reviews, retained traces and derived facts | Yes |
+| Routines, run snapshots, uncertain dispatches and notification attempts | Yes |
+| Saved budget policies, revisions and consumer observations | Yes |
+| Regression cases, immutable evidence and manual reviews | Yes |
+| Agent code, `.env`, `.env.local`, `HEARTBEAT.md`, skills and local sandbox files | No — back up separately |
+| Hosted OAuth grants, provider accounts and previously delivered messages | No — managed by their services |
+
+## 1. Identify the project and stop new work
+
+Run these steps from the intended project's directory. For an attached project,
+use `-f docker-compose.evestack.yml` on **every** Compose command if that is the
+file attach created. An existing project's default Compose file may belong to
+another application.
+
+```bash
+docker compose config --services
+docker compose config --volumes
+docker compose --profile dashboard ps -a
+```
+
+Keep the Compose file and its `name:` value with the backup. Do not print a full
+resolved Compose configuration into a public issue; it may contain credentials.
+
+For a release or recovery checkpoint, pause dashboard routines, disable external
+triggers and stop the agent using its supervisor or terminal. Stop the dashboard
+while keeping Postgres running:
+
+```bash
+docker compose --profile dashboard stop dashboard
+```
+
+An attached dashboard may instead be a separately named Docker container. Stop
+that exact container. [Operations](/docs/operations#run-the-agent-as-a-service)
+describes systemd and launchd supervision. A stopped process can leave durable
+work pending; record those tasks before continuing. `pg_dump` takes a consistent
+database snapshot even with writers, but stopping writers makes comparison with
+the live database and a planned upgrade easier to assess.
+
+## 2. Create a private archive
+
+The following commands use Bash or zsh on macOS/Linux (or WSL with access to
+Docker). They use the client tools shipped in the selected Postgres container.
+For managed Postgres, use its supported backup process or matching `pg_dump` and
+`pg_restore` clients with a private password/service file. Avoid credentials in
+command-line URLs or shell history.
+
+Run the blocks in the same shell. The directory is outside the project and starts
+with private permissions. A failed dump is left with a `.partial` suffix.
+
+```bash
+set -eu
+umask 077
+backup_dir=$(mktemp -d "$HOME/evestack-backup.XXXXXXXX")
+docker compose exec -T postgres sh -c \
+  'exec pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom --no-owner --no-privileges' \
+  > "$backup_dir/database.dump.partial"
+mv "$backup_dir/database.dump.partial" "$backup_dir/database.dump"
+
+docker compose exec -T postgres pg_restore --list \
+  < "$backup_dir/database.dump" > "$backup_dir/archive-contents.txt"
+(cd "$backup_dir" && shasum -a 256 database.dump > database.sha256)
+```
+
+Store an encrypted copy off this host, together with private copies of project
+configuration, code, the lockfile and `evestack-release.json` when present. Record
+the actual image tag/digest, installed package versions, backup time, database
+major and extension versions. Keep backup keys separately. Set a retention period
+that accounts for prompts, credentials in tool results and retained audit copies.
+
+This portable archive omits ownership and grants. Document custom database roles,
+permissions, tablespaces and server configuration separately; recreate them with
+your database administrator when recovering a non-default deployment. A table of
+contents or checksum proves neither that data restores nor that an application works.
+
+## 3. Restore into a new, unused database
+
+Use Postgres 17 with the required extensions available, including `vector` for
+memories. Create an empty database with a unique name. If creation fails, stop;
+do not reuse an existing database. The restore uses one transaction and stops on
+the first error. It does not use `--clean`, replace the source or change its URL.
+
+```bash
+restore_db="evestack_restore_$(date -u +%Y%m%d_%H%M%S)"
+docker compose exec -T postgres sh -c \
+  'exec createdb -U "$POSTGRES_USER" --template=template0 "$1"' sh "$restore_db"
+docker compose exec -T postgres sh -c \
+  'exec pg_restore -U "$POSTGRES_USER" --dbname="$1" --exit-on-error --single-transaction --no-owner --no-privileges' \
+  sh "$restore_db" < "$backup_dir/database.dump"
+```
+
+**Keep the restored database disconnected from agents, dashboards and schedulers.**
+Restored pending jobs, routines and notification records can resume or be retried
+on startup. An old snapshot cannot know which external actions happened after it
+was taken. Setting `EVESTACK_ROUTINES_DISABLED=1` stops the dashboard routine clock;
+it does not disable the agent's code-authored schedules or restored workflow jobs.
+
+Inspect the restore directly with SQL:
+
+```bash
+docker compose exec -T postgres sh -c \
+  'exec psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$1"' sh "$restore_db" <<'SQL'
+SELECT extname, extversion FROM pg_extension ORDER BY extname;
+SELECT schemaname, tablename FROM pg_tables
+ WHERE schemaname IN ('workflow','workflow_drizzle','graphile_worker','evestack')
+ ORDER BY schemaname, tablename;
+-- Generate exact counts for each table that actually exists in this archive.
+SELECT format('SELECT %L AS table_name, count(*) AS rows FROM %I.%I;',
+              schemaname || '.' || tablename, schemaname, tablename)
+ FROM pg_tables
+ WHERE schemaname IN ('workflow','workflow_drizzle','graphile_worker','evestack')
+ ORDER BY schemaname, tablename
+\gexec
+SQL
+```
+
+Compare the same inventory against the paused source. Check representative task
+history, memory ownership/vectors, approvals, routine states, notification IDs,
+budget revisions and regression snapshots. Check schema markers, indexes and
+sequence values as well as row counts. Older installations may not have every
+feature table. Record the restore result before calling this backup verified.
+
+The release test rehearses a real custom-format archive, compares all rows in
+22 fixture tables plus sequences, indexes and constraints, reapplies additive
+operator schemas, and verifies that a damaged archive leaves no partial tables.
+CI requires pgvector and its vector index; a local server without that extension
+only verifies the remaining storage. This test starts no agent and does not
+prove a provider call or external side effect can be safely replayed.
+
+## 4. Recover or roll back deliberately
+
+Keep the original database and verified archive until the replacement is accepted.
+Before switching a stopped installation to the recovered database:
+
+1. Choose matching component versions from the release notes and manifest. A
+   newer schema marker may refuse an older image; do not lower markers or drop
+   the `evestack` schema to bypass it.
+2. Inspect pending workflows, uncertain routine dispatches and notifications.
+   Reconcile them with actual external receipts. Keep routines paused and
+   outbound triggers disabled until this review is complete.
+3. Restore private configuration and update all affected database references
+   together. Recheck roles, extension availability and application permissions.
+4. Start only the components you intend to activate. Use `evestack status`,
+   `evestack verify` and `evestack readiness`, then inspect a bounded real task.
+   Enable one reviewed routine or channel at a time and observe its result.
+
+Starting an agent can resume durable work immediately. If unresolved work cannot
+be replayed safely, keep the restored database for read-only inspection and plan
+a component-specific recovery before activation. An additive migration makes
+installation restart-safe; it does not promise that every older component can
+run against the newer schema.
+
+Delete the rehearsal database only after verifying its exact generated name and
+that no service points to it. Retain the backup independently. For stopping or
+removing an installation while preserving its volume, see [Uninstall](/docs/uninstall).

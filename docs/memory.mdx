@@ -1,9 +1,9 @@
 ---
 title: Long-term memory
-description: Free semantic recall on the Postgres you're already running — and the indexing bug we hit building it.
+description: Semantic recall, ownership, review history and corrections in your own Postgres.
 ---
 
-## Why this is free
+## Storage and recall
 
 The Postgres storing your durable sessions is already running, and `docker-compose.yml` uses
 the `pgvector/pgvector` image — so the storage side of long-term memory costs one
@@ -24,13 +24,13 @@ the box (`agent/tools/remember.ts`, `agent/tools/recall.ts`).
 ## It needs an embeddings provider, and Anthropic is not one
 
 Storage is free; turning text into a vector is not automatic. `lib/memory.ts` resolves the
-embedding model from your chat provider, and the three providers do not all have one:
+embedding model from your chat provider. The template supports OpenAI or Ollama for embeddings; its other chat-provider paths require a separate embedding configuration:
 
 | `EVESTACK_PROVIDER` | Embeddings | Model, vector width |
 | --- | --- | --- |
 | unset, or `openai` | yes, same key | `text-embedding-3-small`, 1536 |
 | `ollama` | yes, but **a second `ollama pull`** | `nomic-embed-text` (274 MB), 768 |
-| `anthropic` | **none — Anthropic has no embeddings endpoint** | borrows OpenAI's if `OPENAI_API_KEY` is set |
+| other template chat providers | separate embedding provider | uses OpenAI if `OPENAI_API_KEY` is set, or explicit `EVESTACK_EMBED_PROVIDER=ollama` |
 
 On `anthropic` with no `OPENAI_API_KEY`, `remember` and `recall` do not work. The first call
 fails with the fix in it:
@@ -66,18 +66,25 @@ overrides exist for the Anthropic case above, and for a different embedding mode
 | `EVESTACK_EMBED_MODEL` | `text-embedding-3-small` / `nomic-embed-text` | the embedding model to call |
 | `EVESTACK_EMBED_DIMENSIONS` | 1536 / 768 | the vector width, which must match what that model returns |
 
-Model and width go together, and the width is baked into `evestack.memories` at creation. Change
-either one and the old rows are unusable — vectors from two different models are not comparable —
-so the table has to be dropped:
+Model and width go together, and the width is baked into `evestack.memories` at creation. Vectors from different models are not comparable. Restore the original model and dimensions when a mismatch appears. To change models, [back up the database](/docs/self-hosting#backups) and plan a migration that recomputes vectors from the saved text while preserving owners, tags and source metadata. The dashboard does not automate that migration.
 
-```bash
-docker compose exec postgres psql -U evestack -d evestack \
-  -c 'DROP TABLE evestack.memories'
-```
+`lib/memory.ts` checks the column width on the first memory call and reports both dimensions. Width alone cannot detect a different model with the same dimensions; retain the original provider/model configuration with your backups. Do not discard the memory table to resolve a configuration mismatch.
 
-`lib/memory.ts` checks the existing column width on the first memory call and says exactly this,
-with both numbers, rather than letting the mismatch surface later as pgvector's `expected 1536
-dimensions, not 768` from inside an INSERT.
+## Review and correction in the dashboard
+
+**Knowledge → Memory** shows the recorded owner, `shared` tag and source task. This is the installation operator's view across owners; dashboard sign-in does not provide per-person access control. Legacy rows retain an unknown owner rather than being relabelled as the operator's.
+
+The template's default `EVESTACK_MEMORY_SCOPE=owner` recalls a caller's own records, records tagged `shared`, and legacy records with no owner. `strict` excludes the legacy records. `shared` makes the table available across callers. Custom agent code can implement a different policy.
+
+Expand a record to mark it reviewed, stale, conflicting, or to save a proposed correction with a reason. Reviews are tied to the record's content, owner and database version. A changed record reopens review; a stale screen cannot save a review or delete that changed record. Each record shows its latest 20 reviews.
+
+A proposal **does not change recall**. Use **Prepare correction task** to review a request for the agent's supported memory tools to regenerate the embedding and verify the result within the caller's existing permissions. The dashboard does not directly edit memory text or apply the correction automatically. Inspect the resulting task and memory records before treating it as corrected.
+
+Removing a memory and writing its deletion audit are one transaction: an audit failure rolls removal back. API clients can send the displayed record hash as `If-Match` to `DELETE /api/memories/:id`; the dashboard always does this. Existing API callers that omit the header keep unconditional operator deletion semantics.
+
+Authenticated API clients can read `GET /api/memories?q=invoice&limit=50&offset=0` and `GET /api/memories/:id` for the same content, ownership, source and record hash. `GET /api/memories/:id/review` returns the latest 20 reviews; `POST` requires the current hash, a verdict and a reason. Proposal text is stored only when the verdict is `correction_proposed`. Embeddings are never included in these responses.
+
+Memory records have no automatic expiry in the template. Deletion removes a record from recall; its audit copy, review notes and proposal snapshots remain in Postgres and backups. These records identify the shared installation credential or recorded proxy attribution, not a verified individual teammate. The additive review tables remain available to a database operator after rollback to an older dashboard; old dashboards do not enforce the new record preconditions.
 
 ## HNSW, not IVFFlat — a correctness fix, not a preference
 

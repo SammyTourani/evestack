@@ -13,10 +13,10 @@
  * is no production database in a test — so read these as representative, not as
  * a ceiling; that script documents exactly which interface each field came from.
  *
- *     list_sessions                                  1,489 B   ~0.4k tokens
+ *     list_sessions                                  11,765 B   ~2.9k tokens
  *     promote_session_to_eval (40-turn session)     15,592 B   ~3.9k
- *     get_session (one pending write_file approval) 39,861 B   ~10k
- *     get_costs (200 principals)                    81,942 B   ~20k
+ *     get_session (one pending write_file approval) 40,015 B   ~10k
+ *     get_costs (200 principals)                    81,967 B   ~20k
  *     list_approvals (no arguments — 200 rows)     113,289 B   ~28k
  *     list_approvals limit=500                     283,123 B   ~71k
  *     list_approvals sessionId, no limit (1000)    566,182 B   ~142k
@@ -31,8 +31,8 @@
  *
  * WHY 64 KiB (~16k tokens) IS THE DEFAULT. The measured results fall into two
  * groups with a wide gap between them: the three that stay small on any
- * deployment top out at 39,861 B, and the four whose size is a function of how
- * much history the deployment has start at 81,942 B. 64 KiB is the only power of
+ * deployment top out at 40,015 B, and the four whose size is a function of how
+ * much history the deployment has start at 81,967 B. 64 KiB is the only power of
  * two that lands in that gap — 32 KiB would cut `get_session`, and 128 KiB would
  * wave a 28k-token audit log through on a call with no arguments. 16k tokens is
  * also ~8% of a 200k window, which is about as much as a single observability
@@ -124,7 +124,8 @@ export function payloadBytes(payload: Record<string, unknown>): number {
 const byteLength = (text: string): number => Buffer.byteLength(text, "utf8");
 
 /** Pretty, because that is what server.ts already sends and what the cap must measure. */
-const serialise = (value: unknown): string => JSON.stringify(value, null, 2) ?? "null";
+const serialise = (value: unknown): string =>
+  JSON.stringify(value, null, 2) ?? "null";
 
 /** Keep enough of a cut string that a human can tell what it was. */
 const STRING_FLOOR = 160;
@@ -213,17 +214,42 @@ function collect(
       // the document (nested lines carry more indentation there). Ranking is all
       // this number decides — how much to actually cut is measured, not
       // estimated, by `shrinkToFit`.
-      out.push({ path, container, key, value: node, length: node.length, bytes: byteLength(serialise(node)) });
+      out.push({
+        path,
+        container,
+        key,
+        value: node,
+        length: node.length,
+        bytes: byteLength(serialise(node)),
+      });
     } else if (typeof node === "string" && node.length > STRING_FLOOR) {
-      out.push({ path, container, key, value: node, length: node.length, bytes: byteLength(node) });
+      out.push({
+        path,
+        container,
+        key,
+        value: node,
+        length: node.length,
+        bytes: byteLength(node),
+      });
     }
   }
 
   if (Array.isArray(node)) {
-    node.forEach((child, index) => collect(child, `${path}[${index}]`, node, index, exhausted, out));
+    node.forEach((child, index) =>
+      collect(child, `${path}[${index}]`, node, index, exhausted, out),
+    );
   } else if (node && typeof node === "object") {
-    for (const [name, child] of Object.entries(node as Record<string, unknown>)) {
-      collect(child, path === "" ? name : `${path}.${name}`, node as Record<string, unknown>, name, exhausted, out);
+    for (const [name, child] of Object.entries(
+      node as Record<string, unknown>,
+    )) {
+      collect(
+        child,
+        path === "" ? name : `${path}.${name}`,
+        node as Record<string, unknown>,
+        name,
+        exhausted,
+        out,
+      );
     }
   }
 }
@@ -241,14 +267,18 @@ function marker(dropped: number): string {
 }
 
 /** Replace the node with its first `keep` items/characters. Never mutates the original. */
-function applyKeep(candidate: Candidate, keep: number): { unit: "items" | "characters"; kept: number; dropped: number } {
+function applyKeep(
+  candidate: Candidate,
+  keep: number,
+): { unit: "items" | "characters"; kept: number; dropped: number } {
   const target = candidate.container as Record<string | number, unknown>;
   if (Array.isArray(candidate.value)) {
     target[candidate.key] = candidate.value.slice(0, keep);
     return { unit: "items", kept: keep, dropped: candidate.length - keep };
   }
   const dropped = candidate.length - keep;
-  target[candidate.key] = candidate.value.slice(0, keep) + (dropped > 0 ? marker(dropped) : "");
+  target[candidate.key] =
+    candidate.value.slice(0, keep) + (dropped > 0 ? marker(dropped) : "");
   return { unit: "characters", kept: keep, dropped };
 }
 
@@ -280,7 +310,10 @@ function reason(originalBytes: number, limitBytes: number): string {
  * really describes what left) is then testable without a dashboard, same as the
  * read-only gate.
  */
-export function fitToolPayload(payload: Record<string, unknown>, limitBytes: number): FittedResult {
+export function fitToolPayload(
+  payload: Record<string, unknown>,
+  limitBytes: number,
+): FittedResult {
   const original = serialise(payload);
   const originalBytes = byteLength(original);
   if (originalBytes <= limitBytes) {
@@ -312,7 +345,10 @@ export function fitToolPayload(payload: Record<string, unknown>, limitBytes: num
    * Record what a cut took, measured against the length the node had BEFORE any
    * pass touched it. See `originalLengths` above for why that matters.
    */
-  const remember = (candidate: Candidate, applied: { unit: "items" | "characters"; kept: number }): void => {
+  const remember = (
+    candidate: Candidate,
+    applied: { unit: "items" | "characters"; kept: number },
+  ): void => {
     const trueLength = originalLengths.get(candidate.path) ?? candidate.length;
     originalLengths.set(candidate.path, trueLength);
     cuts.set(candidate.path, {
@@ -337,7 +373,12 @@ export function fitToolPayload(payload: Record<string, unknown>, limitBytes: num
    */
   const bare = (reasonText: string): FittedResult => {
     const built = assemble({}, reasonText, originalBytes, limitBytes, []);
-    return { payload: built.payload, text: built.text, truncated: true, notice: built.notice };
+    return {
+      payload: built.payload,
+      text: built.text,
+      truncated: true,
+      notice: built.notice,
+    };
   };
 
   const fitted = (built: {
@@ -361,9 +402,13 @@ export function fitToolPayload(payload: Record<string, unknown>, limitBytes: num
 
   let ranOutOfPasses = false;
   for (let pass = 0; ; pass++) {
-    const attempt = assemble(working, reason(originalBytes, limitBytes), originalBytes, limitBytes, [
-      ...cuts.values(),
-    ]);
+    const attempt = assemble(
+      working,
+      reason(originalBytes, limitBytes),
+      originalBytes,
+      limitBytes,
+      [...cuts.values()],
+    );
     if (attempt.bytes <= limitBytes) return fitted(attempt);
 
     if (pass >= passBudget) {
@@ -376,12 +421,20 @@ export function fitToolPayload(payload: Record<string, unknown>, limitBytes: num
     const target = found[0];
     if (!target) break;
 
-    const applied = shrinkToFit(target, working, originalBytes, limitBytes, cuts);
+    const applied = shrinkToFit(
+      target,
+      working,
+      originalBytes,
+      limitBytes,
+      cuts,
+    );
     remember(target, applied);
     // At the floor this node has nothing more to give. Without this the next
     // pass would pick the same still-largest node, find no further cut, and spin
     // out the pass budget instead of moving on to the second-largest.
-    if (applied.kept <= (applied.unit === "items" ? ARRAY_FLOOR : STRING_FLOOR)) {
+    if (
+      applied.kept <= (applied.unit === "items" ? ARRAY_FLOOR : STRING_FLOOR)
+    ) {
       exhausted.add(target.path);
     }
   }
@@ -392,11 +445,19 @@ export function fitToolPayload(payload: Record<string, unknown>, limitBytes: num
     // instead of one per node — and see whether THAT fits. It keeps a row of
     // every list and 160 characters of every string, which is worth
     // immeasurably more than the empty notice this used to return.
-    const flooredReason = exhaustedReason(originalBytes, limitBytes, passBudget);
+    const flooredReason = exhaustedReason(
+      originalBytes,
+      limitBytes,
+      passBudget,
+    );
     for (let batch = 0; batch < MAX_FLOOR_BATCHES; batch++) {
-      const attempt = assembleWithinBudget(working, flooredReason, originalBytes, limitBytes, [
-        ...cuts.values(),
-      ]);
+      const attempt = assembleWithinBudget(
+        working,
+        flooredReason,
+        originalBytes,
+        limitBytes,
+        [...cuts.values()],
+      );
       if (attempt !== null) return fitted(attempt);
 
       const found = candidatesIn();
@@ -410,10 +471,19 @@ export function fitToolPayload(payload: Record<string, unknown>, limitBytes: num
       found.sort((a, b) => depth(a.path) - depth(b.path));
       const flooredHere: string[] = [];
       const nestedInAFlooredNode = (path: string): boolean =>
-        flooredHere.some((parent) => path.startsWith(`${parent}.`) || path.startsWith(`${parent}[`));
+        flooredHere.some(
+          (parent) =>
+            path.startsWith(`${parent}.`) || path.startsWith(`${parent}[`),
+        );
       for (const candidate of found) {
         if (nestedInAFlooredNode(candidate.path)) continue;
-        remember(candidate, applyKeep(candidate, Array.isArray(candidate.value) ? ARRAY_FLOOR : STRING_FLOOR));
+        remember(
+          candidate,
+          applyKeep(
+            candidate,
+            Array.isArray(candidate.value) ? ARRAY_FLOOR : STRING_FLOOR,
+          ),
+        );
         exhausted.add(candidate.path);
         flooredHere.push(candidate.path);
       }
@@ -468,14 +538,31 @@ function assembleWithinBudget(
   originalBytes: number,
   limitBytes: number,
   allCuts: readonly TruncationCut[],
-): { payload: Record<string, unknown>; text: string; bytes: number; notice: TruncationNotice } | null {
+): {
+  payload: Record<string, unknown>;
+  text: string;
+  bytes: number;
+  notice: TruncationNotice;
+} | null {
   // Full list first, so a result that can afford the complete accounting still
   // gets it. Then progressively fewer, shallowest paths kept — those name whole
   // top-level collections and are the ones worth reading.
   for (const keep of [allCuts.length, 64, 16, 4, 0]) {
     if (keep > allCuts.length) continue;
-    const kept = keep === allCuts.length ? allCuts : [...allCuts].sort((a, b) => depth(a.path) - depth(b.path)).slice(0, keep);
-    const attempt = assemble(working, reasonText, originalBytes, limitBytes, kept, allCuts.length - kept.length);
+    const kept =
+      keep === allCuts.length
+        ? allCuts
+        : [...allCuts]
+            .sort((a, b) => depth(a.path) - depth(b.path))
+            .slice(0, keep);
+    const attempt = assemble(
+      working,
+      reasonText,
+      originalBytes,
+      limitBytes,
+      kept,
+      allCuts.length - kept.length,
+    );
     if (attempt.bytes <= limitBytes) return attempt;
   }
   return null;
@@ -494,7 +581,11 @@ function depth(path: string): number {
  * prefix that fits. A caller told "this is what fits" would reasonably conclude
  * the data is simply that big. It is not.
  */
-function exhaustedReason(originalBytes: number, limitBytes: number, passBudget: number): string {
+function exhaustedReason(
+  originalBytes: number,
+  limitBytes: number,
+  passBudget: number,
+): string {
   return (
     reason(originalBytes, limitBytes) +
     ` This result had more shrinkable arrays and strings than the ${passBudget}-pass search budget, so ` +
@@ -543,7 +634,15 @@ function shrinkToFit(
     // sizes a document whose `cuts` list is one entry shorter than the one that
     // actually ships.
     cuts.set(candidate.path, { path: candidate.path, ...applied });
-    return draft(working, reason(originalBytes, limitBytes), originalBytes, limitBytes, [...cuts.values()]) <= budget;
+    return (
+      draft(
+        working,
+        reason(originalBytes, limitBytes),
+        originalBytes,
+        limitBytes,
+        [...cuts.values()],
+      ) <= budget
+    );
   };
 
   // If the floor itself does not fit, no prefix does, and the bisection below
@@ -615,7 +714,12 @@ function assemble(
   limitBytes: number,
   cuts: readonly TruncationCut[],
   cutsOmitted = 0,
-): { payload: Record<string, unknown>; text: string; bytes: number; notice: TruncationNotice } {
+): {
+  payload: Record<string, unknown>;
+  text: string;
+  bytes: number;
+  notice: TruncationNotice;
+} {
   let returnedBytes = 0;
   let text = "";
   let payload: Record<string, unknown> = {};

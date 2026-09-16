@@ -1,96 +1,92 @@
 ---
 title: The @evestack registry
-description: Take one piece of evestack without migrating a project or forking eve.
+description: Add individual Eve Stack components to an existing Eve project.
 ---
 
-evestack ships as an [`eve` registry](https://eve.dev/docs) in the shadcn registry-item format
-— the same mechanism `eve add channel/slack` uses for the official catalog.
+Use the registry when you want individual components in an Eve project. Use
+[the CLI](/docs/cli) to create a complete workspace or attach its dashboard.
+Registry items copy source files into your project; later registry changes do
+not update those copies automatically.
 
 ```bash
 eve registry add @evestack=https://raw.githubusercontent.com/SammyTourani/evestack/main/registry/r/{name}.json
+eve registry view @evestack/memory
 eve add @evestack/memory
 ```
 
-This is the reason evestack doesn't fork `eve`: anyone already running a vanilla `eve init`
-project can take exactly the piece they want.
+Inspect an item's files, dependencies and installation notes before adding it.
+Commit or back up your existing project, then review the resulting diff.
 
-| Item | Adds |
-| --- | --- |
-| `@evestack/memory` | Semantic long-term memory via pgvector — `remember`/`recall`/`forget` tools |
-| `@evestack/instrumentation` | OTLP trace export to an evestack dashboard |
-| `@evestack/docker-sandbox` | Local Docker sandbox instead of hosted Vercel Sandbox |
-| `@evestack/basic-auth` | HTTP Basic route auth, for agents running off Vercel |
-| `@evestack/channel-slack` | Slack channel wiring |
-| `@evestack/channel-telegram` | Telegram channel wiring |
-| `@evestack/channel-discord` | Discord channel wiring |
+## Available components
 
-Seven items, which is what `registry/r/` contains. This table listed four for long enough that
-three shipped items were reachable only by guessing their names — derive it rather than trust it:
+| Item | Adds | Configuration still required |
+| --- | --- | --- |
+| `@evestack/memory` | `remember`, `recall` and `forget` tools plus the memory library | Postgres with pgvector, an embedding provider, and the intended owner scope |
+| `@evestack/instrumentation` | OTLP trace export | Dashboard URL and ingest authentication; decide whether prompt/tool data should be exported |
+| `@evestack/docker-sandbox` | Local Docker sandbox backend | Docker availability and a reviewed network/resource policy |
+| `@evestack/basic-auth` | The Eve HTTP channel's authentication chain | Private `EVESTACK_AUTH_USER` and `EVESTACK_AUTH_PASSWORD` settings |
+| `@evestack/channel-slack` | Slack channel wiring | Platform credentials and allowed senders |
+| `@evestack/channel-telegram` | Telegram channel wiring | Platform credentials and allowed senders |
+| `@evestack/channel-discord` | Discord channel wiring | Platform credentials and allowed senders |
+
+Adding code does not prove an integration works. Follow [channel setup](/docs/channels)
+and [the first useful task](/docs/first-task), then verify actual results and receipts.
+Memory ownership and recall behavior are explained in [memory](/docs/memory).
+
+### Replacing the stock authentication file
+
+A stock Eve project already has `agent/channels/eve.ts`. The basic-auth item
+preserves that file unless you explicitly allow replacement:
 
 ```bash
-ls registry/r/          # every item, plus registry.json (the index)
+eve registry view @evestack/basic-auth
+# After reviewing and backing up your existing authentication chain:
+eve add @evestack/basic-auth --overwrite
 ```
 
-Verified end to end against a stock `eve init` project: `eve add @evestack/memory` installs all
-**four** files at their correct targets — `lib/memory.ts` plus the `remember`, `recall` and
-`forget` tools — the installed content is byte-identical to what ships in `templates/default`
-(the build script inlines from the real, tested source rather than a maintained copy), and
-`tsc --noEmit` passes with **no edits to `package.json` or `tsconfig.json`**.
+Merge any custom authenticators deliberately. Production requests require the
+configured credentials; local-development access follows Eve's process-level
+`localDev()` policy. This item requires Eve 0.30 or later. It is exercised with
+the current template's `^0.54.3` range; it is not a compatibility promise for
+all later releases.
 
-That verification was run against eve 0.29.5. `templates/default` now pins `^0.30.8`, and
-`@evestack/basic-auth` requires `>=0.30`, so the recorded run is older than the code it
-describes. The CI gate below keeps the *content* honest; nobody has re-run the end-to-end
-install since.
+## Verified candidate installation
 
-That last part is the part that is easy to get wrong. A stock eve project maps only
-`"#*": "./agent/*"` and carries no tsconfig `paths`, and TypeScript's `bundler` module
-resolution ignores package.json `imports` outright — so an item whose files import each other
-through a `#`-subpath cannot be made to typecheck there without the user editing two files.
-The memory tools therefore import `lib/memory.ts` by relative path, in `templates/default` too,
-so the tested code and the shipped item are the same code.
+The September 16, 2026 rehearsal created a stock project with the Eve 0.54.3 CLI;
+its declared `^0.54.3` dependency resolved to Eve 0.54.5. Using that installed CLI,
+all seven current items installed, all ten target files matched `registry/r/`
+byte for byte, and the project passed `tsc --noEmit` without adding path aliases.
+The existing authentication file was preserved first, then explicitly replaced
+in the disposable project.
 
-Dependencies are pinned to the ranges `templates/default` is tested against, generated from that
-manifest at build time. `@evestack/memory` carries `pg@^8.20.3`, `@ai-sdk/openai@^4.0.0` and
-`ai-sdk-ollama@^4.1.0` — only what its own files import, not the template's whole dependency
-list, and the third is there because the memory tools take either embedding provider. A bare, unversioned
-name would resolve to whatever npm calls latest on the day you run it, and the pin is what stops
-an item installing a major version the code was never exercised against.
+A local HTTP fixture served the candidate registry files; third-party package
+dependencies came from npm. Interactive setup was skipped. This checks package
+installation and types, not a running Docker backend, authenticated channel or
+live model. The candidate must still reach the public registry location when
+its reviewed commit is merged.
 
-`ai` is deliberately **not** among them even though `lib/memory.ts` imports `embed` from it.
-Every eve project already depends on `ai` and carries an `overrides` entry pinning it, so an item
-that declared it directly would fail the install with `EOVERRIDE` rather than resolve.
+## Source, dependencies and upgrades
 
-This paragraph used to read `@ai-sdk/openai@^2.0.0` and warn against ending up on v4. The repo
-moved to v4 deliberately (`@ai-sdk/openai@4.0.30` made `execution-denied` a first-class tool
-result), so the warning had inverted into a caution against the current, tested state. Read the
-pin out of the item rather than out of this sentence:
+`registry/build.mjs` builds seven items from the actual template source. It
+checks that local imports resolve within each item's file list. CI checks that
+generated files match source and that dependency ranges match the template.
+The memory tools use relative imports so a stock project needs no extra aliases.
+
+Items declare their own extra dependencies. They rely on the host Eve project's
+`ai` dependency and override rather than installing a conflicting second version.
+Read the emitted item for the current ranges:
 
 ```bash
 node -e "console.log(require('./registry/r/memory.json').dependencies)"
 ```
 
-## Where the registry is hosted
+The default URL follows `main` and can change. For a reproducible installation,
+use a reviewed commit in the registry URL and record the resulting lockfile.
+The URL must retain the literal `{name}` placeholder. If a namespace is already
+configured, `eve registry add` preserves it; review `package.json` before changing
+the mapping. Fetching successfully does not authenticate a third-party mirror.
 
-The URL is `raw.githubusercontent.com` and not `registry.evestack.dev` because **evestack owns
-no domain**. `evestack.dev` is unregistered — it returns NXDOMAIN — so the branded URL that used
-to be documented here died with `getaddrinfo ENOTFOUND` on the first command a stranger ran.
-Serving the JSON straight off `main` costs nothing and works today.
-
-If you ever buy `evestack.dev`, point it at `registry/r/` and change the URL in the five places
-that carry it: this file, `README.md`, `docs/channels/slack.mdx`, `docs/channels/telegram.mdx`,
-and the example in the header comment of `registry/build.mjs`. (`llms.txt` links the docs by raw
-URL for the same reason, but those are docs pages, not registry items.) Nothing in the shipped
-code reads the registry URL — it only ever lands in a user's own `package.json` under
-`registries`, written there by `eve registry add`.
-
-Two constraints on any replacement host, both read out of eve's registry client
-(`eve/dist/src/cli/commands/registry-project.js` and eve's bundled shadcn client):
-
-- The URL **must** contain the literal `{name}` placeholder. `eve registry add` rejects the
-  mapping outright otherwise, before it ever touches the network.
-- The `Content-Type` does **not** matter. raw.githubusercontent.com serves these files as
-  `text/plain; charset=utf-8` and eve parses the body as JSON anyway; it reads `content-type`
-  only on the error path, to pull a message out of a non-2xx response.
-
-The one real cost of the raw URL is caching: GitHub sends `cache-control: max-age=300`, so a
-freshly pushed registry change can take up to five minutes to reach users.
+For upgrades, compare your installed files with the reviewed source and merge
+changes explicitly. Do not overwrite modified authentication, channel or memory
+code without reviewing its configuration and data implications. See
+[upgrading](/docs/upgrading) and [backup and restore](/docs/backup-restore).

@@ -1,5 +1,34 @@
 # @evestack/dashboard
 
+## Database restore rehearsal (contributors)
+
+`test/backup-postgres.test.mjs` creates and drops only uniquely named disposable
+databases under a test server. Set `EVESTACK_TEST_POSTGRES_URL` to that server's
+admin connection, and either `EVESTACK_TEST_PG_BIN` to a directory containing
+matching `pg_dump`/`pg_restore` clients or `EVESTACK_TEST_PG_CONTAINER` to the exact
+Docker PostgreSQL service container. The latter executes its own client tools
+against loopback port 5432. `EVESTACK_TEST_REQUIRE_VECTOR=1` makes missing pgvector
+a failure; CI sets it. These are test harness settings, not deployment options.
+Run from this package with:
+
+```bash
+node --import ./test/register-ts-resolve.mjs --test test/backup-postgres.test.mjs
+```
+
+It compares archived/restored rows, sequences, indexes and constraints, checks
+additive schema reapplication and a truncated-archive rollback, and never starts
+an agent or dispatcher. The operator procedure is in
+[Backup and restore](../../docs/backup-restore.mdx).
+
+## Run the dashboard
+
+Queue diagnosis (`/diagnostics/doctor`, `GET /api/doctor`) reuses the CLI's pure
+`queue.mjs`, `findings.mjs` and `format.mjs` modules. Next bundles these imports
+into the dashboard; it does not execute the CLI or import its repair module.
+The image workflow watches and exercises those dependencies. Queries run in one
+read-only transaction against standard schemas, with bounded statements and
+candidate lists; live agent health is explicitly unprobed.
+
 Self-hosted observability and control plane for eve agents: sessions, cost,
 approvals with audit, memory, schedules and evals, read from your own Postgres.
 
@@ -141,6 +170,26 @@ copying it into this package's `.env.local` yourself.
 - Set `EVESTACK_PUBLIC_URL` when the dashboard sits behind a different hostname
   than it sees on the request. It is used for OAuth callback URLs and for the
   cross-site write check.
+
+## Release verification
+
+`pnpm --filter @evestack/dashboard test` runs the unit and rendering checks.
+For the native database group, set `EVESTACK_TEST_POSTGRES_URL` to a disposable
+PostgreSQL server whose fixture role can create databases, then run from this
+package:
+
+```bash
+node --import ./test/register-ts-resolve.mjs --test test/routines-postgres.test.mjs
+```
+
+The test creates a uniquely named database and drops only that database on
+completion. It checks claims from separate processes, ambiguous HTTP acceptance,
+crash recovery, audit rollback, decision reconciliation and shared budget
+activation. It uses local HTTP fixtures and makes no model calls.
+
+Dashboard routines require its Node clock to remain running. Set
+`EVESTACK_ROUTINES_DISABLED=1` and restart to stop this scheduling path. See
+[Recurring work](../../docs/routines.mdx) for dispatch and rollback semantics.
 
 ## Layout
 

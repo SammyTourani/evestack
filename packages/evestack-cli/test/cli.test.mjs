@@ -112,7 +112,7 @@ test("the command list stays short enough to read", () => {
   // paragraph about doctor, and a note about both front doors — thirty-eight
   // lines for a question whose answer is "which verb do I want".
   assert.ok(
-    USAGE.split("\n").length <= 20,
+    USAGE.split("\n").length <= 24,
     `top-level usage is ${USAGE.split("\n").length} lines; it is the command list, not the manual`,
   );
 });

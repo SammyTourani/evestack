@@ -6,6 +6,8 @@
  * is a budget nobody turns on.
  */
 export interface BudgetConfig {
+  /** Opt in to durable dashboard controls, refreshed before each turn and after each step. */
+  readonly dashboardControls?: boolean;
   /**
    * USD ceiling for one durable session. `false` disables the session cap.
    *
@@ -62,6 +64,40 @@ export interface BudgetConfig {
    */
   readonly unpricedModel: "warn" | "stop";
   /**
+   * Whether the hook checks the stop table on `turn.started`, BEFORE the turn's
+   * first model call, as well as on `step.completed` after it.
+   *
+   * Default `true`, and the reason is an aggregate this package used to get
+   * wrong in a way no single turn revealed. Spend was only ever evaluated in
+   * `step.completed`, which fires after the model has already been billed, and
+   * the process-local `stopped` flag is cleared on `turn.cancelled` and
+   * `turn.failed` so the next turn can stop again. Nothing read the durable stop
+   * table at the start of a turn. So once a cap had tripped, EVERY new message
+   * bought one full uncapped model call before the turn failed again: N messages
+   * were N billed calls, with the cap already gone. The README's "at most one
+   * step that was already in flight" was true of one turn and false of the day.
+   *
+   * With this on, a turn that starts while the cap is still gone never reaches a
+   * model. "Still" is load-bearing: the stop row is only what makes the hook
+   * look, and the totals are re-read and compared against the caps as they are
+   * now, so raising a cap still heals a stopped session on its next message
+   * rather than being locked out by a row written under the old one. The
+   * mechanism is the same throw the `fail` path already relies on —
+   * eve 0.54 wraps a throw from `turn.started` in a `BoundaryHookError`, parks
+   * the session with `step.failed` / `turn.failed` carrying our message and then
+   * `session.waiting`, and does not run the turn (read in
+   * `eve/dist/src/context/hook-lifecycle.js` and `harness/tool-loop.js`).
+   *
+   * `EVESTACK_BUDGET_PREFLIGHT=0` restores the pre-0.4 behaviour exactly, for
+   * two cases that are both real. Older eve builds — the peer range still allows
+   * 0.30 — have no `BoundaryHookError` wrapper, so a throw from `turn.started`
+   * escapes to the workflow driver rather than parking the session politely. And
+   * a client that treats `turn.failed` harshly is the same client `mode: cancel`
+   * exists for; a hook has no way to stop a model call other than throwing, so
+   * `cancel` cannot be honoured at the turn boundary and this switch is the out.
+   */
+  readonly preflight: boolean;
+  /**
    * What happens when the spend store itself is unreachable.
    *
    * Default `false`: log loudly and let the turn run. A Postgres blip turning
@@ -95,15 +131,21 @@ const DEFAULT_SESSION_USD = 2;
 const DEFAULT_DAILY_USD = 10;
 const DEFAULT_TIME_ZONE = "UTC";
 
-function envNumberOrFalse(raw: string | undefined, fallback: number | false): number | false {
+function envNumberOrFalse(
+  raw: string | undefined,
+  fallback: number | false,
+): number | false {
   if (raw === undefined || raw.trim() === "") return fallback;
   const trimmed = raw.trim().toLowerCase();
-  if (trimmed === "false" || trimmed === "off" || trimmed === "none") return false;
+  if (trimmed === "false" || trimmed === "off" || trimmed === "none")
+    return false;
   const value = Number(trimmed.replace(/^\$/, ""));
   // A typo in a cap must not silently become "no cap" — fall back to the
   // default, which is the safe direction, and say so.
   if (!Number.isFinite(value) || value < 0) {
-    console.warn(`[evestack:budget] ignoring unparseable cap "${raw}"; using ${String(fallback)}`);
+    console.warn(
+      `[evestack:budget] ignoring unparseable cap "${raw}"; using ${String(fallback)}`,
+    );
     return fallback;
   }
   return value;
@@ -112,7 +154,9 @@ function envNumberOrFalse(raw: string | undefined, fallback: number | false): nu
 function envMode(raw: string | undefined): BudgetConfig["mode"] {
   if (raw === "fail" || raw === "observe" || raw === "cancel") return raw;
   if (raw !== undefined && raw.trim() !== "") {
-    console.warn(`[evestack:budget] unknown EVESTACK_BUDGET_MODE "${raw}"; using "fail"`);
+    console.warn(
+      `[evestack:budget] unknown EVESTACK_BUDGET_MODE "${raw}"; using "fail"`,
+    );
   }
   return "fail";
 }
@@ -162,7 +206,7 @@ function validTimeZone(raw: string | undefined): string {
 /**
  * Each provider's default model, which has to match the agent's.
  *
- * `templates/default/agent/agent.ts` carries the same three and says out loud
+ * `templates/default/agent/agent.ts` carries the same five and says out loud
  * that the two tables must stay in step. They had drifted: this file defaulted
  * every non-ollama provider to `gpt-5-mini`, so the documented anthropic setup —
  * `EVESTACK_PROVIDER=anthropic` with `EVESTACK_MODEL` left commented out, which
@@ -177,7 +221,13 @@ function validTimeZone(raw: string | undefined): string {
 const PROVIDER_DEFAULT_MODEL: Record<string, string | undefined> = {
   openai: "gpt-5-mini",
   anthropic: "claude-sonnet-5",
-  ollama: "qwen3",
+  openrouter: "qwen/qwen3.8-27b",
+  ollama: "qwen3:0.6b",
+  chatgpt: "gpt-5.6-sol",
+  // Deliberately absent, not "": a custom endpoint has no price table anywhere,
+  // so the honest outcome is the unpriced warning below rather than a number
+  // borrowed from whichever vendor the model id happens to resemble.
+  compatible: undefined,
 };
 
 /**
@@ -197,8 +247,10 @@ function envModel(): string {
   const explicit = process.env.EVESTACK_BUDGET_MODEL?.trim();
   if (explicit) return explicit;
 
-  const provider = process.env.EVESTACK_PROVIDER?.trim().toLowerCase() || "openai";
-  const model = process.env.EVESTACK_MODEL?.trim() || PROVIDER_DEFAULT_MODEL[provider];
+  const provider =
+    process.env.EVESTACK_PROVIDER?.trim().toLowerCase() || "openai";
+  const model =
+    process.env.EVESTACK_MODEL?.trim() || PROVIDER_DEFAULT_MODEL[provider];
   if (!model) {
     // A provider `agent.ts` does not know, which it treats as a hard error — so
     // the agent will not have started, and refusing here too would buy nothing
@@ -231,28 +283,50 @@ export function resolveConfig(options: BudgetOptions = {}): BudgetConfig {
   // that throw as "spend store unavailable". A spend cap that silently does not
   // run, with every other half of the app looking healthy, is the worst shape
   // this failure could have taken.
-  const databaseUrl = process.env.WORKFLOW_POSTGRES_URL ?? process.env.DATABASE_URL;
+  const databaseUrl =
+    process.env.WORKFLOW_POSTGRES_URL ?? process.env.DATABASE_URL;
 
   const resolved: BudgetConfig = {
+    dashboardControls: process.env.EVESTACK_BUDGET_DASHBOARD === "1",
     sessionUsd: disabled
       ? false
-      : envNumberOrFalse(process.env.EVESTACK_BUDGET_SESSION_USD, DEFAULT_SESSION_USD),
+      : envNumberOrFalse(
+          process.env.EVESTACK_BUDGET_SESSION_USD,
+          DEFAULT_SESSION_USD,
+        ),
     dailyUsd: disabled
       ? false
-      : envNumberOrFalse(process.env.EVESTACK_BUDGET_DAILY_USD, DEFAULT_DAILY_USD),
+      : envNumberOrFalse(
+          process.env.EVESTACK_BUDGET_DAILY_USD,
+          DEFAULT_DAILY_USD,
+        ),
     timeZone: validTimeZone(process.env.EVESTACK_BUDGET_TIMEZONE),
     mode: envMode(process.env.EVESTACK_BUDGET_MODE),
     model: envModel(),
-    unpricedModel: process.env.EVESTACK_BUDGET_UNPRICED === "stop" ? "stop" : "warn",
+    unpricedModel:
+      process.env.EVESTACK_BUDGET_UNPRICED === "stop" ? "stop" : "warn",
+    // Opt-OUT rather than opt-in, and spelled as the three words an operator
+    // actually types. Every other switch in this file is opt-in because its
+    // default is the cheap direction; this one defaults on because the thing it
+    // prevents is a billed model call per message for as long as the cap stays
+    // tripped, and an enforcement that has to be discovered before it enforces
+    // is the same as no enforcement. Anything else — including a typo — leaves
+    // it on, which is the safe direction here.
+    preflight: !["0", "false", "off"].includes(
+      process.env.EVESTACK_BUDGET_PREFLIGHT?.trim().toLowerCase() ?? "",
+    ),
     failClosed:
       process.env.EVESTACK_BUDGET_FAIL_CLOSED === "1" ||
       process.env.EVESTACK_BUDGET_FAIL_CLOSED === "true",
-    agentUrl: process.env.EVESTACK_BUDGET_AGENT_URL ?? `http://127.0.0.1:${port}`,
+    agentUrl:
+      process.env.EVESTACK_BUDGET_AGENT_URL ?? `http://127.0.0.1:${port}`,
     guardTools: (process.env.EVESTACK_BUDGET_GUARD_TOOLS ?? "")
       .split(",")
       .map((name) => name.trim())
       .filter((name) => name.length > 0),
-    ...(process.env.EVESTACK_AUTH_USER ? { authUser: process.env.EVESTACK_AUTH_USER } : {}),
+    ...(process.env.EVESTACK_AUTH_USER
+      ? { authUser: process.env.EVESTACK_AUTH_USER }
+      : {}),
     ...(process.env.EVESTACK_AUTH_PASSWORD
       ? { authPassword: process.env.EVESTACK_AUTH_PASSWORD }
       : {}),
@@ -267,7 +341,11 @@ export function resolveConfig(options: BudgetOptions = {}): BudgetConfig {
   // must not get a different outcome; and because `BudgetOptions` is a
   // `Partial`, an explicit `timeZone: undefined` spreads over a good value as
   // `undefined`, which `Intl` rejects as well.
-  return { ...merged, timeZone: validTimeZone(merged.timeZone) };
+  return {
+    ...merged,
+    dashboardControls: !disabled && merged.dashboardControls,
+    timeZone: validTimeZone(merged.timeZone),
+  };
 }
 
 /** True when neither axis is capped, i.e. the hook has nothing to enforce. */

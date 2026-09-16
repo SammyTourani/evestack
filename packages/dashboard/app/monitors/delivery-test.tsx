@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { CONTROL } from "@/components/ui/style";
 
@@ -18,10 +18,15 @@ import { CONTROL } from "@/components/ui/style";
  * prove.
  */
 export function DeliveryTest({ sinks }: { sinks: readonly string[] }) {
-  const [state, setState] = useState<"idle" | "sending" | "ok" | "failed">("idle");
+  const [state, setState] = useState<"idle" | "sending" | "ok" | "failed">(
+    "idle",
+  );
   const [message, setMessage] = useState<string | null>(null);
+  const lock = useRef(false);
 
   async function send(): Promise<void> {
+    if (lock.current) return;
+    lock.current = true;
     setState("sending");
     setMessage(null);
     try {
@@ -44,24 +49,41 @@ export function DeliveryTest({ sinks }: { sinks: readonly string[] }) {
       }
       if (body.failures !== undefined && body.failures.length > 0) {
         setState("failed");
-        setMessage(body.failures.map((f) => `${f.sink}: ${f.error}`).join("; "));
+        setMessage(
+          body.failures.map((f) => `${f.sink}: ${f.error}`).join("; "),
+        );
+        return;
+      }
+      if (body.skipped || typeof body.sent !== "number" || body.sent < 1) {
+        setState("failed");
+        setMessage(
+          body.skipped ??
+            "No destination accepted the test. Check notification setup.",
+        );
         return;
       }
       setState("ok");
       setMessage(
-        `Delivered to ${body.sent} of ${sinks.length} ${sinks.length === 1 ? "sink" : "sinks"}. Check the channel.`,
+        `${body.sent} ${body.sent === 1 ? "destination accepted" : "destinations accepted"} the test. Check the channel to confirm receipt.`,
       );
     } catch (error) {
       // A network error here means the dashboard itself is unreachable from the
       // browser, which is worth saying rather than rendering as a failed webhook.
       setState("failed");
       setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      lock.current = false;
     }
   }
 
   return (
     <span className="inline-flex flex-wrap items-center gap-2">
-      <button type="button" className={CONTROL} onClick={() => void send()} disabled={state === "sending"}>
+      <button
+        type="button"
+        className={CONTROL}
+        onClick={() => void send()}
+        disabled={state === "sending" || sinks.length === 0}
+      >
         {state === "sending" ? "Sending…" : "Send a test"}
       </button>
       {message === null ? null : (

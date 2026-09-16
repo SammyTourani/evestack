@@ -22,12 +22,20 @@
  */
 import { readFileSync } from "node:fs";
 
-const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+const manifest = JSON.parse(
+  readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+);
 
 const offenders = [];
-for (const field of ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]) {
+for (const field of [
+  "dependencies",
+  "devDependencies",
+  "peerDependencies",
+  "optionalDependencies",
+]) {
   for (const [name, range] of Object.entries(manifest[field] ?? {})) {
-    if (typeof range === "string" && range.startsWith("workspace:")) offenders.push(`${name}@${range}`);
+    if (typeof range === "string" && range.startsWith("workspace:"))
+      offenders.push(`${name}@${range}`);
   }
 }
 
@@ -51,3 +59,5 @@ process.stdout.write(
     ? `✓ ${offenders.length} workspace range(s) will be resolved by pnpm at pack time\n`
     : "✓ no workspace ranges to resolve\n",
 );
+
+await import("./sync-skill-pack.mjs");

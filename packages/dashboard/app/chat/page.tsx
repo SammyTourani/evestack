@@ -1,4 +1,5 @@
 import { ChatClient } from "./chat-client";
+import { repositoryBrief } from "@/lib/task-examples";
 
 export const dynamic = "force-dynamic";
 
@@ -11,8 +12,19 @@ export const dynamic = "force-dynamic";
 export default async function ChatPage({
   searchParams,
 }: {
-  searchParams: Promise<{ session?: string }>;
+  searchParams: Promise<{ session?: string; example?: string; draft?: string }>;
 }) {
-  const { session } = await searchParams;
-  return <ChatClient initialSessionId={session} />;
+  const { session, example, draft } = await searchParams;
+  return (
+    <ChatClient
+      initialSessionId={session}
+      draftFromConnection={!session && draft === "connection"}
+      draftFromMemory={!session && draft === "memory"}
+      initialDraft={
+        example === "repository-brief"
+          ? repositoryBrief()
+          : undefined
+      }
+    />
+  );
 }

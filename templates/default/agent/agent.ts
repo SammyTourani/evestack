@@ -1,8 +1,19 @@
 import { anthropic } from "@ai-sdk/anthropic";
 import { openai } from "@ai-sdk/openai";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { defineAgent } from "eve";
+/**
+ * eve's own ChatGPT-subscription model, re-exported from a public entry point
+ * (`eve/models/openai`). It returns an ordinary AI SDK `LanguageModel` that
+ * routes through the Codex backend and authenticates from the ChatGPT session
+ * in your OS secret store — so there is no key in this file and none in
+ * .env.local. Sign in with `/model` inside `npm run dev`, or let the scaffolder
+ * do it for you.
+ */
+import { chatgpt } from "eve/models/openai";
 import { createOllama } from "ai-sdk-ollama";
-import { wrapLanguageModel, type LanguageModelMiddleware } from "ai";
+import { wrapLanguageModel, type LanguageModel, type LanguageModelMiddleware } from "ai";
 
 /**
  * Durable session storage.
@@ -35,7 +46,7 @@ const workflow = process.env.WORKFLOW_POSTGRES_URL
  * A missing key should be a clear error, never an implicit decision to consume
  * every spare gigabyte on the host.
  */
-const PROVIDERS = ["openai", "anthropic", "ollama"] as const;
+const PROVIDERS = ["openai", "anthropic", "openrouter", "ollama", "compatible", "chatgpt"] as const;
 type Provider = (typeof PROVIDERS)[number];
 
 const provider = readProvider();
@@ -70,7 +81,15 @@ function readProvider(): Provider {
 const DEFAULT_MODEL: Record<Provider, string> = {
   openai: "gpt-5-mini",
   anthropic: "claude-sonnet-5",
-  ollama: "qwen3",
+  openrouter: "qwen/qwen3.8-27b",
+  ollama: "qwen3:0.6b",
+  // No default worth guessing: a custom endpoint's model id is that server's
+  // own name for it, and "" is refused below with a message naming the variable.
+  compatible: "",
+  // eve's own default for this route, kept identical deliberately: the Codex
+  // backend decides per account which model slugs it will serve, so a different
+  // guess here is a guess about someone else's allow-list.
+  chatgpt: "gpt-5.6-sol",
 };
 
 /**
@@ -152,16 +171,88 @@ const modelId = process.env.EVESTACK_MODEL?.trim() || DEFAULT_MODEL[provider];
  * environment (OPENAI_API_KEY, ANTHROPIC_API_KEY), so a missing key surfaces as
  * that provider's own authentication error rather than as an evestack one.
  */
+/**
+ * Where a custom endpoint lives. Shared by the `compatible` provider and, as a
+ * fallback, by Ollama — OLLAMA_BASE_URL stays the name Ollama users expect.
+ */
+const baseUrl = process.env.EVESTACK_BASE_URL?.trim();
+
 const baseModel =
-  provider === "ollama"
-    ? createOllama({
-        // Host only — no /api suffix. ai-sdk-ollama appends the path itself, so
-        // including it yields "OllamaError: 404 page not found".
-        baseURL: process.env.OLLAMA_BASE_URL?.trim() || "http://127.0.0.1:11434",
-      })(modelId)
-    : provider === "anthropic"
-      ? anthropic(modelId)
-      : openai(modelId);
+  provider === "chatgpt"
+    ? /**
+       * Billed to a ChatGPT plan instead of an API key.
+       *
+       * Nothing is read from the environment here either — the session lives in
+       * the OS secret store, put there by a browser sign-in. That is also the
+       * limit of this provider: a container or a remote host has no keychain and
+       * no browser, so a deployment needs one of the key-based providers above.
+       * `npm run verify` says so rather than leaving it to a 401 at runtime.
+       */
+      modelObject(chatgpt(modelId))
+    : provider === "ollama"
+      ? createOllama({
+          // Host only — no /api suffix. ai-sdk-ollama appends the path itself, so
+          // including it yields "OllamaError: 404 page not found".
+          baseURL: process.env.OLLAMA_BASE_URL?.trim() || baseUrl || "http://127.0.0.1:11434",
+        })(modelId)
+      : provider === "anthropic"
+        ? anthropic(modelId)
+        : provider === "openrouter"
+          ? /**
+             * One key, the whole catalogue. The model id carries its own vendor
+             * prefix (`qwen/qwen3.8-27b`), which is why nothing here rewrites it.
+             *
+             * No baseURL: the provider package ships OpenRouter's own, and an
+             * override here is how someone ends up pointing an OpenRouter key at
+             * api.openai.com.
+             */
+            createOpenRouter({})(modelId)
+          : provider === "compatible"
+            ? /**
+               * LM Studio, llama.cpp, vLLM, Groq, Together, an internal gateway —
+               * anything speaking the OpenAI wire format.
+               *
+               * The URL is REQUIRED and not defaulted. Falling back to OpenAI's
+               * would take a request meant for a machine on this desk and send it,
+               * with whatever key was lying around, to a third party.
+               */
+              createOpenAICompatible({
+                name: "compatible",
+                baseURL: requireBaseUrl(),
+                apiKey: process.env.EVESTACK_COMPATIBLE_API_KEY?.trim() || "not-needed",
+              })(modelId)
+            : openai(modelId);
+
+/**
+ * Narrow eve's `LanguageModel` to the object `wrapLanguageModel` accepts.
+ *
+ * `LanguageModel` in AI SDK v7 is `string | LanguageModelV2 | V3 | V4`: the
+ * string arm exists so an agent can be authored as `model: "openai/gpt-5"` and
+ * resolved by the runtime later. `chatgpt()` never returns it — it builds a
+ * Codex-backed model object — but the declared type keeps the arm, and the
+ * middleware below cannot wrap a string.
+ *
+ * Checked at runtime rather than cast away. A cast would compile today and, the
+ * day eve changed what it hands back, fail inside the middleware with a message
+ * about a property of undefined; this fails here, naming what arrived.
+ */
+function modelObject(model: LanguageModel) {
+  if (typeof model === "string") {
+    throw new Error(
+      `Expected eve's chatgpt() to build a model, but it returned the id "${model}". ` +
+        "Set EVESTACK_PROVIDER=openai (with OPENAI_API_KEY) until this is sorted out.",
+    );
+  }
+  return model;
+}
+
+function requireBaseUrl(): string {
+  if (baseUrl) return baseUrl;
+  throw new Error(
+    'EVESTACK_PROVIDER="compatible" needs EVESTACK_BASE_URL to say where that server is ' +
+      "(for example http://127.0.0.1:1234/v1 for LM Studio). Set it in .env.local.",
+  );
+}
 
 const model = wrapLanguageModel({ model: baseModel, middleware: surviveDeniedToolResults });
 
@@ -179,8 +270,10 @@ const model = wrapLanguageModel({ model: baseModel, middleware: surviveDeniedToo
  * value verbatim and skips the lookup. Without it the entire local-model path
  * is dead on arrival, which is why this is set rather than left to the reader.
  *
- * 32768 matches Qwen3's native window. Override for a model with a different
- * one; too high and compaction triggers too late to save the turn.
+ * 32768 matches Qwen3's native window and is a safe floor for the small local
+ * models the wizard offers. Override for a model with a different one — most
+ * gateway models are far larger — since too high and compaction triggers too
+ * late to save the turn, while too low just compacts more often than it need.
  */
 const localContextWindow = readContextWindow();
 
@@ -199,15 +292,39 @@ function readContextWindow(): number {
   if (!Number.isInteger(value) || value < 1024) {
     throw new Error(
       `EVESTACK_CONTEXT_WINDOW="${raw}" is not a context window. It must be a whole number of ` +
-        "tokens, at least 1024, and it must match what the local model actually accepts — " +
-        "32768 for qwen3. Leave it unset to use that default.",
+        "tokens, at least 1024, and it must match what the model actually accepts — 32768 for " +
+        "qwen3 and most small local models, far more for a gateway model. Leave it unset for 32768.",
     );
   }
   return value;
 }
 
+/**
+ * Which providers eve cannot look up, and therefore must be told about.
+ *
+ * eve sizes compaction from the model's context window, which it reads out of
+ * the AI Gateway catalog. Three of these six are not in that catalog and cannot
+ * be: a local Ollama tag, an OpenRouter id carrying its own vendor prefix, and
+ * a model id that only some server on your own network has a name for. Without
+ * an explicit window the agent does not degrade, it refuses to compile at all.
+ *
+ * This was `provider === "ollama"` and had to widen the moment the wizard could
+ * offer a gateway. Getting it wrong is not a subtle bug — it is the same
+ * `does not have known AI Gateway context window metadata` error that made the
+ * local path dead on arrival before `modelContextWindowTokens` was set for it.
+ *
+ * `chatgpt` is deliberately ABSENT, and that is the one entry here worth
+ * checking before you add to the list. It looks like it belongs — the Codex
+ * model ids are not gateway ids either — but eve special-cases ChatGPT routing
+ * ahead of the catalog lookup and returns 200,000 tokens itself. Adding it
+ * would not rescue anything; it would overwrite a right number with a wrong
+ * one, and the symptom would be compaction firing six times too early with no
+ * error anywhere.
+ */
+const UNCATALOGUED: readonly Provider[] = ["ollama", "openrouter", "compatible"];
+
 export default defineAgent({
   model,
-  ...(provider === "ollama" ? { modelContextWindowTokens: localContextWindow } : {}),
+  ...(UNCATALOGUED.includes(provider) ? { modelContextWindowTokens: localContextWindow } : {}),
   ...(workflow ? { experimental: { workflow } } : {}),
 });

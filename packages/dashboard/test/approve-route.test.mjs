@@ -85,7 +85,7 @@ const TOOL_APPROVAL = {
 };
 
 /** A session parked on one gated tool call — what an operator actually sees. */
-function parked(id, requests = [TOOL_APPROVAL], token = "ct_live") {
+function parked(id, requests = [TOOL_APPROVAL], token = undefined) {
   streams.set(id, [
     { type: "turn.started", data: { turnId: "trn_1" } },
     { type: "input.requested", data: { requests } },
@@ -107,7 +107,13 @@ before(async () => {
         body += chunk;
       });
       req.on("end", () => {
-        resumed.push({ id, body: JSON.parse(body || "{}") });
+        const parsed = JSON.parse(body || "{}");
+        if ("continuationToken" in parsed || ("message" in parsed && "inputResponses" in parsed)) {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "Invalid session-ID command fields" }));
+          return;
+        }
+        resumed.push({ id, body: parsed });
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify({ sessionId: id }));
       });
@@ -297,14 +303,12 @@ test("two outstanding requests and one bare decision is ambiguous, not a blanket
   assert.deepEqual(pool.matching(APPROVALS_INSERT), []);
 });
 
-test("a turn with no continuation token yet is busy, not approvable", async () => {
-  // The token rotates every turn and is published on `session.waiting`. Without
-  // one there is no boundary to resume from, so there is nothing to say yes to.
+test("a running turn without a pending request cannot be approved", async () => {
   streams.set("wrun_busy", [{ type: "turn.started", data: { turnId: "trn_1" } }]);
   stubApprovalsDb();
   const { status, body } = await post("wrun_busy", { decision: "approve" });
   assert.equal(status, 409);
-  assert.equal(body.code, "session_busy");
+  assert.equal(body.code, "no_pending_input");
   assert.deepEqual(resumed, []);
 });
 
@@ -378,11 +382,12 @@ test("an approval resumes the turn with eve's own follow-up shape", async () => 
   assert.equal(resumed[0].id, "wrun_ok");
   assert.equal(
     resumed[0].body.continuationToken,
-    "ct_live",
-    "the token was read off session.waiting rather than demanded from the browser",
+    undefined,
+    "Eve's session-ID endpoint rejects continuationToken",
   );
   assert.deepEqual(resumed[0].body.inputResponses, [{ requestId: "req_1", optionId: "approve" }]);
-  assert.equal(body.resolvedContinuationToken, true);
+  assert.equal(body.resolvedContinuationToken, false);
+  assert.equal(body.addressedBy, "sessionId");
 });
 
 test("a denial is the same path with the other option, not a different one", async () => {

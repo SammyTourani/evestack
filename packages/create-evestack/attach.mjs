@@ -22,7 +22,7 @@ import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { projectNameFor } from "./create.mjs";
+import { projectNameFor, showSecrets } from "./create.mjs";
 import {
   C, DASHBOARD_IMAGE, detectPm, dim, freePort, makePrompter, ok, packageVersion,
   REPO, say, shellQuote, step, templateDir, warn, writeSecretFile,
@@ -86,25 +86,60 @@ const OTEL_RANGE = "^2.1.3";
  * so `latest` has never been an option and this constant used to read `"beta"`
  * to say so. That was the bug. `beta` is a dist-tag: it names whatever upstream
  * published most recently, and upstream ships World **spec** changes inside the
- * `5.0.0-beta.*` line with no semver signal at all. Measured against eve 0.30.8:
+ * `5.0.0-beta.*` line with no semver signal at all. The tag itself moved from
+ * .34 to .35 inside a single working session during the investigation that
+ * replaced it with a literal — the shape of the hazard a range can never close,
+ * since `^5.0.0-beta.32` and `~5.0.0-beta.32` both still admit .34 and .35:
+ * prerelease identifiers compare by their own ordering, and `~` only fixes the
+ * patch. Every floating form reintroduces this verbatim, which is why the pin
+ * has to be an exact literal, and contract/contracts/23-workflow-pin.contract.mjs
+ * holds that property for this file and templates/default/package.json together.
  *
- *   world-postgres 5.0.0-beta.32 → @workflow/world 5.0.0-beta.25 → spec 5 → boots
- *   world-postgres 5.0.0-beta.34 → @workflow/world 5.0.0-beta.27 → spec 6 → dies
+ * THIS EXACT CONSTANT THEN DRIFTED ANYWAY, one level up from a dist-tag: this
+ * repo moved from eve 0.30.8 to 0.54.3, and templates/default/package.json was
+ * bumped from world-postgres 5.0.0-beta.32 to 5.0.0-beta.42 to go with it — but
+ * this string was not, because they are two hand-typed copies of one decision
+ * and only one of them got edited. `deps/workflow-packages-are-exact-versions`
+ * exists to catch exactly that and failed on it (1 of 7 assertions: "attach
+ * writes 5.0.0-beta.32, templates/default declares 5.0.0-beta.42") until this
+ * line was moved to match.
  *
- *     [env-runner] worker init failed: This Workflow runtime requires a World
- *     with matching spec version 5, but the configured World declares spec
- *     version 6.
+ * .42 is not carried over from the .32-vs-.34 measurement below by analogy —
+ * eve's own compatibility check changed SHAPE between those two eve releases,
+ * which matters because a pin chosen by "the same reasoning as last time"
+ * would have been chosen for a runtime that no longer exists. Verified by
+ * reading the compiled runtime directly (templates/default/node_modules/eve/
+ * dist), not by trusting an old comment's numbers or one error message:
  *
- * The `beta` tag moved from .34 to .35 inside a single working session. So the
- * pin has to be exact: `^5.0.0-beta.32` and `~5.0.0-beta.32` both still admit
- * .34 and .35 — prerelease ranges compare by identifier, and `~` only fixes the
- * patch — which means every floating form reintroduces this verbatim.
- * contract/contracts/23-workflow-pin.contract.mjs holds the property.
+ *   eve 0.30.8's compiled Workflow runtime used an EQUALITY check —
+ *     if (world.specVersion !== 5) throw Error(
+ *       `This Workflow runtime requires a World with matching spec version 5,
+ *        but the configured World declares spec version ${world.specVersion}.`)
  *
- * Moving it is a deliberate act: install the candidate, boot it, and only then
- * change this string and templates/default/package.json together.
+ *   eve 0.54.3's compiled runtime instead accepts a RANGE —
+ *     if (!(v >= 6 && v <= 7)) throw Error(
+ *       `This Workflow runtime supports Worlds with spec version 6 through 7,
+ *        but the configured World declares spec version ${v}.`)
+ *
+ * and by reading which spec version each world-postgres release actually
+ * stamps, through the @workflow/world version IT depends on (also read out of
+ * node_modules, not assumed):
+ *
+ *   world-postgres 5.0.0-beta.32 → @workflow/world 5.0.0-beta.25
+ *     stamps SPEC_VERSION_CURRENT = 5 (SUPPORTS_COMPRESSION)         → eve 0.54.3 needs 6-7: REJECTED
+ *   world-postgres 5.0.0-beta.42 → @workflow/world 5.0.0-beta.35
+ *     stamps mintedSpecVersion()  = 7 (SUPPORTS_SEALED_LOG) by
+ *       default, or 6 with WORKFLOW_SEALED_LOG=false                 → accepted either way
+ *
+ * So .32 is not merely "the version this file used to say" against the CURRENT
+ * pin — it is a World that eve 0.54.3 throws on at the first run, the identical
+ * class of failure this repo's own README already documents as a past
+ * incident. Moving this pin again is the deliberate act that was skipped this
+ * time: install the candidate, boot it against the eve version
+ * templates/default currently pins, and only then change this string and
+ * templates/default/package.json together.
  */
-const WORLD_PIN = "5.0.0-beta.32";
+const WORLD_PIN = "5.0.0-beta.42";
 /**
  * The dashboard's ingest URL, on the port this attach actually picked.
  *
@@ -527,15 +562,31 @@ function buildPlan({
           `nothing in that directory's metadata carries a literal credential.`,
       );
     } else {
+      // WORDED AGAINST WHAT EVE ACTUALLY DOES, WHICH CHANGED.
+      //
+      // This used to say `eve dev` "copies that file into
+      // .eve/dev-runtime/snapshots/ on every boot". That was measured and true
+      // of eve 0.30. It is NOT true of eve 0.54: the same fixture now plans
+      // exactly one copied file — the project's own package.json — and nothing
+      // outside the project at all. The credential is still *watched*
+      // (`watchPaths` includes it, which is why an unrelated edit up there
+      // rebuilds), and the snapshot source root is still that workspace root,
+      // but it is not carried into the snapshot any more.
+      //
+      // Keeping the old sentence would have been worse than saying nothing. A
+      // security alert that names a file and then describes a copy the reader
+      // can go and fail to find is how the next real alert gets ignored.
       plan.alerts.push(
-        `${join(markerRoot, exposed)} carries a literal credential, and \`eve dev\` copies that ` +
-          `file into .eve/dev-runtime/snapshots/ on every boot — ${markerRoot} is the nearest ` +
-          `workspace root above this project, so it is where eve snapshots the source from. ` +
-          `attach does not fence a project off from a workspace it belongs to: eve reaches the ` +
-          `sibling packages through that root. Move the secret into your own ~/.npmrc, or ` +
-          `replace it with an environment reference like \`_authToken=\${NPM_TOKEN}\`, and the ` +
-          `copies stop carrying it. If this project does not belong to that workspace, ` +
-          `\`git init\` here and eve will stop at the project instead.`,
+        `${join(markerRoot, exposed)} carries a literal credential, and ${markerRoot} is the ` +
+          `nearest workspace root above this project — which is where \`eve dev\` resolves its ` +
+          `snapshot source from, and which files it watches. eve 0.54 keeps the copy itself ` +
+          `inside the project, so the credential is no longer written into ` +
+          `.eve/dev-runtime/snapshots/; an older eve did copy it. attach does not fence a ` +
+          `project off from a workspace it belongs to: eve reaches the sibling packages ` +
+          `through that root. Move the secret into your own ~/.npmrc, or replace it with an ` +
+          `environment reference like \`_authToken=\${NPM_TOKEN}\`, and nothing up there is a ` +
+          `secret any more. If this project does not belong to that workspace, \`git init\` ` +
+          `here and eve will stop at the project instead.`,
       );
     }
   } else {
@@ -1051,7 +1102,7 @@ function printSummary(plan) {
   say(`  ${C.bold}Then the dashboard${C.reset} ${C.dim}— sessions, cost, approvals, chat:${C.reset}`);
   for (const line of dashboardRunCommand(plan)) say(`    ${line}`);
   say();
-  dim(`  Sign in at http://localhost:${plan.dashboardPort} with ${plan.dashboardUser} / ${plan.dashboardPassword}`);
+  dim(signInSummary(plan));
   if (plan.ingestToken) {
     say();
     // The one value that MUST travel by hand. A `create-evestack` scaffold has
@@ -1329,6 +1380,72 @@ ${composeService({ envFileName, port })}
 `;
 }
 
+/* -------------------------------------------------------------------------- */
+/* the generated password, and who is allowed to see it                        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * `attach`'s password is not `create`'s password, and the difference decides
+ * what these two helpers can say.
+ *
+ * `create` writes EVESTACK_AUTH_PASSWORD into the project's .env.local, so
+ * withholding it from a pipe costs the reader nothing — there is a file to name.
+ * `attach` does not, on purpose: see the comment beside `plan.dashboardPassword`
+ * above, which explains that these are the DASHBOARD's credentials alone and
+ * that writing them next to an existing project's agent config would imply a
+ * coupling attach does not create. So `randomBytes(18)` is minted per run and
+ * the finish screen is the only copy that will ever exist.
+ *
+ * That makes the piped case worse here rather than better, which is the whole
+ * argument for gating it. A `npx create-evestack attach | tee attach.log` run
+ * does not merely COPY a credential into a log — the log becomes the sole
+ * custodian of a password that signs in to a control plane which starts agent
+ * runs and approves gated shell commands. Nothing rotates it because nothing
+ * else knows it exists.
+ *
+ * So off a terminal the value is withheld and the reader is given the two
+ * recoveries that actually work, rather than pointed at a file that does not
+ * hold it: re-run attach in a terminal (it is idempotent, and a fresh password
+ * is fine until a dashboard container has been created with one), or choose a
+ * password and put it in the command.
+ *
+ * `show` comes from `showSecrets()` in create.mjs — one answer for the package,
+ * and EVESTACK_PRINT_SECRETS=1 restores the old behaviour for an automated
+ * setup that wants the value out of stdout deliberately. It is a parameter so
+ * both branches are testable without a pty, and so attach's own tests, which
+ * run the real bin through a pipe, exercise the withholding branch by
+ * construction.
+ *
+ * WHAT THIS DELIBERATELY DOES NOT COVER: the `-e WORKFLOW_POSTGRES_URL=...`
+ * line below still carries the database password inline. That one IS in a file
+ * — the project's env file, which attach makes sure git ignores — but a
+ * Postgres URL with its password removed is not a Postgres URL, and the command
+ * has to stay pasteable. A separate decision from this one, left where it was.
+ */
+export function signInSummary(plan, { show = showSecrets() } = {}) {
+  const where = `http://localhost:${plan.dashboardPort}`;
+  if (show) return `  Sign in at ${where} with ${plan.dashboardUser} / ${plan.dashboardPassword}`;
+  // One line, however long. A newline inside a `dim()` argument prints its
+  // second half at the wrong indent, and this branch only ever lands in a log
+  // file, where wrapping costs nothing.
+  return (
+    `  Sign in at ${where} as ${plan.dashboardUser}. The password is generated per run and is not ` +
+    `printed to a pipe: re-run attach in a terminal, or pick your own in the command above.`
+  );
+}
+
+/**
+ * The `-e EVESTACK_AUTH_PASSWORD=...` flag in the printed `docker run`.
+ *
+ * When output is captured, require a nonempty environment value at shell
+ * expansion time. A literal placeholder is a valid, publicly known password:
+ * copying it unchanged must fail before Docker starts, rather than install it.
+ */
+export function authPasswordFlag(plan, { show = showSecrets() } = {}) {
+  if (show) return `-e EVESTACK_AUTH_PASSWORD='${plan.dashboardPassword}'`;
+  return '-e EVESTACK_AUTH_PASSWORD="${EVESTACK_AUTH_PASSWORD:?Set EVESTACK_AUTH_PASSWORD to a fresh random password first}"';
+}
+
 /**
  * The one command that brings the dashboard up against this project.
  *
@@ -1347,7 +1464,7 @@ ${composeService({ envFileName, port })}
  * one route the gate deliberately lets through; see the note beside
  * plan.dashboardUser above for the measurement.)
  */
-function dashboardRunCommand(plan) {
+export function dashboardRunCommand(plan, { show = showSecrets() } = {}) {
   const lines = [
     // The container name is per project, for the same reason the Compose project
     // name is: a second attached project on one machine got `docker run --name
@@ -1386,7 +1503,9 @@ function dashboardRunCommand(plan) {
     // change this if it landed somewhere else.
     `  -e EVESTACK_AGENT_URL=http://host.docker.internal:${plan.agentPort} \\`,
     `  -e EVESTACK_AUTH_USER=${plan.dashboardUser} \\`,
-    `  -e EVESTACK_AUTH_PASSWORD='${plan.dashboardPassword}' \\`,
+    // The one line in this block that carries a secret, and the only one whose
+    // content depends on who is reading. See `authPasswordFlag`.
+    `  ${authPasswordFlag(plan, { show })} \\`,
   ];
   // The third path 30b4de4 missed.
   //

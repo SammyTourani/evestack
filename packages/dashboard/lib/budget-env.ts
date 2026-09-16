@@ -82,7 +82,10 @@ export function readBudgetCaps(env: Record<string, string | undefined>): BudgetC
  */
 export type CapScope = "install" | "per-principal";
 
-export function dailySpendCap(env: Record<string, string | undefined>): {
+export function dailySpendCap(
+  env: Record<string, string | undefined>,
+  fallback: Pick<BudgetCaps, "dailyUsd"> & { disabled?: boolean } = readBudgetCaps(env),
+): {
   usd: number | null;
   scope: CapScope;
 } {
@@ -103,6 +106,6 @@ export function dailySpendCap(env: Record<string, string | undefined>): {
     // so a reader sees which number it landed on.
   }
 
-  const { dailyUsd } = readBudgetCaps(env);
+  const dailyUsd = fallback.disabled ? false : fallback.dailyUsd;
   return { usd: dailyUsd === false ? null : dailyUsd, scope: "per-principal" };
 }

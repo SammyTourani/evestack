@@ -1,6 +1,12 @@
 import { defineDynamic, defineTool } from "eve/tools";
-import { dayKey, resolveConfig, type BudgetOptions } from "./config.js";
+import {
+  dayKey,
+  isUncapped,
+  resolveConfig,
+  type BudgetOptions,
+} from "./config.js";
 import { readStop } from "./store.js";
+import { runtimeBudgetConfig } from "./runtime-settings.js";
 
 /**
  * The half of enforcement that closes the race.
@@ -39,8 +45,50 @@ const REFUSAL_INPUT_SCHEMA = {
   additionalProperties: true,
 } as const;
 
+/**
+ * True once the "this guard guards nothing" line has been printed.
+ *
+ * At construction rather than per step, and once per process rather than once
+ * per call, for the same reason the warned-set above `dayKey` exists: a line
+ * repeated on every model call is a line nobody reads.
+ */
+let warnedEmptyGuardTools = false;
+
 export function budgetGuard(options: BudgetOptions = {}) {
   const config = resolveConfig(options);
+
+  /**
+   * The configuration in which this file is an elaborate no-op, said out loud.
+   *
+   * `guardTools` defaults to an EMPTY list — `EVESTACK_BUDGET_GUARD_TOOLS` is
+   * unset in every `.env.example` this repo ships — and the resolver's first
+   * line returns null when the list is empty. So `budgetGuard()` written with no
+   * arguments installs a `step.started` resolver that has never shadowed a tool
+   * and never will, while reading in the agent's source exactly like protection.
+   * Nothing said so: there was no error, no log line, and the dashboard shows the
+   * hook's stop rows whether or not anything honours them. The scaffolded
+   * `agent/tools/budget.ts` passes a real list, so this is specifically the
+   * hand-written call that is being caught.
+   *
+   * Only when a cap is actually being enforced. Someone who has set
+   * `EVESTACK_BUDGET_DISABLED=1`, turned both axes off, or chosen `observe` to
+   * measure before enforcing has no stop for a guard to honour, and telling them
+   * their guard guards nothing is noise about a decision they already made.
+   */
+  const guardsNothing =
+    config.guardTools.length === 0 &&
+    !isUncapped(config) &&
+    config.mode !== "observe";
+  if (guardsNothing && !warnedEmptyGuardTools) {
+    warnedEmptyGuardTools = true;
+    console.warn(
+      "[evestack:budget] budgetGuard() has no tools to shadow, so it will do nothing when the " +
+        'budget runs out. It shadows tools BY NAME: pass guardTools: ["remember", "bash", ...] ' +
+        "or set EVESTACK_BUDGET_GUARD_TOOLS to a comma-separated list of the authored tools in " +
+        "agent/tools/. If you do not want a guard, delete the file that calls budgetGuard() — the " +
+        "hook still enforces the cap without it.",
+    );
+  }
 
   return defineDynamic({
     events: {
@@ -54,26 +102,31 @@ export function budgetGuard(options: BudgetOptions = {}) {
 
         let stop;
         try {
-          stop = await readStop(config, {
+          const current = await runtimeBudgetConfig(config);
+          stop = await readStop(current, {
             sessionId: ctx.session.id,
             principalId,
-            day: dayKey(config),
+            day: dayKey(current),
           });
         } catch (error) {
           // eve catches and skips a resolver that throws, which would restore
           // every tool without saying so. Returning null does the same thing,
           // out loud.
           console.error(
-            `[evestack:budget] guard could not read stop state, tools left enabled: ${
+            `[evestack:budget] guard could not read stop state, tools ${config.dashboardControls ? "blocked" : "left enabled"}: ${
               error instanceof Error ? error.message : String(error)
             }`,
           );
-          return null;
+          if (!config.dashboardControls) return null;
+          stop = {
+            reason:
+              "Budget settings or stop state could not be read. These tools remain unavailable until the next successful check.",
+          };
         }
 
         if (!stop) return null;
 
-        const reason = `${stop.reason} Tools are disabled until the budget is raised or the window rolls over.`;
+        const reason = `${stop.reason} Review budget state before the next step.`;
 
         return Object.fromEntries(
           config.guardTools.map((name) => [

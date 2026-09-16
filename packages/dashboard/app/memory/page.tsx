@@ -1,11 +1,20 @@
 import { DatabaseError } from "@/app/db-error";
 import { describeDbError } from "@/lib/db";
 import { type ApproverIdentity } from "@/lib/approvals";
-import { listMemories, listMemoryDeletions, type MemoryDeletionRow } from "@/lib/memories";
+import {
+  listMemories,
+  listMemoryDeletions,
+  type MemoryDeletionRow,
+} from "@/lib/memories";
 import { stamp } from "@/lib/time";
 import { MemoryList } from "./memory-client";
-import { deletionsNote, MEMORY_DELETIONS_LIMIT, MEMORY_PAGE_LIMIT } from "./truncation";
+import {
+  deletionsNote,
+  MEMORY_DELETIONS_LIMIT,
+  MEMORY_PAGE_LIMIT,
+} from "./truncation";
 import styles from "./memory.module.css";
+import { latestMemoryReviews, type MemoryReview } from "@/lib/memory-reviews";
 
 export const dynamic = "force-dynamic";
 
@@ -81,7 +90,10 @@ export default async function MemoryPage(props: PageProps<"/memory">) {
     // The constant, not a literal: ./truncation.ts quotes this same number back
     // to the reader as "showing the most recent N", and the two drifting apart
     // would turn an honest footnote into a specific lie.
-    page = await listMemories({ ...(search ? { search } : {}), limit: MEMORY_PAGE_LIMIT });
+    page = await listMemories({
+      ...(search ? { search } : {}),
+      limit: MEMORY_PAGE_LIMIT,
+    });
   } catch (error) {
     return <DatabaseError error={error} />;
   }
@@ -116,21 +128,58 @@ export default async function MemoryPage(props: PageProps<"/memory">) {
     deletionsError = describeDbError(error);
   }
   const deletionsCap = deletionsNote(deletions.length, MEMORY_DELETIONS_LIMIT);
+  let reviews: MemoryReview[] = [];
+  let reviewsError: string | null = null;
+  try {
+    reviews = await latestMemoryReviews(page.rows.map((row) => row.id));
+  } catch (error) {
+    reviewsError = describeDbError(error);
+  }
 
   return (
     <>
       <h1>Memory</h1>
       <p className="page-sub">
-        Everything the agent has chosen to remember, in your Postgres. An agent with persistent
-        memory can be quietly wrong forever — this is where you find out, and fix it.
+        Everything the agent has chosen to remember, in your Postgres. An agent
+        with persistent memory can be quietly wrong forever — this is where you
+        find out, and fix it.
       </p>
+      <details className="workspace-section">
+        <summary>Ownership, recall and retention</summary>
+        <p>
+          This is the installation operator's view across all recorded owners.
+          Dashboard sign-in does not create separate user permissions.
+        </p>
+        <p>
+          In the template's default owner mode, a caller recalls its own
+          memories, shared-tagged memories and legacy records with no known
+          owner. Strict mode excludes those legacy records; shared mode allows
+          all records. The installation's configured environment says{" "}
+          <code>
+            {process.env.EVESTACK_MEMORY_SCOPE?.trim() || "owner (default)"}
+          </code>
+          ; custom agent code can differ.
+        </p>
+        <p>
+          The source link identifies the task that saved a record. Memories have
+          no automatic expiry in the template. Removing one stops its recall,
+          while deletion audits, review notes and proposal snapshots remain in
+          Postgres and backups until the operator removes them.
+        </p>
+      </details>
+      {reviewsError && (
+        <p role="status">
+          Memory review history is unavailable: {reviewsError}
+        </p>
+      )}
 
       {!page.tableExists ? (
         <div className="empty">
           <h2>No memory table yet</h2>
           <p>
-            The agent creates <code>evestack.memories</code> the first time it calls{" "}
-            <code>remember</code>. Ask it to remember something and this page fills in.
+            The agent creates <code>evestack.memories</code> the first time it
+            calls <code>remember</code>. Ask it to remember something and this
+            page fills in.
           </p>
         </div>
       ) : (
@@ -153,14 +202,17 @@ export default async function MemoryPage(props: PageProps<"/memory">) {
               </a>
             )}
             <span className={`faint ${styles.count}`}>
-              {page.total.toLocaleString("en-US")} {page.total === 1 ? "memory" : "memories"}
+              {page.total.toLocaleString("en-US")}{" "}
+              {page.total === 1 ? "memory" : "memories"}
               {search ? " matching" : ""}
             </span>
           </form>
 
           {page.rows.length === 0 ? (
             <div className="empty">
-              <h2>{search ? "Nothing matches that" : "Nothing remembered yet"}</h2>
+              <h2>
+                {search ? "Nothing matches that" : "Nothing remembered yet"}
+              </h2>
               <p>
                 {search
                   ? "Text search only — the agent's own recall is semantic and may still find it."
@@ -168,7 +220,12 @@ export default async function MemoryPage(props: PageProps<"/memory">) {
               </p>
             </div>
           ) : (
-            <MemoryList rows={page.rows} total={page.total} searching={Boolean(search)} />
+            <MemoryList
+              rows={page.rows}
+              total={page.total}
+              searching={Boolean(search)}
+              reviews={reviews}
+            />
           )}
         </>
       )}
@@ -178,9 +235,10 @@ export default async function MemoryPage(props: PageProps<"/memory">) {
           Recently deleted
         </h2>
         <p className={`faint ${styles.auditSub}`}>
-          Deleting a memory is irreversible, so every delete made from this page is recorded in{" "}
-          <code>evestack.memory_deletions</code> with the content it removed and who removed it.
-          The agent&apos;s own <code>forget</code> tool is a different path and lands in{" "}
+          Deleting a memory is irreversible, so every delete made from this page
+          is recorded in <code>evestack.memory_deletions</code> with the content
+          it removed and who removed it. The agent&apos;s own{" "}
+          <code>forget</code> tool is a different path and lands in{" "}
           <a href="/approvals">Approvals</a>.
         </p>
 
@@ -189,13 +247,13 @@ export default async function MemoryPage(props: PageProps<"/memory">) {
             "I could not look" — never rendered as an empty list. See the read above.
           */
           <p className={styles.auditError}>
-            The deletion trail could not be read, so this section is not evidence that nothing was
-            deleted. {deletionsError}
+            The deletion trail could not be read, so this section is not
+            evidence that nothing was deleted. {deletionsError}
           </p>
         ) : deletions.length === 0 ? (
           <p className="faint">
-            Nothing has been deleted from this page. The trail is kept from the first delete
-            onwards.
+            Nothing has been deleted from this page. The trail is kept from the
+            first delete onwards.
           </p>
         ) : (
           <>
@@ -206,10 +264,18 @@ export default async function MemoryPage(props: PageProps<"/memory">) {
                   <div className={styles.meta}>
                     <span className="mono">#{row.memoryId}</span>
                     <span className={styles.dot}>•</span>
-                    <span title={row.deletedAt}>deleted {stamp(row.deletedAt, "second", { year: true })}</span>
+                    <span>Original owner: {row.principalId ?? "unknown (legacy)"}</span>
+                    <span className={styles.dot}>•</span>
+                    <span title={row.deletedAt}>
+                      deleted {stamp(row.deletedAt, "second", { year: true })}
+                    </span>
                     <span className={styles.dot}>•</span>
                     <span
-                      className={row.actorVia === "unidentified" ? styles.unattributed : undefined}
+                      className={
+                        row.actorVia === "unidentified"
+                          ? styles.unattributed
+                          : undefined
+                      }
                       title={`actor_via = ${row.actorVia}`}
                     >
                       by {deleter(row)}
@@ -230,7 +296,8 @@ export default async function MemoryPage(props: PageProps<"/memory">) {
             {deletionsCap && (
               <p className={`faint ${styles.note}`}>
                 {deletionsCap} This list is capped, not the table:{" "}
-                <code>evestack.memory_deletions</code> holds every deletion ever made here.
+                <code>evestack.memory_deletions</code> holds every deletion ever
+                made here.
               </p>
             )}
           </>

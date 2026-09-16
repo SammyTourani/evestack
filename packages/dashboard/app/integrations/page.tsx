@@ -45,10 +45,10 @@ export default async function IntegrationsPage({
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
   const params = await searchParams;
-  const search = first(params.q).trim();
-  const category = first(params.category).trim();
-  const connected = first(params.connected).trim();
-  const failure = first(params.error).trim();
+  const search = first(params.q).trim().slice(0, 200);
+  const category = first(params.category).trim().slice(0, 100);
+  const connected = first(params.connected).trim().slice(0, 64);
+  const failure = first(params.error).trim().slice(0, 300);
 
   const apiKey = composioApiKey();
   if (!apiKey) return <NoKey />;
@@ -72,15 +72,16 @@ export default async function IntegrationsPage({
         <h2>Can&apos;t reach Composio</h2>
         <p className="dim">{error instanceof Error ? error.message : String(error)}</p>
         <p className="faint">
-          Your agent is unaffected — it drops Composio tools and keeps running when the API is
-          unreachable.
+          Tasks that require connected tools may be affected. Check the agent and
+          retry this page when Composio is reachable.
         </p>
+        <a href="/connections">Return to Connections</a>
       </div>
     );
   }
 
   const connectedSlugs = new Set(
-    accounts.filter((a) => a.status.toUpperCase() === "ACTIVE").map((a) => a.toolkitSlug),
+    accounts.filter((a) => a.status.toUpperCase() === "ACTIVE" && a.userId === composioUserId()).map((a) => a.toolkitSlug),
   );
   const filtered = Boolean(search || category);
 
@@ -88,9 +89,10 @@ export default async function IntegrationsPage({
     <>
       <h1>Integrations</h1>
       <p className="page-sub">
-        One browser flow signs your agent into any of these. Grants are stored against{" "}
+        Browse available tools and authorize supported accounts. Dashboard-created grants use{" "}
         <code className="mono">{composioUserId()}</code> and survive restarts.
       </p>
+      <p><a href="/connections">Set up and check a repository brief</a>. This catalog shows up to 100 account records in the Composio project. Connected-app indicators count active grants for this dashboard's configured identity only.</p>
 
       {connected && (
         <div className={styles.notice}>
@@ -110,7 +112,7 @@ export default async function IntegrationsPage({
 
       <div className="stat-row">
         <div className="stat">
-          <div className="stat-label">Connected accounts</div>
+          <div className="stat-label">Connected apps for this identity</div>
           <div className="stat-value">{fmt(connectedSlugs.size)}</div>
         </div>
         <div className="stat">
@@ -301,8 +303,8 @@ function NoKey() {
     <>
       <h1>Integrations</h1>
       <p className="page-sub">
-        One browser flow signs your agent into 1,000+ apps — Gmail, GitHub, Slack, Notion, Linear,
-        and the rest of the catalog.
+        Browse available integrations and connect supported accounts. Managed OAuth apps
+        offer a browser flow; other apps require your own credentials.
       </p>
       <div className="empty">
         <h2>No Composio API key yet</h2>

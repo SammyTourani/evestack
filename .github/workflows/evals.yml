@@ -36,7 +36,6 @@ on:
 
 permissions:
   contents: read
-  issues: write
 
 concurrency:
   group: evals
@@ -44,6 +43,8 @@ concurrency:
 
 jobs:
   evals:
+    outputs:
+      report: ${{ steps.prepare-report.outputs.ready }}
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -59,21 +60,39 @@ jobs:
           --health-interval 3s
           --health-timeout 3s
           --health-retries 20
+    # Only the live eval steps receive the provider key. Installation and the
+    # negative-control copy use the frozen workspace without provider secrets;
+    # publishing the report runs in a separate job with no project execution.
     env:
       WORKFLOW_POSTGRES_URL: postgres://evestack:evestack@localhost:5433/evestack
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       EVESTACK_MODEL: ${{ inputs.model }}
       TZ: America/New_York
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      # SHA-pinned and de-credentialed for the reasons ci.yml's first checkout
+      # spells out. The credential half matters here for the same reason the key
+      # scoping above does: this job installs and runs third-party code, so
+      # a token sitting in `.git/config` is a token every postinstall script in
+      # that tree can read.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
 
+      # This step exists only because the `secrets` context is NOT available in
+      # a step's `if:` — `if: secrets.OPENAI_API_KEY != ''` does not evaluate
+      # there, it is simply not one of the contexts that expression can see. So
+      # the presence test has to happen inside a `run:`, which means one step
+      # does get the secret in its environment purely to ask whether it is
+      # empty. That step runs `[ -n ... ]` and nothing else: no install, no
+      # third-party code, no network.
       - name: is a provider key configured?
         id: key
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           if [ -n "$OPENAI_API_KEY" ]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
@@ -101,17 +120,25 @@ jobs:
       # before; the contract suite is pointed at eve 0.29.5 for exactly this
       # reason.
       # ─────────────────────────────────────────────────────────────────────────
-      - name: the deny gate must fail against a build with the fix removed
+      - name: prepare negative control from the frozen install
         if: steps.key.outputs.enabled == 'true'
         run: |
-          BROKEN="$(node contract/runtime/negative-control.mjs /tmp/agent-without-the-fix)"
-          echo "built sabotaged agent at $BROKEN"
+          BROKEN="$(node contract/runtime/negative-control.mjs templates/negative-control)"
+          # The sibling has the same depth as templates/default, so copied
+          # relative workspace links still resolve to the frozen root install.
+          # No installer runs in this copy, before or after the model key exists.
+          cp -a templates/default/node_modules "$BROKEN/node_modules"
 
-          cd "$BROKEN"
-          pnpm install --no-frozen-lockfile > /tmp/nc-install.log 2>&1 || {
-            echo "::error::could not install the negative-control agent"; tail -40 /tmp/nc-install.log; exit 1;
-          }
-
+      - name: the deny gate must fail against a build with the fix removed
+        if: steps.key.outputs.enabled == 'true'
+        # The key is scoped to this step rather than to the job — see the note
+        # on the job's `env:` block. This step genuinely needs it: `eve eval`
+        # drives a real model, and a negative control that cannot reach the
+        # provider proves nothing.
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          cd templates/negative-control
           npx eve dev --port 2998 > /tmp/nc-agent.log 2>&1 &
           echo $! > /tmp/nc.pid
           for i in $(seq 1 90); do
@@ -119,27 +146,24 @@ jobs:
             sleep 1
           done
 
+          curl -sf -o /dev/null http://localhost:2998/ || { echo 'Negative-control server did not become ready'; exit 1; }
           set +e
-          npx eve eval deny-survives --url http://127.0.0.1:2998/ > /tmp/nc-eval.log 2>&1
+          npx --no-install eve eval deny-survives --json --url http://127.0.0.1:2998/ > /tmp/nc-eval.json 2> /tmp/nc-eval.log
           RESULT=$?
           set -e
           kill "$(cat /tmp/nc.pid)" 2>/dev/null || true
 
-          echo "── the sabotaged run ───────────────────────────────────────"
           cat /tmp/nc-eval.log
-
-          if [ $RESULT -eq 0 ]; then
-            echo "::error::THE DENY GATE PASSED AGAINST A BUILD WITH THE FIX REMOVED."
-            echo "The eval is not exercising the denial path. Everything it reports about the"
-            echo "real agent is decoration until this is fixed — see contract/runtime/negative-control.mjs."
-            exit 1
-          fi
-          echo "negative control held: the gate went red without the fix, so it can still detect the bug."
+          node ../../.github/scripts/check-negative-control.mjs /tmp/nc-eval.json "$RESULT"
 
       - name: the real suite
         if: steps.key.outputs.enabled == 'true'
         id: suite
         continue-on-error: true
+        # Same as the negative control above: scoped here because this is one of
+        # the two steps whose whole job is to talk to the provider.
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           cd templates/default
           npx eve dev --port 2997 > /tmp/agent.log 2>&1 &
@@ -155,10 +179,9 @@ jobs:
           set -e
           kill "$(cat /tmp/agent.pid)" 2>/dev/null || true
 
-      - name: report
+      - name: prepare report
+        id: prepare-report
         if: steps.key.outputs.enabled == 'true' && steps.suite.outputs.result != '0'
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           # An issue rather than a failed job, because a nondeterministic result
           # must not gate a merge. But WHICH KIND of failure it was is a
@@ -210,16 +233,14 @@ jobs:
             echo '```'
           } > /tmp/issue.md
 
-          TITLE="Nightly evals: ${KIND} failure ($(date -u +%Y-%m-%d))"
-          # One open issue at a time, updated rather than duplicated: a nightly
-          # that files a new issue every morning is a nightly people mute.
-          EXISTING="$(gh issue list --state open --label eval-run --json number --jq '.[0].number // empty')"
-          gh label create eval-run --color B60205 --description "Nightly eval run needs a look" 2>/dev/null || true
-          if [ -n "$EXISTING" ]; then
-            gh issue comment "$EXISTING" --body-file /tmp/issue.md
-          else
-            gh issue create --title "$TITLE" --body-file /tmp/issue.md --label eval-run
-          fi
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: steps.prepare-report.outputs.ready == 'true'
+        with:
+          name: eval-report
+          path: /tmp/issue.md
+          retention-days: 7
 
       - name: logs
         if: always() && steps.key.outputs.enabled == 'true'
@@ -228,3 +249,31 @@ jobs:
           tail -c 20000 /tmp/agent.log 2>/dev/null || echo "(none)"
           echo "── negative-control agent ──────────────────────────────────"
           tail -c 20000 /tmp/nc-agent.log 2>/dev/null || echo "(none)"
+
+  report:
+    needs: evals
+    if: always() && needs.evals.outputs.report == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      # No checkout or dependency execution in the job holding the write token.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: eval-report
+          path: report
+      - name: file the report as data
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          existing="$(gh issue list --state open --label eval-run --json number --jq '.[0].number // empty')"
+          gh label create eval-run --color B60205 --description "Nightly eval run needs a look" 2>/dev/null || true
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file report/issue.md
+          else
+            gh issue create --title "Nightly evals require investigation" --body-file report/issue.md --label eval-run
+          fi

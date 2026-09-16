@@ -1,8 +1,8 @@
 # create-evestack
 
-**One command to a self-hosted [eve](https://github.com/vercel/eve) agent: durable Postgres
-sessions, a Docker sandbox, long-term memory, and a dashboard you can actually drive.
-No Vercel account. $0 infrastructure.**
+Create an Eve Stack workspace with an [eve](https://github.com/vercel/eve) agent, Postgres
+history, a task dashboard and durable routines. Choose a model provider, verify setup and
+start with a repository maintenance brief. No Vercel account is required.
 
 ```bash
 npx create-evestack my-agent
@@ -32,18 +32,20 @@ npm run dev                                # the agent — holds this terminal
 The order matters: `npm run dev` is a foreground process that holds the terminal until you
 Ctrl-C it, so it goes last. The dashboard port is whichever one was free when you scaffolded,
 4000 unless something already had it; `.env.local` and `docker-compose.yml` carry the real
-number, and `npx evestack open` prints it.
+number, and `npx evestack dashboard` prints it and opens it.
 
 Either way you get a `.env.local` with a freshly generated auth password, and dependencies
 installed.
 
-The only thing that costs money is model tokens.
+Eve Stack has no software subscription fee. Hardware, hosting, electricity, model usage and
+connected services may cost money. Cloud providers receive prompts; optional Composio is hosted
+and holds account tokens. Review permissions and [run the first-task walkthrough](https://evestack.vercel.app/docs/first-task).
 
 ## Two names, one scaffolder
 
 `npx evestack create my-agent` runs this exact code. [`evestack`](https://www.npmjs.com/package/evestack)
-is the single command, and it answers to eight verbs — `create`, `status`, `tour`, `open`,
-`verify`, `skills`, `attach`, `doctor` — of which `create` and `attach` are routed straight into this
+provides setup, tasks, routines, readiness, configuration, upgrades and diagnostics. Its
+`create` and `attach` commands are routed straight into this
 package's own modules. `create-evestack` is the name npm's `create-*` convention leads people
 to, and it keeps working. Same prompts, same flags, one place a bug gets fixed.
 
@@ -66,8 +68,8 @@ A project containing:
 
 and, wired up for you:
 
-- **Durable sessions on your Postgres** via `@workflow/world-postgres` — restarting the process
-  loses nothing, because the state never lived in the process.
+- **Durable workflow state in Postgres** via `@workflow/world-postgres`. Inspect completed and
+  uncertain work after a restart before repeating actions.
 - **A local Docker sandbox** instead of hosted Vercel Sandbox.
 - **HTTP Basic route auth**, because eve's stock `vercelOidc()` / `placeholderAuth()` are both
   wrong off Vercel and fail closed.
@@ -79,7 +81,7 @@ and, wired up for you:
 
 - Node 24+
 - Docker, running — Postgres and the agent sandbox both need it
-- A model API key, or [Ollama](https://ollama.com) for a genuinely $0 stack. Check your free RAM
+- A model API key, or [Ollama](https://ollama.com) for local model calls. Check your free RAM
   before choosing Ollama: budget roughly *both model sizes + 4 GB* — long-term memory needs the
   chat model and a separate 274 MB embedding model loaded, not one of them.
 
@@ -93,13 +95,18 @@ goes to whichever provider was already selected, so change them together:
 | --- | --- | --- |
 | unset, or `openai` | `OPENAI_API_KEY` | `gpt-5-mini` |
 | `anthropic` | `ANTHROPIC_API_KEY` | `claude-sonnet-5` |
-| `ollama` | none | `qwen3` |
+| `openrouter` | `OPENROUTER_API_KEY` | `qwen/qwen3.8-27b` |
+| `ollama` | none | `qwen3:0.6b` |
+| `compatible` | `EVESTACK_COMPATIBLE_API_KEY` (optional) | none — plus `EVESTACK_BASE_URL` |
+
+`openrouter` is one key for 400+ models, open weights included. `compatible` is anything else
+speaking the OpenAI wire format — LM Studio, llama.cpp, vLLM, Groq, Together.
 
 ## The dashboard
 
-The agent is only half of evestack. The other half is an open replacement for Vercel's Agent
-Runs — sessions, turns, subagent trees, computed cost per turn, plus the ability to start
-sessions, stream replies and resolve approvals.
+The dashboard groups work into Today, Tasks, Routines, Connections and Knowledge. Settings and
+Diagnostics retain readiness, spend, notifications, traces and recovery. Approvals apply to
+configured gated tools; prompt wording does not enforce permissions.
 
 It is already in the `docker-compose.yml` this scaffolder writes, behind a profile so a plain
 `docker compose up -d` does not pull ~230 MB on someone who only asked for a database:

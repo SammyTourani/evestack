@@ -526,3 +526,26 @@ test("reattach still works for a session persisted before the option existed", a
   assert.equal(connectedTo, "sbx-old");
   assert.equal(handle.session.id, "sbx-old");
 });
+
+test('stop preserves state, delete kills, and lifecycle errors propagate', async (t) => {
+  t.after(restoreStatics);
+  const fake = fakeSandbox({ run: async () => execution({}) });
+  let pauses = 0;
+  let kills = 0;
+  fake.sandbox.pause = async () => { pauses++; };
+  fake.sandbox.kill = async () => { kills++; };
+  const handle = await createSession(fake);
+  await handle.stop();
+  assert.equal(pauses, 1);
+  assert.equal(kills, 0);
+  fake.sandbox.pause = async () => { throw new Error('pause unavailable'); };
+  await assert.rejects(() => handle.stop(), /pause unavailable/);
+  assert.equal(kills, 0, 'stop must never delete state on a pause failure');
+  await handle.delete();
+  assert.equal(kills, 1);
+  await assert.rejects(() => handle.delete({ abortSignal: AbortSignal.abort() }), { name: 'AbortError' });
+  assert.equal(kills, 1, 'pre-aborted deletion sends no request');
+  fake.sandbox.kill = async () => { throw new Error('kill unavailable'); };
+  await assert.rejects(() => handle.delete(), /kill unavailable/);
+  await assert.rejects(() => handle.shutdown(), /kill unavailable/);
+});

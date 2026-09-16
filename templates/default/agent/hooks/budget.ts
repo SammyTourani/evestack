@@ -4,8 +4,9 @@ import { budgetHook } from "@evestack/budget";
  * A spend cap that is on before you ask for one.
  *
  * $2 per session and $10 per user per day, out of the box, on the Postgres this
- * project already runs. Both are one environment variable away from being
- * anything else, and `EVESTACK_BUDGET_DISABLED=1` turns the whole thing off.
+ * project already runs. Environment defaults apply until you save shared controls in the dashboard.
+ * This opted-in hook reads saved revisions before turns and after model steps.
+ * `EVESTACK_BUDGET_DISABLED=1` turns the whole thing off.
  *
  * The second number is the one eve cannot have. Every limit eve ships is scoped
  * to a single durable session — including the 40,000,000-input-token default,
@@ -25,4 +26,4 @@ import { budgetHook } from "@evestack/budget";
  * pauses at the cap, plus at most one step that was already in flight. The
  * package README says the same thing in the same words, on purpose.
  */
-export default budgetHook();
+export default budgetHook({ dashboardControls: true });

@@ -21,16 +21,16 @@
  *
  * The runtime job runs with no model key on purpose: a probe that reaches a
  * provider is a cost, and on a maintainer's machine a real one. So each positive
- * case here is one the provider itself defines as a no-op handshake:
+ * case here is a handshake or a message with nothing to dispatch:
  *
  *   Discord  type 1 PING          answered with {"type":1}, dispatches nothing
  *   Slack    url_verification     answered with the challenge, dispatches nothing
- *   Telegram an update with no    accepted, and there is nothing to dispatch
- *            message in it
+ *   Telegram an allowed sender's accepted, and there is nothing to dispatch
+ *            empty message
  *
- * Verified rather than assumed: the Telegram case was measured against a live
- * agent with `workflow.workflow_runs` counted before and after, and the count did
- * not move.
+ * Set EVESTACK_PROBE_TELEGRAM_USER_ID to a user in the agent's allow-list.
+ * The template ignores messages without text or attachments before it creates
+ * a typing indicator, session, or model call.
  */
 import { sign as edSign, createPrivateKey, createHmac } from "node:crypto";
 
@@ -62,14 +62,17 @@ export default {
   needs: ["agent"],
   why:
     "None of the three channel routes sits behind EVESTACK_AUTH_*, because no chat provider can send " +
-    "Basic credentials. Each one's only protection is its own signature check, which the template " +
-    "asserts in a comment and nothing tested. If one stops verifying, a stranger's POST is dispatched " +
+    "Basic credentials. Each route must verify its provider; Telegram must also enforce its caller allow-list. " +
+    "If one stops verifying, a stranger's POST is dispatched " +
     "to someone's agent as though it arrived from their own Slack.",
 
   async available() {
     const missing = [];
     if (!AGENT) missing.push("EVESTACK_PROBE_AGENT_URL is not set");
     if (!process.env.TELEGRAM_WEBHOOK_SECRET_TOKEN) missing.push("TELEGRAM_WEBHOOK_SECRET_TOKEN is not set on the agent");
+    if (!/^\d+$/.test(process.env.EVESTACK_PROBE_TELEGRAM_USER_ID ?? "")) {
+      missing.push("EVESTACK_PROBE_TELEGRAM_USER_ID must name a numeric user ID in the agent's allow-list");
+    }
     if (!process.env.SLACK_SIGNING_SECRET) missing.push("SLACK_SIGNING_SECRET is not set on the agent");
     if (!process.env.EVESTACK_PROBE_DISCORD_PRIVATE_KEY) {
       missing.push("EVESTACK_PROBE_DISCORD_PRIVATE_KEY is not set (the signing half of DISCORD_PUBLIC_KEY)");
@@ -80,9 +83,13 @@ export default {
   async run(t) {
     /* ---- telegram: a shared secret in a header ---------------------------- */
     const secret = process.env.TELEGRAM_WEBHOOK_SECRET_TOKEN;
-    // An update with no message in it: structurally valid, authenticated, and
-    // there is nothing for the agent to answer. Measured to start no run.
-    const quietUpdate = JSON.stringify({ update_id: 1 });
+    // Empty text and no attachments: authenticates a caller without a model
+    // turn or outbound Telegram call. A sender-less update must fail closed.
+    const quietMessage = (id) => JSON.stringify({
+      update_id: 1,
+      message: { message_id: 1, from: { id, is_bot: false, first_name: "CI" }, chat: { id, type: "private" } },
+    });
+    const quietUpdate = quietMessage(process.env.EVESTACK_PROBE_TELEGRAM_USER_ID);
 
     refused(t, "telegram with no secret-token header", await post("/eve/v1/telegram", {}, quietUpdate));
     refused(
@@ -95,9 +102,15 @@ export default {
       { "x-telegram-bot-api-secret-token": secret },
       quietUpdate,
     );
-    t.ok(telegramOk.status === 200, "telegram with the correct secret token is accepted", {
+    t.ok(telegramOk.status === 200, "telegram with the correct secret token and an allowed sender is accepted", {
       ...(telegramOk.status === 200 ? {} : { actual: `HTTP ${telegramOk.status} ${telegramOk.text}` }),
     });
+    const verified = { "x-telegram-bot-api-secret-token": secret };
+    refused(t, "telegram with a valid secret but no sender", await post("/eve/v1/telegram", verified, JSON.stringify({ update_id: 1 })));
+    refused(t, "telegram with a valid secret but an unlisted sender", await post("/eve/v1/telegram", verified, quietMessage(-1)));
+    refused(t, "telegram callback from an unlisted sender", await post("/eve/v1/telegram", verified, JSON.stringify({
+      update_id: 2, callback_query: { id: "ci-denied-callback", from: { id: -1, is_bot: false }, data: "ci-probe" },
+    })));
 
     /* ---- discord: Ed25519 over timestamp + body --------------------------- */
     const key = createPrivateKey(process.env.EVESTACK_PROBE_DISCORD_PRIVATE_KEY);

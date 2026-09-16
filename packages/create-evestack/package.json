@@ -1,8 +1,8 @@
 {
   "name": "create-evestack",
-  "version": "0.10.1",
+  "version": "0.13.0",
   "type": "module",
-  "description": "Run AI agents on your own machine. One command gives you the whole stack: durable Postgres sessions, a Docker sandbox, memory, approvals, schedules, 1,000+ tool integrations, and a dashboard that drives the agent.",
+  "description": "Create a self-hosted Eve Stack workspace with an agent, Postgres history, task dashboard and durable routines. Choose a model provider and verify setup before running work.",
   "license": "Apache-2.0",
   "keywords": [
     "eve",
@@ -14,7 +14,7 @@
     "dashboard"
   ],
   "bin": {
-    "create-evestack": "./index.mjs"
+    "create-evestack": "index.mjs"
   },
   "exports": {
     ".": "./create.mjs",
@@ -29,6 +29,10 @@
     "index.mjs",
     "create.mjs",
     "attach.mjs",
+    "catalog.data.mjs",
+    "catalog.mjs",
+    "wizard.mjs",
+    "models.mjs",
     "shared.mjs",
     "ui.mjs",
     "template/",
@@ -40,7 +44,7 @@
   },
   "scripts": {
     "prepack": "node scripts/sync-template.mjs",
-    "test": "node scripts/sync-template.mjs && node --check index.mjs && node --check create.mjs && node --check attach.mjs && node --check shared.mjs && node --check ui.mjs && node --test test/*.test.mjs"
+    "test": "node scripts/sync-template.mjs && node --check index.mjs && node --check create.mjs && node --check attach.mjs && node --check shared.mjs && node --check ui.mjs && node --check wizard.mjs && node --check catalog.mjs && node --check catalog.data.mjs && node --check models.mjs && node --test test/*.test.mjs"
   },
   "homepage": "https://github.com/SammyTourani/evestack#readme",
   "bugs": {

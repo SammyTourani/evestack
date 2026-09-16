@@ -1,0 +1,77 @@
+---
+title: Recurring work
+description: Test a task, schedule it, and inspect its result or decision in your dashboard.
+---
+
+## First routine
+
+1. Open **Routines** and choose the repository brief example, or use **Save request as routine** in a task workspace.
+2. Replace the repository placeholder and describe the result you need. Connect the account under **Connections**.
+3. Choose a schedule and IANA time zone, then preview the next three runs. Save the routine; it starts paused.
+4. Choose **Run saved prompt now**. Open its task, inspect the result and supporting links, and check the connected account's permissions.
+5. After the manual test completes successfully, enable the schedule and confirm that you reviewed it.
+
+A changed prompt needs a successful test of that exact prompt. A cancelled or failed test does not qualify. A request saying “read only” is guidance; actual permissions come from the agent's tools and connected account. Use an account with the required access only.
+
+## What keeps it running
+
+The dashboard's Node process checks for work every 15 seconds. It needs the same Postgres database as the agent, dashboard authentication configured, and a reachable `EVESTACK_AGENT_URL`. The clock status and last successful tick appear in Routines. Keeping only the agent running does not dispatch dashboard routines.
+
+`EVESTACK_ROUTINES_DISABLED=1` disables this clock, including dispatch and reconciliation, after a dashboard restart. Manual tests cannot be queued through the API while the clock is stopped. Code-authored schedules and heartbeat use the agent's separate scheduling path and remain visible under Developer schedules.
+
+Multiple dashboard processes coordinate through Postgres. A transaction records a claim before calling the agent. At most four routines are active across the database, with at most one active or uncertain run per routine. Losing the database cannot fall back to starting unrecorded work.
+
+## Time, missed work and edits
+
+Schedules use five-field cron with daily, weekday, weekly and hourly presets. Preview and dispatch share one evaluator. Both the routine's local time and UTC appear in the preview.
+
+- After downtime, only the latest missed occurrence runs. History records the interval whose earlier occurrences were skipped.
+- If a prior run is still active or awaiting a decision, the next occurrence is skipped instead of overlapping it.
+- A missing local time during a daylight-saving change moves to the first valid minute. A repeated local time runs once.
+- Editing, pausing or archiving a routine retires a scheduled claim that has not begun dispatch. A task already dispatched continues; open that task to request Stop.
+- Each run keeps its saved prompt and schedule revision. Editing a routine does not rewrite its past requests.
+
+## Uncertain delivery
+
+A timeout does not prove the agent rejected a task. If dispatch cannot be confirmed, the run becomes **unknown**, the routine pauses, and another run is blocked. This also covers a dispatcher that stopped after sending but before recording the returned task ID.
+
+Inspect recent tasks and the dispatcher logs. After checking whether a task is still active, record your investigation in the run's resolution form. This preserves the record and keeps the routine paused. Resolving a record does not cancel a task that already started, and the system never automatically resends an uncertain dispatch.
+
+Agent state probes have a separate failure state. An unavailable probe leaves a known task active and records the error; it does not guess that the task finished. A pending decision remains active until answered and reconciled.
+
+## Budget and visibility
+
+The task workspace links its transcript, recorded spend, budget stop reason and detailed evidence. **Settings → Budget controls** stores limits read by opted-in agent hooks. Check the reported revision before relying on a saved change; existing custom agents may still use their own configuration. In-flight model calls can finish and incur charges.
+
+The Routines page shows the latest 50 runs per routine. Today shows up to eight scheduled or active routines, prioritizing recent run problems. Neither list claims to be a complete export.
+
+## Notifications
+
+Set `EVESTACK_ALERT_WEBHOOK_URL` on the dashboard to reuse the operator's Slack,
+Discord or generic webhook destination. **Connections → Notifications → Send a
+test** checks the transport. `EVESTACK_PUBLIC_URL` supplies absolute links back
+to the affected task. No task prompt can choose a notification destination.
+
+When a routine completes, fails, needs a decision or has an uncertain dispatch,
+the same transaction records its state and queues notifications for configured
+destinations. Each newly observed set of pending requests can notify separately.
+Events that happened before a destination was configured are not backfilled.
+
+Routine history shows the latest 50 delivery records. An accepted response is
+recorded per destination and is not sent again during normal processing. Failed
+attempts use bounded backoff and stop after five attempts. The operator can
+explicitly retry a failed delivery after checking the destination; that action
+is audited. Removing a destination retires its pending deliveries.
+
+A timeout or process crash can occur after a receiver accepted a message. Retries
+reuse the `x-evestack-notification-id` header and generic webhook
+`notificationId` field. A receiver must deduplicate that ID to guarantee a
+single message; Slack and Discord webhook retries may produce duplicates.
+An HTTP acceptance is not proof that a person received or read the message.
+The dashboard must remain running for notification delivery too.
+
+## Storage and upgrades
+
+The dashboard creates versioned additive tables in the `evestack` schema: routines, run history and audit records. It does not alter existing workflow or developer-schedule rows. Save/edit, run-now, uncertain dispatch and operator resolution retain installation or proxy attribution. Shared dashboard credentials identify an installation, not an individual teammate.
+
+Back up Postgres and project configuration before upgrading. To roll back the dashboard, pause routines first and stop its clock. An older image does not operate this new scheduling path. Keep the new tables for history; do not delete them to retry uncertain work. A dashboard refuses a routine schema version it does not understand.

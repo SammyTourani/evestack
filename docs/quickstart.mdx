@@ -1,14 +1,18 @@
 ---
 title: Quickstart
-description: One command to a running, durable, dashboard-observed agent.
+description: Create the workspace, start services and verify your first model connection.
 ---
 
 ## Requirements
 
 - Node 24+
 - Docker, running (for Postgres and the agent sandbox)
-- An `OPENAI_API_KEY` or an `ANTHROPIC_API_KEY` — or skip straight to
-  [Ollama](/docs/local-setup#ollama) for $0 total
+- An `OPENAI_API_KEY` or an `ANTHROPIC_API_KEY`, or a supported provider configured in
+  [local setup](/docs/local-setup). [Ollama](/docs/local-setup#ollama) runs models locally
+  when your machine has enough memory; hardware and electricity still cost money.
+
+After setup, follow [Your first useful task](/docs/first-task): connect a repository,
+review a maintenance brief and test it as a routine before enabling repeats.
 
 ## Create the project
 
@@ -85,7 +89,7 @@ a database with no tables.
   Pin `@workflow/world-postgres` to an **exact version**. npm's `latest` is the 4.x line and
   `eve` rejects it outright, but the `beta` dist-tag is not the fix — upstream moves the World
   spec version inside `5.0.0-beta.*` with no semver signal, so `beta` resolving one release
-  forward is enough to kill a boot. The scaffolded `package.json` pins `5.0.0-beta.32`; leave it
+  forward is enough to kill a boot. The scaffolded `package.json` pins `5.0.0-beta.42`; leave it
   exact if you ever touch that dependency by hand.
 </Warning>
 
@@ -113,9 +117,18 @@ curl -X POST http://127.0.0.1:2000/eve/v1/session \
   -d '{"message":"Remember this exact phrase: quokka-orbit-9."}'
 ```
 
-Kill the dev server (`Ctrl-C`), restart it (`npm run dev`), then send a follow-up using the
-`continuationToken` from the first response. The agent recalls it — durable state survives the
-process, because it never lived in the process to begin with.
+Keep the `sessionId` returned by this request. Stop the dev server (`Ctrl-C`),
+restart it (`npm run dev`), and send a follow-up to that same session:
+
+```bash
+curl -X POST http://127.0.0.1:2000/eve/v1/session/SESSION_ID \
+  -H 'content-type: application/json' \
+  -d '{"message":"What exact phrase did I ask you to remember?"}'
+```
+
+Replace `SESSION_ID` with the saved value and inspect the reply and memory tool
+results. Current Eve routes use the session ID directly; do not send a
+`continuationToken`.
 
 ## See it in the dashboard
 

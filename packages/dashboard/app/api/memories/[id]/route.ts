@@ -1,5 +1,5 @@
 import { identifyApprover } from "@/lib/approvals";
-import { deleteMemory } from "@/lib/memories";
+import { deleteMemory, getMemory, MemoryConflictError } from "@/lib/memories";
 import { handleRouteError, jsonError, jsonOk } from "../../control/_http";
 
 export const dynamic = "force-dynamic";
@@ -15,6 +15,23 @@ export const dynamic = "force-dynamic";
  * already has the right answer for that, four lines down.
  */
 const MAX_MEMORY_ID = 9223372036854775807n;
+
+export async function GET(
+  request: Request,
+  context: { params: Promise<{ id: string }> },
+): Promise<Response> {
+  try {
+    const { id } = await context.params;
+    if (!/^\d{1,19}$/.test(id) || BigInt(id) > MAX_MEMORY_ID)
+      return jsonError("Invalid memory id.", 400, "bad_request");
+    const memory = await getMemory(id);
+    return memory
+      ? jsonOk({ memory })
+      : jsonError(`No memory ${id}.`, 404, "not_found");
+  } catch (error) {
+    return handleRouteError(error, request);
+  }
+}
 
 /**
  * DELETE /api/memories/:id — remove one long-term memory.
@@ -40,11 +57,20 @@ export async function DELETE(
       return jsonError(`No memory ${id}.`, 404, "not_found");
     }
 
-    const deleted = await deleteMemory(id, identifyApprover(request));
+    const hash = request.headers.get("if-match")?.replace(/^"|"$/g, "");
+    if (hash !== undefined && !/^[a-f0-9]{64}$/.test(hash))
+      return jsonError(
+        "If-Match must contain the memory's content hash.",
+        400,
+        "bad_request",
+      );
+    const deleted = await deleteMemory(id, identifyApprover(request), hash);
     if (!deleted) return jsonError(`No memory ${id}.`, 404, "not_found");
 
     return jsonOk({ deleted: { id: deleted.id, content: deleted.content } });
   } catch (error) {
+    if (error instanceof MemoryConflictError)
+      return jsonError(error.message, 409, "stale_record");
     return handleRouteError(error, request);
   }
 }

@@ -91,7 +91,9 @@ function resolved(candidate) {
   const decl = utility(candidate);
   if (decl === null) return null;
   return decl.replace(/var\((--[\w-]+)\)/g, (whole, name) => {
-    const emitted = compiler.build([candidate]).match(new RegExp(`\\${name}:\\s*([^;]+);`));
+    const emitted = compiler
+      .build([candidate])
+      .match(new RegExp(`\\${name}:\\s*([^;]+);`));
     return emitted ? emitted[1].trim() : whole;
   });
 }
@@ -158,7 +160,10 @@ test("preflight is imported, into base, and base still sits before app", () => {
     // that is ordinary CSS anybody may write. The sidebar's `.nav-list` writes
     // it, because a <ul> of links should not render bullets.
   ]) {
-    assert.ok(css.includes(sentinel), `compiled CSS is missing ${sentinel}, which preflight emits`);
+    assert.ok(
+      css.includes(sentinel),
+      `compiled CSS is missing ${sentinel}, which preflight emits`,
+    );
   }
 
   assert.ok(
@@ -186,9 +191,15 @@ test("preflight is imported, into base, and base still sits before app", () => {
 test("every variable the hand-rolled stylesheet defined is still defined", () => {
   const root = block(":root {");
   for (const name of [...PALETTE, ...NON_COLOUR]) {
-    assert.ok(root.includes(`--${name}:`), `--${name} is no longer declared on :root`);
+    assert.ok(
+      root.includes(`--${name}:`),
+      `--${name} is no longer declared on :root`,
+    );
   }
-  assert.ok(root.includes("color-scheme: dark light"), "the dark-first color-scheme is gone");
+  assert.ok(
+    root.includes("color-scheme: dark light"),
+    "the dark-first color-scheme is gone",
+  );
 });
 
 test("the light override still overrides every colour, and only colours", () => {
@@ -199,7 +210,10 @@ test("the light override still overrides every colour, and only colours", () => 
   // --radius / --mono / --sans are mode-independent; a light value for one of
   // them would mean two sources of truth for the same number.
   for (const name of NON_COLOUR) {
-    assert.ok(!light.includes(`--${name}:`), `--${name} should not vary by colour scheme`);
+    assert.ok(
+      !light.includes(`--${name}:`),
+      `--${name} should not vary by colour scheme`,
+    );
   }
 });
 
@@ -219,13 +233,20 @@ test("the chart palette is six slots, each var-backed in both colour schemes", (
   for (let i = 1; i <= 6; i++) {
     assert.equal(utility(`stroke-chart-${i}`), `stroke: var(--chart-${i});`);
   }
-  assert.equal(utility("stroke-chart-7"), null, "a seventh slot exists; the palette validated six");
+  assert.equal(
+    utility("stroke-chart-7"),
+    null,
+    "a seventh slot exists; the palette validated six",
+  );
 
   const dark = block(":root {");
   const light = block("@media (prefers-color-scheme: light)");
   for (let i = 1; i <= 6; i++) {
     assert.ok(dark.includes(`--chart-${i}:`), `--chart-${i} has no dark value`);
-    assert.ok(light.includes(`--chart-${i}:`), `--chart-${i} has no light value`);
+    assert.ok(
+      light.includes(`--chart-${i}:`),
+      `--chart-${i} has no light value`,
+    );
   }
 });
 
@@ -237,7 +258,11 @@ test("the type scale is six steps and the default numeric scale is gone", () => 
   assert.equal(resolved("text-title"), "font-size: 19px;");
   assert.equal(resolved("text-metric"), "font-size: 22px;");
   for (const off of ["text-xs", "text-sm", "text-base", "text-lg", "text-xl"]) {
-    assert.equal(utility(off), null, `${off} still resolves to a Tailwind default font size`);
+    assert.equal(
+      utility(off),
+      null,
+      `${off} still resolves to a Tailwind default font size`,
+    );
   }
 });
 
@@ -248,15 +273,25 @@ test("two radii, matching the two the product draws", () => {
   assert.equal(utility("rounded-md"), "border-radius: var(--radius);");
   assert.match(block(":root {"), /--radius:\s*8px;/);
   for (const off of ["rounded-xs", "rounded-lg", "rounded-xl"]) {
-    assert.equal(utility(off), null, `${off} still resolves to a Tailwind default radius`);
+    assert.equal(
+      utility(off),
+      null,
+      `${off} still resolves to a Tailwind default radius`,
+    );
   }
   // Pills keep using the built-in, which is a static utility rather than a token.
   assert.notEqual(utility("rounded-full"), null);
 });
 
 test("font-sans asks for Geist first, and the layout is what supplies it", () => {
-  assert.match(utility("font-sans"), /^font-family: var\(--font-geist-sans\), /);
-  assert.match(utility("font-mono"), /^font-family: var\(--font-geist-mono\), /);
+  assert.match(
+    utility("font-sans"),
+    /^font-family: var\(--font-geist-sans\), /,
+  );
+  assert.match(
+    utility("font-mono"),
+    /^font-family: var\(--font-geist-mono\), /,
+  );
   // The token is only meaningful because <html> carries the classes that
   // declare those two variables. Without them the whole declaration is invalid
   // at computed-value time and `font-sans` silently does nothing.
@@ -284,9 +319,16 @@ test("a headline distinguishes an empty window from a failed query", async () =>
   const here = dirname(fileURLToPath(import.meta.url));
 
   const overview = readFileSync(join(here, "..", "app", "overview.ts"), "utf8");
-  const page = readFileSync(join(here, "..", "app", "page.tsx"), "utf8");
+  const page = readFileSync(
+    join(here, "..", "app", "overview", "page.tsx"),
+    "utf8",
+  );
 
-  assert.match(overview, /readonly failed: boolean/, "Headline must carry why the value is absent");
+  assert.match(
+    overview,
+    /readonly failed: boolean/,
+    "Headline must carry why the value is absent",
+  );
   assert.match(
     overview,
     /const failed = current\.status === "rejected"/,

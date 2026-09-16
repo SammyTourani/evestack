@@ -397,37 +397,17 @@ export async function POST(
       signal: request.signal,
     });
 
-    /*
-     * Sequential, and each turn re-reads the token.
-     *
-     * The bug this replaced: the loop sent every follow-up with
-     * `created.continuationToken`, the token minted when the session was
-     * created. eve rotates that token at every turn boundary and publishes the
-     * live one on `session.waiting` (see SessionSnapshot in lib/agent-client.ts:
-     * "Rotates every turn; only the one from the latest `session.waiting`
-     * works"). `continueSession` returns `{sessionId}` and no replacement, so
-     * there was nothing to advance it with — the second follow-up carried a
-     * token that was already two turns old. A 3-turn fork therefore failed
-     * partway and reported itself a partial success.
-     *
-     * `getSessionSnapshot` is the fix and already existed: the message and
-     * approve routes both use it to resolve the current token off the durable
-     * stream. Waiting for it also solves the second half of the problem — the
-     * agent rejects a follow-up sent while a turn is still running — because
-     * the token only appears once the session is parked.
-     */
+    // Wait for a new completed turn before each replay message. The session
+    // address stays constant; it cannot distinguish a new boundary from a stale one.
     const deadline = Date.now() + FORK_BUDGET_MS;
     let delivered = 1;
     let stopped: { atTurn: number; code: string; message: string } | undefined;
-    // The token we last spent. Carried between iterations because "the session
-    // is waiting" is not by itself "the session is waiting for the NEXT turn" —
-    // see waitUntilReady.
-    let spentToken: string | undefined;
+    let previousTurnId: string | undefined;
 
     for (const [index, message] of script.slice(1).entries()) {
       const turnNumber = index + 2;
 
-      const ready = await waitUntilReady(created.sessionId, deadline, request.signal, spentToken);
+      const ready = await waitUntilReady(created.sessionId, deadline, request.signal, previousTurnId);
       if (ready.code !== "ready") {
         stopped = { atTurn: turnNumber, code: ready.code, message: ready.message };
         break;
@@ -435,11 +415,10 @@ export async function POST(
 
       try {
         const result = await continueSession(created.sessionId, {
-          continuationToken: ready.continuationToken,
           message,
           signal: request.signal,
         });
-        spentToken = ready.continuationToken;
+        previousTurnId = ready.turnId;
 
         // eve answers an unknown session id by starting a NEW session and
         // returning its id rather than failing — see the same guard in
@@ -489,7 +468,7 @@ export async function POST(
 }
 
 type Readiness =
-  | { code: "ready"; continuationToken: string }
+  | { code: "ready"; turnId: string }
   | { code: "session_ended" | "awaiting_human" | "timeout"; message: string };
 
 /**
@@ -508,22 +487,15 @@ type Readiness =
  *    the replay cannot reproduce the decision. It stops and hands the fork back.
  *  - `timeout` — the budget above.
  *
- * `spentToken` closes a race that re-reading the token alone does not. eve
- * answers the follow-up POST as soon as it accepts the message, which is before
- * `turn.started` reaches the durable stream — so for a moment after sending turn
- * N the snapshot still shows the PREVIOUS `session.waiting`, with the token we
- * just consumed. Taking that at face value would send turn N+1 with a spent
- * token and get it rejected, which is a slower version of the bug this function
- * was written to fix. Since tokens rotate every turn, "the token differs from
- * the one I spent" is exactly the signal that a new boundary was published.
- * `turnId` would work as well; the token is preferable only because it is the
- * value actually being used.
+ * `previousTurnId` rejects a stale waiting snapshot after a message is accepted
+ * but before its turn.started event arrives. Eve 0.54 keeps the same session
+ * address across turns, so comparing continuation tokens would wait forever.
  */
-async function waitUntilReady(
+export async function waitUntilReady(
   sessionId: string,
   deadline: number,
   signal: AbortSignal,
-  spentToken?: string,
+  previousTurnId?: string,
 ): Promise<Readiness> {
   const turnDeadline = Math.min(deadline, Date.now() + TURN_READY_TIMEOUT_MS);
 
@@ -554,8 +526,8 @@ async function waitUntilReady(
             `fork's own page, then send the remaining turns yourself.`,
         };
       }
-      if (snapshot.continuationToken && snapshot.continuationToken !== spentToken) {
-        return { code: "ready", continuationToken: snapshot.continuationToken };
+      if (snapshot.turnId && snapshot.turnId !== previousTurnId) {
+        return { code: "ready", turnId: snapshot.turnId };
       }
     }
 

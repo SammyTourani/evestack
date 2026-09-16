@@ -272,58 +272,25 @@ export default {
       );
     }
 
-    // The token was resolved BY THE DASHBOARD, off the durable stream, which is
-    // the whole reason the route lets a caller omit it. `resolvedContinuationToken`
-    // being true is proof the session was real, was waiting, and had published a
-    // token — none of which a refusal could have produced.
+    // Current Eve commands use the durable session ID and do not send tokens.
     if (accepted) {
       t.ok(
-        followUp.body.sessionId === id && followUp.body.resolvedContinuationToken === true,
-        "the follow-up went to the session that was asked for, on a token the dashboard resolved",
-        followUp.body.sessionId === id && followUp.body.resolvedContinuationToken === true
-          ? {}
-          : {
-              expected: `sessionId ${id} and resolvedContinuationToken true`,
-              actual: JSON.stringify(followUp.body).slice(0, 200),
-            },
+        followUp.body.sessionId === id && followUp.body.addressedBy === "sessionId",
+        "the follow-up reused the requested durable session ID",
+        { actual: JSON.stringify(followUp.body).slice(0, 200) },
       );
     }
 
-    /* ── a continuation token that is not one ──────────────────────────────── */
-    // The route maps eve's upstream 404 onto 409 `stale_continuation_token`,
-    // because a stale token is the one failure a caller can act on. Supplying a
-    // token also SKIPS the tailIndex guard above, so this is the path where the
-    // session-mismatch check is the only thing left standing.
-    const stale = await message(id, {
-      message: "probe: bogus token",
+    // A legacy token cannot bypass the unknown-session guard or create a run.
+    const stale = await message("wrun_probe_missing_session", {
+      message: "probe: legacy token on an unknown session",
       continuationToken: "ct_probe_not_a_real_token",
     });
     const staleBody = await json(stale);
-    const mapped =
-      stale.status >= 400 &&
-      stale.status < 500 &&
-      staleBody.ok === false &&
-      typeof staleBody.error === "string";
-    t.ok(mapped, "a continuation token the agent rejects becomes a 4xx that explains itself", {
-      ...(mapped
-        ? { actual: `${stale.status} ${staleBody.code ?? ""}` }
-        : {
-            expected: "4xx with ok:false and an error a caller can act on",
-            actual: `${stale.status} ${JSON.stringify(staleBody).slice(0, 200)}`,
-          }),
-    });
-    // And it must not have quietly started a second run under a different id,
-    // which is the failure the session-mismatch guard exists to catch.
-    t.ok(
-      staleBody.startedSessionId === undefined || staleBody.startedSessionId === id,
-      "a rejected token did not leave a second session running under another id",
-      staleBody.startedSessionId === undefined || staleBody.startedSessionId === id
-        ? {}
-        : {
-            expected: "no other session started",
-            actual: `the agent started ${staleBody.startedSessionId} instead of continuing ${id}`,
-          },
-    );
+    t.ok(stale.status === 404 && staleBody.code === "session_not_found",
+      "legacy token does not bypass session lookup", { actual: JSON.stringify(staleBody) });
+    t.ok(staleBody.startedSessionId === undefined,
+      "an unknown session did not create a replacement run");
 
     /* ── cancel ────────────────────────────────────────────────────────────── */
 

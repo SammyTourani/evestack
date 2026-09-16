@@ -140,7 +140,9 @@ they resolve through the normal continuation route:
 ```
 
 The dashboard exposes this as a UI, and `@evestack/mcp` exposes it as a tool that is withheld
-from `tools/list` entirely unless `EVESTACK_MCP_ALLOW_CONTROL=1`.
+from `tools/list` unless both `EVESTACK_MCP_ALLOW_CONTROL=1` and
+`EVESTACK_MCP_ALLOW_APPROVALS=1` are set. Ordinary task control does not grant
+authority to answer human decisions.
 
 ## Evals
 

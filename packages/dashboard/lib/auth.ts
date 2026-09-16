@@ -326,6 +326,19 @@ export function authenticate(request: Request): AuthenticatedRequest | null {
 /* -------------------------------------------------------------------------- */
 
 /**
+ * Which door an ingest request came through.
+ *
+ * `token` is the shared secret in `x-evestack-ingest-token` or as a Bearer —
+ * a program. The other two are the ordinary deployment credential: a human's
+ * browser cookie, or `curl -u`.
+ */
+export type IngestVia = "token" | AuthVia;
+
+export interface IngestAuthorization {
+  readonly via: IngestVia;
+}
+
+/**
  * Trace ingest is the one route a signed-in human is not the caller for, so it
  * gets its own credential.
  *
@@ -340,14 +353,37 @@ export function authenticate(request: Request): AuthenticatedRequest | null {
  * Loopback-only was considered and rejected: nothing inside a Next route can
  * see the peer address, and Host / X-Forwarded-For are both client-controlled,
  * so a "loopback only" check here would be a comment rather than a control.
+ *
+ * ── why this reports WHICH door, and no longer a bare boolean ───────────────
+ *
+ * The session fallback below is not conditional on the token being unset. It
+ * runs whenever the token was absent or wrong, so the operator's cookie is a
+ * second key to the ingest door on every deployment, configured token or not.
+ * That is deliberate — it is what makes the dashboard's own Traces page work —
+ * and it is also the one credential a third-party page can borrow, because a
+ * browser attaches it by itself.
+ *
+ * The two doors therefore need different treatment in proxy.ts, and a boolean
+ * could not express that: the ingest tier returned `NextResponse.next()` for a
+ * cookie exactly as it did for the token, which made it the only write tier in
+ * the dashboard with no cross-site check on it. See proxy.ts for the mechanism
+ * that made the gap reachable. Reporting the door is what lets the gate spend
+ * that check on browser credentials only, and never on an exporter.
+ *
+ * `null` for "no", not `false`, and that is load-bearing: a caller written
+ * against the old signature says `if (!ingestAuthorized(request))`, and an
+ * object is always truthy, so a boolean-shaped result object would turn a
+ * missed call site into a route with no auth at all. `null` keeps that spelling
+ * failing closed while the compiler catches the rest.
  */
-export function ingestAuthorized(request: Request): boolean {
+export function ingestAuthorized(request: Request): IngestAuthorization | null {
   const token = process.env.EVESTACK_INGEST_TOKEN?.trim();
   if (token) {
     const presented = request.headers.get(INGEST_TOKEN_HEADER)?.trim() ?? bearerToken(request);
-    if (presented && equalsConstantTime(presented, token)) return true;
+    if (presented && equalsConstantTime(presented, token)) return { via: "token" };
   }
-  return authenticate(request) !== null;
+  const session = authenticate(request);
+  return session === null ? null : { via: session.via };
 }
 
 function bearerToken(request: Request): string | null {
