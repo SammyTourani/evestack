@@ -1,4 +1,5 @@
 import { ChatClient } from "./chat-client";
+import { repositoryBrief } from "@/lib/task-examples";
 
 export const dynamic = "force-dynamic";
 
@@ -11,15 +12,16 @@ export const dynamic = "force-dynamic";
 export default async function ChatPage({
   searchParams,
 }: {
-  searchParams: Promise<{ session?: string; example?: string }>;
+  searchParams: Promise<{ session?: string; example?: string; draft?: string }>;
 }) {
-  const { session, example } = await searchParams;
+  const { session, example, draft } = await searchParams;
   return (
     <ChatClient
       initialSessionId={session}
+      draftFromConnection={!session && draft === "connection"}
       initialDraft={
         example === "repository-brief"
-          ? "Prepare a repository maintenance brief for [owner/repository]. Review recent changes, failing checks and issues needing attention. Include links supporting each finding and a short list of suggested next steps. Read and report only; do not change files, issues, settings, or send messages. If the repository or account is unavailable, explain what is missing."
+          ? repositoryBrief()
           : undefined
       }
     />

@@ -77,9 +77,9 @@ Status: `[ ]` queued, `[-]` in progress, `[x]` verified, `[~]` implemented await
 - [x] Budget enforcement, remaining budget, unknown prices, per-principal scope and fail-open/closed policy visible.
 - [x] Budget edits affect the enforcing process, with validation and a reported activation revision.
 - [ ] Provider and channel configuration have a safe edit/activation path.
-- [ ] Connection flow starts from the selected task and exposes required accounts/scopes.
+- [x] Repository connection flow preserves the selected task, identifies its account and explains where scopes must be reviewed.
 - [~] Disclose Composio's hosted OAuth dependency; expose health/reconnect/revoke where supported.
-- [ ] Read-only connection test and useful first-run example.
+- [x] Read-only authorization check and repository brief draft; actual repository access remains a task-level verification.
 - [x] Notification setup/test, delivery status and affected-task links.
 - [ ] Inbound channel setup, allow-list guidance, test receipt and task links.
 - [ ] Heartbeat editable examples, preview, quiet delivery/quiet hours and execution-path explanation.
@@ -187,3 +187,10 @@ These are required product learning, not claims a coding session can prove.
 - Website: all 32 browser tests pass after full-size menu placement, resize/font remeasurement and removal of the hero's hidden scroll container. A regression covers keyboard access after viewport resize. Escape verification now targets the same DOM node after it leaves the accessibility tree. CI retains failure screenshots/traces and uses Metal only on macOS.
 - Checkpoint `57d307f` passed the image, runtime and platform checks; its general test job failed on the website hover interaction. The next signed checkpoint must verify these fixes in CI.
 - The Linux trace for `222ba33` showed the remaining hover failure came from the automation helper centering an already visible menu item, scrolling 361 pixels and triggering the hero scrub. The gap test now moves the pointer directly and asserts scroll position stays unchanged; all 14 agent-menu tests pass locally. Keyboard and resize reachability remain separately tested. CI verification is pending.
+
+### Guided connection checkpoint
+
+- CI and runtime-image checks both passed on signed commit `c1d8f10`; the Linux menu issue is resolved in that checkpoint.
+- Connections now preserves a repository choice through authorization, checks grants against the configured identity, distinguishes active/expired/missing/unknown results and prepares an editable request with evidence requirements. The check does not verify repository access, scopes or custom agent configuration.
+- Ten connection tests cover foreign identities, incomplete/malformed responses, size limits, secret redaction, ambiguous writes, return-path restrictions, cross-site/oversized forms and unsafe redirects. Dashboard: 751 tests pass, with the native database group separate. All 25 contracts / 623 assertions pass.
+- Browser verification against a local Composio fixture passed for failed/repeated checks, OAuth-return draft preservation, an editable task handoff without repository text in the URL, and mobile layout. No actual GitHub authorization or repository execution is claimed.

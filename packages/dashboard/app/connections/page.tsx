@@ -1,7 +1,14 @@
 import { deliveryStatus } from "@/lib/alert-delivery";
 import { DeliveryTest } from "@/app/monitors/delivery-test";
+import { composioApiKey, composioUserId } from "@/app/integrations/composio";
+import { RepositorySetup } from "./repository-setup";
 export const dynamic = "force-dynamic";
-export default async function ConnectionsPage() {
+export default async function ConnectionsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ connected?: string; error?: string }>;
+}) {
+  const params = await searchParams;
   const notifications = await deliveryStatus();
   return (
     <>
@@ -9,24 +16,21 @@ export default async function ConnectionsPage() {
       <p className="page-sub">
         Connect the accounts and delivery channels your task needs.
       </p>
-      <section className="workspace-section">
-        <h2>Start with a repository maintenance brief</h2>
-        <p>
-          Connect your repository account, select the repository in your
-          request, and ask for a report with links. Review account permissions
-          before authorizing a connection.
+      {typeof params.connected === "string" && (
+        <p role="status">
+          Returned from {params.connected.slice(0, 64)} authorization. Use Check
+          authorization to inspect its current status.
         </p>
-        <div className="workspace-actions">
-          <a className="primary-action" href="/integrations">
-            Manage connected accounts
-          </a>
-          <a href="/chat?example=repository-brief">Try the brief</a>
-        </div>
-        <p className="page-sub">
-          Account authorization uses Composio, a hosted OAuth service. Model
-          requests go to the model provider configured in your agent.
+      )}
+      {typeof params.error === "string" && (
+        <p role="alert">
+          Connection could not be confirmed: {params.error.slice(0, 300)}
         </p>
-      </section>
+      )}
+      <RepositorySetup
+        configured={Boolean(composioApiKey())}
+        identity={composioUserId()}
+      />
       <div className="workspace-grid">
         <section className="workspace-section">
           <h2>Notifications</h2>

@@ -3,6 +3,20 @@ title: Composio auth
 description: One browser flow, 1,000+ apps — and the third party that holds your OAuth tokens.
 ---
 
+## Start with a repository brief
+
+Open **Connections** in the dashboard and enter `owner/repository` in the repository maintenance brief.
+
+1. Set `COMPOSIO_API_KEY` in the project environment and restart the agent and dashboard if it is not configured.
+2. Choose **Connect or reauthorize GitHub**. Review the account, repository selection and permissions in the provider's authorization flow. Returning to Connections preserves the repository draft in that browser tab.
+3. Choose **Check authorization**. This makes a read-only request for Composio's account records and counts only grants matching the dashboard's configured identity. An active grant does **not** prove that the selected repository is accessible, that the agent uses the same configuration, or that tools are restricted to reading. Incomplete account lists and unavailable checks remain explicit.
+4. Choose **Open task draft**, review the request, then start it. Repository names and draft text stay in browser session storage during this handoff; they are not put in the navigation URL.
+5. Inspect the report and its source links. Use **Save request as routine** in the task to prepare a recurring version, then test and review it before enabling the routine.
+
+The account API does not return the granted scopes used by this check. Inspect the GitHub authorization screen or your account's application settings to review or revoke them. Recheck after revocation. Dashboard Basic-auth tasks and app schedules use the installation identity by default; Telegram, Slack, JWT and other separately authenticated callers can resolve to different identities. A custom agent configuration must match the identity shown in Connections.
+
+`GET /api/connections/check?toolkit=github` provides the same authenticated, read-only check to API clients. It reports the identity, grant status, checked time and account-list coverage, and leaves repository access and scopes unverified. Requests are bounded to 10 seconds and 2 MB; failures do not become a successful connection result.
+
 ## What you get
 
 [Vercel Connect](https://vercel.com/docs/connect) ships four **Vercel Managed Connectors** —

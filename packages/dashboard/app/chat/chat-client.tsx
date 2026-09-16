@@ -5,6 +5,7 @@ import { DecisionCard } from "@/components/decision-card";
 import { ResultMarkdown } from "@/components/markdown";
 import { TaskBudget } from "@/components/task-budget";
 import type { InputRequest } from "@/lib/agent-client";
+import { CONNECTION_DRAFT_KEY } from "@/lib/task-examples";
 import styles from "./chat.module.css";
 
 /**
@@ -46,9 +47,11 @@ const STATUS_LABEL: Record<Status, string> = {
 export function ChatClient({
   initialSessionId,
   initialDraft,
+  draftFromConnection = false,
 }: {
   initialSessionId?: string;
   initialDraft?: string;
+  draftFromConnection?: boolean;
 }) {
   const [sessionId, setSessionId] = useState<string | null>(
     initialSessionId ?? null,
@@ -60,6 +63,22 @@ export function ChatClient({
   const [draft, setDraft] = useState(initialDraft ?? "");
   const [notice, setNotice] = useState<string | null>(null);
   const sendingRef = useRef(false);
+  const connectionDraftLoaded = useRef(false);
+
+  useEffect(() => {
+    if (!draftFromConnection || initialSessionId || connectionDraftLoaded.current) return;
+    connectionDraftLoaded.current = true;
+    try {
+      const saved = sessionStorage.getItem(CONNECTION_DRAFT_KEY);
+      if (!saved || saved.length > 20_000) {
+        setNotice("The connection draft is no longer available in this tab. Return to Connections to prepare it again.");
+        return;
+      }
+      setDraft(current => current || saved);
+      sessionStorage.removeItem(CONNECTION_DRAFT_KEY);
+      setNotice("Review this request before starting. Account authorization alone does not verify repository access or enforce read-only tools.");
+    } catch { setNotice("Browser draft storage is unavailable. Enter your repository request below."); }
+  }, [draftFromConnection, initialSessionId]);
 
   const abortRef = useRef<AbortController | null>(null);
   const liveStreamRef = useRef<AbortSignal | null>(null);

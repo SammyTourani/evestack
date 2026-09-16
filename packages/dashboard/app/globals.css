@@ -767,6 +767,14 @@
   .workspace-section p {
     line-height: 1.65;
   }
+  .repository-setup h3 {
+    margin: 22px 0 8px;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .repository-setup > .routine-form {
+    margin: 16px 0;
+  }
   .workspace-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));

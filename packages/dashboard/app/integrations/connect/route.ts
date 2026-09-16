@@ -1,4 +1,5 @@
 import { publicOrigin } from "@/lib/auth";
+import { readBoundedBody } from "@/app/api/control/_http";
 
 import {
   ComposioError,
@@ -28,7 +29,8 @@ const MAX_TOOLKIT_SLUG_LENGTH = 64;
  */
 function isCrossSite(request: Request, expectedOrigin: string): boolean {
   const fetchSite = request.headers.get("sec-fetch-site");
-  if (fetchSite && fetchSite !== "same-origin" && fetchSite !== "none") return true;
+  if (fetchSite && fetchSite !== "same-origin" && fetchSite !== "none")
+    return true;
   const origin = request.headers.get("origin");
   if (!origin) return false;
   return origin.replace(/\/+$/, "") !== expectedOrigin;
@@ -44,8 +46,12 @@ export async function POST(request: Request): Promise<Response> {
   // is that the fallback is now the host the browser dialled.
   const requestOrigin = publicOrigin(request);
   const origin = requestOrigin.replace(/\/+$/, "");
+  let returnPath = "/integrations";
   const back = (params: Record<string, string>) =>
-    Response.redirect(`${origin}/integrations?${new URLSearchParams(params)}`, 303);
+    Response.redirect(
+      `${origin}${returnPath}?${new URLSearchParams(params)}`,
+      303,
+    );
 
   if (isCrossSite(request, origin) && isCrossSite(request, requestOrigin)) {
     return Response.json(
@@ -54,12 +60,30 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
-  const form = await request.formData();
-  const toolkit = String(form.get("toolkit") ?? "").trim().toLowerCase();
+  const bytes = await readBoundedBody(request, 8192);
+  if (bytes instanceof Response) return bytes;
+  let form: FormData;
+  try {
+    form = await new Response(bytes, {
+      headers: { "content-type": request.headers.get("content-type") ?? "" },
+    }).formData();
+  } catch {
+    return Response.json(
+      { error: "Unreadable connection form." },
+      { status: 400 },
+    );
+  }
+  if (form.get("returnTo") === "repository-brief") returnPath = "/connections";
+  const toolkit = String(form.get("toolkit") ?? "")
+    .trim()
+    .toLowerCase();
 
   // Slugs land in a URL path, so refuse anything that is not one. Length is
   // bounded because the pattern alone happily accepted 5,000 characters.
-  if (!/^[a-z0-9][a-z0-9_-]*$/.test(toolkit) || toolkit.length > MAX_TOOLKIT_SLUG_LENGTH) {
+  if (
+    !/^[a-z0-9][a-z0-9_-]*$/.test(toolkit) ||
+    toolkit.length > MAX_TOOLKIT_SLUG_LENGTH
+  ) {
     return back({ error: "That is not a valid app id." });
   }
 
@@ -73,18 +97,29 @@ export async function POST(request: Request): Promise<Response> {
     const url = await createConnectLink(apiKey, {
       authConfigId,
       userId: composioUserId(),
-      callbackUrl: `${origin}/integrations?connected=${encodeURIComponent(toolkit)}`,
+      callbackUrl: `${origin}${returnPath}?connected=${encodeURIComponent(toolkit)}`,
     });
 
     // The URL comes from an authenticated API call, but it is still a redirect
     // target read off the wire — refuse anything that is not plain https.
-    if (!URL.parse(url)?.protocol.startsWith("https")) {
-      return back({ toolkit, error: "Composio returned an authorization URL we will not follow." });
+    const target = URL.parse(url);
+    if (
+      !target ||
+      target.protocol !== "https:" ||
+      target.username ||
+      target.password
+    ) {
+      return back({
+        toolkit,
+        error: "Composio returned an authorization URL we will not follow.",
+      });
     }
     return Response.redirect(url, 303);
   } catch (error) {
     const message =
-      error instanceof ComposioError || error instanceof Error ? error.message : String(error);
+      error instanceof ComposioError || error instanceof Error
+        ? error.message
+        : String(error);
     return back({ toolkit, error: message.slice(0, 300) });
   }
 }
