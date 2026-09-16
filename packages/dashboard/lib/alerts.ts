@@ -50,6 +50,7 @@
  */
 
 import { dailySpendCap } from "./budget-env";
+import { readBudgetPolicy } from "./budget-policy";
 import { query } from "./db";
 import { STUCK_TURN_MS, schemaVersionsAhead } from "./facts";
 import { freshFacts } from "./metrics";
@@ -99,21 +100,6 @@ export const THRESHOLDS = {
   sandboxLongLivedHours: ORPHAN_AFTER_MS / 3_600_000,
   scheduleFailingStreak: 3,
 } as const;
-
-/**
- * The cap "Spend today" is judged against, and which cap it is.
- *
- * This used to read `EVESTACK_DAILY_BUDGET_USD`, which is not a variable. The
- * real one is `EVESTACK_BUDGET_DAILY_USD` — the same four words in a different
- * order — and the transposition existed only inside this file, so nothing else
- * in the repository contradicted it. The result was not a wrong number; it was
- * this monitor reporting `unknown` on every install ever made, saying "no cap is
- * configured" while @evestack/budget enforced its $10/day default a process
- * away. lib/budget-env.ts carries the full write-up.
- */
-function budgetUsd(): { usd: number | null; scope: "install" | "per-principal" } {
-  return dailySpendCap(process.env);
-}
 
 const pct = (n: number): string => `${(n * 100).toFixed(1)}%`;
 const usd = (n: number): string => `$${n.toFixed(2)}`;
@@ -199,8 +185,7 @@ export async function evaluateAlerts(): Promise<AlertResult[]> {
 
   /* ── money ───────────────────────────────────────────────────────────────── */
   if (spend.status === "fulfilled") {
-    const { usd: cap, scope } = budgetUsd();
-    const { total, unpriced, unpricedTurns } = spend.value;
+    const { total, unpriced, unpricedTurns, cap: { usd: cap, scope }, timeZone, policyNote } = spend.value;
     // Which cap this is, said out loud. `dailySpend()` sums every priced turn on
     // the INSTALL, and the fallback cap is per PRINCIPAL — the same number on a
     // single-user install and a different one the moment there are two. Naming
@@ -222,12 +207,12 @@ export async function evaluateAlerts(): Promise<AlertResult[]> {
             // who deliberately switched off spend alerting that their budget cap
             // is also gone would send them to check a setting that is fine.
             scope === "install"
-            ? `${usd(total)} so far today. Spend alerting is switched off with EVESTACK_ALERT_DAILY_SPEND_USD=false, so there is nothing to compare it to.`
-            : `${usd(total)} so far today. @evestack/budget has no daily cap — either EVESTACK_BUDGET_DAILY_USD=false or budgets are disabled — and EVESTACK_ALERT_DAILY_SPEND_USD is unset, so there is nothing to compare it to.`
-          : `${usd(total)} of ${usd(cap)} spent today.${scopeNote}`,
+            ? `${usd(total)} so far today. Spend alerting is switched off with EVESTACK_ALERT_DAILY_SPEND_USD=false, so there is nothing to compare it to. Day boundary: ${timeZone}.`
+            : `${usd(total)} so far today. @evestack/budget has no daily cap in the reported policy, and no installation alert threshold is configured. ${policyNote} Day boundary: ${timeZone}.`
+          : `${usd(total)} of ${usd(cap)} spent today.${scopeNote} ${policyNote} Day boundary: ${timeZone}.`,
       threshold:
         cap === null ? "set EVESTACK_ALERT_DAILY_SPEND_USD to enable" : `under ${usd(cap)}/day`,
-      href: "/",
+      href: "/settings",
     });
 
     out.push({
@@ -241,7 +226,7 @@ export async function evaluateAlerts(): Promise<AlertResult[]> {
       detail:
         unpricedTurns > 0
           ? `${unpricedTurns.toLocaleString("en-US")} turn${unpricedTurns === 1 ? "" : "s"} today ran a model with no catalog price (${unpriced.join(", ")}). Their real cost is unknown, not zero — the ${usd(total)} above excludes them entirely.`
-          : "Every model that ran today has a catalog price, so today's spend figure is complete.",
+          : "Every model in today's retained, recorded turns has a catalog price, so today's spend figure is complete for those records. This does not verify trace delivery or the provider's final bill.",
       threshold: "every model priced",
       href: "/",
     });
@@ -560,7 +545,12 @@ export function wedgedAlert(n: number, threshold: number = THRESHOLDS.wedgedSess
   };
 }
 
-async function dailySpend(): Promise<{ total: number; unpriced: string[]; unpricedTurns: number }> {
+async function dailySpend() {
+  // Read the same saved policy as Settings. A failed/partial policy read must
+  // not silently revive an old environment cap or use the database's timezone.
+  const { limits, configuration } = await readBudgetPolicy();
+  const cap = dailySpendCap(process.env, limits);
+  const timeZone = limits.timeZone;
   /**
    * Refresh before summing, or the spend cap is armed with stale money.
    *
@@ -617,8 +607,10 @@ async function dailySpend(): Promise<{ total: number; unpriced: string[]; unpric
   }>(
     `SELECT model, priced, sum(cost_usd)::text AS cost, count(*)::text AS n
        FROM evestack.fact_turn
-      WHERE created_at >= date_trunc('day', now())
+      WHERE created_at >= (date_trunc('day', now() AT TIME ZONE $1) AT TIME ZONE $1)
+        AND created_at < ((date_trunc('day', now() AT TIME ZONE $1) + interval '1 day') AT TIME ZONE $1)
       GROUP BY model, priced`,
+    [timeZone],
   );
   let total = 0;
   const unpriced: string[] = [];
@@ -631,7 +623,10 @@ async function dailySpend(): Promise<{ total: number; unpriced: string[]; unpric
     }
     // r.priced === null — no model call. Deliberately in neither total.
   }
-  return { total, unpriced, unpricedTurns };
+  const policyNote = configuration.source === "saved"
+    ? `Saved budget revision ${configuration.revision}; current enforcement by every agent is not verified.`
+    : "Dashboard environment policy; a custom agent may enforce different settings.";
+  return { total, unpriced, unpricedTurns, cap, timeZone, policyNote };
 }
 
 async function ingestHealth(): Promise<{

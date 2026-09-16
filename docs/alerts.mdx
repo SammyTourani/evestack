@@ -89,19 +89,18 @@ To repeat a still-firing alert, set `EVESTACK_ALERT_RENOTIFY_MINUTES=60`. It is 
 
 `EVESTACK_ALERT_DAILY_SPEND_USD` is the install-wide daily spend the alert is judged against.
 
-With it unset, the alert falls back to `@evestack/budget`'s `EVESTACK_BUDGET_DAILY_USD` (default
-`10`) so that it works out of the box — and it **says so in the alert text**, because the two are
-not the same measure. The budget cap is per principal; this alert sums every priced turn on the
-install. On the single-user install that self-hosting usually means they are the same number; with
-two users the install crosses $10 while neither person is near their own limit.
+With it unset, the alert uses the daily cap saved in Settings, or the dashboard's
+`EVESTACK_BUDGET_DAILY_USD` (default `10`) when no saved policy exists. The alert
+names that source and revision. It uses the policy's timezone for both boundaries
+of the local day, including daylight-saving changes. A failed or partial policy
+read makes the result unknown; it does not silently revive an old environment cap.
 
-<Warning>
-  This monitor spent its entire existence stuck at *not checked*. It read
-  `EVESTACK_DAILY_BUDGET_USD` — the same four words in a different order from the variable that
-  exists — so on every install ever made it reported "no cap is configured" while `@evestack/budget`
-  enforced its $10/day default a process away. A check that cannot fire is worse than a missing
-  one, because the page counts it among the ones that passed.
-</Warning>
+The fallback budget cap is per principal; the alert sums priced, recorded turns
+across the installation. Its detail names that difference. Set an explicit
+installation threshold when that comparison is unsuitable. A saved cap does not
+prove every attached agent is enforcing it; inspect the observed revisions in
+Settings. Recorded costs do not verify complete trace delivery or the provider's
+final bill.
 
 Set it to `false` to switch spend alerting off without touching your budget caps.
 

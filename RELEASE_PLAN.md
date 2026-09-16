@@ -236,3 +236,9 @@ These are required product learning, not claims a coding session can prove.
 - Added authenticated `tasks`, `routines` and `readiness` CLI commands. Tasks support search/cursors, detail, saved recovery, explicit start/reply from a bounded message file and cooperative stop. Remote credentials require HTTPS, redirect following is disabled, unrelated flags are refused and mutations never retry. An accepted request is not reported as task completion.
 - CLI: 163 tests pass, covering actual HTTP authentication, route encoding, flag/file validation, size limits, timeout/lost-response uncertainty and routing. Against the built fixture dashboard, the CLI read a paginated task list, detail, recovery fingerprints, routine history and all six setup checks. Offline agent/model uncertainty remained visible; no real provider call was made.
 - MCP adds read-only recovery, readiness, memory/review and regression-case tools over the same routes. Ownership, pagination, evidence coverage, stale-review hashes and exact-revision manual observations are retained. Full MCP suite: 112 tests pass, including no-control access, route traversal and invalid-argument refusal.
+
+### Spend monitoring consistency
+
+- The daily spend monitor now follows Settings' saved daily cap and timezone, preserving an explicitly configured installation alert threshold. It labels the saved revision, the difference between installation spend and a per-principal cap, and unknown current enforcement.
+- A failed or partial policy read reports unknown instead of falling back to an obsolete environment value. A pre-controls installation retains a labelled environment fallback. Both local-day boundaries use the selected timezone.
+- Dashboard suite: 760 tests pass, three native suites separate. Typecheck passes. Focused tests cover saved-versus-environment values, explicit alert thresholds, missing/partial storage and timezone query parameters.

@@ -109,6 +109,7 @@ const CONTROLLED = [
   "EVESTACK_ALERT_DAILY_SPEND_USD",
   "EVESTACK_BUDGET_DAILY_USD",
   "EVESTACK_BUDGET_DISABLED",
+  "EVESTACK_BUDGET_TIMEZONE",
   "EVESTACK_DOCKER_SOCKET",
 ];
 const saved = {};
@@ -442,6 +443,59 @@ test("an empty fact table is a measured $0.00, not a shrug", async () => {
   assert.match(get("daily_spend").detail, /^\$0\.00 of \$10\.00 spent today\./);
   assert.equal(get("unpriced_spend").state, "ok");
   assert.match(get("unpriced_spend").detail, /today's spend figure is complete/);
+});
+
+const savedPolicy = (overrides = {}) => [{ revision: 7, policy: {
+  sessionUsd: 2, dailyUsd: 3, timeZone: "America/Toronto", mode: "fail", ...overrides,
+} }];
+
+test("spend alert follows the saved cap and timezone, while retaining enforcement uncertainty", async () => {
+  process.env.EVESTACK_BUDGET_DAILY_USD = "100";
+  process.env.EVESTACK_BUDGET_TIMEZONE = "Asia/Tokyo";
+  const { get, pool } = await evaluate([
+    ["FROM evestack.budget_settings", savedPolicy()],
+    [SPEND_SQL, [{ model: "fixture", priced: true, cost: "4", n: "1" }]],
+  ]);
+  assert.equal(get("daily_spend").state, "firing");
+  assert.match(get("daily_spend").detail, /\$4\.00 of \$3\.00/);
+  assert.match(get("daily_spend").detail, /Saved budget revision 7/);
+  assert.match(get("daily_spend").detail, /enforcement by every agent is not verified/);
+  assert.match(get("daily_spend").detail, /Day boundary: America\/Toronto/);
+  const summed = pool.matching(SPEND_SQL).find(call => call.squashed.includes("GROUP BY model, priced"));
+  assert.deepEqual(summed.params, ["America/Toronto"]);
+  assert.match(summed.sql, /now\(\) AT TIME ZONE \$1/);
+  assert.match(summed.sql, /interval '1 day'/);
+});
+
+test("explicit installation threshold wins over a saved disabled budget without losing its day boundary", async () => {
+  process.env.EVESTACK_ALERT_DAILY_SPEND_USD = "2";
+  const { get } = await evaluate([
+    ["FROM evestack.budget_settings", savedPolicy({ dailyUsd: false })],
+    [SPEND_SQL, [{ model: "fixture", priced: true, cost: "4", n: "1" }]],
+  ]);
+  assert.equal(get("daily_spend").state, "firing");
+  assert.match(get("daily_spend").detail, /\$4\.00 of \$2\.00/);
+  assert.doesNotMatch(get("daily_spend").detail, /per-principal daily cap/);
+  assert.match(get("daily_spend").detail, /America\/Toronto/);
+});
+
+test("an unavailable or partial saved policy makes spend unknown instead of using an old environment cap", async () => {
+  for (const [table, failure] of [
+    ["FROM evestack.budget_settings", new Error("policy store unavailable")],
+    ["FROM evestack.budget_consumers", undefinedTable("evestack.budget_consumers")],
+  ]) {
+    const { get } = await evaluate([[table, failure]]);
+    assert.equal(get("daily_spend").state, "unknown");
+    assert.equal(get("unpriced_spend").state, "unknown");
+    assert.doesNotMatch(get("daily_spend").detail, /\$0\.00/);
+  }
+});
+
+test("an installation predating shared controls keeps its labelled environment threshold", async () => {
+  process.env.EVESTACK_BUDGET_DAILY_USD = "9";
+  const { get } = await evaluate([["FROM evestack.budget_settings", undefinedTable("evestack.budget_settings")]]);
+  assert.match(get("daily_spend").detail, /\$0\.00 of \$9\.00/);
+  assert.match(get("daily_spend").detail, /Dashboard environment policy/);
 });
 
 test("a fact table that cannot be refreshed is unknown on both money checks", async () => {
