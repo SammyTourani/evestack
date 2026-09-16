@@ -1,30 +1,16 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { createHash } from "node:crypto";
+import type { PoolClient } from "pg";
 import type { ApproverIdentity } from "./approvals";
-import { describeDbError, query } from "./db";
+import { getPool, query } from "./db";
 
 /**
- * Read and curate the agent's long-term memory.
- *
- * The table belongs to the agent template (`templates/default/lib/memory.ts`
- * creates it on first use), and the dashboard only ever reads and prunes it —
- * it never writes memories, because deciding what is worth remembering is the
- * agent's job.
- *
- * Why this page exists at all: an agent with persistent memory is an agent that
- * can be quietly wrong forever. A single bad row — a stale fact, a name it
- * misheard, something a user asked it to forget — keeps surfacing in recall and
- * shaping answers, and nothing in eve or in any hosted memory product lets you
- * simply look at the list. Mem0, Zep and Letta are all hosted-or-heavy, and none
- * of them offers "see and edit what your agent believes" on your own hardware.
- * The rows are already in your Postgres. Reading them is not a feature so much
- * as an obligation.
- *
- * Deliberately NOT semantic search. Searching by embedding would need the
- * dashboard to hold a model key and pay per keystroke to answer "what does it
- * know about X". A trigram/ILIKE match over content and tags answers the
- * question a human actually asks — "what did it save about invoices?" — for
- * nothing, and `recall` remains the semantic path.
+ * Operator access to the template's memory table. Text search reads no model
+ * keys and makes no embedding requests. Reviews and proposals live in separate
+ * tables; changing a memory's text requires regenerating its vector.
+ * The dashboard can inspect all owners. Agent-side recall and deletion retain
+ * the template's separate principal rules.
  */
 
 export interface MemoryRow {
@@ -33,6 +19,9 @@ export interface MemoryRow {
   readonly tags: string[];
   readonly sessionId: string | null;
   readonly createdAt: string;
+  readonly principalId: string | null;
+  readonly version: string;
+  readonly hash: string;
 }
 
 export interface MemoryPage {
@@ -42,22 +31,100 @@ export interface MemoryPage {
   readonly tableExists: boolean;
 }
 
-async function memoriesTableExists(): Promise<boolean> {
-  const rows = await query<{ exists: boolean }>(
-    `SELECT to_regclass('evestack.memories') IS NOT NULL AS exists`,
-  );
-  return rows[0]?.exists === true;
+async function memoryShape(client?: PoolClient) {
+  const sql = `SELECT to_regclass('evestack.memories') IS NOT NULL AS exists,
+    EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('evestack.memories') AND attname='principal_id' AND NOT attisdropped) AS has_owner`;
+  const rows = client
+    ? (await client.query(sql)).rows
+    : await query<{ exists: boolean; has_owner: boolean }>(sql);
+  return rows[0] as { exists: boolean; has_owner: boolean };
 }
 
-export async function listMemories(options: {
-  search?: string;
-  limit?: number;
-  offset?: number;
-} = {}): Promise<MemoryPage> {
+export function memoryRow(raw: Record<string, unknown>): MemoryRow {
+  const row = {
+    id: String(raw.id),
+    content: String(raw.content ?? ""),
+    tags: Array.isArray(raw.tags) ? (raw.tags as string[]) : [],
+    sessionId: typeof raw.session_id === "string" ? raw.session_id : null,
+    createdAt: new Date(raw.created_at as string | Date).toISOString(),
+    principalId: typeof raw.principal_id === "string" ? raw.principal_id : null,
+    version: String(raw.memory_version ?? "unknown"),
+  };
+  return {
+    ...row,
+    hash: createHash("sha256").update(JSON.stringify(row)).digest("hex"),
+  };
+}
+
+export class MemoryConflictError extends Error {
+  constructor() {
+    super(
+      "This memory changed since you opened it. Refresh and review the current record before changing it.",
+    );
+  }
+}
+
+export async function memoryTransaction<T>(
+  fn: (client: PoolClient) => Promise<T>,
+): Promise<T> {
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      "SET LOCAL statement_timeout='10s'; SET LOCAL lock_timeout='3s'",
+    );
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function lockedMemory(
+  client: PoolClient,
+  id: string,
+): Promise<MemoryRow | null> {
+  const shape = await memoryShape(client);
+  if (!shape.exists) return null;
+  const raw = (
+    await client.query(
+      `SELECT id,content,tags,session_id,created_at,xmin::text AS memory_version,
+    ${shape.has_owner ? "principal_id" : "NULL::text AS principal_id"}
+    FROM evestack.memories WHERE id=$1 FOR UPDATE`,
+      [id],
+    )
+  ).rows[0];
+  return raw ? memoryRow(raw) : null;
+}
+
+export async function getMemory(id: string): Promise<MemoryRow | null> {
+  const shape = await memoryShape();
+  if (!shape.exists) return null;
+  const rows = await query<Record<string, unknown>>(
+    `SELECT id,content,tags,session_id,created_at,xmin::text AS memory_version,
+    ${shape.has_owner ? "principal_id" : "NULL::text AS principal_id"}
+    FROM evestack.memories WHERE id=$1`,
+    [id],
+  );
+  return rows[0] ? memoryRow(rows[0]) : null;
+}
+
+export async function listMemories(
+  options: {
+    search?: string;
+    limit?: number;
+    offset?: number;
+  } = {},
+): Promise<MemoryPage> {
   // The table is created lazily by the agent's first `remember`, so a fresh
   // install has none. Querying it anyway would surface a Postgres error where
   // the honest answer is "nothing saved yet".
-  if (!(await memoriesTableExists())) {
+  const shape = await memoryShape();
+  if (!shape.exists) {
     return { rows: [], total: 0, tableExists: false };
   }
 
@@ -67,7 +134,9 @@ export async function listMemories(options: {
 
   // `array_to_string` so a tag match works with the same ILIKE as content —
   // cheaper than a second predicate and it lets one box search both.
-  const where = search ? `WHERE content ILIKE $1 OR array_to_string(tags, ' ') ILIKE $1` : "";
+  const where = search
+    ? `WHERE content ILIKE $1 OR array_to_string(tags, ' ') ILIKE $1`
+    : "";
   const params: unknown[] = search ? [`%${search}%`] : [];
 
   const counted = await query<{ count: string }>(
@@ -76,7 +145,8 @@ export async function listMemories(options: {
   );
 
   const rows = await query<Record<string, unknown>>(
-    `SELECT id, content, tags, session_id, created_at
+    `SELECT id, content, tags, session_id, created_at, xmin::text AS memory_version,
+       ${shape.has_owner ? "principal_id" : "NULL::text AS principal_id"}
      FROM evestack.memories ${where}
      ORDER BY created_at DESC, id DESC
      LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
@@ -84,13 +154,7 @@ export async function listMemories(options: {
   );
 
   return {
-    rows: rows.map((raw) => ({
-      id: String(raw.id),
-      content: String(raw.content ?? ""),
-      tags: Array.isArray(raw.tags) ? (raw.tags as string[]) : [],
-      sessionId: (raw.session_id as string) ?? null,
-      createdAt: new Date(raw.created_at as string | Date).toISOString(),
-    })),
+    rows: rows.map(memoryRow),
     total: Number(counted[0]?.count ?? 0),
     tableExists: true,
   };
@@ -114,33 +178,20 @@ export async function listMemories(options: {
 export async function deleteMemory(
   id: string,
   identity: ApproverIdentity,
+  expectedHash?: string,
 ): Promise<MemoryRow | null> {
-  if (!(await memoriesTableExists())) return null;
-  const rows = await query<Record<string, unknown>>(
-    `DELETE FROM evestack.memories WHERE id = $1
-     RETURNING id, content, tags, session_id, created_at`,
-    [id],
-  );
-  const raw = rows[0];
-  if (!raw) return null;
-
-  const row: MemoryRow = {
-    id: String(raw.id),
-    content: String(raw.content ?? ""),
-    tags: Array.isArray(raw.tags) ? (raw.tags as string[]) : [],
-    sessionId: (raw.session_id as string) ?? null,
-    createdAt: new Date(raw.created_at as string | Date).toISOString(),
-  };
-
-  // Audited after the delete, and never allowed to fail the delete: the row is
-  // already gone, and throwing here would report failure for something that
-  // succeeded. A missing audit row is visible in the log; a lie is not.
-  try {
-    await ensureMemoryAuditSchema();
-    await query(
+  if (!(await memoryShape()).exists) return null;
+  await ensureMemoryAuditSchema();
+  return memoryTransaction(async (client) => {
+    const row = await lockedMemory(client, id);
+    if (!row) return null;
+    if (expectedHash !== undefined && row.hash !== expectedHash)
+      throw new MemoryConflictError();
+    await client.query("DELETE FROM evestack.memories WHERE id=$1", [id]);
+    await client.query(
       `INSERT INTO evestack.memory_deletions
-         (memory_id, content, tags, session_id, created_at, actor, actor_via)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+         (memory_id, content, tags, session_id, created_at, actor, actor_via, principal_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
       [
         row.id,
         row.content,
@@ -149,21 +200,11 @@ export async function deleteMemory(
         row.createdAt,
         identity.approver,
         identity.via,
+        row.principalId,
       ],
     );
-  } catch (error) {
-    // Swallowed on purpose — see above — but not silently. The comment above
-    // promised "a missing audit row is visible in the log" while this block was
-    // an empty catch containing only a comment, so nothing was ever written
-    // anywhere. Deleting a memory is irreversible; losing the record of who did
-    // it, without a trace, is the one outcome this whole path exists to prevent.
-    console.warn(
-      `[evestack] memory ${row.id} was deleted but its audit row could not be written: ` +
-        `${describeDbError(error)}`,
-    );
-  }
-
-  return row;
+    return row;
+  });
 }
 
 export interface MemoryDeletionRow {
@@ -174,6 +215,7 @@ export interface MemoryDeletionRow {
   readonly tags: string[];
   readonly actor: string | null;
   readonly actorVia: string;
+  readonly principalId: string | null;
 }
 
 /**
@@ -198,10 +240,12 @@ export interface MemoryDeletionRow {
  * must not take the memory list down with it, nor be rendered as "nothing was
  * deleted".
  */
-export async function listMemoryDeletions(limit = 100): Promise<MemoryDeletionRow[]> {
+export async function listMemoryDeletions(
+  limit = 100,
+): Promise<MemoryDeletionRow[]> {
   await ensureMemoryAuditSchema();
   const rows = await query<Record<string, unknown>>(
-    `SELECT id, deleted_at, memory_id, content, tags, actor, actor_via
+    `SELECT id, deleted_at, memory_id, content, tags, actor, actor_via, principal_id
      FROM evestack.memory_deletions ORDER BY deleted_at DESC, id DESC LIMIT $1`,
     [limit],
   );
@@ -213,14 +257,18 @@ export async function listMemoryDeletions(limit = 100): Promise<MemoryDeletionRo
     tags: Array.isArray(raw.tags) ? (raw.tags as string[]) : [],
     actor: (raw.actor as string) ?? null,
     actorVia: String(raw.actor_via ?? "unidentified"),
+    principalId: typeof raw.principal_id === "string" ? raw.principal_id : null,
   }));
 }
 
 let auditSchemaReady: Promise<void> | null = null;
 
-function ensureMemoryAuditSchema(): Promise<void> {
+export function ensureMemoryAuditSchema(): Promise<void> {
   if (!auditSchemaReady) {
-    auditSchemaReady = query(readAuditSql())
+    auditSchemaReady = memoryTransaction(async (client) => {
+      await client.query("SELECT pg_advisory_xact_lock(7141506)");
+      await client.query(readAuditSql());
+    })
       .then(() => undefined)
       .catch((error: unknown) => {
         auditSchemaReady = null;

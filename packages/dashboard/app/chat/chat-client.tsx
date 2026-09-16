@@ -5,7 +5,7 @@ import { DecisionCard } from "@/components/decision-card";
 import { ResultMarkdown } from "@/components/markdown";
 import { TaskBudget } from "@/components/task-budget";
 import type { InputRequest } from "@/lib/agent-client";
-import { CONNECTION_DRAFT_KEY } from "@/lib/task-examples";
+import { CONNECTION_DRAFT_KEY, MEMORY_DRAFT_KEY } from "@/lib/task-examples";
 import styles from "./chat.module.css";
 
 /**
@@ -48,10 +48,12 @@ export function ChatClient({
   initialSessionId,
   initialDraft,
   draftFromConnection = false,
+  draftFromMemory = false,
 }: {
   initialSessionId?: string;
   initialDraft?: string;
   draftFromConnection?: boolean;
+  draftFromMemory?: boolean;
 }) {
   const [sessionId, setSessionId] = useState<string | null>(
     initialSessionId ?? null,
@@ -66,19 +68,35 @@ export function ChatClient({
   const connectionDraftLoaded = useRef(false);
 
   useEffect(() => {
-    if (!draftFromConnection || initialSessionId || connectionDraftLoaded.current) return;
+    if (
+      (!draftFromConnection && !draftFromMemory) ||
+      initialSessionId ||
+      connectionDraftLoaded.current
+    )
+      return;
     connectionDraftLoaded.current = true;
     try {
-      const saved = sessionStorage.getItem(CONNECTION_DRAFT_KEY);
+      const key = draftFromMemory ? MEMORY_DRAFT_KEY : CONNECTION_DRAFT_KEY;
+      const saved = sessionStorage.getItem(key);
       if (!saved || saved.length > 20_000) {
-        setNotice("The connection draft is no longer available in this tab. Return to Connections to prepare it again.");
+        setNotice(
+          `The task draft is no longer available in this tab. Return to ${draftFromMemory ? "Memory" : "Connections"} to prepare it again.`,
+        );
         return;
       }
-      setDraft(current => current || saved);
-      sessionStorage.removeItem(CONNECTION_DRAFT_KEY);
-      setNotice("Review this request before starting. Account authorization alone does not verify repository access or enforce read-only tools.");
-    } catch { setNotice("Browser draft storage is unavailable. Enter your repository request below."); }
-  }, [draftFromConnection, initialSessionId]);
+      setDraft((current) => current || saved);
+      sessionStorage.removeItem(key);
+      setNotice(
+        draftFromMemory
+          ? "This is a correction request. The original memory has not changed. Review the agent's actions and verify the resulting memory before treating it as corrected."
+          : "Review this request before starting. Account authorization alone does not verify repository access or enforce read-only tools.",
+      );
+    } catch {
+      setNotice(
+        "Browser draft storage is unavailable. Enter your request below.",
+      );
+    }
+  }, [draftFromConnection, draftFromMemory, initialSessionId]);
 
   const abortRef = useRef<AbortController | null>(null);
   const liveStreamRef = useRef<AbortSignal | null>(null);

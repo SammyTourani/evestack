@@ -629,3 +629,21 @@ test("every response carries the headers a session transcript needs", async () =
   assert.equal(headers.get("x-frame-options"), "SAMEORIGIN");
   assert.equal(headers.get("referrer-policy"), "same-origin");
 });
+
+test("memory read and review routes reject invalid bounds before reaching storage", async () => {
+  const { GET: listMemories } = await import("../app/api/memories/route.ts");
+  const { GET: getMemory } = await import("../app/api/memories/[id]/route.ts");
+  const { POST: reviewMemory } = await import("../app/api/memories/[id]/review/route.ts");
+  for (const query of ["limit=0", "limit=101", "offset=-1", "offset=Infinity", `q=${"x".repeat(201)}`])
+    assert.equal((await listMemories(new Request(`http://localhost/api/memories?${query}`))).status, 400);
+  assert.equal((await getMemory(new Request("http://localhost/api/memories/nope"), { params: Promise.resolve({ id: "nope" }) })).status, 400);
+  for (const body of [
+    { hash: "x", verdict: "reviewed", note: "A sufficient review reason" },
+    { hash: "a".repeat(64), verdict: "apply_directly", note: "A sufficient review reason" },
+    { hash: "a".repeat(64), verdict: "correction_proposed", note: "A sufficient review reason" },
+    { hash: "a".repeat(64), verdict: "reviewed", note: "short" },
+  ]) {
+    const request = new Request("http://localhost/api/memories/1/review", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    assert.equal((await reviewMemory(request, { params: Promise.resolve({ id: "1" }) })).status, 400);
+  }
+});

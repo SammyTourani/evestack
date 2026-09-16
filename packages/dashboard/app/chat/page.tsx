@@ -19,6 +19,7 @@ export default async function ChatPage({
     <ChatClient
       initialSessionId={session}
       draftFromConnection={!session && draft === "connection"}
+      draftFromMemory={!session && draft === "memory"}
       initialDraft={
         example === "repository-brief"
           ? repositoryBrief()

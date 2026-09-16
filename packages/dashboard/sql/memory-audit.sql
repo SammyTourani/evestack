@@ -37,3 +37,21 @@ CREATE TABLE IF NOT EXISTS evestack.memory_deletions (
 );
 
 CREATE INDEX IF NOT EXISTS memory_deletions_recent_idx ON evestack.memory_deletions (deleted_at DESC);
+
+ALTER TABLE evestack.memory_deletions ADD COLUMN IF NOT EXISTS principal_id text;
+
+-- Reviews are proposals and observations, never replacement embeddings.
+-- No foreign key: review history survives removal from recall.
+CREATE TABLE IF NOT EXISTS evestack.memory_reviews (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  memory_id text NOT NULL,
+  memory_hash text NOT NULL,
+  verdict text NOT NULL CHECK(verdict IN ('reviewed','stale','conflicting','correction_proposed')),
+  note text NOT NULL,
+  proposed_content text,
+  snapshot jsonb NOT NULL,
+  actor text,
+  actor_via text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS memory_review_history ON evestack.memory_reviews(memory_id, created_at DESC, id DESC);

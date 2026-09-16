@@ -88,8 +88,10 @@ Status: `[ ]` queued, `[-]` in progress, `[x]` verified, `[~]` implemented await
 ## 7. Knowledge and warning quality
 
 - [x] Knowledge landing page distinguishes remembered facts and installed skills.
-- [ ] Memory owner/shared state, source session and retention semantics visible.
-- [ ] Correction history and stale/conflicting-memory review with scoped writes.
+- [x] Memory owner/shared state, source session and retention semantics visible.
+- [x] Append-only reviewed/stale/conflicting/correction-proposal history bound to the exact memory and owner; stale writes rejected.
+- [x] Editable correction-task handoff preserves the proposal and original owner without changing recall or starting a task.
+- [ ] Verify an applied correction and recomputed embedding through a real agent's scoped memory tools.
 - [x] Explain removal from recall versus retained audit copies; expose supported retention controls.
 - [x] Skill finding review bound to exact file hash; changes reopen review.
 - [x] Resolve bundled safety-skill false positive without exempting quoted attacks globally.
@@ -194,3 +196,11 @@ These are required product learning, not claims a coding session can prove.
 - Connections now preserves a repository choice through authorization, checks grants against the configured identity, distinguishes active/expired/missing/unknown results and prepares an editable request with evidence requirements. The check does not verify repository access, scopes or custom agent configuration.
 - Ten connection tests cover foreign identities, incomplete/malformed responses, size limits, secret redaction, ambiguous writes, return-path restrictions, cross-site/oversized forms and unsafe redirects. Dashboard: 751 tests pass, with the native database group separate. All 25 contracts / 623 assertions pass.
 - Browser verification against a local Composio fixture passed for failed/repeated checks, OAuth-return draft preservation, an editable task handoff without repository text in the URL, and mobile layout. No actual GitHub authorization or repository execution is claimed.
+
+### Memory review checkpoint
+
+- Guided connection commit `31e2d9e` passed CI and runtime-image checks.
+- Remembered facts now show ownership, sharing, source tasks and retention. Review history is append-only and tied to the current record, including owner and row version. A proposed correction prepares an editable agent task; it does not silently replace text or embeddings.
+- Dashboard removal locks and checks the current record and records the original owner in the same transaction. An audit write failure rolls the removal back. The interface keeps stale-review drafts and explains uncertain removal responses.
+- Native PostgreSQL: seven tests pass for legacy ownership, proposal isolation, concurrent changes/deletes, vector-only changes, audit rollback and retained history. These tests are included in CI alongside routine durability.
+- Dashboard: 752 tests pass, two native suites run separately; production build passes. Browser verification of the built memory page passed proposal handoff, stale review/delete rejection, deletion ownership/audit, mobile layout and no JavaScript errors. Template memory tests: 24 pass. Memory documentation and template error messages now prescribe backup and re-embedding instead of dropping the memory table.

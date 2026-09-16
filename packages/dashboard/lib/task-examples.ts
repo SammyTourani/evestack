@@ -11,3 +11,4 @@ export function validRepository(value: string) {
 }
 
 export const CONNECTION_DRAFT_KEY = "evestack.connection-task-draft";
+export const MEMORY_DRAFT_KEY = "evestack.memory-task-draft";

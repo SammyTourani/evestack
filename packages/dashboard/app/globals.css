@@ -775,6 +775,13 @@
   .repository-setup > .routine-form {
     margin: 16px 0;
   }
+  .memory-review {
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+  .memory-review p { margin: 10px 0; line-height: 1.6; }
+  .memory-review > details { margin-top: 16px; }
   .workspace-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));

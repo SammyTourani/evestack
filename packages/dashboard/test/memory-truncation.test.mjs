@@ -100,7 +100,7 @@ test("a failed audit read is reported, never rendered as an empty trail", () => 
   assert.match(PAGE, /deletionsError/, "the audit read has no error state");
   assert.match(
     PAGE,
-    /not evidence that nothing was\s*\n?\s*deleted/,
+    /not\s+evidence that nothing was\s+deleted/,
     "the failure state must say it is not an all-clear",
   );
 });

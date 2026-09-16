@@ -274,7 +274,7 @@ function getPool(): Pool {
  * runtime and a migration of ours must never collide with theirs.
  *
  * The vector column is fixed-width, so changing embedding model or dimension
- * means dropping this table. That is why the dimension is explicit rather than
+ * needs a planned re-embedding migration. That is why the dimension is explicit rather than
  * inferred: a silent mismatch would fail at insert time with a confusing error.
  */
 async function ensureSchema(): Promise<void> {
@@ -378,10 +378,9 @@ async function ensureSchema(): Promise<void> {
       throw new Error(
         `evestack.memories stores ${existing}-dimensional vectors but this agent is configured for ` +
           `${dimensions} (${provider}/${model}). Vectors from two different models are ` +
-          "not comparable, so the old rows cannot be kept. Either set " +
-          `EVESTACK_EMBED_DIMENSIONS=${existing} and go back to the model that wrote them, or drop ` +
-          "the table and start over:\n" +
-          "    docker compose exec postgres psql -U evestack -d evestack -c 'DROP TABLE evestack.memories'",
+          "not comparable. Restore the model that wrote these memories and " +
+          `EVESTACK_EMBED_DIMENSIONS=${existing}. To change models, back up the database and ` +
+          "re-embed the saved text in a separate migration. Changing a setting must not delete your memories.",
       );
     }
   })().catch((error: unknown) => {
@@ -444,9 +443,8 @@ async function embedText(text: string): Promise<number[]> {
   if (embedding.length !== dimensions) {
     throw new Error(
       `${provider}/${model} returns ${embedding.length}-dimensional vectors but this ` +
-        `database stores ${dimensions}. Set EVESTACK_EMBED_DIMENSIONS=${embedding.length} and drop ` +
-        "the evestack.memories table (existing rows were embedded by the old model and cannot be " +
-        "compared against the new one).",
+        `database stores ${dimensions}. Restore the model and dimensions used by the existing ` +
+        "memories. To change models, back up the database and re-embed the saved text in a separate migration; do not discard the table to fix this error.",
     );
   }
   return embedding;
