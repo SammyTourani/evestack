@@ -1,10 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { createServer } from "node:http";
 import pg from "pg";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 // Creates and drops only its own disposable database. CI runs this against native PostgreSQL.
 test(
@@ -69,10 +70,61 @@ test(
       );
     }
     await routines.ensureRoutines();
+    // Use the pinned world's migrations: a text status fixture accepted values
+    // that PostgreSQL's real workflow.status enum rejects during reconciliation.
+    const templateRequire = createRequire(
+      new URL("../../../templates/default/package.json", import.meta.url),
+    );
+    const cli = pathToFileURL(templateRequire.resolve("@workflow/world-postgres/cli")).href;
+    const setup = spawnSync(process.execPath, [
+      "--input-type=module", "--eval",
+      `const { setupDatabase } = await import(${JSON.stringify(cli)}); await setupDatabase();`,
+    ], { env: process.env, encoding: "utf8", timeout: 30000 });
+    assert.equal(setup.status, 0, "The pinned workflow schema must bootstrap successfully");
     await db().query(
-      "CREATE SCHEMA workflow; CREATE TABLE workflow.workflow_runs(id text PRIMARY KEY,status text,attributes jsonb,created_at timestamp DEFAULT now())",
+      "ALTER TABLE workflow.workflow_runs ALTER COLUMN name SET DEFAULT 'routine-fixture', ALTER COLUMN deployment_id SET DEFAULT 'routine-fixture'",
     );
 
+    await t.test(
+      "a terminal stream reconciles success and failed children with the real status enum",
+      async () => {
+        await settle();
+        const server = createServer((_req, res) => {
+          res.writeHead(200, {
+            "content-type": "application/x-ndjson",
+            "x-eve-stream-tail-index": "0",
+          });
+          res.end(JSON.stringify({ type: "session.completed", data: {} }) + "\n");
+        });
+        await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+        const previous = process.env.EVESTACK_AGENT_URL;
+        process.env.EVESTACK_AGENT_URL = `http://127.0.0.1:${server.address().port}`;
+        try {
+          for (const childStatus of ["completed", "failed", "cancelled"]) {
+            const routine = await create();
+            const run = await routines.runRoutineNow(routine.id, randomUUID(), actor);
+            const session = `completion_${randomUUID()}`;
+            await db().query(
+              "UPDATE evestack.routine_runs SET state='running',session_id=$2 WHERE id=$1",
+              [run.id, session],
+            );
+            await db().query(
+              "INSERT INTO workflow.workflow_runs(id,status,attributes) VALUES($1,$2,$3)",
+              [session + '_child', childStatus, JSON.stringify({ "$eve.root": session })],
+            );
+            await tickRoutines();
+            const history = await routines.routineHistory(routine.id);
+            assert.equal(history.runs[0].error, null);
+            assert.equal(history.runs[0].state, childStatus === "completed" ? "completed" : "failed");
+          }
+        } finally {
+          if (previous === undefined) delete process.env.EVESTACK_AGENT_URL;
+          else process.env.EVESTACK_AGENT_URL = previous;
+          await new Promise((resolve) => server.close(resolve));
+          await settle();
+        }
+      },
+    );
     await t.test(
       "new routines are paused and enabling requires a successful test",
       async () => {
@@ -541,9 +593,6 @@ test(
     await t.test(
       "task detail reads the latest 500 runs and labels the history window",
       async () => {
-        await db().query(
-          "ALTER TABLE workflow.workflow_runs ADD COLUMN error_code text, ADD COLUMN started_at timestamp, ADD COLUMN completed_at timestamp",
-        );
         const id = `bounded_${randomUUID()}`;
         await db().query(
           "INSERT INTO workflow.workflow_runs(id,status,attributes) VALUES($1,'completed',$2)",

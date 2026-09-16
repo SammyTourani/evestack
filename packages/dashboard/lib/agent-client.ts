@@ -7,8 +7,7 @@
  * know what HTTP status to return — and because the agent's wire contract is
  * worth stating once in types instead of being re-derived in five route files.
  *
- * Routes below were read out of eve 0.29.5 rather than guessed;
- * `templates/default/node_modules/eve/dist/src/protocol/routes.js` declares:
+ * Eve 0.54 addresses commands by durable session ID:
  *
  *   POST /eve/v1/session                      create a session, 202
  *   POST /eve/v1/session/:sessionId           follow-up message and/or HITL answers, 200
@@ -18,6 +17,8 @@
  * There is no approve/deny route. HITL answers ride the follow-up route as
  * `inputResponses`; see `answerInput` below.
  */
+
+import { resolvedInputIds } from "./input-resolutions";
 
 const DEFAULT_AGENT_URL = "http://127.0.0.1:2000";
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -320,22 +321,7 @@ export interface CreateSessionInput {
 
 export interface CreateSessionResult {
   sessionId: string;
-  /**
-   * NULL FROM eve 0.31 ONWARD, and that is not a degradation.
-   *
-   * 0.30.x minted a continuation token in the create response. 0.31.3 answers
-   * `{ok, sessionId, status}` and publishes the token on the `session.waiting`
-   * stream event instead — which is where it becomes meaningful, since a session
-   * that has not parked has nothing to continue from. Verified against a running
-   * 0.31.3: the event still carries `data.continuationToken`, unchanged.
-   *
-   * Requiring it here rejected every session created against 0.31.3 with
-   * "The agent accepted the session but returned no handles" — a 502 on the
-   * dashboard's only way to start a conversation. Contracts did not see it
-   * (they pin routes and module exports, not response bodies) and neither did
-   * typecheck (this is JSON parsed at runtime). Only seam/chat-stream and
-   * seam/chat-mutations, driving a live agent, did.
-   */
+  /** Legacy response metadata; current commands use sessionId directly. */
   continuationToken: string | null;
 }
 
@@ -356,12 +342,7 @@ export async function createSession(
     ...(input.signal ? { signal: input.signal } : {}),
   });
 
-  // The SESSION ID is the handle. The token is not required, and demanding it
-  // is what broke against 0.31.3 — see CreateSessionResult above. Every caller
-  // that needs a token already resolves one from the durable stream: the
-  // follow-up route does it whenever `continuationToken` is omitted, and the
-  // fork route polls `getSessionSnapshot` for a token that is not the one it
-  // already spent. Neither has ever depended on this field.
+  // A successful create must identify the durable session.
   if (!result.sessionId) {
     throw new AgentError(
       "invalid_response",
@@ -378,7 +359,8 @@ export async function createSession(
 }
 
 export interface ContinueSessionInput {
-  continuationToken: string;
+  /** Legacy caller compatibility only. Eve 0.54 rejects this field on the wire. */
+  continuationToken?: string;
   message?: UserMessage;
   inputResponses?: readonly InputResponse[];
   clientContext?: unknown;
@@ -387,15 +369,16 @@ export interface ContinueSessionInput {
 
 /**
  * Follow-up turn. eve requires a non-empty `message`, a non-empty
- * `inputResponses`, or both; sending neither is a 400 from the agent.
+ * `inputResponses`, exclusively. The session ID supplies the address.
  */
 export async function continueSession(
   sessionId: string,
   input: ContinueSessionInput,
 ): Promise<{ sessionId: string }> {
-  const body: Record<string, unknown> = {
-    continuationToken: input.continuationToken,
-  };
+  if (input.message !== undefined && input.inputResponses !== undefined) {
+    throw new AgentError("bad_request", "Send a follow-up message separately from an input decision.", { status: 400 });
+  }
+  const body: Record<string, unknown> = {};
   if (input.message !== undefined) body.message = input.message;
   if (input.inputResponses !== undefined)
     body.inputResponses = input.inputResponses;
@@ -440,7 +423,7 @@ export async function cancelTurn(
 export async function answerInput(
   sessionId: string,
   input: {
-    continuationToken: string;
+    continuationToken?: string;
     inputResponses: readonly InputResponse[];
     message?: UserMessage;
     signal?: AbortSignal;
@@ -689,7 +672,7 @@ function parseEventLine(line: string): EveStreamEvent | undefined {
 
 export interface SessionSnapshot {
   sessionId: string;
-  /** Rotates every turn; only the one from the latest `session.waiting` works. */
+  /** Legacy stream metadata. Current session-ID commands do not send this field. */
   continuationToken?: string;
   /** True when the last boundary event was `session.waiting`. */
   waiting: boolean;
@@ -739,16 +722,11 @@ export async function getSessionSnapshot(
         const turnId = event.data.turnId;
         if (typeof turnId === "string") snapshot.turnId = turnId;
         snapshot.waiting = false;
-        // Two orderings, both verified against eve 0.29.5, force this to be the
-        // clearing signal. A HITL pause emits `turn.completed` BEFORE
-        // `session.waiting`, so turn completion cannot mean "answered". And
-        // answering an `ask_question` emits no `action.result` at all — the
-        // resumed turn just starts. A new turn is the one thing that reliably
-        // means the parked one moved on. eve re-emits `input.requested` for
-        // anything still outstanding, so clearing here cannot strand a live
-        // request; the reverse mistake would show an operator a decision that
-        // has already been made.
-        pending.clear();
+        // Unrelated messages start new turns without resolving older approvals.
+        break;
+      }
+      case "input.resolved": {
+        for (const requestId of resolvedInputIds(event.data)) pending.delete(requestId);
         break;
       }
       case "input.requested": {

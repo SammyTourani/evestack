@@ -92,7 +92,7 @@ export function DecisionCard({
             key={option.id}
             type="button"
             disabled={busy}
-            className={option.id === "deny" ? styles.deny : undefined}
+            className={option.id === "deny" || option.id === "cancel" ? styles.deny : undefined}
             title={"description" in option ? option.description : undefined}
             onClick={() => void submit({ optionId: option.id })}
           >

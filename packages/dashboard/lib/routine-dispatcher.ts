@@ -94,7 +94,7 @@ export async function tickRoutines() {
           const failed =
             (
               await getPool().query(
-                `SELECT id FROM workflow.workflow_runs WHERE (id=$1 OR attributes->>'$eve.root'=$1) AND status IN ('failed','errored','cancelled') LIMIT 1`,
+                `SELECT id FROM workflow.workflow_runs WHERE (id=$1 OR attributes->>'$eve.root'=$1) AND status IN ('failed','cancelled') LIMIT 1`,
                 [run.session_id],
               )
             ).rows.length > 0;

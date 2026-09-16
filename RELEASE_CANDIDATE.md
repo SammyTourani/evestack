@@ -1,6 +1,6 @@
 # Eve Stack release candidate
 
-**Prepared for supervised first use. Live operation still needs verification.**
+**Local live workflows verified for supervised use. Production integrations still need verification.**
 
 This candidate turns Eve Stack into a workspace for a solo operator to run a
 useful task, inspect its evidence, respond to decisions and schedule a tested
@@ -68,6 +68,7 @@ A selected version is not proof it has been published or deployed.
 | HTTP boundary | 24 changed routes reject anonymous requests; 14 write handlers reject foreign origins; applicable body-size limits reject oversized requests |
 | Compatibility | 25 contracts / 656 assertions on locked Eve 0.54.3; 18 upstream contracts / 298 assertions on resolved Eve 0.54.5, with seven checkout-only groups explicitly skipped |
 | Production audit | Zero reported advisories across 688 production dependencies on September 16 |
+| Real Mac workflow | Local Qwen/Ollama, real PostgreSQL/pgvector, repository file reads, scoped memory correction, browser approvals, restarts, scheduled occurrence, CLI replay and cancellation; [results and limitations](MAC_SMOKE_TEST.md) |
 
 The PR's checks must all pass on the final candidate commit, including advisory
 Windows/macOS jobs and the separate dashboard image build. Earlier checkpoint
@@ -76,28 +77,27 @@ not establish a real provider, repository or external channel result.
 
 ## Remaining launch gates
 
-No model or Composio credentials were available in the checkout, shell or scoped
-Eve Stack workspaces. These checks need the intended configured installation.
-Credentials belong in its private configuration, not in a chat or committed file.
+The [Mac test](MAC_SMOKE_TEST.md) verified a real local model and repository-file
+workflow, an actual scheduled occurrence, decisions, restart recovery and a
+guided memory correction with a recomputed vector. Composio and external channel
+credentials were not configured. Verify the following in the intended deployment.
 
-1. **One real repository brief.** Use the [first-task guide](docs/first-task.mdx).
+1. **The intended repository brief.** Use the [first-task guide](docs/first-task.mdx).
    Select one repository, inspect grants, choose a modest enforced budget and run
    the read-only prompt. Inspect actual tool results, source links and reported
    usage. A completed task with fabricated or inaccessible evidence fails this gate.
-2. **One real scheduled occurrence.** Review the test result before enabling its
+2. **A scheduled occurrence in the intended deployment.** The local clock test passed.
+   Review the production test result before enabling its
    routine. Leave the clock and agent running, then inspect the occurrence, task
    link and result. Confirm a pause prevents new dispatches; it does not cancel
    work already running.
-3. **Actual delivery and recovery.** Observe a notification or channel receipt at
-   its real destination. Exercise a harmless approval and a controlled failure;
-   inspect the decision history and recover without repeating an uncertain write.
-4. **Memory correction.** Complete a
-   reviewed correction through the scoped agent tools, then verify changed recall
-   and a recomputed embedding. The dashboard proposal alone does not pass.
-5. **First-user rehearsal.** Have someone unfamiliar with the repository complete
+3. **External delivery.** Observe a notification or channel receipt at
+   its intended destination. Local receiver delivery, browser approvals and
+   recovery passed; they do not prove that external credentials and routing work.
+4. **First-user rehearsal.** Have someone unfamiliar with the repository complete
    installation and the first useful task without coaching. Record each confusing
    step and whether the result was useful enough to repeat.
-6. **Release decision and publication.** Review the full PR and exact CI result,
+5. **Release decision and publication.** Review the full PR and exact CI result,
    then follow the runbook's dependency order. After publication, repeat the clean
    install against the public registry and pull the versioned dashboard image.
 

@@ -16,8 +16,9 @@ to whichever provider is already selected.
 | `openrouter` | `OPENROUTER_API_KEY` | `qwen/qwen3.8-27b` |
 | `ollama` | none | `qwen3:0.6b` |
 | `compatible` | `EVESTACK_COMPATIBLE_API_KEY` (optional) | none — set it yourself |
+| `chatgpt` | the signed-in local ChatGPT session | `gpt-5.6-sol` |
 
-`create-evestack` asks which one you want and writes both lines. Anything other than those five
+`create-evestack` asks which one you want and writes both lines. Anything other than those six
 values is rejected at boot with the list above rather than silently treated as OpenAI — a
 misspelled provider is a mistake, not a preference.
 
@@ -64,19 +65,21 @@ and sizes are what `ollama pull` reports:
 
 | Model | Download | Tools | Notes |
 | --- | --- | --- | --- |
-| `granite4:350m-h` | 366 MB | yes | the smallest thing that can still drive this agent |
-| `qwen3:0.6b` | 523 MB | yes | **the wizard's default** — tiny and reliable at tool calls |
-| `llama3.2:1b` | 1.3 GB | yes | a good fallback if 0.6b struggles |
-| `qwen3:1.7b` | 1.4 GB | yes | noticeably better reasoning, still small |
-| `qwen3:4b` | 2.5 GB | yes | the sweet spot on a 16 GB machine |
+| `granite4:350m-h` | 366 MB | yes | tool support still needs a workflow test |
+| `qwen3:0.6b` | 523 MB | yes | **the wizard's default**; narrow supervised tasks, with thinking enabled |
+| `llama3.2:1b` | 1.3 GB | yes | malformed tool arguments observed in the Mac smoke test |
+| `qwen3:1.7b` | 1.4 GB | yes | check runtime memory and task quality |
+| `qwen3:4b` | 2.5 GB | yes | needs more memory headroom |
 | `qwen3` | 5.2 GB | yes | the old default; needs real headroom |
 | `gemma3:270m` | 292 MB | **no** | chat only |
 | `gemma3:1b` | 815 MB | **no** | chat only |
 
-Budget the model's download **plus about 4 GB** for Docker, Postgres, the dashboard and the agent.
-On an 8 GB laptop that rules out `qwen3` and leaves everything above it comfortable.
+Download size is not runtime memory. On the tested 8 GB Mac, Qwen 0.6B used about
+1.5 GB while loaded with an 8,192-token context, before the embedding model and
+other apps. Docker adds its own VM overhead. Check available memory before
+loading a model; a small download does not guarantee a comfortable full stack.
 
-For zero cost, total:
+To run without a hosted model API bill:
 
 ```bash
 ollama pull qwen3:0.6b           # the chat model — 523 MB
@@ -123,10 +126,19 @@ save the turn. Both are ignored on the hosted providers, whose models the catalo
 </Warning>
 
 <Note>
-  Local models generally have weaker tool-calling than gpt-5-mini or Claude, and the small ones
-  more so. That's the honest tradeoff for $0 total cost — try it, and switch to a larger local
-  model, an OpenRouter key, or a cloud key if tool use feels unreliable.
+  Tool support does not guarantee correct answers or instructions followed. The
+  Mac smoke test saw invented file contents, malformed arguments and repeated
+  approval requests from tiny models. Inspect tool results and keep consequential
+  actions behind approval. Local inference avoids a hosted API bill; hardware,
+  electricity, storage and maintenance still have costs.
 </Note>
+
+`EVESTACK_CONTEXT_WINDOW` tells Eve when to compact its conversation. Configure
+the same context size in Ollama's model options or Modelfile; this environment
+variable does not change Ollama's allocation. The Mac test used native PostgreSQL
+with its database timezone set to UTC and a `just-bash` virtual filesystem to
+avoid Docker's VM. That setup can read copied repository files, but cannot run
+real `git`, Node or package-manager commands inside the sandbox.
 
 ## What it costs on disk
 

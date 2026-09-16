@@ -287,7 +287,7 @@ Two prefixes, both forwarded, neither rewritten:
 - `/.well-known/workflow/` — workflow callbacks
 
 Forwarding only `/eve/` is the most common self-hosting failure and it is not a clean one: the
-session starts, returns `202` with a continuation token, and then stalls forever because the run's
+session starts, returns `202` with a session ID, and then stalls forever because the run's
 callback cannot get back in. Nothing errors. It just never finishes.
 
 ```nginx

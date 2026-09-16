@@ -109,15 +109,6 @@ export async function POST(
       return jsonError("This session has already ended; there is nothing to approve.", 409, "session_terminal");
     }
 
-    const continuationToken = providedToken ?? snapshot.continuationToken;
-    if (!continuationToken) {
-      return jsonError(
-        "No continuation token is available yet — the session has not reached a waiting boundary.",
-        409,
-        "session_busy",
-      );
-    }
-
     const targets = selectTargets(snapshot.pendingRequests, requestId);
     if (isResponse(targets)) return targets;
 
@@ -146,7 +137,6 @@ export async function POST(
     }
 
     const result = await answerInput(id, {
-      continuationToken,
       inputResponses,
       ...(message === undefined ? {} : { message }),
       signal: request.signal,
@@ -204,7 +194,8 @@ export async function POST(
     return jsonOk({
       sessionId: result.sessionId,
       answered: inputResponses,
-      resolvedContinuationToken: providedToken === undefined,
+      resolvedContinuationToken: false,
+      addressedBy: "sessionId",
       approver: identity.approver,
       approverVia: identity.via,
       audited,

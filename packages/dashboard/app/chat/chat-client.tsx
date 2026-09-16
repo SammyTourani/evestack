@@ -6,6 +6,7 @@ import { ResultMarkdown } from "@/components/markdown";
 import { TaskRecoveryPanel } from "@/components/task-recovery";
 import { TaskBudget } from "@/components/task-budget";
 import type { InputRequest } from "@/lib/agent-client";
+import { resolvedInputIds } from "@/lib/input-resolutions";
 import { CONNECTION_DRAFT_KEY, MEMORY_DRAFT_KEY } from "@/lib/task-examples";
 import styles from "./chat.module.css";
 
@@ -320,7 +321,6 @@ export function ChatClient({
           break;
         }
         case "turn.started":
-          setPending([]);
           setStatus("streaming");
           break;
         case "input.requested": {
@@ -341,10 +341,11 @@ export function ChatClient({
           }
           break;
         }
-        case "input.resolved":
-        case "input.completed":
-          setPending([]);
+        case "input.resolved": {
+          const resolved = resolvedInputIds(data);
+          setPending((prev) => prev.filter((request) => !resolved.has(request.requestId)));
           break;
+        }
         case "session.waiting":
           setStatus("waiting");
           // Deliberately does NOT touch `pending`.
@@ -375,6 +376,7 @@ export function ChatClient({
           setPending([]);
           break;
         case "session.failed":
+          setPending([]);
           setStatus("error");
           setError(
             "This task ended with a failure. Open its evidence to inspect the cause before repeating work.",
@@ -666,7 +668,11 @@ export function ChatClient({
                     entry.pending ? styles.toolPending : styles.toolDone
                   }
                 >
-                  {entry.pending ? "running…" : entry.text || "done"}
+                  {entry.pending
+                    ? pending.some((request) => `t-${request.action?.callId}` === entry.id)
+                      ? "waiting for your decision"
+                      : "running…"
+                    : entry.text || "done"}
                 </span>
               </div>
             ) : (

@@ -1417,6 +1417,12 @@ Knowledge, with Settings and Diagnostics still available. Readable results link
 to recorded evidence and cost; failed requests retain drafts, and uncertain
 external delivery remains visible.
 
+Real-model testing on an 8 GB Mac found and fixed routine completion against the
+actual PostgreSQL status enum, Eve 0.54 follow-up/approval command compatibility,
+replay progress with stable session IDs, and independent pending-decision tracking.
+Gated tools display their pending decision state. See [the live test](MAC_SMOKE_TEST.md)
+for successful workflows and small-model limitations.
+
 - Durable routines have timezone previews, tested DST behavior, revision snapshots,
   concurrent-worker claims, a test-before-enable gate, bounded catch-up and visible
   uncertain dispatch. Notification retries retain stable delivery identifiers.

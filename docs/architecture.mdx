@@ -60,9 +60,13 @@ the task's request.
 ## Approvals ride the ordinary follow-up route
 
 There's no dedicated approve/deny endpoint. A pending tool approval resolves the same way an
-`ask_question` does — through the normal continuation route:
+`ask_question` does — through the session's ID-addressed route:
 
 ```
 POST /eve/v1/session/:sessionId
-{ "continuationToken": "...", "inputResponses": [{ "requestId": "...", "optionId": "approve" }] }
+{ "inputResponses": [{ "requestId": "...", "optionId": "approve" }] }
 ```
+
+Eve 0.54 rejects `continuationToken` on this route. Send either a message or
+structured input responses in one request. Unrelated messages leave existing
+approvals pending; `input.resolved` identifies the requests that actually ended.

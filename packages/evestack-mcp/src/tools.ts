@@ -678,8 +678,8 @@ const sendMessage: ToolDefinition = {
     "MUTATING. Sends a follow-up message to an existing session, which starts another turn: more model " +
     "calls, more spend, possibly more tool execution. Not for answering an approval prompt — use " +
     "approve_or_deny for that.\n\n" +
-    "The continuation token rotates every turn and the dashboard resolves the current one for you, so " +
-    "you normally omit it. Fails with `session_terminal` if the session has already ended (start a new " +
+    "The durable session ID addresses the follow-up; no continuation token is needed. " +
+    "Fails with `session_terminal` if the session has already ended (start a new " +
     "one) and with `session_busy` if a turn is still mid-flight.",
   inputSchema: {
     type: "object",
@@ -696,7 +696,7 @@ const sendMessage: ToolDefinition = {
         type: "string",
         minLength: 1,
         description:
-          "Rarely needed. Omit and the dashboard reads the current one off the durable stream.",
+          "Deprecated compatibility field. Current dashboards ignore it; use sessionId.",
       },
     },
   },
