@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "A fully free, self-hosted distribution of the eve agent framework.",
+  "description": "A self-hosted workspace for recurring AI work, task results and operator decisions.",
   "license": "Apache-2.0",
   "engines": {
     "node": ">=24"

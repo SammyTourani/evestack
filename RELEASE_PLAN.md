@@ -126,9 +126,9 @@ Status: `[ ]` queued, `[-]` in progress, `[x]` verified, `[~]` implemented await
 
 ## 10. Public release and product promise
 
-- [ ] Website shows the recurring-work use case, real prerequisites and a representative result.
-- [ ] Update screenshots and walkthrough to the shipped interface.
-- [ ] Fix README platform, runtime pin and verification-count drift.
+- [x] Website shows the recurring-work use case, real prerequisites and a representative result.
+- [x] Update screenshots and walkthrough to the shipped interface.
+- [x] Fix README platform, runtime pin and verification-count drift.
 - [ ] Version-matched docs and coding-agent pack; no claims beyond implemented behavior.
 - [ ] Release notes cover features, security fixes, upgrade steps and limitations.
 - [x] Bump changed published runtime packages; synchronize template/registry/CLI dependencies.
@@ -291,3 +291,12 @@ These are required product learning, not claims a coding session can prove.
 - Dashboard production build, 770 non-database tests and 25 compatibility contracts / 640 assertions pass. Six native database groups are excluded from that fast-test count and run separately.
 - Browser checks use actual disposable file changes: stale saves reject with the draft retained; additions/edits/removals are visible; source metadata and permissions caveats remain readable on desktop/mobile/dark views. No browser script errors.
 - Exact CI and dashboard-image builds passed for the preceding queue (`a4d92c3`) and execution-environment (`e4d12c1`) checkpoints. This new checkpoint awaits its own CI verification.
+
+### Public onboarding and product claims (September 16)
+
+- The website, README and docs lead with a checkable repository maintenance brief, then a tested recurring run. The new first-task guide covers real prerequisites, account/repository verification, source review, permissions, costs and clock/notification operations.
+- Removed blanket safety/privacy, zero-cost and automatic-recovery claims. npm descriptions, support coverage and coding-agent references follow the current implementation and selected runtime pins.
+- Replaced README screenshots with the current Tasks interface. The website includes the real task UI displaying an explicitly illustrative repository brief. Local seeded data and the browser stream fixture are labeled; no live model/source result is implied.
+- Desktop/mobile/dark visual checks passed; the product explanation is now visible in the phone hero. The new walkthrough link meets the 44px touch target. Existing interactive website behavior remains covered by all 32 passing Playwright checks and a fresh production build.
+- CLI: 168 tests passed; scaffolder: 246 passed, one optional runtime check skipped. Expanded documented-path coverage to coding-agent references and rendered docs URLs: 25 contracts / 651 assertions pass without lowering coverage floors. Documentation-order tests now use section markers rather than cross-link occurrence.
+- Exact CI and dashboard image passed on skill checkpoint `d271e4d`. No credentials were found in this checkout, shell or the scoped Eve Stack workspaces; live-provider validation remains an unmet gate. Operator directed us to choose the best approach; no credentials or live result were invented.

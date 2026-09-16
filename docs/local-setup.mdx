@@ -1,6 +1,6 @@
 ---
 title: Local setup & troubleshooting
-description: Docker, Postgres, and the Ollama path to a genuinely $0 stack.
+description: Docker, Postgres and local models, with provider and memory requirements.
 ---
 
 ## Picking a provider
@@ -133,7 +133,7 @@ save the turn. Both are ignored on the hosted providers, whose models the catalo
 The RAM warning above is the one that bites first, but disk is the one nobody budgets for.
 Measured on macOS with Colima, one project, clean Docker:
 
-| | With an API key | On the $0 Ollama path |
+| | With an API key | With local Ollama models |
 | --- | --- | --- |
 | Docker images | ~2.0 GB | ~2.0 GB |
 | Postgres volume | ~70 MB | ~70 MB |

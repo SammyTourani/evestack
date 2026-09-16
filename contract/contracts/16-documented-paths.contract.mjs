@@ -25,7 +25,17 @@ import { join } from "node:path";
 import { REPO_ROOT } from "../lib/repo.mjs";
 
 /** Documents that carry links a stranger or a crawler will follow. */
-const LINK_SOURCES = ["llms.txt", "README.md", "RELEASING.md", "contract/README.md"];
+const LINK_SOURCES = [
+  "llms.txt",
+  "README.md",
+  "RELEASING.md",
+  "contract/README.md",
+  "skills/evestack/SKILL.md",
+  "skills/evestack/references/dashboard.md",
+  "skills/evestack/references/cli.md",
+  "skills/evestack/references/build-an-agent.md",
+  "skills/evestack/references/troubleshooting.md",
+];
 
 /**
  * Repo-relative paths appearing in prose. Deliberately narrow: it matches paths
@@ -59,7 +69,8 @@ const PATH_PATTERN =
  * with one is either already covered above or an external URL, and a URL cannot
  * match `[A-Za-z][A-Za-z0-9._-]*` past its scheme colon.
  */
-const ROOT_LINK_PATTERN = /\]\((?:\.\/)?([A-Za-z][A-Za-z0-9._-]*\.[a-z]{2,4})\)/g;
+const ROOT_LINK_PATTERN =
+  /\]\((?:\.\/)?([A-Za-z][A-Za-z0-9._-]*\.[a-z]{2,4})\)/g;
 
 /** Paths that legitimately do not resolve on disk. */
 const EXEMPT = new Set([
@@ -89,6 +100,12 @@ function linksIn(file) {
   if (!existsSync(full)) return [];
   const text = readFileSync(full, "utf8")
     .replace(RAW_PREFIX, "")
+    // Public README links use rendered documentation URLs. Check the source
+    // page behind those routes as well as raw GitHub paths.
+    .replace(
+      /https:\/\/evestack\.vercel\.app\/docs(?:\/([A-Za-z0-9_/-]+))?/g,
+      (_url, slug) => `docs/${slug || "index"}.mdx`,
+    )
     .replace(/\bnode_modules\/\S*/g, "");
   const prefixed = text.match(PATH_PATTERN) ?? [];
   const rootLevel = [...text.matchAll(ROOT_LINK_PATTERN)].map((m) => m[1]);
@@ -99,7 +116,8 @@ function linksIn(file) {
 
 export default {
   id: "docs/every-documented-path-exists",
-  title: "every repo path named in llms.txt, the READMEs and RELEASING.md is on disk",
+  title:
+    "every repo path named in llms.txt, the READMEs and RELEASING.md is on disk",
   scope: "repo",
   assumption:
     "A path written into prose is a promise that the file is there. llms.txt in particular is " +
@@ -148,15 +166,24 @@ export default {
      * no assertion can make; whether it is still there is exactly the part that
      * rots silently when a page is moved.
      */
-    const copy = readFileSync(join(REPO_ROOT, "packages/website/lib/copy.ts"), "utf8");
-    const sources = [...copy.matchAll(/^\s*source:\s*"([^"]+)"/gm)].map((m) => m[1]);
+    const copy = readFileSync(
+      join(REPO_ROOT, "packages/website/lib/copy.ts"),
+      "utf8",
+    );
+    const sources = [...copy.matchAll(/^\s*source:\s*"([^"]+)"/gm)].map(
+      (m) => m[1],
+    );
 
     // A capability list that silently emptied would pass every assertion below
     // by having none to make.
-    t.ok(sources.length >= 4, `copy.ts still names ${sources.length} source files`, {
-      expected: "at least 4",
-      actual: String(sources.length),
-    });
+    t.ok(
+      sources.length >= 4,
+      `copy.ts still names ${sources.length} source files`,
+      {
+        expected: "at least 4",
+        actual: String(sources.length),
+      },
+    );
 
     for (const path of sources) {
       t.ok(

@@ -1,0 +1,89 @@
+---
+title: Your first useful task
+description: Connect a repository, review a maintenance brief, then test a recurring run.
+---
+
+Start with one repository you maintain. The goal is a short brief you can verify: what changed,
+what needs attention, and links supporting each finding. A successful connection or completed
+task alone does not prove the brief is correct.
+
+## 1. Check the workspace
+
+Complete the [quickstart](/docs/quickstart), then open **Settings**. Recheck the database, agent
+and model. The model must actually answer a request; a saved key only shows configuration.
+Review estimated costs and budget settings before starting. Budgets apply only to agents that
+load the budget hook, and an in-flight call can still incur charges.
+
+You need Node 24+, Docker and a model provider. A local model also needs enough memory for its
+weights, context and the rest of the stack. Embeddings are separate from chat; this brief does
+not need long-term memory. Review [memory setup](/docs/memory) before using `remember` or `recall`.
+
+## 2. Connect one repository
+
+Open **Connections**, enter `owner/repository`, and follow the GitHub connection flow. The
+managed connection uses Composio, a hosted service that holds the account's OAuth token.
+Review the account and consent screen, select the narrowest access that supports your task,
+then recheck the connection. [Connection setup](/docs/composio-auth) explains the tradeoff.
+
+An active account does not prove it can read the selected repository. Keep the first task
+small and ask it to name the account and repository it actually accessed. If you use your own
+repository tools, configure those instead and check their credentials and permissions.
+
+## 3. Run the brief
+
+Choose **Run a repository brief** from Today, or continue from Connections. The connection
+flow preserves the repository in the editable draft. Replace any remaining placeholder:
+
+```text
+Prepare a repository maintenance brief for owner/repository.
+Review changes from the last seven days, failing checks and issues needing attention.
+Include links supporting each finding and a short list of suggested next steps.
+State the connected account and repository you actually accessed.
+Read and report only; do not change files, issues, settings, or send messages.
+If the repository or account is unavailable, explain what is missing.
+```
+
+The read-only instruction expresses intent. Enforce access with the credentials and tools you
+give the agent; prompt text is not a permission boundary. The dashboard asks for approval only
+when the underlying tool is configured to require it.
+
+## 4. Check the result
+
+A useful response is specific enough to check. This is an **illustrative format**, not a live
+repository result:
+
+> **Repository maintenance brief: example/project**
+>
+> **Access:** selected repository confirmed; issue history available; check logs unavailable.
+>
+> **Changed:** a configuration option was added. Cite the pull request and changed file.
+>
+> **Needs attention:** an issue still lacks reproduction steps. Cite the issue and explain
+> which information is missing.
+>
+> **Next steps:** review the configuration documentation; request the missing reproduction
+> details yourself. No repository changes or messages were made.
+
+Open each cited source. Check the date range, repository and account. Look at the recorded
+tool evidence when available. Missing access or missing evidence should remain visible, not
+be filled with guesses. Use an editable follow-up to correct the brief; a correction can also
+be saved as a versioned regression case for later comparison.
+
+If delivery is uncertain, reconnect and inspect the existing task before sending it again.
+For a failure, open the task's recovery details and [operations guide](/docs/operations).
+Cooperative cancellation may leave an in-flight call running until it returns.
+
+## 5. Test a repeat before enabling it
+
+Choose **Save request as routine** in the task workspace. In **Routines**, name the job,
+select a timezone and schedule, and inspect the next three occurrences. New routines start
+paused. Choose **Run now**, wait for completion, and review its linked task result. Enable
+scheduled work only after that completed test is acceptable.
+
+The dashboard process and routine clock must stay up for due work to dispatch. Verify their
+health, keep backups, and arrange an [external liveness check](/docs/alerts) before relying on
+unattended runs. Unknown dispatch pauses visibly and needs investigation before a retry.
+Notifications are optional: configure and test a destination, then confirm an actual receipt.
+The dashboard's acknowledgement is not proof that someone read the message.
+
+See [Routines](/docs/routines) for catch-up, overlaps, pause/resume and recovery behavior.

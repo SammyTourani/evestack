@@ -124,7 +124,7 @@ export function Hero() {
           </h1>
           <p
             data-hero="sub"
-            className="hidden max-w-xl text-balance text-copy-16 text-gray-900 md:block md:text-copy-18"
+            className="max-w-xl text-balance text-copy-16 text-gray-900 md:text-copy-18"
           >
             {site.subhead}
           </p>

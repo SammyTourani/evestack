@@ -1,6 +1,6 @@
 ---
 title: Support
-description: Which versions get fixes, what the version numbers promise, and which platforms are actually tested — including the one that is not.
+description: Which versions get fixes and what the Linux, macOS and Windows checks actually cover.
 ---
 
 This page is deliberately unambitious. Everything on it is a statement about what CI runs and
@@ -110,48 +110,14 @@ runtime tier that does not run there. The job narrows the macOS gap; it does not
 
 ### Windows
 
-<Warning>
-  **Windows is untested. There is no CI job on any Windows runner, and there never has been.**
-  Twelve `process.platform === "win32"` branches ship in the code, and only one of them is
-  covered by a test — and that one is covered by passing `"win32"` in as an argument, not by
-  running on Windows. Use WSL2, where the Linux paths run.
-</Warning>
+A non-blocking `windows-latest` CI job runs Node 24 workspace builds/typechecks and the
+CLI/scaffolder platform suites. It includes ASCII output, path handling and native Windows
+ACL checks for private configuration and backups. Inspect the job's conclusion directly:
+`continue-on-error` means a failed platform job can coexist with an overall passing workflow.
 
-This is stated bluntly because the code *looks* like it supports Windows. The twelve branches,
-so you can judge the risk yourself:
-
-- **Opening a browser** — `packages/evestack-cli/src/project.mjs:357`,
-  `packages/evestack-cli/src/tour.mjs:396`, `templates/default/scripts/verify.mjs:651` each pick
-  `cmd /c start` over `open` / `xdg-open`. Find them with
-  `rg -n "cmd\", \[\"/c\", \"start\"" packages templates` rather than by line number.
-- **Spawning `npm` and `docker`** — `packages/create-evestack/create.mjs:231`, `:354` and
-  `:1185`, `templates/default/scripts/dev.mjs:81`, `templates/default/scripts/start.mjs:60`,
-  `templates/default/scripts/eval.mjs:148` pass `shell: process.platform === "win32"`, which is
-  how a `.cmd` shim gets found on Windows. Find them with
-  `rg -n 'shell: process.platform' packages templates`.
-- **Naming the `eve` binary** — `templates/default/scripts/checks.mjs:532` returns `eve` rather
-  than `eve.cmd`. This is the one with a test: `templates/default/test/eve-binary.test.mjs:115`
-  calls `eveBinary(url, "win32")` on Linux, which checks the string and nothing about Windows.
-- **Terminal glyphs** — `packages/create-evestack/ui.mjs:68` and
-  `templates/default/scripts/ui.mjs:68` fall back to ASCII outside Windows Terminal. That file's
-  own comment is the honest summary: the failure mode is "mojibake in a legacy Windows code page
-  — one nobody here can reproduce."
-
-`packages/create-evestack/test/attach-writes.test.mjs` gates its file-permission assertions on
-`process.platform !== "win32"`, so even if you ran the suite on Windows, the checks on credential
-file modes would skip rather than fail.
-
-If Windows matters to you, a CI job on `windows-latest` is the contribution that would change
-this row — not a bug report saying it did not work.
-
-There is a cheaper contribution than that, though, and `eveBinary` is the worked example of it.
-Its signature is `eveBinary(scriptUrl, platform = process.platform)`: the default keeps every
-caller unchanged, and passing `"win32"` explicitly makes the Windows branch reachable from a
-test on the runner this repo already pays for. That is why one of the twelve is covered and
-eleven are not — not because the others are harder, but because they read `process.platform`
-directly instead of taking it as an argument. Threading the same defaulted parameter through the
-other eleven would convert them into tested branches on Linux, and would leave a
-`windows-latest` job as a nice-to-have rather than the only way to move this row.
+The interactive wizard, browser-opening helpers and full Docker runtime are not covered by
+that job. Linux has the broader runtime coverage. WSL2 is an option when you need the Linux
+execution path, but it does not replace testing your own Windows installation.
 
 ### Everything else
 
@@ -162,9 +128,8 @@ other eleven would convert them into tested branches on Linux, and would leave a
   one CI's `services:` block starts. The `vector` extension is not optional if you use memory:
   `templates/default/lib/memory.ts` runs `CREATE EXTENSION IF NOT EXISTS vector` and stores a
   `vector(n)` column.
-- **Browsers.** The dashboard is a Next app and has no browser test matrix. The only browser CI
-  ever launches is Chromium, and that is for the marketing site's Playwright suite, not the
-  dashboard.
+- **Browsers.** The dashboard is a Next app and has no browser test matrix. Website CI uses Chromium. Dashboard release checks use a separate local Chromium fixture
+  for task, decision, routine and recovery flows. Safari and Firefox are not in the browser matrix.
 - **eve** is pinned at `^0.54.3` in `templates/default/package.json`. Below `0.54.0` is a
   security floor, not a preference.
 
@@ -178,8 +143,8 @@ can rely on:
 2. **Security reports get a reply within 72 hours**, and a fix or mitigation before public
    disclosure. See
    [SECURITY.md](https://github.com/SammyTourani/evestack/blob/main/SECURITY.md).
-3. **Assumptions about eve are checked by machine, not by memory.** `contract/` is 22 contracts
-   that go red when eve's behaviour drifts under them, and `eve-watch` runs them against every
+3. **Assumptions about eve are checked by machine, not by memory.** `contract/` checks runtime and repository assumptions
+   and goes red when eve's behaviour drifts under them, and `eve-watch` runs them against every
    new eve release daily. That is the closest thing here to a compatibility guarantee, and it is
    stronger than a promise because it is executable.
 

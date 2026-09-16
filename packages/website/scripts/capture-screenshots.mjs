@@ -1,43 +1,17 @@
-/* Captures REAL dashboard UI for the landing page — dark + light via
-   prefers-color-scheme emulation, 2x. Outputs raw PNGs to
-   assets/screenshots-raw/; optimize-images.mjs bakes AVIF/WebP.
-
-   ── Three things this got wrong, all of them silently ─────────────────────
-
-   AUTHENTICATION. This script predates lib/auth.ts. Every route except the
-   liveness one now redirects an unauthenticated GET to /signin, so a run
-   without credentials captures the sign-in form, at 1440x900, twice, and
-   reports "captured dark / captured light / done". The HTTP Basic pair now goes
-   on every request as a header — see the note on `authHeader` for why
-   Playwright's own `httpCredentials` cannot work against this dashboard.
-
-   THE PAGE IT CAPTURED. It screenshotted `/` and wrote it to `sessions-*.png`.
-   That was right when `/` WAS the session list. Dashboard v2 made `/` an
-   overview of charts and monitors and moved the list to `/sessions`, and
-   packages/website/lib/copy.ts now names `app/sessions/page.tsx` as the file
-   that renders this shot — so the caption, the alt text and the source path all
-   described a page the image did not show. Fixing the path in copy.ts without
-   fixing this file would have left the claim pointing at the wrong picture.
-
-   NETWORKIDLE. `waitUntil: "networkidle"` returns when the network is quiet,
-   which on the overview is BEFORE the streamed Suspense boundaries have
-   resolved — the fleet banner talks to the agent and the alerts panel to the
-   Docker socket. The captures below wait for a selector that only exists once
-   the content is really there.
-
-   Run against a seeded dashboard:
-
-     DASHBOARD_URL=http://localhost:4000 \
-     EVESTACK_AUTH_USER=... EVESTACK_AUTH_PASSWORD=... \
-     node scripts/capture-screenshots.mjs
-*/
+/* Capture the current Tasks page and a task workspace from a test installation.
+   Requires explicit dashboard credentials and an agent that can replay the selected task.
+   Review and label fixture data before publishing screenshots. Never capture a production
+   task containing secrets or private source material for the public website.
+   scripts/optimize-images.mjs converts raw PNGs to WebP/AVIF and reports dimensions. */
 import { chromium } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 
 const outDir = new URL("../assets/screenshots-raw/", import.meta.url).pathname;
 await mkdir(outDir, { recursive: true });
 
-const dashboardUrl = (process.env.DASHBOARD_URL ?? "http://localhost:4000").replace(/\/$/, "");
+const dashboardUrl = (
+  process.env.DASHBOARD_URL ?? "http://localhost:4000"
+).replace(/\/$/, "");
 const username = process.env.EVESTACK_AUTH_USER;
 const password = process.env.EVESTACK_AUTH_PASSWORD;
 
@@ -92,19 +66,24 @@ async function pickSession() {
   return [...sessions].sort((a, b) => (b.turns ?? 0) - (a.turns ?? 0))[0].id;
 }
 
-const sessionId = await pickSession();
+const sessionId = process.env.DASHBOARD_CAPTURE_TASK ?? (await pickSession());
 console.log("session for detail capture:", sessionId ?? "(none found)");
 if (!sessionId) {
-  console.error("no session in /api/health/detail — seed the database before capturing");
+  console.error(
+    "no session in /api/health/detail — seed the database before capturing",
+  );
   process.exit(1);
 }
 
 const browser = await chromium.launch();
 
 const shots = [
-  // The session LIST, which is what copy.ts's `sessions` shot claims to show.
-  { name: "sessions", path: "/sessions", ready: "table" },
-  { name: "session-detail", path: `/sessions/${sessionId}`, ready: "h1" },
+  { name: "tasks", path: "/tasks", ready: "h1" },
+  {
+    name: "task-detail",
+    path: `/chat?session=${encodeURIComponent(sessionId)}`,
+    ready: '[class*="assistant"]',
+  },
 ];
 
 for (const scheme of ["dark", "light"]) {
@@ -116,17 +95,33 @@ for (const scheme of ["dark", "light"]) {
   });
 
   for (const shot of shots) {
-    await page.goto(`${dashboardUrl}${shot.path}`, { waitUntil: "networkidle" });
+    await page.goto(`${dashboardUrl}${shot.path}`, {
+      waitUntil: "networkidle",
+    });
 
     // The real readiness signal. If the page redirected to /signin this throws
     // rather than producing a screenshot of the login form.
     await page.waitForSelector(shot.ready, { timeout: 15_000 });
     if (new URL(page.url()).pathname === "/signin") {
-      throw new Error(`captured /signin instead of ${shot.path} — credentials were refused`);
+      throw new Error(
+        `captured /signin instead of ${shot.path} — credentials were refused`,
+      );
     }
 
-    // Suspense boundaries stream in after networkidle; this is the settle.
-    await page.waitForTimeout(800);
+    await page.waitForFunction(
+      () =>
+        !Array.from(document.querySelectorAll("summary")).some((el) =>
+          /checking/i.test(el.textContent ?? ""),
+        ),
+    );
+    if (
+      shot.name === "task-detail" &&
+      (await page.getByRole("alert").count())
+    ) {
+      throw new Error(
+        "Task workspace has an error; inspect it before capturing.",
+      );
+    }
     await page.screenshot({ path: `${outDir}/${shot.name}-${scheme}.png` });
     console.log(`captured ${shot.name}-${scheme} from ${shot.path}`);
   }

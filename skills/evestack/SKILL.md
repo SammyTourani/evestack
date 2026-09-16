@@ -55,7 +55,8 @@ npm run verify                    # checks every part, names the fix for anythin
 ```
 
 Requirements: **Node 24+**, Docker running, and a model key — `OPENAI_API_KEY` or
-`ANTHROPIC_API_KEY`, or Ollama for $0 total.
+`ANTHROPIC_API_KEY`, or a local Ollama model with enough memory. Hardware, hosting,
+electricity, model usage and connected services may cost money.
 
 `npx create-evestack my-agent` is the same scaffolder under npm's `create-*` convention. Same
 code, same prompts, same flags. Neither is a wrapper around the other.
@@ -70,6 +71,23 @@ Sign in with the `EVESTACK_AUTH_USER` / `EVESTACK_AUTH_PASSWORD` the scaffolder 
 `.env.local` and printed when it finished. Every route is behind that credential — the
 dashboard starts runs, approves gated shell commands and deletes memories, so it fails closed.
 
+## First useful task
+
+After setup, open Settings and verify the agent and model. Connect one repository in Connections,
+then use the repository brief draft from Today. Ask for recent changes, issues needing attention,
+source links and the account/repository actually accessed. Require missing access to be reported.
+Read-only instructions are intent; actual permissions come from credentials and configured tools.
+
+Inspect the result and evidence before saving the request as a routine. New routines start paused.
+Preview the timezone and next occurrences, run a manual test and review its completed result, then
+consider enabling repeats. Unknown dispatch pauses for investigation. The dashboard clock must be
+running for due work to dispatch. Configure notifications only to operator-selected destinations
+and verify real receipt. Full walkthrough: https://evestack.vercel.app/docs/first-task.
+
+Use `references/dashboard.md` for current task/routine APIs. Memory proposals do not recompute
+embeddings, regression cases do not provide an isolated eval runner, and shared credentials do not
+identify teammates. See the source release plan for verified checks and outstanding live gates.
+
 ## The five things that most often go wrong
 
 These are measured failure modes, not theory. Each one presents as something else, which is
@@ -81,13 +99,10 @@ why they are here rather than in a reference file.
    `postgres://world:world@localhost:5432/world` and dies on `ECONNREFUSED`. The npm script
    passes `--env-file-if-exists=.env.local` explicitly.
 
-2. **`@workflow/world-postgres` must be pinned to an exact version — `5.0.0-beta.32`.** npm's
-   `latest` is the 4.x line and eve rejects it outright, but the `beta` dist-tag is not the
-   answer either: upstream raises the World **spec version** inside `5.0.0-beta.*` without a
-   semver bump, so `beta` (`.34`/`.35`) pulls a spec-6 world into a runtime that requires spec 5
-   and the project dies at boot. `^` and `~` admit the same releases. The scaffolded
-   `package.json` pins the exact version — it matters if anyone touches that dependency by
-   hand.
+2. **Keep `@workflow/world-postgres` pinned to exact `5.0.0-beta.42`.** This candidate selects
+   Eve `^0.54.3`; `release-manifest.json` records the component combination. Do not replace the
+   Workflow pin with a tag or range: beta versions can change the required runtime contract.
+   Check installed/deployed versions separately; a source manifest does not prove publication.
 
 3. **Setting a model name without `EVESTACK_PROVIDER` leaves you on the previous provider.**
    `agent/agent.ts` branches on `EVESTACK_PROVIDER`; unset means `openai`. A *misspelled* value
