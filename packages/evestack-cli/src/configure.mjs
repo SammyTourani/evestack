@@ -123,14 +123,14 @@ function gitSafety(dir, file) {
 
 // Windows does not implement POSIX 0600/0700. Apply an explicit owner-only ACL
 // before a file containing credentials becomes the active configuration.
-function protectWindowsPath(path, directory) {
+function protectWindowsPath(path, directory, created = false) {
   if (process.platform !== "win32") return;
   const script = `
     $ErrorActionPreference = 'Stop'
     $p = $env:EVESTACK_CONFIG_PRIVATE_PATH
     $who = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
     $current = Get-Acl -LiteralPath $p
-    if ($current.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $who.Value) { throw 'Not owned by current user' }
+    if ($env:EVESTACK_CONFIG_JUST_CREATED -ne '1' -and $current.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $who.Value) { throw 'Existing backup path is not owned by current user' }
     if ($env:EVESTACK_CONFIG_PRIVATE_DIRECTORY -eq '1') {
       $acl = New-Object System.Security.AccessControl.DirectorySecurity
       $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($who,'FullControl','ContainerInherit,ObjectInherit','None','Allow')
@@ -145,13 +145,17 @@ function protectWindowsPath(path, directory) {
   `;
   const result = spawnSync("powershell.exe",["-NoProfile","-NonInteractive","-Command",script],{
     encoding:"utf8",timeout:15000,
-    env:{...process.env,EVESTACK_CONFIG_PRIVATE_PATH:path,EVESTACK_CONFIG_PRIVATE_DIRECTORY:directory?'1':'0'},
+    env:{...process.env,EVESTACK_CONFIG_PRIVATE_PATH:path,EVESTACK_CONFIG_PRIVATE_DIRECTORY:directory?'1':'0',EVESTACK_CONFIG_JUST_CREATED:created?'1':'0'},
   });
-  if (result.error || result.status !== 0) throw new Error("Could not protect configuration permissions with a Windows owner-only ACL. Nothing was activated.");
+  if (result.error || result.status !== 0) {
+    const detail=String(result.error?.code??result.stderr??"unknown permission error").replaceAll(path,"[configuration path]").replace(/[\x00-\x1f\x7f]/g," ").slice(0,450);
+    throw new Error(`Could not protect configuration permissions with a Windows owner-only ACL. Nothing was activated. ${detail}`);
+  }
 }
 
 function privateDirectory(path) {
-  if (!existsSync(path)) {
+  const created = !existsSync(path);
+  if (created) {
     const parent = dirname(path);
     if (!existsSync(parent)) privateDirectory(parent);
     mkdirSync(path, {mode:0o700});
@@ -159,7 +163,7 @@ function privateDirectory(path) {
   const info = lstatSync(path);
   if (!info.isDirectory() || info.isSymbolicLink() || (process.platform !== "win32" && (info.mode & 0o077) !== 0) || (process.getuid && info.uid !== process.getuid()))
     throw new Error("The backup directory must be owned by you, private (0700), and not a symbolic link.");
-  protectWindowsPath(path,true);
+  protectWindowsPath(path,true,created);
 }
 
 function atomicWrite(path, text) {
@@ -167,7 +171,7 @@ function atomicWrite(path, text) {
   let fd;
   try {
     fd = openSync(temporary, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
-    protectWindowsPath(temporary,false);
+    protectWindowsPath(temporary,false,true);
     writeFileSync(fd,text);fsyncSync(fd);closeSync(fd);fd=undefined;
     renameSync(temporary,path);
   } finally {
