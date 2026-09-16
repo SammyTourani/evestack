@@ -590,6 +590,7 @@ jobs:
       # `tsc` on a package this size is a couple of seconds against the two
       # minutes a full workspace build costs.
       - run: pnpm --filter @evestack/schedules run build
+      - run: pnpm --filter @evestack/budget run build
       # Before the Next build, deliberately. The dashboard's unit tests import
       # lib/auth.ts, lib/pricing.ts, lib/traces.ts and lib/promote-eval.ts
       # directly under `node --test`; apart from the oracle above, their import
@@ -811,6 +812,8 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
       - run: node registry/build.mjs
+      - name: release manifest matches versions and storage guards
+        run: node scripts/release-manifest.mjs --check
 
       # THE gate. Every assertion below this step describes the JSON that
       # `node registry/build.mjs` just wrote into this checkout — content is

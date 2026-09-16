@@ -57,6 +57,7 @@ const PROJECT_COMMANDS = new Set([
   "tasks",
   "routines",
   "readiness",
+  "upgrade",
 ]);
 
 /**
@@ -98,6 +99,7 @@ export const USAGE = `evestack — the whole eve stack, on your own machine
   evestack tour              a guided first run, on a stack that is already up
   evestack verify            check every part and name the fix for anything broken
   evestack configure         preview, back up and save provider/channel settings
+  evestack upgrade           compare this project with the bundled template
   evestack skills            teach your coding agent this project
   evestack attach [dir]      add evestack to an eve project you already have
   evestack doctor            a run stopped moving — read-only forensics
@@ -236,6 +238,7 @@ async function printVersion(stdout) {
 
 /** Every verb this binary answers to, for the router and for did-you-mean. */
 export const COMMANDS = [
+  "upgrade",
   "create",
   "status",
   "tour",
@@ -304,6 +307,7 @@ async function runProjectCommand(name, argv, { stdout, stderr }) {
     tasks: () => import("./work.mjs"),
     routines: () => import("./work.mjs"),
     readiness: () => import("./work.mjs"),
+    upgrade: () => import("./upgrade.mjs"),
   };
   try {
     const module = await MODULES[name]();

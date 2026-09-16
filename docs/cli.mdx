@@ -15,6 +15,7 @@ evestack readiness            check the dashboard's setup state
 evestack tour                 a guided first run, on a stack that is already up
 evestack verify               check every part and name the fix for anything broken
 evestack configure            preview, back up and save supported configuration
+evestack upgrade              compare with this CLI's bundled template
 evestack skills               teach your coding agent this project
 evestack attach [dir]         add evestack to an eve project you already have
 evestack doctor               a run stopped moving — read-only forensics
@@ -101,6 +102,15 @@ Saving does not activate a provider or channel. Restart the affected processes,
 run `evestack verify`, then inspect a real task or receipt. For supported heartbeat
 settings, use the template's `npm run heartbeat:preview` before enabling. The
 preview shows the exact prompt and quiet-hour gate without sending anything.
+
+## Upgrade preview
+
+`evestack upgrade --changed-only` compares your code and declared dependencies
+with this CLI's bundled template. `--json` includes hashes and component versions.
+It writes nothing and has no apply flag. Differences require manual merging;
+symlinks and oversized files are flagged without reading their targets. Secrets,
+caches and extra user files are excluded. Follow the [upgrade procedure](/docs/upgrading)
+for backups, publication checks and activation.
 
 ## `evestack create` / `npx create-evestack`
 

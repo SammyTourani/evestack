@@ -348,7 +348,11 @@ export default {
     }
 
     try {
-      for (let attempt = 0; attempt < 40 && original === null; attempt += 1) {
+      // The no-provider turn can still be finishing after its stream index
+      // appears. Reopening it then races the engine's terminal write: the sweep
+      // correctly sees no open candidate. Wait for the terminal row we intend
+      // to turn into a crash fixture; do not fight a live engine with retries.
+      for (let attempt = 0; attempt < 80 && original === null; attempt += 1) {
         const { rows } = await client.query(
           `SELECT id, status, started_at, completed_at FROM workflow.workflow_runs
             WHERE attributes->>'$eve.root' = $1
@@ -356,18 +360,18 @@ export default {
             ORDER BY created_at LIMIT 1`,
           [body.sessionId],
         );
-        if (rows.length > 0) original = rows[0];
+        if (rows.length > 0 && rows[0].completed_at !== null) original = rows[0];
         else await new Promise((resolve) => setTimeout(resolve, 250));
       }
 
       t.ok(
         original !== null,
-        "the live agent wrote a turn row for the new session, which is what the sweep reads",
+        "the live agent settled the new turn before the probe reopens it as a crash fixture",
         original !== null
           ? {}
           : {
-              expected: "a $eve.type='turn' row carrying $eve.root = the session id within 10s",
-              actual: "none — without it there is no fixture to reopen and the classification checks below would run over an empty sweep",
+              expected: "a settled turn row carrying $eve.root = the session id within 20s",
+              actual: "none — an absent or still-running turn cannot safely be used as this crash fixture",
             },
       );
 

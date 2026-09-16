@@ -12,6 +12,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { isTemplateFile } from "../create.mjs";
+import { releaseManifest } from "../../../scripts/release-manifest.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pkg = join(here, "..");
@@ -80,3 +81,4 @@ if (rewritten > 0) {
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 }
 console.log(`✓ synced template -> ${dest}${rewritten ? ` (${rewritten} workspace range(s) pinned)` : ""}`);
+writeFileSync(join(dest, "evestack-release.json"), JSON.stringify(releaseManifest(), null, 2) + "\n");

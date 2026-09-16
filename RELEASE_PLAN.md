@@ -118,8 +118,8 @@ Status: `[ ]` queued, `[-]` in progress, `[x]` verified, `[~]` implemented await
 - [x] Read-only routine/decision views in MCP; mutation capabilities explicit and separately gated.
 - [x] CLI links/actions share the dashboard API and preserve server credential boundaries.
 - [ ] Attach change preview, compatibility/permissions summary and attach health checks.
-- [ ] Component release manifest with supported version combinations.
-- [ ] Upgrade preview that preserves user configuration and reports manual conflicts.
+- [x] Component release manifest with selected version combinations and storage guards; deployment verification remains separate.
+- [x] Upgrade preview that preserves user configuration and reports manual conflicts.
 - [ ] Backup/restore procedure verified with disposable data; service start/stop/state guidance.
 - [ ] Guided removal with explicit data choices and no implicit destructive defaults.
 - [ ] Registry dry-run/install verification and standalone/component compatibility notes.
@@ -131,7 +131,7 @@ Status: `[ ]` queued, `[-]` in progress, `[x]` verified, `[~]` implemented await
 - [ ] Fix README platform, runtime pin and verification-count drift.
 - [ ] Version-matched docs and coding-agent pack; no claims beyond implemented behavior.
 - [ ] Release notes cover features, security fixes, upgrade steps and limitations.
-- [ ] Bump every changed published package; synchronize template/registry/CLI dependencies.
+- [x] Bump changed published runtime packages; synchronize template/registry/CLI dependencies.
 - [ ] Verify packaged tarballs and clean generated-project installation.
 - [ ] Check supported Node platforms, full tests/typecheck/build, workflow checks and dependency audit.
 - [ ] Browser verification of new-task failure/retry, decision failure/retry, routine CRUD/run/pause, mobile and dark mode.
@@ -250,3 +250,10 @@ These are required product learning, not claims a coding session can prove.
 - A fresh HEARTBEAT.md contains only commented examples and triggers no model work. Missing/empty/comment-only files are inactive; read errors, invalid UTF-8, oversized files and invalid quiet settings fail explicitly. Supported env changes use the existing protected configure/restore workflow.
 - Template: 122 tests pass and typecheck passes. Tests cover overnight boundaries, both repeated DST readings, a spring gap, a half-hour zone, bounded files, actual no-dispatch behavior and executable preview parity. CLI: 163 tests pass. Dashboard production build passes. Compatibility: 25 contracts / 631 assertions pass.
 - Built-dashboard browser checks passed the three setup guides, marker retention, failed/retried history reads, task links, stale selection reset, mobile/dark layout and no script errors. The receipt acknowledgement was simulated; no real Telegram, Slack or Discord message was sent.
+
+### Upgrade preview and version coordination
+
+- `evestack upgrade` compares the installed CLI's bundled template against a project without writing files or reading environment secrets. It reports hashes, declared dependency ranges and manual merge requirements, refuses symlinks/oversized files, bounds total reads, and leaves extra project files alone. A recorded manifest is not proof of installed or running versions.
+- The generated release manifest checks component versions, template dependencies, Postgres image majors and storage guards. It ships in new projects and is checked in CI. Candidate versions are CLI 0.7.0, scaffolder 0.13.0, dashboard 0.5.0, budget 0.4.0, Composio 0.3.0, MCP 0.4.0 and OpenSandbox 0.4.1; schedules stays 0.2.1 because its runtime is unchanged. No artifact is published by this checkpoint.
+- CLI: 168 tests pass. Scaffolder: 246 pass, one optional runtime test skipped. Compatibility: 25 contracts / 632 assertions pass. Template sync, registry generation, lockfile resolution and manifest consistency pass.
+- CI on `69b1e61` found a missing budget build before dashboard unit tests and a fleet probe that reopened its fixture while the engine could still finish it. The job now builds the dependency first; the probe waits for the real turn to settle before reopening it. These corrections await verification on the next exact commit.

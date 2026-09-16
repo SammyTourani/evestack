@@ -14,6 +14,7 @@ evestack tour                   # a guided first run, on a stack that is already
 evestack dashboard              # open the dashboard in your browser, signed in
 evestack verify                 # check every part and name the fix for anything broken
 evestack configure              # preview, back up and save provider/channel settings
+evestack upgrade                # compare code/dependencies without changing them
 evestack skills                 # teach your coding agent this project
 evestack attach .               # add evestack to an eve project you already have
 evestack doctor                 # a run stopped moving — read-only forensics
@@ -72,6 +73,22 @@ with shell overrides as usual. Remote dashboards require HTTPS. Credentials are
 never printed, embedded in links or forwarded through redirects. Message files
 are bounded to 64 KiB and responses to 2 MiB. Read timeouts are 15 seconds;
 mutation responses have 30 seconds, after which delivery remains unknown.
+
+## `evestack upgrade`
+
+`evestack upgrade --changed-only` compares your project with the template bundled
+with the current CLI. Use `--json` for file hashes, declared dependency changes
+and the candidate's component versions. It writes nothing, downloads nothing and
+offers no apply flag. Select the desired CLI version before running it.
+
+Different files require manual merging: older projects have no original template
+baseline, and local code, dependencies and Compose settings must be preserved.
+Secrets and caches are excluded; symlinks and oversized files are flagged for
+manual review. Extra project files are not deletion candidates. Exit 0 means the
+preview completed, 1 means some comparison failed, and 2 means no project was
+found. A recorded release manifest does not prove what is installed or running.
+See the [upgrade procedure](https://github.com/SammyTourani/evestack/blob/main/docs/upgrading.mdx)
+for backups, image checks and activation.
 
 ## `evestack configure`
 

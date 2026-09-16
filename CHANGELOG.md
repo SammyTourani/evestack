@@ -37,7 +37,7 @@ git log --oneline <bump>..<next-bump> -- packages/<dir>
 git tag -l
 ```
 
-Every version below is a version npm or GHCR actually serves, cross-checked against the
+Historical versions below describe npm or GHCR releases, cross-checked against the
 commit that moved the `version` field in that package's `package.json`. Where the
 boundary between two versions cannot be established from the tree — no tag was cut, so
 the only evidence is that a commit's timestamp falls before or after the registry's
@@ -52,9 +52,47 @@ They are summarised rather than itemised, deliberately.
 
 ## Unreleased
 
-**`create-evestack@0.12.1` and `evestack@0.6.1` are written and not published.** 0.12.0 and
-0.6.0 went out on 2026-09-14 and `latest` names both, so the registry is serving a good pair;
-the tree is one patch ahead of it.
+**This release candidate is not published.** The planned versions are:
+
+| Artifact | Candidate |
+| --- | --- |
+| `create-evestack` | `0.13.0` |
+| `evestack` | `0.7.0` |
+| `@evestack/budget` | `0.4.0` |
+| `@evestack/composio` | `0.3.0` |
+| `@evestack/mcp` | `0.4.0` |
+| `@evestack/sandbox-opensandbox` | `0.4.1` |
+| Dashboard image | `0.5.0` |
+
+Schedules remains at `0.2.1`. The earlier pending scaffolder/CLI patch numbers
+have been superseded by these minor versions because the release adds workflows
+and changes security behavior. The generated `release-manifest.json` records the
+complete selected combination. Follow `RELEASING.md` for publication order; a
+candidate version is not proof its npm package or image is available.
+
+- **A task workspace.** Today, searchable Tasks, pending decisions and readable
+  results put useful work first. Failed delivery preserves drafts, reconnection
+  does not replay work, and saved recovery evidence remains available when the
+  agent is offline.
+- **Durable dashboard routines.** Review a manual run before enabling a schedule,
+  preview its timezone-aware occurrences and inspect run/delivery history.
+  Competing workers cannot claim the same occurrence; ambiguous dispatches pause
+  for investigation. Notifications use a durable queue and stable deduplication
+  IDs, with explicit retry handling after uncertain acknowledgements.
+- **Setup and control.** Guided repository/channel checks, six truthful readiness
+  checks and saved budget revisions distinguish configuration from observed
+  execution. The daily spend monitor follows the saved cap and timezone.
+- **Knowledge and review.** Memory ownership and append-only reviews stay tied
+  to the exact record. Removal and its audit commit together. A correction can
+  become a versioned regression case with original/candidate evidence and manual
+  observations; no automated evaluation or applied embedding correction is implied.
+- **Terminal and MCP access.** CLI commands inspect/start/continue/stop tasks and
+  read routine/recovery state. Read-only MCP tools expose the same evidence.
+  Configuration changes have a redacted preview, protected backup, stale-file
+  checks and restore path. Upgrade previews compare files without changing them.
+- **Quiet heartbeats.** An exact prompt/recipient preview and explicit quiet-hour
+  gate share execution logic. Fresh scaffold examples are inactive until edited;
+  quiet hours prevent new dispatches without cancelling work already running.
 
 > **A publish can sit STAGED, and it looks exactly like a failure.** Both of these answered
 > `+ create-evestack@0.12.0` and then `npm view` kept saying `0.11.2` — because npm had
@@ -86,7 +124,7 @@ the tree is one patch ahead of it.
 > window, and it is the right first move any time `latest` names something that should not be
 > the default.
 
-### Changed but not yet versioned
+#### Additional candidate changes
 
 - **Chat stream progress.** The dashboard continues reading when a network chunk contains
   only part of an event or a blank line. Previously, a pending browser read could stall until
@@ -127,9 +165,9 @@ the tree is one patch ahead of it.
   bot, and it does nothing on a process with no terminal.
 
 
-- **Security pass, 2026-09-15.** Ten confirmed findings from a full review, fixed across every
-  package. Nothing here is released yet; the dashboard image and three npm packages all need a
-  version bump before any of it reaches a user. Grouped by what an attacker gets.
+- **Security pass, 2026-09-15.** Ten confirmed findings from a full review, fixed across the
+  affected packages. These changes are included in the candidate versions above and are not
+  yet released. Grouped by what an attacker gets.
 
   **Multi-user installs were not multi-user safe.** Three separate holes, all opening the moment a
   channel is enabled and strangers become principals:

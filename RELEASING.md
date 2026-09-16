@@ -9,7 +9,7 @@ section exists to prevent. It had been working by luck.
 
 | Package | Directory | Published |
 | --- | --- | --- |
-| `evestack` | `packages/evestack-cli` | yes — the CLI (`create`, `status`, `tour`, `open`, `verify`, `attach`, `doctor`) |
+| `evestack` | `packages/evestack-cli` | yes — project setup, work, configuration, upgrade preview and diagnostics |
 | `create-evestack` | `packages/create-evestack` | yes — the `npm create` entry point |
 | `@evestack/budget` | `packages/evestack-budget` | yes — **template dependency** |
 | `@evestack/composio` | `packages/evestack-composio` | yes — **template dependency** |
@@ -330,6 +330,12 @@ release — a missing changelog section fails the job, because an empty release 
 answer.
 
 ## Bumping versions
+
+Run `node scripts/release-manifest.mjs` after a version or storage guard changes,
+and commit `release-manifest.json`. CI checks it against the source definitions.
+The scaffolder bundles the same combination as `evestack-release.json`. It is a
+reference for compatibility and upgrade review, not evidence that an artifact
+has been published or that a deployment is using it.
 
 `templates/default/package.json` is the source of truth for the versions the registry items pin
 to. After changing any dependency there, re-run `node registry/build.mjs` and commit

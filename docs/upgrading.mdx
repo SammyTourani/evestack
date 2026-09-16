@@ -24,9 +24,9 @@ description: Two different jobs under one name — moving a project you scaffold
 
 Worth stating before any commands, because it determines the whole shape of an upgrade: your
 project is a **copy**, not an install. `create-evestack` copies `templates/default` into your
-directory once and then has no further relationship with it. There is no `evestack upgrade`
-command — `packages/evestack-cli/src/` contains no such module — and nothing in the project
-checks for a newer version of itself.
+directory once. `evestack upgrade` now provides a read-only comparison against the
+template bundled with that CLI version. It does not fetch a newer release,
+overwrite files, install dependencies, restart services or migrate a database.
 
 So these are the pieces, they move independently, and you move each one yourself:
 
@@ -90,6 +90,38 @@ section) and read its `package.json` and `docker-compose.yml`. That pair — tem
 tag — is the combination that was tested together, which is the reason
 `packages/create-evestack/shared.mjs` pins the image to a tag rather than `latest`.
 
+### Preview the template changes
+
+From inside your project, using the CLI version you want to evaluate:
+
+```bash
+evestack upgrade --changed-only
+evestack upgrade --json
+```
+
+The preview lists declared dependency changes and file hashes. `same` means the
+bytes match; `missing` is a candidate addition; `review` requires a manual merge;
+`blocked` means a file could not be safely inspected. Symlinks, non-regular files
+and oversized files are not followed or guessed. No contents of `.env`,
+`.env.local`, `.npmrc` or caches are read. Extra project files are not proposed
+for deletion.
+
+An older project has no original template baseline, so differences cannot be
+automatically attributed to your changes versus old defaults. Retain customized
+agent setup, dependencies, project names and Compose choices. Use the printed
+candidate directory for local file comparison; the command offers no apply flag.
+
+New scaffolds carry `evestack-release.json`: the selected component versions,
+runtime requirements and versioned storage guards. The source repository's
+`release-manifest.json` is regenerated from those definitions and checked by CI.
+A recorded manifest is a reference, not proof of installed dependencies, running
+services or publication. Check the registry and deployment before updating it.
+
+Back up Postgres and verify a restore before migrations. The evestack schema
+contains durable routines, settings, memory reviews, regression cases and audit
+history as well as traces/facts. Use a matching version and a component-specific
+repair; do not drop the entire schema to make an older dashboard start.
+
 ### Upgrade the dashboard
 
 The dashboard is a container, so this is a repull and a restart. Your compose file names it as
@@ -98,11 +130,9 @@ it without editing a committed file — the generated `.env` already carries the
 out:
 
 <Warning>
-  **Pick a tag that exists.** The examples below say `0.4.0` because that is what this tree pins,
-  and `0.4.0` **is not published yet** — a manifest request for it against GHCR returns 404, so
-  `docker compose pull` fails rather than upgrading anything. The published tags at the time of
-  writing were `0.1.0`, `0.2.0`, `0.3.0`, `0.3.1` and `latest`. Ask the registry rather than
-  trusting this list, which will age:
+  **Pick a tag that exists.** The examples below use the candidate's `0.5.0` pin.
+  A version in this source tree does not prove an image is published. Check the
+  registry before changing a running installation:
 
   ```bash
   curl -s "https://ghcr.io/token?scope=repository:sammytourani/evestack-dashboard:pull&service=ghcr.io" \
@@ -117,7 +147,7 @@ out:
 
 ```bash
 # in .env (NOT .env.local — Compose only interpolates from .env and the shell)
-EVESTACK_DASHBOARD_IMAGE=ghcr.io/sammytourani/evestack-dashboard:0.4.0
+EVESTACK_DASHBOARD_IMAGE=ghcr.io/sammytourani/evestack-dashboard:0.5.0
 ```
 
 Then:
@@ -142,7 +172,7 @@ version in version control.
   before:
 
   ```json
-  {"ok":true,"database":"connected","version":"0.4.0"}
+  {"ok":true,"database":"connected","version":"0.5.0"}
   ```
 
   If it still reports the old number, the container was not recreated. `docker compose --profile
